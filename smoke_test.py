@@ -10,6 +10,8 @@ _fault_logs = []
 
 
 def run(output):
+    if not __debug__:
+        raise RuntimeError('Self-tests require assertions enabled; rebuild with optimize=0.')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     fault_log = (output/'native-fault.log').open('w', encoding='utf-8')

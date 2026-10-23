@@ -1,6 +1,6 @@
 """Runtime state machine: normal, lightweight, manual/automatic game mode."""
 from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QDialog
 from screen_corners import CornerManager
 from platform_services import foreground_fullscreen, set_priority
 from update_service import UpdateService
@@ -16,7 +16,7 @@ class RuntimeController:
         from desktop_panels import DesktopPanels
         self.panels = DesktopPanels(self)
         self.settings_open = False
-        self.was_dock_visible = dock.isVisible()
+        self.was_dock_visible = self.dock.cfg['dock_visible']
         self.corners = CornerManager()
         self.updater = UpdateService(self)
         self.lite_timer = QTimer(dock)
@@ -28,17 +28,14 @@ class RuntimeController:
         self.fullscreen_timer.timeout.connect(self.check_fullscreen)
         app = QApplication.instance()
         app.aboutToQuit.connect(self.close)
-        app.screenAdded.connect(self.screens_changed)
-        app.screenRemoved.connect(self.screens_changed)
-        for screen in app.screens():
-            screen.geometryChanged.connect(self.screens_changed)
+        from screen_layout import DisplayLayout
+        self.layout = DisplayLayout(self)
         self.apply_settings()
+        if self.dock.cfg.get('runtime_lite'): self.set_lite(True, persist=False)
         self.arm_lite()
 
     def screens_changed(self, *args):
-        self.dock.reposition()
-        self.panels.reposition()
-        self.refresh_corners()
+        self.layout.changed(*args)
 
     def refresh_corners(self):
         # A fullscreen foreground window may be a browser/video, not a game.
@@ -51,12 +48,30 @@ class RuntimeController:
         if self.dock.cfg['lite_enabled'] and not self.settings_open and not self.lite:
             self.lite_timer.start(60000)
 
+    def ui_busy(self):
+        from glass_panel import DesktopPanel
+        return any(isinstance(widget,QDialog) and not isinstance(widget,DesktopPanel) and widget.isVisible()
+                   for widget in QApplication.topLevelWidgets()) or bool(QApplication.activePopupWidget())
+
     def enter_lite_if_allowed(self):
         if self.dock.cfg['lite_enabled'] and not self.settings_open:
-            self.set_lite(True)
+            if self.ui_busy(): self.lite_timer.start(60000)
+            else: self.set_lite(True)
 
-    def set_lite(self, enabled):
-        self.lite = bool(enabled)
+    def set_lite(self, enabled, persist=True):
+        enabled = bool(enabled)
+        was_lite = self.lite
+        if enabled and was_lite: return
+        restore = dict(self.dock.cfg.get('lite_restore',{}))
+        if enabled and not (not persist and restore):
+            restore = {key:window.collapsed for key,window in self.panels.windows.items()}
+            restore['__merged__'] = self.dock.cfg['merged_collapsed']
+        candidate = dict(self.dock.cfg,runtime_lite=enabled,lite_restore=restore)
+        if persist and self.api.save_config(candidate) is False:
+            self.api.log('运行模式保存失败，未切换模式。')
+            return False
+        self.dock.cfg.update(runtime_lite=enabled,lite_restore=restore)
+        self.lite = enabled
         self.dock.lite_mode = self.lite
         if enabled:
             self.lite_timer.stop()
@@ -89,10 +104,16 @@ class RuntimeController:
             self.configure_fullscreen_timer()
             self.apply_visibility()
             self.refresh_corners()
-            self.panels.set_lite(False)
+            if was_lite:
+                self.dock.cfg['merged_collapsed'] = self.dock.cfg.get('lite_restore',{}).get('__merged__',self.dock.cfg['merged_collapsed'])
+                self.panels.set_lite(False)
+                self.dock.cfg['lite_restore'] = {}
+                self.api.save_config(self.dock.cfg)
         self.dock._recalc(uniform=True)
         self.dock._kick()
         self.tray.setToolTip('大肥鱼Dock · '+('精简模式' if self.lite else '完整模式'))
+        if not enabled and not self.settings_open: self.arm_lite()
+        return True
 
     def show_settings(self):
         self.settings_open = True
@@ -126,17 +147,19 @@ class RuntimeController:
         else:
             self.show_panel()
 
+    def set_dock_visible(self, visible):
+        if self.panels.commit(dock_visible=bool(visible)):
+            self.was_dock_visible = bool(visible)
+            if visible and not self.game_active: self.tray._show_dock()
+            else: self.dock.hide()
+
     def toggle_dock(self):
         if self.game_active:
             self.toggle_game(False)
             self.auto_game = False
             self.apply_visibility()
-            self.tray._show_dock()
-            return
-        if self.dock.isVisible():
-            self.dock.hide()
-        else:
-            self.tray._show_dock()
+            self.set_dock_visible(True)
+        else: self.set_dock_visible(not self.dock.isVisible())
 
     def toggle_game(self, enabled):
         candidate = dict(self.dock.cfg, game_mode=bool(enabled))
@@ -178,15 +201,21 @@ class RuntimeController:
     def apply_settings(self):
         if self.lite and not self.dock.cfg['lite_enabled']:
             self.set_lite(False)
+        self.tray.setVisible(not self.dock.cfg['hide_tray'])
         self.panels.apply_settings()
         self.configure_fullscreen_timer()
         self.apply_visibility()
         self.refresh_corners()
         set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
+        if not self.settings_open: self.arm_lite()
 
     def close(self):
         if self.closed: return
         self.closed = True
+        self.layout.close()
+        if not self.game_active: self.dock.cfg['dock_visible'] = self.dock.isVisible()
+        self.dock.cfg['runtime_lite'] = self.lite
+        self.api.save_config(self.dock.cfg)
         self.lite_timer.stop()
         self.fullscreen_timer.stop()
         self.corners.close()

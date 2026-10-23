@@ -24,6 +24,7 @@ def rebuild(tray):
     game.setChecked(tray.cfg.get('game_mode', False))
     game.triggered.connect(lambda checked: runtime.toggle_game(checked) if runtime else None)
     tools = menu.addMenu('更多工具')
+    tools.addAction('分组与分页管理…').triggered.connect(lambda: runtime.panels.manage_groups() if runtime else None)
     tools.addAction('新建桌面面板…').triggered.connect(lambda: runtime.panels.new_panel() if runtime else None)
     tools.addAction('重新整理桌面').triggered.connect(lambda: runtime.panels.scan() if runtime else None)
     tools.addAction('添加分隔符').triggered.connect(tray.add_separator)

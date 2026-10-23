@@ -7,7 +7,8 @@ from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, QMimeData, QUrl
 from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QAbstractItemView, QSizeGrip, QApplication,
-    QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy)
+    QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy, QTabBar)
+from ui_style import AlignedMenu as QMenu
 from app_catalog import path_key
 from liquid_glass import paint_liquid_glass, tint_palette
 from appearance_presets import PANEL_PRESETS
@@ -25,6 +26,43 @@ class CollectionList(QListWidget):
         drag.exec_(Qt.CopyAction)
 
 
+class PanelTabs(QTabBar):
+    """Keep this page alive while dragging a different tab to a new position."""
+    def __init__(self, panel):
+        super().__init__()
+        self.panel = panel
+        self.pressing = False
+        self.pressed_identity = None
+        self.setMovable(True)
+        self.setToolTip('拖动分组栏目调整顺序，自动保存；点击切换分组')
+        self.tabMoved.connect(self.save_order)
+
+    def mousePressEvent(self, event):
+        if event.button()==Qt.LeftButton:
+            self.pressing = True
+            self.pressed_identity = self.tabData(self.tabAt(event.pos()))
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        identity = self.pressed_identity
+        super().mouseReleaseEvent(event)
+        if event.button()==Qt.LeftButton:
+            self.pressing = False
+            self.pressed_identity = None
+            index = next((i for i in range(self.count()) if self.tabData(i)==identity),self.currentIndex())
+            self.panel.select_tab(index)
+
+    def hideEvent(self, event):
+        self.pressing = False
+        self.pressed_identity = None
+        super().hideEvent(event)
+
+    def save_order(self, source, destination):
+        order = [self.tabData(index) for index in range(self.count())]
+        if not self.panel.manager.reorder_panels(order):
+            self.panel.update_tabs(self.panel.manager.merged_models())
+
+
 class DesktopPanel(QDialog):
     def __init__(self, manager, identity, geometry):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
@@ -34,6 +72,7 @@ class DesktopPanel(QDialog):
         self.restoring = True
         self.collapsed = False
         self.manual_resize = False
+        self.merged_view = self.manager.is_merged(self.identity)
         self.fit_timer = QTimer(self)
         self.fit_timer.setSingleShot(True)
         self.fit_timer.timeout.connect(self.fit_content)
@@ -90,6 +129,13 @@ class DesktopPanel(QDialog):
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(4)
         content.setSizeConstraint(QLayout.SetNoConstraint)
+        self.tabs = PanelTabs(self)
+        self.tabs.setObjectName('PanelTabs')
+        self.tabs.setExpanding(False)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.currentChanged.connect(self.select_tab)
+        content.addWidget(self.tabs)
+        self.tabs.setVisible(self.manager.is_merged(self.identity))
         self.query = QLineEdit()
         self.query.setObjectName('PanelSearch')
         self.query.setPlaceholderText('搜索此面板')
@@ -113,7 +159,7 @@ class DesktopPanel(QDialog):
         self.list.customContextMenuRequested.connect(self.item_menu)
         self.list.itemDoubleClicked.connect(self.launch_item)
         content.addWidget(self.list, 1)
-        footer = QHBoxLayout()
+        footer = self.footer = QHBoxLayout()
         self.notice = label('拖入文件、文件夹或快捷方式', 'muted')
         self.notice.setObjectName('PanelLabel')
         self.notice.setStyleSheet('font-size:11px;')
@@ -127,6 +173,28 @@ class DesktopPanel(QDialog):
         self.apply_options()
         self.set_collapsed_geometry(bool(self.model.get('collapsed')))
         self.restoring = False
+
+    def update_tabs(self, models):
+        self.tabs.blockSignals(True)
+        expected = [(model['id'],model['name']) for model in models]
+        current = [(self.tabs.tabData(i),self.tabs.tabText(i)) for i in range(self.tabs.count())]
+        # Never rebuild the bar being dragged; its order already matches the saved model.
+        if current != expected:
+            while self.tabs.count(): self.tabs.removeTab(0)
+            for identity,name in expected:
+                index = self.tabs.addTab(name)
+                self.tabs.setTabData(index, identity)
+        for index,(identity,name) in enumerate(expected):
+            if identity==self.identity and not self.tabs.pressing: self.tabs.setCurrentIndex(index)
+        self.tabs.setVisible(self.manager.is_merged(self.identity))
+        self.tabs.blockSignals(False)
+
+    def select_tab(self, index):
+        if self.tabs.pressing: return
+        identity = self.tabs.tabData(index)
+        if identity and identity!=self.identity:
+            self.manager.select_page(identity)
+            if self.manager.active_window!=identity: self.update_tabs(self.manager.merged_models())
 
     @property
     def model(self): return self.manager.model(self.identity)
@@ -144,6 +212,16 @@ class DesktopPanel(QDialog):
         return material_palette(tint_palette(self.dock.base_theme_colors(theme), color), self.option('material'))
 
     def apply_options(self):
+        view = self.model.get('view','small')
+        self.list.setViewMode(QListWidget.ListMode if view=='list' else QListWidget.IconMode)
+        self.list.setIconSize(QSize(22,22) if view=='list' else QSize(54,54) if view=='large' else QSize(34,34))
+        # Reset explicit IconMode properties: a zero grid makes list rows overlap.
+        self.list.setFlow(QListWidget.TopToBottom if view=='list' else QListWidget.LeftToRight)
+        self.list.setWrapping(view!='list')
+        self.list.setGridSize(QSize() if view=='list' else QSize(108,102) if view=='large' else QSize(78,78))
+        self.list.setSpacing(0)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWindowTitle(self.model['name']+' · 桌面收纳')
         self.grip.setVisible(not self.option('locked'))
         # Use min/max constraints as well as hiding the grip: native resize is locked too.
@@ -157,7 +235,10 @@ class DesktopPanel(QDialog):
         ink = colors['fg'].name()
         search_background = 'transparent' if self.is_clear() else 'rgba(128,128,128,20)'
         self.setStyleSheet('''QDialog#DesktopPanel, QWidget#PanelContent {background:transparent;}
-            QLabel#PanelLabel, QListWidget#PanelFiles, QLineEdit#PanelSearch, QPushButton#PanelButton {color:%s;}
+            QLabel#PanelLabel, QListWidget#PanelFiles, QLineEdit#PanelSearch, QPushButton#PanelButton, QTabBar#PanelTabs {color:%s;}
+            QTabBar#PanelTabs::tab {padding:5px 8px; margin:0; border-bottom:2px solid transparent;}
+            QTabBar#PanelTabs::tab:selected {border-bottom-color:rgba(128,128,128,140);}
+            QTabBar#PanelTabs QToolButton {border:0; background:rgba(128,128,128,28); border-radius:4px; width:18px;}
             QListWidget#PanelFiles {background:transparent; border:0; padding:0;}
             QListWidget#PanelFiles::item {padding:2px; border-radius:6px;}
             QListWidget#PanelFiles::item:selected {background:rgba(128,128,128,65);}
@@ -193,6 +274,7 @@ class DesktopPanel(QDialog):
         self.list.clear()
         for row in rows:
             item = QListWidgetItem(QIcon(self.dock.icons.get(row['path'], 64)), row['name'])
+            if self.model.get('view')=='list': item.setSizeHint(QSize(80,34))
             item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
             item.setData(Qt.UserRole, row)
             self.list.addItem(item)
@@ -206,27 +288,30 @@ class DesktopPanel(QDialog):
     def fit_content(self):
         # Fit the full collection, so filtering never moves the window under the cursor.
         if (self.disposed or self.collapsed or self.restoring or self.manual_resize
-                or self.option('locked') or not self.model.get('compact', True)):
+                or self.option('locked') or not (self.dock.cfg['merged_compact'] if self.manager.is_merged(self.identity) else self.model.get('compact', True))):
             return
         self.layout().activate()
         grid = self.list.gridSize()
+        list_view = self.model.get('view')=='list'
+        if list_view: grid = QSize(max(1,self.list.width()),34)
         available = (QApplication.screenAt(self.pos()) or QApplication.primaryScreen()).availableGeometry()
         limit = min(available.height(), max(240, self.bounds()[3]))
         margins = self.layout().contentsMargins()
         chrome = (margins.top()+margins.bottom()+self.layout().itemAt(0).sizeHint().height()
                   + self.layout().spacing()+self.query.sizeHint().height()
-                  + self.content.layout().itemAt(2).sizeHint().height()+2*self.content.layout().spacing())
+                  + self.footer.sizeHint().height()+2*self.content.layout().spacing())
+        if self.manager.is_merged(self.identity): chrome += self.tabs.sizeHint().height()+self.content.layout().spacing()
         width = self.list.contentsRect().width()
         count = max(1, len(self.manager.rows(self.identity)))
-        columns = max(1, width//grid.width())
+        columns = 1 if list_view else max(1, width//grid.width())
         height = chrome + ((count+columns-1)//columns)*grid.height()+2
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if height > limit else Qt.ScrollBarAlwaysOff)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         if height > limit:
             width -= self.style().pixelMetric(self.style().PM_ScrollBarExtent)
-            columns = max(1, width//grid.width())
+            columns = 1 if list_view else max(1, width//grid.width())
             height = chrome + ((count+columns-1)//columns)*grid.height()+2
-        height = max(156, min(limit, height))
+        height = max(min(156,available.height()), min(limit, height))
         if height != self.height():
             self.restoring = True
             self.resize(self.width(), height)
@@ -234,10 +319,12 @@ class DesktopPanel(QDialog):
             self.restoring = False
             self.backdrop = None
             self.refresh_timer.start(100)
+        self._layout_geometry=self.geometry().getRect()
         self.list.doItemsLayout()
 
     def set_compact(self, enabled):
         self.manual_resize = False
+        if self.manager.is_merged(self.identity): self.manager.commit(merged_compact=enabled)
         if not enabled: self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         if self.manager.update_panel(self.identity, compact=enabled): self.fit_timer.start(0)
 
@@ -253,12 +340,17 @@ class DesktopPanel(QDialog):
 
     def item_menu(self, point):
         item = self.list.itemAt(point)
+        if item is None:
+            self.exec_panel_menu(self.list.viewport().mapToGlobal(point))
+            return
         if item and not item.isSelected():
             self.list.clearSelection()
             item.setSelected(True)
         if not self.selected_keys(): return
         self.collapse_timer.stop()
-        self.build_item_menu().exec_(self.list.viewport().mapToGlobal(point))
+        menu = self.build_item_menu()
+        menu.exec_(self.list.viewport().mapToGlobal(point))
+        menu.deleteLater()
         if self.option('auto_hide'): self.collapse_timer.start()
 
     def build_item_menu(self):
@@ -266,25 +358,55 @@ class DesktopPanel(QDialog):
         keys = self.selected_keys()
         pinned = all(row.get('pinned', False) for row in self.manager.rows(self.identity) if path_key(row['path']) in keys)
         menu.addAction('取消置顶' if pinned else '置顶').triggered.connect(
-            lambda: self.manager.pin_entries(keys, not pinned))
+            lambda: self.manager.pin_entries(keys, not pinned, self.identity))
         menu.addSeparator()
-        move = menu.addMenu('收纳到其他面板')
+        move = menu.addMenu('引用到其他面板')
         for model in self.dock.cfg['desktop_panels']:
             if model['id'] != self.identity:
                 move.addAction(model['name']).triggered.connect(
-                    lambda checked=False, identity=model['id']: self.manager.move_entries(self.selected_keys(), identity))
+                    lambda checked=False, identity=model['id']: self.manager.add_paths(identity, [row['path'] for row in self.manager.rows(self.identity) if path_key(row['path']) in self.selected_keys()]))
+        self.add_view_menu(menu)
         menu.addAction('移除收纳引用（保留原文件）').triggered.connect(
-            lambda: self.manager.remove_entries(self.selected_keys()))
+            lambda: self.manager.remove_entries(self.selected_keys(), self.identity))
         return menu
 
+    def add_view_menu(self, menu):
+        views = menu.addMenu('显示方式')
+        for key,title in [('small','小图标'),('large','大图标'),('list','列表')]:
+            action = views.addAction(title)
+            action.setCheckable(True)
+            action.setChecked(self.model.get('view','small')==key)
+            action.triggered.connect(lambda checked=False,value=key:self.manager.update_panel(self.identity,view=value))
+        return views
+
+    def contextMenuEvent(self, event):
+        self.exec_panel_menu(event.globalPos())
+
     def open_menu(self):
+        self.exec_panel_menu(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
+
+    def exec_panel_menu(self, point):
         self.collapse_timer.stop()
+        menu = self.build_panel_menu()
+        menu.exec_(point)
+        from PyQt5 import sip
+        if not sip.isdeleted(menu): menu.deleteLater()
+        if not self.disposed and self.option('auto_hide'): self.collapse_timer.start()
+
+    def build_panel_menu(self):
         menu = QMenu(self)
         menu.addAction('添加文件…').triggered.connect(self.add_files)
         menu.addAction('添加文件夹…').triggered.connect(self.add_folder)
+        menu.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)
+        merge = menu.addAction('独立显示此卡片' if self.manager.is_merged(self.identity) else '加入合并卡片')
+        merge.triggered.connect(lambda: self.manager.set_merged(self.identity, not self.manager.is_merged(self.identity)))
+        if self.identity not in dict(__import__('desktop_catalog').CATEGORIES):
+            menu.addAction('自动归入格式…').triggered.connect(self.edit_definition)
+        menu.addAction('设置…').triggered.connect(self.runtime.show_settings)
         menu.addAction('新建面板…').triggered.connect(lambda: self.manager.new_panel())
         menu.addAction('重命名…').triggered.connect(self.rename)
         menu.addAction('外观与收起…').triggered.connect(self.edit_options)
+        self.add_view_menu(menu)
         sort = menu.addMenu('排序方式')
         for key, title in [('name_asc','文件名：升序'), ('name_desc','文件名：降序'),
                            ('modified_desc','修改时间：最新优先'), ('modified_asc','修改时间：最早优先')]:
@@ -303,8 +425,14 @@ class DesktopPanel(QDialog):
         menu.addSeparator()
         menu.addAction('重新扫描桌面').triggered.connect(self.manager.scan)
         menu.addAction('移除此面板…').triggered.connect(lambda: self.manager.delete_panel(self.identity))
-        menu.exec_(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
-        if self.option('auto_hide'): self.collapse_timer.start()
+        return menu
+
+    def edit_definition(self):
+        from panel_management import PanelDefinition
+        dialog = PanelDefinition(self.model, self)
+        if dialog.exec_()==dialog.Accepted:
+            self.manager.update_panel(self.identity, name=dialog.name.text().strip(), extensions=dialog.extensions())
+            self.manager.schedule_scan()
 
     def rename(self):
         name, okay = QInputDialog.getText(self, '重命名面板', '面板名称：', text=self.model['name'])
@@ -324,7 +452,10 @@ class DesktopPanel(QDialog):
         if self.option('auto_hide'): self.collapse_timer.start()
 
     def bounds(self):
-        return list(self.model.get('geometry', self.default_geometry))
+        raw=(self.dock.cfg['merged_geometry'] if self.manager.is_merged(self.identity) and self.dock.cfg.get('merged_geometry')
+             else self.model.get('geometry',self.default_geometry))
+        layout=getattr(self.runtime,'layout',None)
+        return layout.panel_bounds(self.identity,raw) if layout else list(raw)
 
     def set_collapsed_geometry(self, collapsed):
         self.restoring = True
@@ -344,12 +475,13 @@ class DesktopPanel(QDialog):
             self.resize(min(geometry[2], available.width()), min(geometry[3], available.height()))
             self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
                       max(available.top(), min(self.y(), available.bottom()+1-self.height())))
-            self.setMinimumSize(260, 156)
+            self.setMinimumSize(min(260,available.width()), min(156,available.height()))
             if self.option('locked'): self.setFixedSize(self.size())
         screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
         available = screen.availableGeometry()
         self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
                   max(available.top(), min(self.y(), available.bottom()+1-self.height())))
+        self._layout_geometry=self.geometry().getRect()
         self.collapse_button.setText('+' if collapsed else '−')
         if not collapsed: self.fit_timer.start(0)
         self.restoring = False
@@ -428,15 +560,31 @@ class DesktopPanel(QDialog):
 
     def store_geometry(self):
         if self.restoring or self.disposed: return
+        layout=getattr(self.runtime,'layout',None)
+        if layout and (layout.pending or layout.applying):return
+        if self.merged_view != self.manager.is_merged(self.identity): return
+        if self.merged_view and self.manager.active_window != self.identity: return
         geometry = self.bounds()
         geometry[0:2] = [self.x(), self.y()]
         if not self.collapsed: geometry[2:4] = [self.width(), self.height()]
+        changed=self.geometry().getRect()!=getattr(self,'_layout_geometry',None)
+        anchor=layout.panel_update(self.identity,geometry) if layout and (changed or not layout.record(self.identity)) else None
+        if self.manager.is_merged(self.identity):
+            changes = {'merged_geometry': geometry}
+            if anchor is not None:changes['display_layout']=anchor
+            if self.manual_resize: changes['merged_compact'] = False
+            if any(self.dock.cfg.get(key)!=value for key,value in changes.items()) and not self.manager.commit(**changes):return
+            self.manual_resize = False
+            self._layout_geometry=self.geometry().getRect()
+            return
         changes = {'geometry': geometry}
         if self.manual_resize:
             changes['compact'] = False
             self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        if any(self.model.get(key) != value for key, value in changes.items()):
-            if self.manager.update_panel(self.identity, **changes): self.manual_resize = False
+        if anchor is not None or any(self.model.get(key) != value for key, value in changes.items()):
+            if self.manager.update_panel(self.identity, _layout=anchor if anchor is not None else False, **changes):
+                self.manual_resize = False
+                self._layout_geometry=self.geometry().getRect()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -483,7 +631,8 @@ class DesktopPanel(QDialog):
             if not screen.geometry().contains(geometry): return
             image = screen.grabWindow(0, geometry.x()-screen.geometry().x(), geometry.y()-screen.geometry().y(), geometry.width(), geometry.height())
             if not image.isNull():
-                ratio, divisor = image.devicePixelRatio(), self.option('blur')
+                from liquid_glass import material_blur
+                ratio, divisor = image.devicePixelRatio(), material_blur(self.option('blur'), self.option('material'))
                 self.backdrop = image.scaled(max(1,image.width()//divisor), max(1,image.height()//divisor), Qt.IgnoreAspectRatio, Qt.SmoothTransformation).scaled(image.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
                 self.backdrop.setDevicePixelRatio(ratio)
         finally:
@@ -508,7 +657,7 @@ class DesktopPanel(QDialog):
         if material == 'clear': alpha = min(alpha, 55)
         if material == 'mica': alpha = max(alpha, 210)
         if material == 'solid': alpha = 255
-        surface = SimpleNamespace(cfg={'glass': material not in ('clear','solid'), 'clear_background': self.is_clear()}, backdrop=self.backdrop,
+        surface = SimpleNamespace(cfg={'glass': material not in ('clear','solid'), 'clear_background': self.is_clear(), 'dock_material': material}, backdrop=self.backdrop,
                                   spec_x=self.spec_x, spec_alpha=self.spec_alpha)
         paint_liquid_glass(surface, painter, shape, rect, rect, colors, int(alpha), stops)
 
@@ -604,6 +753,12 @@ class PanelOptions(QDialog):
             signal = field.currentIndexChanged if isinstance(field, QComboBox) else field.valueChanged
             signal.connect(self.customized)
         self.color.textChanged.connect(self.customized)
+        self.fields['material'].currentIndexChanged.connect(self.material_changed)
+
+    def material_changed(self):
+        if not self.applying_preset and self.fields['material'].currentData()!='clear' and self.fields['opacity'].value()==0 and self.fields['highlight'].value()==0:
+            self.fields['opacity'].setValue(38)
+            self.fields['highlight'].setValue(45)
 
     def customized(self, *args):
         if not self.applying_preset: self.preset.setCurrentIndex(0)

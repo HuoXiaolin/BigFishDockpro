@@ -11,7 +11,8 @@ a = Analysis([str(root / 'dock.py')], pathex=[str(root)],
     excludes=['PyQt5.QtNetwork', 'PyQt5.QtQml', 'PyQt5.QtQuick', 'PyQt5.QtWebEngine',
               'PyQt5.QtWebEngineCore', 'PyQt5.QtWebEngineWidgets', 'PyQt5.QtSql',
               'PyQt5.QtMultimedia', 'PyQt5.QtPrintSupport', 'PyQt5.QtTest', 'tkinter'],
-    noarchive=False, optimize=1)
+    # Keep assertions executable in the bundled self-test modules.
+    noarchive=False, optimize=0)
 # Only the native Windows platform and the icon/image formats used by this app.
 def retain(entry):
     name = entry[0].replace('\\', '/').lower()

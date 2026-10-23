@@ -83,7 +83,7 @@ def run(api, runtime, root, output, checks):
     assert compact.height() <= 240 and compact.list.verticalScrollBar().maximum() > 0
     manager.remove_entries({path_key(path) for path in many})
     app.processEvents()
-    assert compact.height() < 220
+    wait_for(app, lambda: compact.height()<220)
     compact.resize(360, 330)
     compact.store_geometry()
     compact.render()
@@ -92,12 +92,13 @@ def run(api, runtime, root, output, checks):
     assert api.load_config()['desktop_panels'][-1]['compact'] is False
     compact.set_compact(True)
     app.processEvents()
-    assert compact.height() < 220
+    wait_for(app, lambda: compact.height()<220)
     compact.collapse()
     assert compact.height() == 44
     compact.expand()
     app.processEvents()
-    assert compact.height() < 220 and compact.list.count() == 3
+    wait_for(app,lambda:compact.height()<220)
+    assert compact.height() < 220 and compact.list.count() == 3, (compact.height(),compact.list.count(),compact.manual_resize,compact.restoring)
     checks.append('compact panel: three items at 260px width fit without bottom gap, light/dark render, manual resize persists and compact reset/collapse restore')
     custom = manager.new_panel('项目资料')
     target = manager.windows[custom]

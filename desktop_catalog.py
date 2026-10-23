@@ -76,22 +76,47 @@ def scan_desktop(roots, cancelled=lambda: False):
     return sorted(rows, key=lambda row: row['name'].casefold()), errors
 
 
+def effective_suffix(path):
+    seen = set()
+    while Path(path).suffix.casefold() in ('.lnk','.url') and path_key(path) not in seen and len(seen)<8:
+        seen.add(path_key(path))
+        from shortcut_targets import shortcut_target
+        target = shortcut_target(path)
+        if not target or target.lower().startswith('shell:'): break
+        path = target
+    return '' if os.path.isdir(path) else Path(path).suffix.casefold()
+
+
+def parse_extensions(value):
+    tokens = re.split(r'[\s,;，；]+', str(value or '').strip().casefold())
+    result = []
+    for token in tokens:
+        if not token: continue
+        token = token.removeprefix('*').lstrip('.')
+        if not re.fullmatch(r'[a-z0-9][a-z0-9_+-]{0,31}', token):
+            raise ValueError('格式请填写扩展名，例如 .pdf .docx .png，用空格或逗号分隔。')
+        if '.'+token not in result: result.append('.'+token)
+        if len(result)>64: raise ValueError('每个面板最多设置 64 种格式。')
+    return result
+
+
 def reconcile(existing, scanned, excluded):
     blocked = set(excluded)
-    incoming = {path_key(row['path']): row for row in scanned}
-    result, seen = [], set()
+    incoming = {path_key(row['path']): row for row in scanned if path_key(row['path']) not in blocked}
+    result, seen, paths = [], set(), set()
     for row in existing:
         key = path_key(row['path'])
-        if key in blocked or key in seen: continue
-        if row.get('source') == 'desktop' and key not in incoming: continue
-        seen.add(key)
-        updated = dict(row, name=incoming[key]['name']) if key in incoming else dict(row)
-        if key in incoming and row.get('source') == 'desktop' and row.get('panel') in {identity for identity, _ in CATEGORIES}:
-            updated['panel'] = incoming[key]['panel']
-        result.append(updated)
-    for key, row in incoming.items():
-        if key not in blocked and key not in seen:
-            result.append(dict(row))
+        if key in blocked or (row.get('source')=='desktop' and key not in incoming): continue
+        updated = dict(row)
+        if key in incoming:
+            updated['name'] = incoming[key]['name']
+            if row.get('source')=='desktop' and row.get('panel') in {identity for identity,_ in CATEGORIES}:
+                updated['panel'] = incoming[key]['panel']
+        pair = (key,updated['panel'])
+        if pair not in seen:
+            result.append(updated); seen.add(pair); paths.add(key)
+    for key,row in incoming.items():
+        if key not in paths: result.append(dict(row))
     return result
 
 
@@ -108,9 +133,10 @@ def normalize_desktop(cfg):
             panel['geometry'] = [geo[0], geo[1], max(260, min(2400, geo[2])), max(156, min(1800, geo[3]))]
         for key, low, high in [('opacity', 0, 100), ('blur', 2, 30), ('highlight', 0, 100), ('capsule_ratio', 30, 100)]:
             if type(raw.get(key)) is int: panel[key] = max(low, min(high, raw[key]))
-        for key in ('locked', 'auto_hide', 'collapsed', 'compact'):
+        for key in ('locked', 'auto_hide', 'collapsed', 'compact', 'enabled', 'merged'):
             if isinstance(raw.get(key), bool): panel[key] = raw[key]
         if raw.get('collapse_style') in ('bar', 'capsule'): panel['collapse_style'] = raw['collapse_style']
+        if raw.get('view') in ('small','large','list'): panel['view'] = raw['view']
         if raw.get('sort') in ('name_asc', 'name_desc', 'modified_desc', 'modified_asc'): panel['sort'] = raw['sort']
         if raw.get('material') in ('liquid', 'gloss', 'acrylic', 'mica', 'clear', 'solid'): panel['material'] = raw['material']
         if raw.get('theme') in ('auto', 'light', 'dark'): panel['theme'] = raw['theme']
@@ -118,11 +144,16 @@ def normalize_desktop(cfg):
         if raw.get('theme') == 'gloss': panel.update(theme='light', material='gloss')
         if raw.get('color') == '' or re.fullmatch(r'#[0-9a-fA-F]{6}', str(raw.get('color') or '')):
             panel['color'] = str(raw.get('color') or '').lower()
+        if isinstance(raw.get('extensions'),list):
+            try: panel['extensions'] = parse_extensions(' '.join(str(value) for value in raw['extensions']))
+            except ValueError: panel['extensions'] = []
+        for key in ('excluded', 'pinned_paths'):
+            if isinstance(raw.get(key),list): panel[key] = list(dict.fromkeys(str(value) for value in raw[key]))
         panels.append(panel)
     entries, seen = [], set()
     for row in cfg.get('desktop_entries', []) if isinstance(cfg.get('desktop_entries'), list) else []:
         if not isinstance(row, dict) or not isinstance(row.get('path'), str) or not row['path'].strip(): continue
-        key = path_key(row['path'])
+        key = (path_key(row['path']), str(row.get('panel') or 'other'))
         if key in seen: continue
         seen.add(key)
         entries.append({'path': row['path'], 'name': str(row.get('name') or Path(row['path']).name),

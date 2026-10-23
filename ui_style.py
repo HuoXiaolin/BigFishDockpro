@@ -1,9 +1,10 @@
 """Shared native Qt styling. Dock painting and glass rendering stay unchanged."""
 from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache
-from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication
+from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication, QPoint
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
     QProxyStyle, QStyle, QStyleFactory, QSpinBox, QComboBox, QToolButton,
-    QAbstractSpinBox, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip)
+    QAbstractSpinBox, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip,
+    QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView)
 
 THEME_COLORS = [('冰川蓝','#8fbfe0'), ('薄荷绿','#8fc9b0'), ('青碧','#70b9bc'),
                 ('雾紫','#b3a0d6'), ('樱花粉','#dea6bb'), ('暖杏','#e5ba8d'), ('石墨灰','#8a95a5')]
@@ -23,7 +24,7 @@ class ColorSwatch(QToolButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         chosen = self.field.text().strip().casefold() == self.color
-        p.setPen(QPen(self.palette().color(QPalette.Text), 1.5) if chosen or self.hasFocus() else Qt.NoPen)
+        p.setPen(QPen(self.palette().color(QPalette.Text), 1.5) if chosen or self.property('keyboardFocus') else Qt.NoPen)
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(QRectF(self.rect()).adjusted(1,1,-1,-1), 6, 6)
         p.setPen(Qt.NoPen)
@@ -63,7 +64,7 @@ class CaptionButton(QToolButton):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        if self.underMouse() or self.isDown() or self.hasFocus():
+        if self.underMouse() or self.isDown() or self.property('keyboardFocus'):
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor('#c5343f') if self.close_button else self.palette().color(QPalette.AlternateBase))
             painter.drawRoundedRect(QRectF(self.rect()).adjusted(1,1,-1,-1), 6, 6)
@@ -112,11 +113,124 @@ class SettingsGrip(QSizeGrip):
             painter.drawLine(self.width()-distance, self.height()-2, self.width()-2, self.height()-distance)
 
 
+class PopupDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        return QSize(size.width()+16, max(32, option.fontMetrics.height()+14))
+
+
+class AlignedMenu(QMenu):
+    """One text column for checked, ordinary and submenu actions."""
+    def addMenu(self, title):
+        if isinstance(title, str):
+            menu = AlignedMenu(title, self)
+            super().addMenu(menu)
+            return menu
+        return super().addMenu(title)
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        return QSize(max(220, size.width()), size.height())
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        palette = self.palette()
+        font = self.font(); font.setUnderline(False); p.setFont(font)
+        p.setPen(QPen(palette.color(QPalette.Mid), .7))
+        p.setBrush(palette.color(QPalette.Base))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5), 7, 7)
+        for action in self.actions():
+            if not action.isVisible(): continue
+            rect = self.actionGeometry(action)
+            rect.setRight(self.width()-6)
+            if action.isSeparator():
+                p.setPen(QPen(palette.color(QPalette.Mid), .5))
+                p.drawLine(rect.left()+12, rect.center().y(), rect.right()-12, rect.center().y())
+                continue
+            if action == self.activeAction() and action.isEnabled():
+                p.setPen(Qt.NoPen); p.setBrush(palette.color(QPalette.Highlight))
+                p.drawRoundedRect(QRectF(rect).adjusted(3,1,-3,-1), 4, 4)
+            ink = palette.color(QPalette.Text if action.isEnabled() else QPalette.Mid)
+            p.setPen(ink)
+            p.drawText(rect.adjusted(32,0,-25,0), Qt.AlignVCenter, action.text().replace('&',''))
+            if action.isChecked():
+                path = QPainterPath(); y = rect.center().y()
+                path.moveTo(rect.left()+11,y); path.lineTo(rect.left()+14,y+3); path.lineTo(rect.left()+20,y-4)
+                p.setPen(QPen(ink,1.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)); p.drawPath(path)
+            if action.menu():
+                path = QPainterPath(); x,y = rect.right()-13,rect.center().y()
+                path.moveTo(x-2,y-3); path.lineTo(x+1,y); path.lineTo(x-2,y+3)
+                p.setPen(QPen(ink,1.4)); p.drawPath(path)
+
+
+class PopupList(QListView):
+    def __init__(self, combo, parent):
+        super().__init__(parent)
+        self.combo = combo
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.combo.choose_popup(self.currentIndex())
+            event.accept()
+        elif event.key()==Qt.Key_Escape:
+            self.combo.hidePopup(); event.accept()
+        else: super().keyPressEvent(event)
+
+
 class ModernComboBox(QComboBox):
     def __init__(self, *args):
         super().__init__(*args)
         self.setProperty('modern', True)
         self.setMaxVisibleItems(9)
+        self._popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
+        self._popup.setObjectName('ComboPopupFrame')
+        layout = QVBoxLayout(self._popup)
+        layout.setContentsMargins(4,4,4,4)
+        view = self._popup_view = PopupList(self, self._popup)
+        view.setObjectName('ComboPopup')
+        view.setUniformItemSizes(True)
+        view.setItemDelegate(PopupDelegate(view))
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(view)
+        view.clicked.connect(self.choose_popup)
+
+    def view(self): return self._popup_view
+
+    def choose_popup(self, index):
+        if index.isValid():
+            self.setCurrentIndex(index.row())
+            self.activated[int].emit(index.row())
+            self.activated[str].emit(self.currentText())
+        self.hidePopup()
+
+    def showPopup(self):
+        if not self.isEnabled() or not self.count(): return
+        view = self._popup_view
+        view.setModel(self.model())
+        view.setModelColumn(self.modelColumn())
+        view.setFont(self.font())
+        view.setCurrentIndex(self.model().index(self.currentIndex(),self.modelColumn()))
+        row_height = max(32,view.sizeHintForRow(0))
+        height = min(self.count(),self.maxVisibleItems())*row_height+20
+        width = max(self.width(),min(520,view.sizeHintForColumn(0)+32))
+        point = self.mapToGlobal(QPoint(0,self.height()+3))
+        screen = QApplication.screenAt(point) or QApplication.primaryScreen()
+        bounds = screen.availableGeometry()
+        height = min(height,bounds.height()-8)
+        width = min(width,bounds.width()-8)
+        if point.y()+height>bounds.bottom(): point.setY(self.mapToGlobal(QPoint(0,0)).y()-height-3)
+        point.setX(max(bounds.left()+4,min(point.x(),bounds.right()-width-3)))
+        point.setY(max(bounds.top()+4,min(point.y(),bounds.bottom()-height-3)))
+        self._popup.setGeometry(point.x(),point.y(),width,height)
+        self._popup.show()
+        self._popup.raise_()
+        view.scrollTo(view.currentIndex(),QAbstractItemView.PositionAtCenter)
+        view.setFocus(Qt.PopupFocusReason)
+
+    def hidePopup(self):
+        if hasattr(self,'_popup'): self._popup.hide()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -195,8 +309,15 @@ class ModernCheckBox(QCheckBox):
 
 
 class ReadableChecks(QProxyStyle):
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.SH_ComboBox_Popup: return 0
+        return super().styleHint(hint, option, widget, returnData)
+
     def drawPrimitive(self, element, option, painter, widget=None):
         if element == QStyle.PE_FrameFocusRect:
+            # Mouse focus must not leave an inner rounded frame after activation.
+            if not option.state & QStyle.State_KeyboardFocusChange: return
+            if widget is not None and widget.property('keyboardFocus') is False: return
             painter.save()
             painter.setRenderHint(QPainter.Antialiasing)
             painter.setPen(QPen(option.palette.color(QPalette.Mid), 1.2))
@@ -228,6 +349,17 @@ class ReadableChecks(QProxyStyle):
 
 class DialogChrome(QObject):
     def eventFilter(self, widget, event):
+        if isinstance(widget, (QPushButton, QToolButton, QCheckBox)):
+            keyboard = None
+            if event.type() == QEvent.FocusIn:
+                keyboard = event.reason() in (Qt.TabFocusReason, Qt.BacktabFocusReason, Qt.ShortcutFocusReason)
+            elif event.type() in (QEvent.MouseButtonPress, QEvent.FocusOut): keyboard = False
+            elif event.type() == QEvent.KeyPress: keyboard = True
+            if keyboard is not None and widget.property('keyboardFocus') != keyboard:
+                widget.setProperty('keyboardFocus', keyboard)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
         if event.type() == QEvent.Show and isinstance(widget, QDialog) and not widget.windowFlags() & Qt.FramelessWindowHint:
             import ctypes
             from ctypes import wintypes
@@ -298,11 +430,12 @@ def apply_theme(app, light):
         QPushButton {background:%(surface)s; color:%(text)s; border:1px solid %(line)s;
             border-radius:8px; padding:8px 16px; min-height:22px;}
         QPushButton:hover {background:%(hover)s;}
-        QPushButton:focus, QLineEdit:focus, QSpinBox:focus, QComboBox:focus {border:1px solid %(text)s;}
+        QLineEdit:focus, QSpinBox:focus, QComboBox:focus {border:1px solid %(text)s;}
         QPushButton:pressed {background:%(selection)s;}
         QPushButton[role="primary"] {background:%(primary)s; color:%(on)s; border-color:%(primary)s;}
         QPushButton[role="primary"]:hover {border:1px solid %(muted)s;}
         QPushButton[role="danger"] {color:%(danger)s;}
+        QPushButton[keyboardFocus="true"] {border:1px solid %(text)s;}
         QPushButton:disabled {color:%(muted)s; background:%(ground)s; border-color:%(line)s;}
         QLineEdit, QSpinBox, QComboBox {background:%(surface)s; color:%(text)s;
             border:1px solid %(line)s; border-radius:8px; padding:8px 12px; min-height:22px;}
@@ -319,6 +452,10 @@ def apply_theme(app, light):
         QComboBox QAbstractItemView {background:%(surface)s; color:%(text)s;
             border:1px solid %(line)s; outline:0; selection-background-color:%(selection)s;
             selection-color:%(text)s; padding:5px;}
+        QComboBox QAbstractItemView::item {min-height:28px; padding:4px 8px; border:0;}
+        QFrame#ComboPopupFrame {background:%(surface)s; border:1px solid %(line)s; border-radius:6px;}
+        QListView#ComboPopup {background:%(surface)s; color:%(text)s; border:0; padding:4px; outline:0;}
+        QListView#ComboPopup::item:selected {background:%(selection)s; color:%(text)s;}
         QListWidget {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; border-radius:8px; padding:6px;}
         QListWidget::item {min-height:30px; padding:7px 10px; border-radius:4px;}
         QListWidget::item:selected {background:%(selection)s; color:%(text)s;}
@@ -364,6 +501,7 @@ def label(text, role=None):
 
 def button(text, callback, role=None):
     widget = QPushButton(text)
+    widget.setAutoDefault(False)
     if role:
         widget.setProperty('role', role)
     widget.clicked.connect(callback)

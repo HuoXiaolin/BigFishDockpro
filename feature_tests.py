@@ -33,6 +33,8 @@ def run(api, dock, tray, root, output, checks):
         entries.append({'path':str(path), 'name':['浏览器', '代码编辑器', '设计文档'][n % 3]+' %02d' % n,
                         'group':['网络', '开发', '办公'][n % 3]})
     cfg['items'] = entries
+    assert normalize({})['dock_visible'] and not normalize({})['panel_enabled']
+    cfg['panel_enabled'] = True
     cfg['panel_auto_hide'] = False
     cfg['panel_page_size'] = 12
     dock.reload()
@@ -367,6 +369,12 @@ def run(api, dock, tray, root, output, checks):
         assert not settings.isVisible() and finished
         settings.finished.disconnect(finished.append)
         runtime.settings_closed()
+    from panel_group_tests import run as run_group_tests
+    run_group_tests(api, runtime, root, output, checks)
+    from material_tests import run as run_material_tests
+    run_material_tests(api,runtime,output,checks)
+    from screen_layout_tests import run as run_layout_tests
+    run_layout_tests(api,runtime,root,output,checks)
     runtime.close()
     app.aboutToQuit.disconnect(runtime.close)
     checks.append('settings: save stays open without finished or lite countdown; minimize/restore and close controls; compact and default layouts, all pages in both themes')

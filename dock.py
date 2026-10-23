@@ -6,7 +6,7 @@ Liquid Glass Dock —— Windows 11 仿 macOS / iOS 液态玻璃桌面图标栏
 特点：
   * 屏幕底部居中悬浮，真毛玻璃（自己抓屏模糊）+ 液态玻璃高光
   * macOS 风格鼠标放大（鱼眼）效果，点击有回弹动画
-  * 托盘常驻，所有「添加 / 移除图标」只在右下角系统托盘菜单里完成
+  * Dock 右键可管理应用、打开设置，支持快捷方式拖入和独立桌面收纳
   * 一键设置开机自启动（写入注册表 HKCU Run）
   * 配置文件：%APPDATA%\\LiquidGlassDock\\config.json
   * 日志文件：%APPDATA%\\LiquidGlassDock\\dock.log
@@ -760,6 +760,12 @@ class IconProvider(object):
         self.cache_bytes = 0
 
 
+from ui_style import AlignedMenu as QMenu
+
+WM_OPEN_SETTINGS = 0x8000 + 804
+EMPTY_DOCK_HINT = "拖入应用或快捷方式即可添加\n右键：应用批量管理 · 设置\n桌面卡片可在设置中开启"
+
+
 class Dock(QWidget):
     """悬浮在桌面底部的 Dock 图标栏。"""
 
@@ -781,10 +787,13 @@ class Dock(QWidget):
         self.setAcceptDrops(True)
         self.setWindowTitle(APP_TITLE)
 
+        from screen_layout import screen_records, scale
+        displays=screen_records()
+        self.display_scale=scale(cfg.get('display_layout',{}).get('dock',{}),displays[0] if displays else None)
         self.base_icon = int(cfg["icon_size"])
         self.ui_mult = self._ui_mult()
         self.icon_size = self._scaled(self.base_icon)
-        self.font_pt = max(8, int(round(9 * self.ui_mult)))
+        self.font_pt = max(8, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
         self.pad_x = int(self.icon_size * 0.36)
         self.pad_y = int(self.icon_size * 0.34)
         self.gap_ratio = 0.26
@@ -804,7 +813,7 @@ class Dock(QWidget):
         self.drag_moved = False
         self.drag_from_x = 0.0
         self.items = []
-        self.page_index = 0
+        self.page_index = int(cfg.get("dock_page", 0))
         self.page_count = 1
         self.page_offset = 0
         self.cur = []
@@ -847,6 +856,14 @@ class Dock(QWidget):
             self.proc_timer.start()
             self.geo_timer.start()
             self.refresh_running()
+
+    def nativeEvent(self, event_type, message):
+        msg = wintypes.MSG.from_address(int(message))
+        if msg.message == WM_OPEN_SETTINGS and self.tray:
+            runtime = getattr(self.tray,'runtime',None)
+            QTimer.singleShot(0,runtime.show_settings if runtime else self.tray.show_settings)
+            return True, 0
+        return super().nativeEvent(event_type,message)
 
     def is_light(self):
         """当前是不是浅色系（文字/小圆点用深色）。光感模式也算浅色系。"""
@@ -974,10 +991,13 @@ class Dock(QWidget):
         return m if 0.1 < m < 4.0 else 1.0
 
     def _scaled(self, v):
-        return max(20, int(round(v * self.ui_mult)))
+        return max(20, int(round(v * self.ui_mult * getattr(self,'display_scale',1.0))))
 
     def bar_h(self):
-        return self.icon_size + self.pad_y * 2
+        height = self.icon_size + self.pad_y * 2
+        if not self.items:
+            height = max(height,QFontMetrics(QFont("Microsoft YaHei UI",self.font_pt)).height()*3+16)
+        return height
 
     def sep_width(self):
         """分隔符竖条本身的宽度（很窄）。"""
@@ -1427,11 +1447,11 @@ class Dock(QWidget):
         if geo is None:
             return 100, QRectF(0, 0, 1920, 1080)
         mode = str(self.cfg.get("position", "bottom"))
-        margin = int(self.cfg.get("bottom_margin", 6))
+        margin = round(int(self.cfg.get("bottom_margin", 6))*getattr(self,"display_scale",1.0))
         if mode == "top":
             bar_top = geo.top() + margin
         elif mode == "custom":
-            off = int(self.cfg.get("custom_bottom", 200))
+            off = round(int(self.cfg.get("custom_bottom", 200))*getattr(self,"display_scale",1.0))
             bar_top = geo.bottom() + 1 - off - self.bar_h()
         else:
             bar_top = geo.bottom() + 1 - margin - self.bar_h()
@@ -1784,6 +1804,8 @@ class Dock(QWidget):
         if self.page_count <= 1:
             return
         self.page_index = (self.page_index+delta) % self.page_count
+        self.cfg["dock_page"] = self.page_index
+        save_config(self.cfg)
         self.mouse_x = self.mouse_smooth = -99999.0
         self.hover_index = self.pressed = self.drag_idx = -1
         self._build_items()
@@ -1819,7 +1841,12 @@ class Dock(QWidget):
             m.addAction('图标设置…').triggered.connect(lambda _=False, index=self.page_offset+idx: self.edit_icon(index))
             m.addAction('移除').triggered.connect(lambda _=False, index=self.page_offset+idx, entry=dict(self.cfg['items'][self.page_offset+idx]): self.remove_icon(index, entry))
             m.addSeparator()
-        m.addAction("隐藏 Dock（在托盘菜单里可以重新显示）").triggered.connect(self.hide)
+        runtime = getattr(self.tray, 'runtime', None)
+        if self.tray:
+            m.addAction('设置…').triggered.connect(runtime.show_settings if runtime else self.tray.show_settings)
+            m.addAction('应用批量管理…').triggered.connect(runtime.show_batch if runtime else self.tray.importer.show)
+            m.addSeparator()
+        m.addAction('隐藏 Dock').triggered.connect(lambda: runtime.set_dock_visible(False) if runtime else self.hide())
         m.addAction("退出").triggered.connect(QApplication.instance().quit)
         return m
 
@@ -1837,7 +1864,9 @@ class Dock(QWidget):
             self.tray.importer.apply_items(items)
 
     def contextMenuEvent(self, e):
-        self.icon_context_menu(self._hit(e.pos())).exec_(e.globalPos())
+        menu = self.icon_context_menu(self._hit(e.pos()))
+        menu.exec_(e.globalPos())
+        menu.deleteLater()
 
     # ---------------- 绘制 ----------------
     @staticmethod
@@ -1971,11 +2000,9 @@ class Dock(QWidget):
             p.restore()
 
         if not self.items:
-            hint = T("请在右下角托盘图标上右键 → 添加图标")
+            hint = EMPTY_DOCK_HINT if LANG["cur"]!="en" else "Drop apps or shortcuts here\nRight-click: Manage Apps · Settings\nEnable desktop cards in Settings"
             f = QFont("Microsoft YaHei UI", self.font_pt)
             p.setFont(f)
-            p.setPen(c["shadow"])
-            p.drawText(bar.adjusted(0, 1, 0, 1), Qt.AlignCenter, hint)
             p.setPen(c["fg"])
             p.drawText(bar, Qt.AlignCenter, hint)
             return
@@ -2082,7 +2109,8 @@ class Dock(QWidget):
     def blur_divisor(self):
         """毛玻璃模糊程度：把背景缩小到 1/div 再放大回来，div 越大越糊。"""
         try:
-            return max(2, min(40, int(self.cfg.get("blur_px", 6))))
+            from liquid_glass import material_blur
+            return material_blur(int(self.cfg.get("blur_px", 6)),self.cfg.get("dock_material","liquid"))
         except Exception:
             return 6
 
@@ -2195,7 +2223,7 @@ class Dock(QWidget):
         self.base_icon = int(self.cfg["icon_size"])
         self.ui_mult = self._ui_mult()
         self.icon_size = self._scaled(self.base_icon)
-        self.font_pt = max(8, int(round(9 * self.ui_mult)))
+        self.font_pt = max(8, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
         self.pad_x = int(self.icon_size * 0.36)
         self.pad_y = int(self.icon_size * 0.34)
         self.icons.clear()
@@ -2306,9 +2334,10 @@ class DockTray(QSystemTrayIcon):
             from settings_dialog import SettingsDialog
             # Use this module's globals even when launched as the frozen __main__.
             self.settings_dialog = SettingsDialog(self, sys.modules[__name__])
-            if hasattr(self, 'runtime'):
-                self.settings_dialog.finished.connect(lambda _: self.runtime.settings_closed())
-        if self.settings_dialog.isVisible():
+        if hasattr(self, 'runtime') and not getattr(self.settings_dialog, '_runtime_bound', False):
+            self.settings_dialog.finished.connect(lambda _: self.runtime.settings_closed())
+            self.settings_dialog._runtime_bound = True
+        if self.settings_dialog.isVisible() and not self.settings_dialog.isMinimized():
             self.settings_dialog.raise_()
             self.settings_dialog.activateWindow()
         else:
@@ -2477,7 +2506,7 @@ class DockTray(QSystemTrayIcon):
             if os.path.exists(p):
                 os.startfile(p)
                 return
-        QMessageBox.information(None, APP_TITLE, T("请在托盘菜单里操作：添加图标 / 移除图标。"))
+        QMessageBox.information(None, APP_TITLE, "将应用或快捷方式拖入 Dock，或右键打开应用批量管理、设置。桌面卡片可在设置中开启。")
 
 
 # ----------------------------------------------------------------------------
@@ -2610,9 +2639,14 @@ def main():
     # 只允许运行一个实例
     shm = QSharedMemory(COMPAT_NAME + (('_test_'+os.environ['FISHDOCK_TEST_DESKTOP']) if probe else "_single_instance"))
     if not shm.create(1):
+        if "--autostart" in args: return 0
         cfg0 = load_config()
         set_lang(cfg0.get("lang", "zh"))
-        QMessageBox.information(None, APP_TITLE, T("Dock 已经在运行了（请看右下角托盘）。"))
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.PostMessageW.argtypes = [wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
+        handle = user32.FindWindowW(None,APP_TITLE)
+        if handle and user32.PostMessageW(handle,WM_OPEN_SETTINGS,0,0): return 0
+        QMessageBox.information(None,APP_TITLE,'大肥鱼Dock 已在运行，请从 Dock 右键进入设置。')
         return 0
 
     if not probe:
@@ -2632,14 +2666,15 @@ def main():
         tray.importer = BatchImporter(dock, tray, save_config, log)
         from ui_style import apply_theme
         apply_theme(app, dock.is_light())
-        tray.show()
+        tray.setVisible(not cfg['hide_tray'])
         if cfg.get('autostart'):
             set_autostart(True)
-        if '--autostart' not in args:
+        if cfg.get('dock_visible', True):
             dock.show()
             dock.start_backdrop()
         from runtime_controller import RuntimeController
         tray.runtime = RuntimeController(dock, tray, sys.modules[__name__])
+        dock.winId()  # A hidden instance still needs its settings-wake HWND.
         state.update(dock=dock, tray=tray, runtime=tray.runtime)
         if probe:
             QTimer.singleShot(200, lambda: probe.complete(state))

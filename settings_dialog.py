@@ -59,7 +59,7 @@ class SettingsDialog(QDialog):
         body.addWidget(label('管理 Dock、桌面收纳与运行偏好，保存后生效。', 'muted'))
         self.tabs = SettingsPages()
         body.addWidget(self.tabs)
-        appearance = self.section('Dock 与圆角')
+        appearance = self.section('外观设置')
         self.dock_preset = ModernComboBox()
         self.dock_preset.addItem('自定义 / 保留当前设置')
         self.dock_preset.addItems([name for name, _ in DOCK_PRESETS])
@@ -81,15 +81,13 @@ class SettingsDialog(QDialog):
         self.number(layout, 'custom_bottom', '自定义距底部（像素）', 0, 2000)
         self.number(layout, 'bottom_margin', '边缘距离（像素）', 0, 200)
         self.combo(layout, 'layer', '窗口层级', api.LAYERS)
-        self.check(layout, 'reorder', '允许拖动图标排序')
-        self.check(layout, 'running_dots', '显示已固定应用的运行标记')
         self.check(layout, 'show_name', '悬停时显示应用名称')
         self.check(layout, 'sep_split', '分隔符切开玻璃背景')
         self.combo(layout, 'lang', '原 Dock 菜单语言', [(name, key) for name, key in api.LANGS])
         self.check(layout, 'screen_corners', '屏幕圆角美化（仅游戏模式隐藏，鼠标穿透）')
         self.number(layout, 'corner_radius', '屏幕圆角半径（像素）', 0, 120)
 
-        panel = self.section('玻璃面板')
+        panel = self.section('桌面收纳')
         panel.addRow(label('这里设置面板的默认外观；各面板可单独覆盖。', 'muted'))
         self.check(panel, 'panel_enabled', '启用桌面悬浮收纳面板')
         self.check(panel, 'desktop_auto_sort', '自动将桌面内容按类型归入多个面板')
@@ -106,18 +104,22 @@ class SettingsDialog(QDialog):
         panel.addRow(label('这里设置面板默认外观；材质决定表面质感，颜色模式决定明暗，主题色只控制配色。各面板可独立覆盖。', 'muted'))
         panel.addRow(label('比例相对于面板展开宽度，最窄 180 像素；每个面板的外观设置中可单独调整。方条保持展开宽度。', 'muted'))
         panel.addRow(label('标题处拖动，右下角调整大小；每个面板可独立锁定、设置外观并保存位置。收起仍常驻桌面，点击或悬停展开。沿用 Dock 液态玻璃绘制；模糊不支持时保留半透明。', 'muted'))
-        panel.addRow(button('显示桌面面板', self.open_panel))
         panel.addRow(button('新建桌面面板', lambda: self.tray.runtime.panels.new_panel()))
+        panel.addRow(button('分组与合并管理', lambda: self.tray.runtime.panels.manage_groups()))
+        panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，选择部分卡片合并并在顶部切换，其余卡片独立显示。','muted'))
 
-        apps = self.section('应用整理')
+        apps = self.section('应用管理')
         apps.addRow(label('Dock 的应用批量管理独立保留；桌面收纳面板不再与 Dock 共用列表。', 'muted'))
-        apps.addRow(button('打开批量管理', self.open_batch))
+        apps.addRow(button('打开应用批量管理', self.open_batch))
+        self.check(apps, 'reorder', '允许拖动 Dock 图标排序')
+        self.check(apps, 'running_dots', '显示 Dock 应用的运行标记')
         apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。启用面板后自动隐藏系统桌面图标，关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
 
-        running = self.section('运行方式')
+        running = self.section('启动与运行')
         self.check(running, 'lite_enabled', '启用自动精简：关闭设置 1 分钟后进入')
         running.addRow(label('精简时保留基础 Dock、拖入、托盘与静态圆角；桌面面板收为方条或胶囊，目录变动仍自动分类。暂停屏幕抓取、运行扫描、位置与全屏轮询。打开设置恢复完整模式。', 'muted'))
-        self.check(running, 'autostart', '开机自动启动（静默进入托盘）')
+        self.check(running, 'hide_tray', '隐藏托盘图标（可从 Dock 右键打开设置）')
+        self.check(running, 'autostart', '开机自动启动（恢复上次显示与运行状态）')
         self.startup_status = label('', 'muted')
         running.addRow(self.startup_status)
         self.startup_path = QLineEdit()
@@ -143,7 +145,7 @@ class SettingsDialog(QDialog):
         self.check(running, 'fullscreen_detection', '前台全屏应用自动隐藏 Dock 和面板')
         running.addRow(label('全屏检测每 1.5 秒一次，普通最大化窗口不算全屏；不区分游戏与视频，因此不隐藏圆角。游戏时可从托盘开启游戏模式。精简模式暂停检测。', 'muted'))
 
-        updates = self.section('软件更新')
+        updates = self.section('更新设置')
         self.check(updates, 'check_updates_on_start', '启动时检查更新')
         self.check(updates, 'update_use_proxy', '使用系统 / 环境代理')
         self.text(updates, 'update_source', '本项目版本清单（HTTPS）')
@@ -154,7 +156,7 @@ class SettingsDialog(QDialog):
         self.update_link = button('打开新版本下载页面', self.open_update_link)
         self.update_link.setEnabled(False)
         updates.addRow(self.update_link)
-        info = self.section('数据与关于')
+        info = self.section('关于与数据')
         info.addRow(label('大肥鱼Dock  ' + VERSION, 'section'))
         info.addRow(label('用液态玻璃 Dock 启动常用应用，用桌面悬浮面板分类收纳文件与快捷方式。', 'muted'))
         info.addRow('维护作者', label(AUTHOR))
@@ -187,6 +189,7 @@ class SettingsDialog(QDialog):
         body.addLayout(actions)
         self.fields['position'].currentIndexChanged.connect(self.position_changed)
         self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
+        self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
         for key in DOCK_PRESETS[0][1]:
             field = self.fields[key]
             signal = (field.currentIndexChanged if isinstance(field, QComboBox) else
@@ -258,6 +261,12 @@ class SettingsDialog(QDialog):
         container.addLayout(row)
         container.addWidget(ThemeSwatches(field))
         form.addRow(self.field_label(title), container)
+
+    def material_changed(self):
+        if not self.applying_dock_preset and self.fields['dock_material'].currentData()!='clear' and self.fields['clear_background'].isChecked():
+            self.fields['clear_background'].setChecked(False)
+            if self.fields['transparency'].value()==0: self.fields['transparency'].setValue(38)
+            if self.fields['dock_highlight'].value()==0: self.fields['dock_highlight'].setValue(45)
 
     def apply_dock_preset(self, index):
         if index <= 0: return
@@ -384,10 +393,6 @@ class SettingsDialog(QDialog):
             runtime.show_batch()
         else:
             self.tray.importer.show()
-
-    def open_panel(self):
-        if hasattr(self.tray, 'runtime'):
-            self.tray.runtime.show_panel()
 
     def check_update(self):
         if self.fields['update_source'].text().strip() != self.tray.cfg['update_source'] or self.fields['update_use_proxy'].isChecked() != self.tray.cfg['update_use_proxy']:

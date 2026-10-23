@@ -1,9 +1,13 @@
 """Persisted options and validation shared by startup, settings and panels."""
 import re
 DEFAULTS = {
+    'display_layout': {},
+    'dock_visible': True, 'panels_visible': True, 'runtime_lite': False, 'hide_tray': False,
+    'dock_page': 0, 'merged_panels': False, 'merged_active': '', 'merged_geometry': [],
+    'merged_collapsed': False, 'merged_compact': True, 'disabled_categories': [], 'lite_restore': {},
     'screen_corners': False, 'corner_radius': 28,
     'lite_enabled': True,
-    'panel_enabled': True, 'panel_opacity': 38, 'panel_blur': 8,
+    'panel_enabled': False, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
     'panel_collapse_style': 'capsule', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
@@ -25,7 +29,7 @@ def normalize(cfg):
             result[theme], result[material] = 'light', 'gloss'
         if result.get(theme) == 'follow': result[theme] = 'auto'
     for key, value in DEFAULTS.items():
-        result.setdefault(key, list(value) if isinstance(value, list) else value)
+        result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
     for key, lower, upper in [('corner_radius', 0, 120), ('panel_opacity', 0, 100),
                               ('panel_blur', 2, 30), ('panel_highlight', 0, 100), ('dock_highlight', 0, 100),
                               ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100), ('startup_delay', 0, 300)]:
@@ -44,6 +48,13 @@ def normalize(cfg):
     for key, value in DEFAULTS.items():
         if isinstance(value, bool):
             result[key] = result[key] if isinstance(result[key], bool) else value
+    result['disabled_categories'] = [str(value) for value in result.get('disabled_categories', [])] if isinstance(result.get('disabled_categories'), list) else []
+    result['lite_restore'] = {str(key): value for key,value in result.get('lite_restore', {}).items() if isinstance(value,bool)} if isinstance(result.get('lite_restore'),dict) else {}
+    result['merged_active'] = str(result.get('merged_active') or '')[:80]
+    geo = result.get('merged_geometry')
+    result['merged_geometry'] = geo if isinstance(geo,list) and len(geo)==4 and all(type(n) is int for n in geo) else []
+    try: result['dock_page'] = max(0,int(result['dock_page']))
+    except (TypeError,ValueError): result['dock_page'] = 0
     groups = result.get('groups')
     result['groups'] = list(dict.fromkeys(['未分类'] + [str(g)[:40] for g in groups if str(g).strip()])) if isinstance(groups, list) else list(DEFAULTS['groups'])
     geometry = result.get('panel_geometry')
@@ -53,6 +64,8 @@ def normalize(cfg):
     for key in ('theme_color', 'panel_color'):
         color = str(result.get(key) or '').strip()
         result[key] = color.lower() if re.fullmatch(r'#[0-9a-fA-F]{6}', color) else ''
+    from screen_layout import normalize_layout
+    result['display_layout']=normalize_layout(result.get('display_layout'))
     from desktop_catalog import normalize_desktop
     result.update(normalize_desktop(result))
     return result

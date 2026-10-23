@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -165,6 +166,23 @@ def discovery_roots():
     return list(dict.fromkeys(roots))
 
 
+def is_uninstall_entry(row):
+    """Filter discovered removal launchers; never remove saved user entries."""
+    title = str(row.get('name') or '').strip().casefold()
+    if title.startswith(('卸载','反安装','解除安装')) or title.endswith('卸载程序'): return True
+    identity = launch_identity(row['path'])
+    target = identity[1] if identity[0]=='target' else row['path']
+    binary = Path(target).name.casefold()
+    # Keep the standalone utility called Uninstall Tool, rather than mistaking it for a removal link.
+    if binary not in ('uninstalltool.exe',):
+        if re.match(r'^(uninstall(?:er)?|unins[0-9]*)(?:$|[\s_-])',title): return True
+    if re.fullmatch(r'(?:uninst(?:all(?:er)?)?|unins[0-9]*|unwise)(?:32|64)?\.exe',binary): return True
+    if binary.startswith(('uninstall_','uninstall-')): return True
+    args = identity[2] if identity[0]=='target' and len(identity)>2 else ''
+    if re.search(r'(?:^|\s)(?:--?|/)uninstall(?:\s|$)',args,re.I): return True
+    return binary=='msiexec.exe' and bool(re.search(r'(?:^|\s)/x(?=[{\s]|$)',args,re.I))
+
+
 def discover_apps(roots=None, include_store=True, cancelled=lambda: False):
     apps = {}
     for root in discovery_roots() if roots is None else roots:
@@ -211,6 +229,7 @@ def discover_apps(roots=None, include_store=True, cancelled=lambda: False):
     # system components are hidden rather than flooding the ordinary app list.
     tools = {launch_identity(row['path']) for row in common_windows_tools()}
     rows = [row for row in rows if row['column'] != 'windows' or launch_identity(row['path']) in tools or windows_tool_id(row['path'])]
+    rows = [row for row in rows if not is_uninstall_entry(row)]
     return sorted(unique_apps(rows), key=lambda a: (a['name'].casefold(), a['path'].casefold()))
 
 

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Toolchain = 'D:\Agant\toolchain',
     [string]$Iscc = '',
     [switch]$Deliver,
@@ -17,16 +17,18 @@ $taskLock = [IO.File]::Open((Join-Path $PSScriptRoot 'artifacts\release.lock'), 
 try {
     $taskVersion = & $taskPython release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
-    & $taskPython run_isolated_test.py --target dock.py --output artifacts/source-test
+    & $taskPython run_isolated_test.py --target dock.py --timeout 100 --output artifacts/source-test
     if ($LASTEXITCODE -ne 0) { throw 'Source verification failed' }
     & $taskPython -m PyInstaller --noconfirm --clean BigFishDockpro.spec
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
-    & $taskPython run_isolated_test.py --target dist/BigFishDockpro/BigFishDockpro.exe --output artifacts/bundle-test
+    & $taskPython run_isolated_test.py --target dist/BigFishDockpro/BigFishDockpro.exe --timeout 100 --output artifacts/bundle-test
     if ($LASTEXITCODE -ne 0) { throw 'Bundle verification failed' }
     & $taskPython run_isolated_test.py --target dist/BigFishDockpro/BigFishDockpro.exe --startup --output artifacts/startup-manual-test
     if ($LASTEXITCODE -ne 0) { throw 'Manual startup verification failed' }
     & $taskPython run_isolated_test.py --target dist/BigFishDockpro/BigFishDockpro.exe --startup --autostart --output artifacts/startup-auto-test
     if ($LASTEXITCODE -ne 0) { throw 'Autostart verification failed' }
+    & $taskPython run_isolated_test.py --target dist/BigFishDockpro/BigFishDockpro.exe --startup --fresh-profile --output artifacts/startup-fresh-test
+    if ($LASTEXITCODE -ne 0) { throw 'Fresh-profile startup verification failed' }
     & $Iscc "/DAppVersion=$taskVersion" installer.iss
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
     if ($SingleFile) {
@@ -36,7 +38,7 @@ try {
             & $taskPython -m PyInstaller --noconfirm --clean --distpath release BigFishDockpro.spec
             if ($LASTEXITCODE -ne 0) { throw 'Single-file build failed' }
         } finally { $env:FISHDOCK_ONEFILE = $taskOldBundleMode }
-        & $taskPython run_isolated_test.py --target release/BigFishDockpro.exe --output artifacts/singlefile-test
+        & $taskPython run_isolated_test.py --target release/BigFishDockpro.exe --timeout 100 --output artifacts/singlefile-test
         if ($LASTEXITCODE -ne 0) { throw 'Single-file verification failed' }
     }
     $taskHash = Get-FileHash -LiteralPath release/BigFishDockpro-Setup-x64.exe -Algorithm SHA256

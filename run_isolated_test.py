@@ -68,6 +68,8 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--startup', action='store_true')
     parser.add_argument('--autostart', action='store_true')
+    parser.add_argument('--fresh-profile', action='store_true')
+    parser.add_argument('--timeout', type=int, default=55)
     args = parser.parse_args()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -86,6 +88,8 @@ def main():
         command += ['--startup-test' if args.startup else '--self-test', str(output)]
         if args.autostart:
             command.append('--autostart')
+        if args.fresh_profile:
+            command.append('--fresh-profile')
         startup = subprocess.STARTUPINFO()
         startup.lpDesktop = name
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -98,7 +102,7 @@ def main():
             process = subprocess.Popen(command, cwd=target.parent, env=env, startupinfo=startup,
                 creationflags=subprocess.CREATE_NO_WINDOW, stdout=log, stderr=subprocess.STDOUT)
             try:
-                code = process.wait(timeout=55)
+                code = process.wait(timeout=max(5,min(180,args.timeout)))
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)

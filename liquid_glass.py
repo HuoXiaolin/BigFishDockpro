@@ -1,23 +1,54 @@
 """The original Dock liquid-glass renderer, shared by desktop collection panels."""
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QColor, QLinearGradient, QRadialGradient, QBrush, QPen
+from PyQt5.QtGui import QColor, QLinearGradient, QRadialGradient, QBrush, QPen, QImage
 
 
 def material_palette(colors, material):
     colors = dict(colors)
-    strength = {'acrylic':.55, 'mica':.3, 'solid':0}.get(material, 1)
+    strength = {'gloss':1.55, 'acrylic':.22, 'mica':.08, 'clear':.12, 'solid':0}.get(material, 1)
+    colors['material'] = material
+    if material=='mica':
+        tint = QColor(colors['tint'])
+        colors['tint'] = tint.darker(106) if colors.get('light',True) else tint.lighter(110)
+    if material in ('acrylic','mica','clear'):
+        border = QColor(colors['border'])
+        border.setAlpha({'acrylic':55,'mica':30,'clear':45}[material])
+        colors['border'] = border
     colors['gloss'] = material == 'gloss'
     for key in ('grad','hl'):
-        colors[key] = [(pos,round(alpha*strength)) for pos,alpha in colors[key]]
-    colors['spec'] = round(colors['spec']*strength)
+        colors[key] = [(pos,min(255,round(alpha*strength))) for pos,alpha in colors[key]]
+    colors['spec'] = min(255,round(colors['spec']*({'mica':0,'acrylic':.12,'clear':.15}.get(material,strength))))
     return colors
 
 
 def material_alpha(alpha, material):
-    if material == 'clear': return min(alpha, 55)
-    if material == 'mica': return max(alpha, 210)
+    if material == 'clear': return min(alpha, 30)
+    if material == 'acrylic': return max(alpha, 130)
+    if material == 'mica': return max(alpha, 232)
     if material == 'solid': return 255
     return alpha
+
+
+def material_blur(value, material):
+    value = max(2,min(40,int(value)))
+    if material=='acrylic': return max(16,min(40,value*2))
+    if material=='mica': return max(24,min(40,value*3))
+    if material=='gloss': return max(2,value//2)
+    return value
+
+
+from functools import lru_cache
+@lru_cache(maxsize=2)
+def grain_tile(material):
+    tile = QImage(64,64,QImage.Format_ARGB32_Premultiplied)
+    tile.fill(Qt.transparent)
+    for y in range(64):
+        for x in range(64):
+            value = ((x+1)*73856093)^((y+1)*19349663)
+            value ^= value>>13; value *= 1540483477; value ^= value>>15
+            channel = 255 if value & 4 else 0
+            tile.setPixelColor(x,y,QColor(channel,channel,channel,(value&3) if material=='acrylic' else (value&1)))
+    return tile
 
 
 def tint_palette(palette, color):
@@ -54,6 +85,9 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
         col.setAlpha(min(255, tint_a + 20))
         p.fillRect(path_rect, col)
 
+    material = surface.cfg.get('dock_material',c.get('material','liquid'))
+    if material in ('acrylic','mica'): p.fillRect(path_rect,QBrush(grain_tile(material)))
+
     # 竖向渐变 + 顶部高光（已经合并成一条渐变，省一次裁切+填充）
     # 注：实测这里用 QLinearGradient 直接填充比"缓存贴图再拉伸"更快，
     # 因为 Qt 的线性渐变填充走的是优化过的快路径。
@@ -84,13 +118,14 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
     if c.get("gloss"):
         gx0 = path_rect.left()
         gy0 = path_rect.top()
-        sweep_w = path_rect.height() * 1.5
+        sweep_w = max(path_rect.height()*1.5,path_rect.width()*.85)
         sweep = QLinearGradient(QPointF(gx0, gy0),
                                 QPointF(gx0 + sweep_w, path_rect.bottom()))
         sweep.setColorAt(0.00, QColor(255, 255, 255, 0))
-        sweep.setColorAt(0.13, QColor(255, 255, 255, 132))
-        sweep.setColorAt(0.30, QColor(255, 255, 255, 28))
-        sweep.setColorAt(0.52, QColor(255, 255, 255, 0))
+        sweep.setColorAt(0.25, QColor(255, 255, 255, 12))
+        sweep.setColorAt(0.38, QColor(255, 255, 255, 190))
+        sweep.setColorAt(0.45, QColor(255, 255, 255, 28))
+        sweep.setColorAt(0.60, QColor(255, 255, 255, 0))
         sbox = QRectF(gx0, path_rect.top(), sweep_w,
                       path_rect.height()).intersected(path_rect)
         if not sbox.isEmpty():

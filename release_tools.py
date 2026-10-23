@@ -7,9 +7,9 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parent
-SOURCE_FILES = ['dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
+SOURCE_FILES = ['screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
     'feature_config.py', 'runtime_controller.py', 'platform_services.py', 'screen_corners.py',
-    'glass_panel.py', 'desktop_panels.py', 'desktop_catalog.py', 'desktop_icons.py', 'desktop_panel_tests.py', 'liquid_glass.py', 'appearance_presets.py',
+    'glass_panel.py', 'desktop_panels.py', 'panel_management.py', 'panel_group_tests.py', 'material_tests.py', 'desktop_catalog.py', 'desktop_icons.py', 'desktop_panel_tests.py', 'liquid_glass.py', 'appearance_presets.py',
     'tray_menu.py', 'update_service.py', 'feature_tests.py', 'startup_probe.py',
     'ui_style.py', 'startup_service.py', 'startup_tests.py', 'icon_settings.py', 'shortcut_targets.py', 'interaction_tests.py', 'app_version.py', 'version.json', 'smoke_test.py', 'run_isolated_test.py',
     'BigFishDockpro.spec', 'installer.iss', 'bootstrap.ps1', 'build.ps1', 'release_tools.py',
