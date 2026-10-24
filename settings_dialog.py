@@ -119,8 +119,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，选择部分卡片合并并在顶部切换，其余卡片独立显示。','muted'))
 
         self.number(panel,'card_scale','卡片整体缩放（%）',50,150)
-        panel.addRow(button('卡片尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
-        panel.addRow(label('桌面卡片和便签共用紧凑比例，默认70%；每张卡片的宽高和文字可单独调整，换屏保持比例。','muted'))
+        panel.addRow(button('统一卡片尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
+        panel.addRow(label('桌面卡片和便签共用紧凑比例，默认70%；所有卡片和便签统一宽高与字号，新建卡片同步，换屏保持比例。','muted'))
         panel.addRow(label('便签卡片','section'))
         self.check(panel,'notes_enabled','启用便签卡片（独立于文件收纳面板）')
         from sticky_notes_store import STYLES

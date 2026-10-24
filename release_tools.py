@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parent
-SOURCE_FILES = ['glass_capture_tests.py', 'glass_capture.py', 'card_sizing_tests.py', 'settings_layout.py', 'card_sizing.py', 'sticky_notes_tests.py', 'sticky_notes.py', 'sticky_notes_store.py', 'external_launch_tests.py', 'desktop_visibility_tests.py', 'native_launch_probe.c', 'external_launch.py', 'desktop_item_visibility.py', 'config_transfer.py', 'config_transfer_tests.py', 'running_apps.py', 'running_apps_tests.py', 'dpi_support.py', 'BigFishDockpro.manifest', 'screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
+SOURCE_FILES = ['card_metrics.py', 'glass_capture_tests.py', 'glass_capture.py', 'card_sizing_tests.py', 'settings_layout.py', 'card_sizing.py', 'sticky_notes_tests.py', 'sticky_notes.py', 'sticky_notes_store.py', 'external_launch_tests.py', 'desktop_visibility_tests.py', 'native_launch_probe.c', 'external_launch.py', 'desktop_item_visibility.py', 'config_transfer.py', 'config_transfer_tests.py', 'running_apps.py', 'running_apps_tests.py', 'dpi_support.py', 'BigFishDockpro.manifest', 'screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
     'feature_config.py', 'runtime_controller.py', 'platform_services.py', 'screen_corners.py',
     'glass_panel.py', 'desktop_panels.py', 'panel_management.py', 'panel_group_tests.py', 'material_tests.py', 'desktop_catalog.py', 'desktop_icons.py', 'desktop_panel_tests.py', 'liquid_glass.py', 'appearance_presets.py',
     'tray_menu.py', 'update_service.py', 'feature_tests.py', 'startup_probe.py',
@@ -60,7 +60,7 @@ def copy_files(source, target):
             shutil.copy2(path, dest)
 
 
-def deliver(source_dir, release_dir):
+def deliver(source_dir, release_dir, skip_tests=False):
     # Only the named project's leaves are managed. Unknown files and .git survive.
     source, release = Path(source_dir).resolve(), Path(release_dir).resolve()
     if source.name != 'BigFishDockpro' or release.name != 'BigFishDockpro':
@@ -68,9 +68,14 @@ def deliver(source_dir, release_dir):
     if source == ROOT or release == ROOT or source == release:
         raise ValueError('Delivery targets must be separate from the development workspace.')
     installer = ROOT/'release/BigFishDockpro-Setup-x64.exe'
-    if not installer.exists() or not (ROOT/'artifacts/bundle-test/result.json').exists():
+    receipt_path=ROOT/'artifacts/build-validation.json'
+    receipt=json.loads(receipt_path.read_text(encoding='utf-8-sig')) if receipt_path.exists() else {}
+    if receipt.get('tests_skipped') and not skip_tests:raise RuntimeError('This build skipped tests; explicit --skip-tests is required.')
+    if not installer.exists():raise RuntimeError('Build the installer before delivery.')
+    if receipt and hashlib.sha256(installer.read_bytes()).hexdigest()!=receipt.get('installer_sha256'):raise RuntimeError('Installer does not match the current build receipt.')
+    if not skip_tests and not (ROOT/'artifacts/bundle-test/result.json').exists():
         raise RuntimeError('A verified installer is required before delivery.')
-    if not json.loads((ROOT/'artifacts/bundle-test/result.json').read_text(encoding='utf-8'))['passed']:
+    if not skip_tests and not json.loads((ROOT/'artifacts/bundle-test/result.json').read_text(encoding='utf-8'))['passed']:
         raise RuntimeError('Bundle test did not pass.')
     # Verify the delivered installer before committing the successful release date.
     release.mkdir(parents=True, exist_ok=True)
@@ -85,9 +90,10 @@ def deliver(source_dir, release_dir):
         if single.stat().st_mtime < installer.stat().st_mtime:
             raise RuntimeError('Rebuild the single-file artifact alongside the current installer before delivery.')
         result = ROOT/'artifacts/singlefile-test/result.json'
-        if not result.exists() or not json.loads(result.read_text(encoding='utf-8')).get('passed'):
+        if not skip_tests and (not result.exists() or not json.loads(result.read_text(encoding='utf-8')).get('passed')):
             raise RuntimeError('Single-file verification is required before delivery.')
         single_digest = hashlib.sha256(single.read_bytes()).hexdigest()
+        if receipt and single_digest!=receipt.get('singlefile_sha256'):raise RuntimeError('Single file does not match the current build receipt.')
         shutil.copy2(single, release/single.name)
         if hashlib.sha256((release/single.name).read_bytes()).hexdigest() != single_digest:
             raise RuntimeError('Delivered single-file hash differs.')
@@ -111,7 +117,7 @@ def deliver(source_dir, release_dir):
         (directory/'SHA256SUMS.txt').write_text('\n'.join(manifest)+'\n', encoding='utf-8')
     report = {'development': str(ROOT), 'source': str(source), 'release': str(release),
               'installer': installer.name, 'sha256': digest, 'source_files': len(source_hashes),
-              'version': json.loads((ROOT/'version.json').read_text(encoding='utf-8'))['version']}
+              'version': json.loads((ROOT/'version.json').read_text(encoding='utf-8'))['version'], 'tests_skipped':bool(skip_tests)}
     (ROOT/'artifacts/delivery.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
@@ -119,10 +125,11 @@ def deliver(source_dir, release_dir):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['prepare', 'deliver'])
+    parser.add_argument('--skip-tests',action='store_true',help='Explicitly deliver a build without running tests.')
     parser.add_argument('--source', default=r'D:\Agant\Github_Source\BigFishDockpro')
     parser.add_argument('--release', default=r'D:\Agant\Github_Releases\BigFishDockpro')
     args = parser.parse_args()
     if args.action == 'prepare':
         prepare()
     else:
-        deliver(args.source, args.release)
+        deliver(args.source, args.release, args.skip_tests)

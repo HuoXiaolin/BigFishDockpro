@@ -217,8 +217,9 @@ class DesktopPanel(QDialog):
 
     def apply_options(self):
         layout=getattr(self.runtime,'layout',None)
-        self.ui_factor=layout.panel_scale(self.identity) if layout else self.default_ui_factor
-        if layout and not layout.record(self.identity):self.ui_factor=self.default_ui_factor*self.dock.cfg.get('card_scale',70)/100
+        from card_metrics import metrics
+        from screen_layout import screen_records
+        self.ui_factor=layout.panel_scale(self.identity) if layout else metrics(self.dock.cfg,self.model.get('geometry',self.default_geometry),screen_records())[1]
         factor=self.ui_factor
         self.layout().setContentsMargins(metric(10,factor),metric(6,factor),metric(10,factor),metric(6,factor))
         self.layout().setSpacing(metric(4,factor))
@@ -239,14 +240,14 @@ class DesktopPanel(QDialog):
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWindowTitle(self.model['name']+' · 桌面收纳')
-        self.grip.setVisible(not self.option('locked'))
+        self.grip.setVisible(False)
         # Use min/max constraints as well as hiding the grip: native resize is locked too.
         if self.collapsed:
             self.set_collapsed_geometry(True)
         else:
-            self.setMinimumSize(*minimum(factor))
-            self.setMaximumSize(16777215, 16777215)
-            if self.option('locked'): self.setFixedSize(self.size())
+            self.setMinimumSize(1,1)
+            self.setMaximumSize(16777215,16777215)
+            bounds=self.bounds();self.resize(bounds[2],bounds[3]);self.setFixedSize(self.size())
         colors = self.colors()
         ink = colors['fg'].name()
         search_background = 'transparent' if self.is_clear() else 'rgba(128,128,128,20)'
@@ -274,7 +275,8 @@ class DesktopPanel(QDialog):
         self.update()
 
     def text_pixels(self):
-        return max(7,min(72,round(self.model.get('font_size',13)*self.ui_factor/self.model.get('font_scale',1.0))))
+        from card_metrics import font_pixels
+        return font_pixels(self.dock.cfg,self.ui_factor)
 
     def visible_items(self):
         query = self.query.text().strip().casefold()
@@ -308,6 +310,7 @@ class DesktopPanel(QDialog):
         self.fit_timer.start(0)
 
     def fit_content(self):
+        return  # Width and height are shared by every card.
         # Fit the full collection, so filtering never moves the window under the cursor.
         if (self.disposed or self.collapsed or self.restoring or self.manual_resize
                 or self.option('locked') or not (self.dock.cfg['merged_compact'] if self.manager.is_merged(self.identity) else self.model.get('compact', True))):
@@ -417,7 +420,7 @@ class DesktopPanel(QDialog):
 
     def build_panel_menu(self):
         menu = QMenu(self)
-        menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
+        menu.addAction('统一尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
         menu.addAction('添加文件…').triggered.connect(self.add_files)
         menu.addAction('添加文件夹…').triggered.connect(self.add_folder)
         menu.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)
@@ -437,10 +440,6 @@ class DesktopPanel(QDialog):
             action.setCheckable(True)
             action.setChecked(self.model.get('sort', 'name_asc') == key)
             action.triggered.connect(lambda checked=False, value=key: self.manager.update_panel(self.identity, sort=value))
-        compact = menu.addAction('按内容紧凑排列')
-        compact.setCheckable(True)
-        compact.setChecked(self.model.get('compact', True))
-        compact.triggered.connect(self.set_compact)
         lock = menu.addAction('锁定位置和大小')
         lock.setCheckable(True)
         lock.setChecked(self.option('locked'))
@@ -478,7 +477,10 @@ class DesktopPanel(QDialog):
         raw=(self.dock.cfg['merged_geometry'] if self.manager.is_merged(self.identity) and self.dock.cfg.get('merged_geometry')
              else self.model.get('geometry',self.default_geometry))
         layout=getattr(self.runtime,'layout',None)
-        return layout.panel_bounds(self.identity,raw) if layout else list(raw)
+        if layout:return layout.panel_bounds(self.identity,raw)
+        from card_metrics import metrics
+        from screen_layout import screen_records
+        return metrics(self.dock.cfg,list(raw),screen_records())[0]
 
     def set_collapsed_geometry(self, collapsed):
         self.restoring = True
@@ -499,7 +501,7 @@ class DesktopPanel(QDialog):
             self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
                       max(available.top(), min(self.y(), available.bottom()+1-self.height())))
             self.setMinimumSize(min(minimum(self.ui_factor)[0],geometry[2],available.width()), min(minimum(self.ui_factor)[1],geometry[3],available.height()))
-            if self.option('locked'): self.setFixedSize(self.size())
+            self.setFixedSize(self.size())
         screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
         available = screen.availableGeometry()
         self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),

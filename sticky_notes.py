@@ -9,7 +9,7 @@ import uuid
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt,QObject,QTimer,QRectF,QEvent,QPoint,pyqtSignal,QVariant
 from PyQt5.QtGui import QPainter,QPainterPath,QColor,QPen,QLinearGradient,QFont,QTextCharFormat,QTextListFormat,QTextCursor,QTextDocument,QPalette
-from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QLineEdit,QTextEdit,QToolButton,QLabel,QSizeGrip,QApplication,QListWidget,QListWidgetItem,QTabBar,QMessageBox,QShortcut
+from PyQt5.QtWidgets import QWidget,QDialog,QLayout,QVBoxLayout,QHBoxLayout,QLineEdit,QTextEdit,QToolButton,QLabel,QSizeGrip,QApplication,QListWidget,QListWidgetItem,QTabBar,QMessageBox,QShortcut
 from PyQt5.QtGui import QKeySequence,QCursor
 from ui_style import AlignedMenu,button,label,SettingsHeader,compact_dialog
 from sticky_notes_store import STYLES,COLORS,normalize_notes,clean_editor_html
@@ -45,7 +45,7 @@ class NoteWindow(QWidget):
         self.identity=identity;self.loading=True;self.disposed=False;self.drag=None;self.backdrop=None;self.ui_factor=1.0;self.expanded_height=260
         self.setObjectName('StickyNote');self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(230,150)
-        self.layout_box=QVBoxLayout(self);self.layout_box.setContentsMargins(12,9,12,9);self.layout_box.setSpacing(6)
+        self.layout_box=QVBoxLayout(self);self.layout_box.setSizeConstraint(QLayout.SetNoConstraint);self.layout_box.setContentsMargins(12,9,12,9);self.layout_box.setSpacing(6)
         header=QHBoxLayout();header.setSpacing(4)
         self.handle=QLabel('⋮⋮');self.handle.setToolTip('拖动便签');self.handle.installEventFilter(self);header.addWidget(self.handle)
         self.title=QLineEdit();self.title.setMaxLength(60);self.title.setPlaceholderText('便签标题');header.addWidget(self.title,1)
@@ -144,7 +144,7 @@ class NoteWindow(QWidget):
             if value:self.collapse_timer.start()
     def build_menu(self):
         menu=AlignedMenu(self)
-        menu.addAction('尺寸与文字…').triggered.connect(lambda:self.runtime.open_card_sizing('note',self.identity))
+        menu.addAction('统一尺寸与文字…').triggered.connect(lambda:self.runtime.open_card_sizing('note',self.identity))
         menu.addAction('新建便签').triggered.connect(self.manager.new)
         styles=menu.addMenu('外观样式')
         for title,key in STYLES:
@@ -195,7 +195,9 @@ class NoteWindow(QWidget):
                 record=capture(geometry,screens,ui_scale=factor)
             if not record:record=capture(geometry,screens)
         geometry=project(record,screens,minimum=(160,96),density=self.dock.cfg.get('card_scale',70)/100) or row.get('geometry',[40,50,300,260])
-        self.ui_factor=geometry[2]/record['rect'][2]*record.get('ui_scale',1.0) if record else 1.0
+        from card_metrics import metrics
+        from screen_layout import choose_screen
+        geometry,self.ui_factor,_=metrics(self.dock.cfg,geometry,screens,choose_screen(record,screens))
         self.expanded_height=geometry[3]
         self.loading=True
         self.setMinimumSize(1,1);self.setMaximumSize(16777215,16777215);self.setGeometry(*geometry)
@@ -204,24 +206,25 @@ class NoteWindow(QWidget):
         row=self.row();collapsed=row['collapsed'];self.loading=True
         self.tools.setVisible(not collapsed);self.editor.setVisible(not collapsed);self.footer.setVisible(not collapsed)
         factor=self.ui_factor;bar=max(30,round(42*factor));small_before=self.height()<max(80,bar+2)
-        self.setMinimumSize(max(160,round(230*min(1,factor))),bar if collapsed else max(96,round(150*min(1,factor))));self.setMaximumSize(16777215,16777215)
+        self.setMinimumSize(1,1);self.setMaximumSize(16777215,16777215)
         if collapsed:self.resize(self.width(),bar)
         elif small_before:self.resize(self.width(),self.expanded_height)
         self.layout_box.setContentsMargins(*(max(5,round(v*factor)) for v in (12,9,12,9)));self.layout_box.setSpacing(max(3,round(6*factor)))
         for widget in [self.more,self.collapse_button,self.retry]+list(self.format_buttons.values()):widget.setFixedSize(max(16,round(23*factor)),max(16,round(23*factor)))
-        if row['locked']:self.setFixedSize(self.size())
-        self.grip.setVisible(not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
+        self.setFixedSize(self.size())
+        self.grip.setVisible(False);self.collapse_button.setText('▾' if collapsed else '−')
         color=QColor(row['color']);ink='#20252b' if color.lightness()>110 else '#f5f7fa'
         self.setStyleSheet('QWidget#StickyNote {background:transparent;} QLineEdit,QTextEdit,QLabel,QToolButton {background:transparent;color:'+ink+';border:0;font-family:"Microsoft YaHei UI";font-size:12px;} QLineEdit {font-weight:600;padding:0;min-height:20px;} QTextEdit {padding:3px;selection-background-color:rgba(90,140,180,80);} QToolButton {border-radius:5px;} QToolButton:hover {background:rgba(120,130,150,28);} QLabel {font-size:10px;}')
         from dpi_support import panel_css
         self.setStyleSheet(panel_css(self.styleSheet(),self.ui_factor))
-        size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;'%size)
+        size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;'%size);self.title.setStyleSheet('font-size:%dpx;'%size)
         font=QFont('Microsoft YaHei UI');font.setPixelSize(size);self.editor.document().setDefaultFont(font)
         palette=self.editor.palette();palette.setColor(QPalette.Text,QColor(ink));palette.setColor(QPalette.Base,QColor(0,0,0,0));self.editor.setPalette(palette)
         self.setWindowTitle(row['title']+' · 大肥鱼Dock便签');self.layer();self.loading=False;self.update();self.refresh_timer.start()
         if not self.geometry_timer.isActive():self._saved_geometry=self.geometry().getRect()
     def text_pixels(self):
-        row=self.row();return max(8,min(72,round(row.get('font_size',12)*self.ui_factor/row.get('font_scale',1.0))))
+        from card_metrics import font_pixels
+        return font_pixels(self.dock.cfg,self.ui_factor)
 
     def layer(self):
         user=ctypes.windll.user32

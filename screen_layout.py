@@ -117,12 +117,17 @@ class DisplayLayout:
     def panel_bounds(self,identity,fallback):
         screens=self.screens();window=self.runtime.panels.windows.get(identity)
         record=self.record(identity) or capture(list(fallback),screens,getattr(window,'default_ui_factor',1.0))
-        return project(record,screens,density=self.dock.cfg.get('card_scale',70)/100) or list(fallback)
+        from card_metrics import metrics
+        bounds=project(record,screens,density=self.dock.cfg.get('card_scale',70)/100) or list(fallback)
+        return metrics(self.dock.cfg,bounds,screens,choose_screen(record,screens))[0]
 
     def panel_scale(self,identity):
-        record=self.record(identity)
-        projected=project(record,self.screens(),density=self.dock.cfg.get('card_scale',70)/100)
-        return projected[2]/record['rect'][2]*record.get('ui_scale',1.0) if record and projected else self.dock.cfg.get('card_scale',70)/100*getattr(self.runtime.panels.windows.get(identity),'default_ui_factor',1.0)
+        from card_metrics import metrics
+        record=self.record(identity);screens=self.screens()
+        window=self.runtime.panels.windows.get(identity)
+        fallback=getattr(window,'default_geometry',[0,0,320,260])
+        bounds=project(record,screens,density=self.dock.cfg.get('card_scale',70)/100) or fallback
+        return metrics(self.dock.cfg,bounds,screens,choose_screen(record,screens))[1]
 
     def panel_update(self,identity,rect):
         state=copy.deepcopy(self.dock.cfg.get('display_layout',{}))
