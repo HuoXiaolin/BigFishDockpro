@@ -6,6 +6,68 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushBu
     QAbstractSpinBox, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip,
     QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView)
 
+# Half the former screen area, while retaining readable text at normal DPI.
+UI_DENSITY = 0.70
+
+def compact_px(value):
+    return max(1, round(value * UI_DENSITY)) if value > 0 else value
+
+
+def compact_dialog(dialog):
+    """Apply geometry density once; theme changes and reopens must never rescale."""
+    if dialog.property('densityApplied'):
+        return
+    dialog.setProperty('densityApplied', True)
+    dialog.setProperty('compactDialog', True)
+    size = dialog.size()
+    minimum = dialog.minimumSize()
+    for widget in [dialog] + dialog.findChildren(QWidget):
+        if widget is not dialog and widget.window() is not dialog:
+            continue
+        for axis in ('Width', 'Height'):
+            lower = getattr(widget, 'minimum'+axis)()
+            upper = getattr(widget, 'maximum'+axis)()
+            if lower == upper and upper < 16777215:
+                getattr(widget, 'setFixed'+axis)(compact_px(lower))
+        if isinstance(widget, QAbstractItemView):
+            icons = widget.iconSize()
+            if icons.isValid():widget.setIconSize(QSize(compact_px(icons.width()), compact_px(icons.height())))
+        layout = widget.layout()
+        def compress(current):
+            margins=current.contentsMargins()
+            current.setContentsMargins(*(compact_px(v) for v in (margins.left(),margins.top(),margins.right(),margins.bottom())))
+            if current.spacing() >= 0:current.setSpacing(compact_px(current.spacing()))
+            if hasattr(current,'horizontalSpacing'):
+                for name in ('HorizontalSpacing','VerticalSpacing'):
+                    value=getattr(current,name[0].lower()+name[1:])()
+                    if value>=0:getattr(current,'set'+name)(compact_px(value))
+            for i in range(current.count()):
+                child=current.itemAt(i).layout()
+                if child is not None:compress(child)
+        if layout is not None:compress(layout)
+    dialog.setMinimumSize(compact_px(minimum.width()),compact_px(minimum.height()))
+    dialog.resize(compact_px(size.width()),compact_px(size.height()))
+
+
+def density_stylesheet(stylesheet):
+    """Scope compact metrics to dialogs/menus; desktop card metrics remain local."""
+    import re
+    rules=[]
+    for selectors,body in re.findall(r'([^{}]+)\{([^{}]*)\}',stylesheet):
+        scoped=[]
+        for selector in selectors.split(','):
+            selector=selector.strip()
+            if selector=='*':scoped.extend(('QDialog','QDialog *','QMenu','QToolTip'))
+            elif selector.startswith(('QDialog','QMessageBox','QMenu','QToolTip')):scoped.append(selector)
+            else:scoped.append('QDialog '+selector)
+        def scale(match):
+            number=int(match.group(1));prefix=body[:match.start()].rsplit(';',1)[-1]
+            value=max(10,compact_px(number)) if 'font-size' in prefix else compact_px(number)
+            return str(value)+'px'
+        rules.append(', '.join(scoped)+' {'+re.sub(r'(\d+)px',scale,body)+'}')
+    return '\n'.join(rules)
+
+
 THEME_COLORS = [('冰川蓝','#8fbfe0'), ('薄荷绿','#8fc9b0'), ('青碧','#70b9bc'),
                 ('雾紫','#b3a0d6'), ('樱花粉','#dea6bb'), ('暖杏','#e5ba8d'), ('石墨灰','#8a95a5')]
 
@@ -116,7 +178,7 @@ class SettingsGrip(QSizeGrip):
 class PopupDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
-        return QSize(size.width()+16, max(32, option.fontMetrics.height()+14))
+        return QSize(size.width()+compact_px(16), max(compact_px(32), option.fontMetrics.height()+compact_px(14)))
 
 
 class AlignedMenu(QMenu):
@@ -130,7 +192,7 @@ class AlignedMenu(QMenu):
 
     def sizeHint(self):
         size = super().sizeHint()
-        return QSize(max(220, size.width()), size.height())
+        return QSize(max(compact_px(220), size.width()), size.height())
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -143,7 +205,7 @@ class AlignedMenu(QMenu):
         for action in self.actions():
             if not action.isVisible(): continue
             rect = self.actionGeometry(action)
-            rect.setRight(self.width()-6)
+            rect.setRight(self.width()-compact_px(6))
             if action.isSeparator():
                 p.setPen(QPen(palette.color(QPalette.Mid), .5))
                 p.drawLine(rect.left()+12, rect.center().y(), rect.right()-12, rect.center().y())
@@ -153,13 +215,13 @@ class AlignedMenu(QMenu):
                 p.drawRoundedRect(QRectF(rect).adjusted(3,1,-3,-1), 4, 4)
             ink = palette.color(QPalette.Text if action.isEnabled() else QPalette.Mid)
             p.setPen(ink)
-            p.drawText(rect.adjusted(32,0,-25,0), Qt.AlignVCenter, action.text().replace('&',''))
+            p.drawText(rect.adjusted(compact_px(32),0,-compact_px(25),0), Qt.AlignVCenter, action.text().replace('&',''))
             if action.isChecked():
                 path = QPainterPath(); y = rect.center().y()
-                path.moveTo(rect.left()+11,y); path.lineTo(rect.left()+14,y+3); path.lineTo(rect.left()+20,y-4)
+                path.moveTo(rect.left()+compact_px(11),y); path.lineTo(rect.left()+compact_px(14),y+compact_px(3)); path.lineTo(rect.left()+compact_px(20),y-compact_px(4))
                 p.setPen(QPen(ink,1.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)); p.drawPath(path)
             if action.menu():
-                path = QPainterPath(); x,y = rect.right()-13,rect.center().y()
+                path = QPainterPath(); x,y = rect.right()-compact_px(13),rect.center().y()
                 path.moveTo(x-2,y-3); path.lineTo(x+1,y); path.lineTo(x-2,y+3)
                 p.setPen(QPen(ink,1.4)); p.drawPath(path)
 
@@ -212,9 +274,9 @@ class ModernComboBox(QComboBox):
         view.setModelColumn(self.modelColumn())
         view.setFont(self.font())
         view.setCurrentIndex(self.model().index(self.currentIndex(),self.modelColumn()))
-        row_height = max(32,view.sizeHintForRow(0))
-        height = min(self.count(),self.maxVisibleItems())*row_height+20
-        width = max(self.width(),min(520,view.sizeHintForColumn(0)+32))
+        row_height = max(compact_px(32),view.sizeHintForRow(0))
+        height = min(self.count(),self.maxVisibleItems())*row_height+compact_px(20)
+        width = max(self.width(),min(compact_px(520),view.sizeHintForColumn(0)+compact_px(32)))
         point = self.mapToGlobal(QPoint(0,self.height()+3))
         screen = QApplication.screenAt(point) or QApplication.primaryScreen()
         bounds = screen.availableGeometry()
@@ -237,7 +299,7 @@ class ModernComboBox(QComboBox):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(QPen(self.palette().color(QPalette.Text if self.isEnabled() else QPalette.Mid), 1.5))
-        cx, cy = self.width()-18, self.height()/2
+        cx, cy = self.width()-compact_px(18), self.height()/2
         path = QPainterPath()
         path.moveTo(cx-4, cy-2)
         path.lineTo(cx, cy+2)
@@ -273,9 +335,10 @@ class ModernSpinBox(QSpinBox):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        y = (self.height()-26)//2
-        self.minus.setGeometry(self.width()-62, y, 26, 26)
-        self.plus.setGeometry(self.width()-32, y, 26, 26)
+        step=compact_px(26)
+        y = (self.height()-step)//2
+        self.minus.setGeometry(self.width()-compact_px(62), y, step, step)
+        self.plus.setGeometry(self.width()-compact_px(32), y, step, step)
 
 
 class ModernCheckBox(QCheckBox):
@@ -287,14 +350,14 @@ class ModernCheckBox(QCheckBox):
         self.setSizePolicy(policy)
 
     def heightForWidth(self, width):
-        return max(30, self.fontMetrics().boundingRect(QRect(0,0,max(50,width-30),1000),
-                    Qt.TextWordWrap, self.text()).height()+10)
+        return max(compact_px(30), self.fontMetrics().boundingRect(QRect(0,0,max(compact_px(50),width-compact_px(30)),1000),
+                    Qt.TextWordWrap, self.text()).height()+compact_px(10))
 
     def sizeHint(self):
-        width = min(340, self.fontMetrics().horizontalAdvance(self.text())+32)
+        width = min(compact_px(340), self.fontMetrics().horizontalAdvance(self.text())+compact_px(32))
         return QSize(width, self.heightForWidth(width))
 
-    def minimumSizeHint(self): return QSize(110, 30)
+    def minimumSizeHint(self): return QSize(compact_px(110), compact_px(30))
 
     def hitButton(self, point): return self.rect().contains(point)
 
@@ -305,7 +368,7 @@ class ModernCheckBox(QCheckBox):
         option.text = ''
         self.style().drawControl(QStyle.CE_CheckBox, option, painter, self)
         painter.setPen(self.palette().color(QPalette.Text if self.isEnabled() else QPalette.Mid))
-        painter.drawText(self.rect().adjusted(30,4,0,-4), Qt.TextWordWrap | Qt.AlignVCenter, self.text())
+        painter.drawText(self.rect().adjusted(compact_px(30),compact_px(4),0,-compact_px(4)), Qt.TextWordWrap | Qt.AlignVCenter, self.text())
 
 
 class ReadableChecks(QProxyStyle):
@@ -410,7 +473,7 @@ def apply_theme(app, light):
     p.setColor(QPalette.Link, QColor('#225eaa' if light else '#8fc2ff'))
     p.setColor(QPalette.LinkVisited, QColor('#225eaa' if light else '#8fc2ff'))
     app.setPalette(p)
-    app.setStyleSheet('''
+    stylesheet = '''
         * {font-family:"Microsoft YaHei UI"; font-size:13px;}
         QDialog[compactDialog="true"] QLabel, QDialog[compactDialog="true"] QLineEdit,
         QDialog[compactDialog="true"] QComboBox, QDialog[compactDialog="true"] QSpinBox,
@@ -485,7 +548,8 @@ def apply_theme(app, light):
         QMenu::item:selected {background:%(selection)s;}
         QMenu::separator {height:1px; background:%(line)s; margin:5px 10px;}
         QToolTip {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; padding:6px;}
-    ''' % colors)
+    ''' % colors
+    app.setStyleSheet(stylesheet + density_stylesheet(stylesheet))
     if not hasattr(app, '_chrome_filter'):
         app._chrome_filter = DialogChrome(app)
         app.installEventFilter(app._chrome_filter)

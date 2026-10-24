@@ -1,9 +1,11 @@
+from ui_style import compact_dialog, compact_px
 """Staged batch additions/removals: cancel never changes the saved Dock."""
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QEvent, QPoint
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QFileDialog, QApplication, QTabBar)
 from app_catalog import discover_apps, merge_items, path_key, launch_identity, unique_apps
+from running_apps import discover_running_apps
 from ui_style import label, button, SettingsHeader, SettingsGrip
 
 
@@ -18,15 +20,29 @@ class Discovery(QThread):
             self.failed.emit(str(error))
 
 
+class RunningDiscovery(QThread):
+    ready=pyqtSignal(int,object)
+    failed=pyqtSignal(int,str)
+    def __init__(self,generation,parent=None):
+        super().__init__(parent);self.generation=generation
+    def run(self):
+        try:
+            apps=discover_running_apps(cancelled=self.isInterruptionRequested)
+            if not self.isInterruptionRequested():self.ready.emit(self.generation,apps)
+        except Exception as error:
+            if not self.isInterruptionRequested():self.failed.emit(self.generation,str(error))
+
+
 class BatchDialog(QDialog):
     def __init__(self, importer):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.setProperty('compactDialog', True)
         self.importer = importer
         self.apps = []
+        self.running_apps=[];self.running_worker=None;self.running_generation=0;self.running_rescan=False;self.running_error=''
         self.catalog_released = False
-        self.selected = [set(), set(), set()]
-        self.queries = ['', '', '']
+        self.selected = [set(), set(), set(), set()]
+        self.queries = ['', '', '', '']
         self.mode = 0
         self.pending_add = []
         self.pending_remove = set()
@@ -43,6 +59,7 @@ class BatchDialog(QDialog):
         self.tabs.addTab('添加应用')
         self.tabs.addTab('已固定应用')
         self.tabs.addTab('Windows 应用')
+        self.tabs.addTab('正在运行')
         self.tabs.setExpanding(False)
         body.addWidget(self.tabs)
         self.query = QLineEdit()
@@ -54,6 +71,9 @@ class BatchDialog(QDialog):
         tools.addWidget(button('全选当前结果', self.select_visible))
         tools.addWidget(button('取消选择', self.clear_selection))
         tools.addStretch()
+        self.refresh_running_button=button('刷新运行列表',self.refresh_running)
+        self.refresh_running_button.setVisible(False)
+        tools.addWidget(self.refresh_running_button)
         self.pick = button('从文件添加…', self.pick_files)
         tools.addWidget(self.pick)
         body.addLayout(tools)
@@ -94,6 +114,43 @@ class BatchDialog(QDialog):
         self.worker.failed.connect(self.scan_failed)
         self.worker.finished.connect(self.release_if_idle)
         self.worker.start()
+        compact_dialog(self)
+
+    def refresh_running(self):
+        self.running_error=''
+        self.running_generation+=1
+        if self.running_worker and self.running_worker.isRunning():
+            self.running_rescan=True;self.running_worker.requestInterruption();return
+        self.running_rescan=False
+        self.running_worker=RunningDiscovery(self.running_generation,self)
+        worker=self.running_worker
+        worker.ready.connect(self.running_discovered)
+        worker.failed.connect(self.running_failed)
+        worker.finished.connect(lambda:self.running_finished(worker))
+        self.refresh_running_button.setEnabled(False)
+        self.empty.setText('正在读取有窗口的运行应用…')
+        worker.start()
+
+    def running_discovered(self,generation,apps):
+        if generation!=self.running_generation:return
+        self.running_apps=apps
+        keys={path_key(app['path']) for app in apps}
+        self.selected[3].intersection_update(keys)
+        if self.mode==3:self.render()
+
+    def running_failed(self,generation,message):
+        if generation!=self.running_generation:return
+        self.running_error='运行列表读取失败，请点击刷新重试。'
+        self.importer.log('运行应用读取失败: '+message)
+        if self.mode==3:self.status.setText('运行列表读取失败，请点击刷新重试。')
+
+    def running_finished(self,worker):
+        if worker is self.running_worker:self.running_worker=None
+        worker.deleteLater()
+        self.refresh_running_button.setEnabled(True)
+        if self.running_rescan and self.isVisible() and self.mode==3:self.refresh_running()
+        elif self.mode==3 and self.isVisible():self.render()
+        self.release_if_idle()
 
     def scan_failed(self, message):
         self.empty.setText('应用扫描失败，可从文件添加。详细信息已记录到日志。')
@@ -108,13 +165,14 @@ class BatchDialog(QDialog):
         if self.importer.dock.lite_mode: self.release_memory()
 
     def release_memory(self):
-        if self.isVisible() or self.worker.isRunning(): return False
+        if self.isVisible() or self.worker.isRunning() or (self.running_worker and self.running_worker.isRunning()): return False
         self.icon_timer.stop()
         self.list.clear()
         self.icon_rows.clear()
         self.apps = []
+        self.running_apps=[]
         self.catalog_released = True
-        self.selected = [set(), set(), set()]
+        self.selected = [set(), set(), set(), set()]
         return True
 
     def rescan(self):
@@ -131,13 +189,14 @@ class BatchDialog(QDialog):
             self.rescan()
         self.pending_add.clear()
         self.pending_remove.clear()
-        self.selected = [set(), set(), set()]
+        self.selected = [set(), set(), set(), set()]
         self.render()
         self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
         self.showNormal() if self.isMinimized() else self.show()
         self.raise_()
         self.activateWindow()
         self.query.setFocus()
+        if self.mode==3:self.refresh_running()
 
     def switch_mode(self, mode):
         self.queries[self.mode] = self.query.text()
@@ -146,11 +205,13 @@ class BatchDialog(QDialog):
         self.query.setText(self.queries[mode])
         self.query.blockSignals(False)
         self.pick.setVisible(mode == 0)
+        self.refresh_running_button.setVisible(mode==3)
         self.action.setText('移除所选' if mode == 1 else '添加所选')
         self.action.setProperty('role', 'danger' if mode == 1 else '')
         self.action.style().unpolish(self.action)
         self.action.style().polish(self.action)
         self.render()
+        if mode==3:self.refresh_running()
 
     def draft_items(self):
         existing = [i for i in self.importer.dock.cfg['items']
@@ -166,7 +227,7 @@ class BatchDialog(QDialog):
         query = self.query.text().casefold()
         draft = self.draft_items()
         pinned = {launch_identity(i['path']) for i in draft if i.get('path')}
-        rows = unique_apps([i for i in draft if i.get('path')]) if self.mode == 1 else unique_apps(
+        rows = unique_apps([i for i in draft if i.get('path')]) if self.mode == 1 else unique_apps(self.running_apps) if self.mode==3 else unique_apps(
             [i for i in self.apps if (i.get('column') == 'windows') == (self.mode == 2)])
         for app in rows:
             if query not in app['name'].casefold() and query not in app['path'].casefold():
@@ -193,7 +254,7 @@ class BatchDialog(QDialog):
         self.load_visible_icons()
         self.icon_timer.start()
         self.empty.setVisible(self.list.count() == 0)
-        self.empty.setText('正在扫描应用…' if self.mode != 1 and self.worker.isRunning() else
+        self.empty.setText(('正在读取运行应用…' if self.running_worker and self.running_worker.isRunning() else (self.running_error or '未找到匹配的运行应用，可点击刷新。')) if self.mode==3 else '正在扫描应用…' if self.mode != 1 and self.worker.isRunning() else
                            ('没有匹配的已固定应用。' if self.mode == 1 else '没有匹配的应用，可更换关键词。'))
         self.update_status()
 
@@ -229,10 +290,11 @@ class BatchDialog(QDialog):
     def update_status(self):
         visible = len(self.visible_selected())
         hidden = len(self.selected[self.mode]) - visible
-        self.status.setText('当前结果 %d 个 · 当前已选 %d 个%s' %
+        self.status.setText(('有窗口的软件（含最小化） · ' if self.mode==3 else '')+'当前结果 %d 个 · 当前已选 %d 个%s' %
             (self.list.count(), visible, (' · 筛选外已选 %d 个（本次不操作）' % hidden) if hidden else ''))
         self.pending.setText('待保存：添加 %d 个，移除 %d 个。取消或关闭将放弃这些改动。' %
                              (len(self.pending_add), len(self.pending_remove)) if self.pending_add or self.pending_remove else '尚无待保存的更改')
+        if self.mode==3 and self.running_error:self.status.setText(self.running_error)
         self.action.setEnabled(visible > 0)
         self.save_button.setEnabled(bool(self.pending_add or self.pending_remove))
 
@@ -298,9 +360,12 @@ class BatchDialog(QDialog):
             self.pending.setText('更改已保存，可继续添加或移除应用。')
 
     def reject(self):
+        self.running_generation+=1;self.running_rescan=False;self.running_apps=[]
+        if self.running_worker:self.running_worker.requestInterruption()
+        if self.mode==3:self.icon_timer.stop();self.list.clear();self.icon_rows.clear()
         self.pending_add.clear()
         self.pending_remove.clear()
-        self.selected = [set(), set(), set()]
+        self.selected = [set(), set(), set(), set()]
         super().reject()
         self.release_if_idle()
 
@@ -348,4 +413,6 @@ class BatchImporter:
         if self.dialog:
             self.dialog.worker.requestInterruption()
             self.dialog.worker.wait(27000)
+            if self.dialog.running_worker:
+                self.dialog.running_worker.requestInterruption();self.dialog.running_worker.wait(5000)
             self.dialog.reject()

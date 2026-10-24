@@ -671,6 +671,9 @@ def start_menu_dirs():
 # ----------------------------------------------------------------------------
 # PyQt5 部分
 # ----------------------------------------------------------------------------
+from dpi_support import prepare as prepare_dpi
+prepare_dpi()
+
 from PyQt5.QtCore import (Qt, QTimer, QPoint, QPointF, QRectF, QSize, QFileInfo,
                           QSharedMemory, QEvent, pyqtSignal)
 from PyQt5.QtGui import (QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap,
@@ -793,7 +796,7 @@ class Dock(QWidget):
         self.base_icon = int(cfg["icon_size"])
         self.ui_mult = self._ui_mult()
         self.icon_size = self._scaled(self.base_icon)
-        self.font_pt = max(8, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
+        self.font_pt = max(5, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
         self.pad_x = int(self.icon_size * 0.36)
         self.pad_y = int(self.icon_size * 0.34)
         self.gap_ratio = 0.26
@@ -969,29 +972,12 @@ class Dock(QWidget):
 
     # ---------------- 尺寸与布局 ----------------
     def _ui_mult(self):
-        """Windows 缩放适配。
-
-        Qt 在某些机器上不会自动启用高 DPI 缩放，这时窗口坐标就等于物理像素，
-        图标会显得偏小。这里用 Windows 自己的缩放比例补一次：
-            目标物理尺寸 = 配置值 × Windows缩放
-        如果 Qt 已经缩放过了（devicePixelRatio>1），就不再重复放大。
-        """
-        try:
-            qt = float(QGuiApplication.primaryScreen().devicePixelRatio())
-        except Exception:
-            qt = 1.0
-        if qt <= 0.01:
-            qt = 1.0
-        try:
-            dpi = float(user32.GetDpiForSystem())
-        except Exception:
-            dpi = 96.0
-        win = max(1.0, dpi / 96.0)
-        m = win / qt
-        return m if 0.1 < m < 4.0 else 1.0
+        # Qt owns per-monitor DPI. Multiplying by GetDpiForSystem applies it twice
+        # or retains the previous monitor's system DPI after a hot switch.
+        return 1.0
 
     def _scaled(self, v):
-        return max(20, int(round(v * self.ui_mult * getattr(self,'display_scale',1.0))))
+        return max(12, int(round(v * self.ui_mult * getattr(self,'display_scale',1.0))))
 
     def bar_h(self):
         height = self.icon_size + self.pad_y * 2
@@ -1776,17 +1762,13 @@ class Dock(QWidget):
     def launch(self, path):
         log("启动: " + path)
         try:
-            low = path.lower()
-            if low.startswith("shell:appsfolder\\"):
-                subprocess.Popen(["explorer.exe", path], close_fds=True)
-            elif low.endswith(".exe") and os.path.exists(path):
-                subprocess.Popen([path], cwd=os.path.dirname(path), close_fds=True)
-            else:
-                os.startfile(path)
+            from external_launch import launch
+            launch(path)
         except Exception:
             log("启动失败，尝试 os.startfile: " + traceback.format_exc())
             try:
-                os.startfile(path)
+                from external_launch import startfile
+                startfile(path)
             except Exception:
                 log("启动彻底失败: " + traceback.format_exc())
 
@@ -1845,9 +1827,13 @@ class Dock(QWidget):
         if self.tray:
             m.addAction('设置…').triggered.connect(runtime.show_settings if runtime else self.tray.show_settings)
             m.addAction('应用批量管理…').triggered.connect(runtime.show_batch if runtime else self.tray.importer.show)
+            if runtime:
+                notes=m.addMenu('便签卡片')
+                notes.addAction('新建便签').triggered.connect(runtime.notes.new)
+                notes.addAction('便签管理与搜索…').triggered.connect(runtime.notes.manage)
             m.addSeparator()
         m.addAction('隐藏 Dock').triggered.connect(lambda: runtime.set_dock_visible(False) if runtime else self.hide())
-        m.addAction("退出").triggered.connect(QApplication.instance().quit)
+        m.addAction("退出").triggered.connect(lambda: runtime.request_exit() if getattr(getattr(self,'tray',None),'runtime',None) else QApplication.instance().quit())
         return m
 
     def edit_icon(self, index):
@@ -2223,7 +2209,7 @@ class Dock(QWidget):
         self.base_icon = int(self.cfg["icon_size"])
         self.ui_mult = self._ui_mult()
         self.icon_size = self._scaled(self.base_icon)
-        self.font_pt = max(8, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
+        self.font_pt = max(5, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
         self.pad_x = int(self.icon_size * 0.36)
         self.pad_y = int(self.icon_size * 0.34)
         self.icons.clear()
@@ -2504,7 +2490,8 @@ class DockTray(QSystemTrayIcon):
         for name in ("使用说明.txt", "使用说明.md"):
             p = os.path.join(APP_DIR, name)
             if os.path.exists(p):
-                os.startfile(p)
+                from external_launch import startfile
+                startfile(p)
                 return
         QMessageBox.information(None, APP_TITLE, "将应用或快捷方式拖入 Dock，或右键打开应用批量管理、设置。桌面卡片可在设置中开启。")
 

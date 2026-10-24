@@ -1,3 +1,4 @@
+from ui_style import compact_dialog
 """Floating desktop collection windows using the original Dock liquid glass."""
 import ctypes
 import os
@@ -13,6 +14,7 @@ from app_catalog import path_key
 from liquid_glass import paint_liquid_glass, tint_palette
 from appearance_presets import PANEL_PRESETS
 from ui_style import label, button, ModernComboBox, ModernSpinBox, ModernCheckBox
+from dpi_support import metric, minimum, panel_css
 
 
 class CollectionList(QListWidget):
@@ -68,6 +70,7 @@ class DesktopPanel(QDialog):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
         self.manager, self.runtime, self.dock = manager, manager.runtime, manager.dock
         self.identity, self.default_geometry = identity, list(geometry)
+        self.ui_factor = 1.0
         self.disposed = False
         self.restoring = True
         self.collapsed = False
@@ -103,7 +106,7 @@ class DesktopPanel(QDialog):
         body.setContentsMargins(10, 6, 10, 6)
         body.setSpacing(4)
         body.setSizeConstraint(QLayout.SetNoConstraint)
-        header = QHBoxLayout()
+        header = self.header_layout = QHBoxLayout()
         header.setSpacing(4)
         self.title = label('')
         self.title.setObjectName('PanelLabel')
@@ -212,13 +215,24 @@ class DesktopPanel(QDialog):
         return material_palette(tint_palette(self.dock.base_theme_colors(theme), color), self.option('material'))
 
     def apply_options(self):
+        layout=getattr(self.runtime,'layout',None)
+        self.ui_factor=layout.panel_scale(self.identity) if layout else 1.0
+        factor=self.ui_factor
+        self.layout().setContentsMargins(metric(10,factor),metric(6,factor),metric(10,factor),metric(6,factor))
+        self.layout().setSpacing(metric(4,factor))
+        self.header_layout.setSpacing(metric(4,factor))
+        self.content.layout().setSpacing(metric(4,factor))
+        self.footer.setSpacing(metric(4,factor))
+        self.grip.setFixedSize(metric(12,factor,6),metric(12,factor,6))
+        self.notice.setStyleSheet('font-size:%dpx;'%metric(11,factor,6))
         view = self.model.get('view','small')
         self.list.setViewMode(QListWidget.ListMode if view=='list' else QListWidget.IconMode)
-        self.list.setIconSize(QSize(22,22) if view=='list' else QSize(54,54) if view=='large' else QSize(34,34))
+        icon=metric(22 if view=='list' else 54 if view=='large' else 34,factor,12)
+        self.list.setIconSize(QSize(icon,icon))
         # Reset explicit IconMode properties: a zero grid makes list rows overlap.
         self.list.setFlow(QListWidget.TopToBottom if view=='list' else QListWidget.LeftToRight)
         self.list.setWrapping(view!='list')
-        self.list.setGridSize(QSize() if view=='list' else QSize(108,102) if view=='large' else QSize(78,78))
+        self.list.setGridSize(QSize() if view=='list' else QSize(metric(108,factor),metric(102,factor)) if view=='large' else QSize(metric(78,factor),metric(78,factor)))
         self.list.setSpacing(0)
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -228,13 +242,13 @@ class DesktopPanel(QDialog):
         if self.collapsed:
             self.set_collapsed_geometry(True)
         else:
-            self.setMinimumSize(260, 156)
+            self.setMinimumSize(*minimum(factor))
             self.setMaximumSize(16777215, 16777215)
             if self.option('locked'): self.setFixedSize(self.size())
         colors = self.colors()
         ink = colors['fg'].name()
         search_background = 'transparent' if self.is_clear() else 'rgba(128,128,128,20)'
-        self.setStyleSheet('''QDialog#DesktopPanel, QWidget#PanelContent {background:transparent;}
+        self.setStyleSheet(panel_css('''QDialog#DesktopPanel, QWidget#PanelContent {background:transparent;}
             QLabel#PanelLabel, QListWidget#PanelFiles, QLineEdit#PanelSearch, QPushButton#PanelButton, QTabBar#PanelTabs {color:%s;}
             QTabBar#PanelTabs::tab {padding:5px 8px; margin:0; border-bottom:2px solid transparent;}
             QTabBar#PanelTabs::tab:selected {border-bottom-color:rgba(128,128,128,140);}
@@ -246,7 +260,7 @@ class DesktopPanel(QDialog):
             QPushButton#PanelButton {background:transparent; border:0; padding:0; min-height:24px; max-width:26px; min-width:26px;}
             QPushButton#PanelButton:hover {background:rgba(128,128,128,40);}
             QLineEdit#PanelSearch {background:%s; border:0; padding:3px 8px; min-height:20px;}
-        ''' % (ink, search_background))
+        ''' % (ink, search_background),factor)+'''QLabel#PanelLabel, QLineEdit#PanelSearch, QListWidget#PanelFiles, QPushButton#PanelButton, QTabBar#PanelTabs {font-size:%dpx;}'''%metric(13,factor,7))
         palette = self.query.palette()
         palette.setColor(QPalette.PlaceholderText, QColor('#5c626c' if colors['light'] else '#b4b8c0'))
         self.query.setPalette(palette)
@@ -274,7 +288,7 @@ class DesktopPanel(QDialog):
         self.list.clear()
         for row in rows:
             item = QListWidgetItem(QIcon(self.dock.icons.get(row['path'], 64)), row['name'])
-            if self.model.get('view')=='list': item.setSizeHint(QSize(80,34))
+            if self.model.get('view')=='list': item.setSizeHint(QSize(metric(80,self.ui_factor),metric(34,self.ui_factor,18)))
             item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
             item.setData(Qt.UserRole, row)
             self.list.addItem(item)
@@ -293,7 +307,7 @@ class DesktopPanel(QDialog):
         self.layout().activate()
         grid = self.list.gridSize()
         list_view = self.model.get('view')=='list'
-        if list_view: grid = QSize(max(1,self.list.width()),34)
+        if list_view: grid = QSize(max(1,self.list.width()),metric(34,self.ui_factor,18))
         available = (QApplication.screenAt(self.pos()) or QApplication.primaryScreen()).availableGeometry()
         limit = min(available.height(), max(240, self.bounds()[3]))
         margins = self.layout().contentsMargins()
@@ -311,7 +325,7 @@ class DesktopPanel(QDialog):
             width -= self.style().pixelMetric(self.style().PM_ScrollBarExtent)
             columns = 1 if list_view else max(1, width//grid.width())
             height = chrome + ((count+columns-1)//columns)*grid.height()+2
-        height = max(min(156,available.height()), min(limit, height))
+        height = max(min(minimum(self.ui_factor)[1],available.height()), min(limit, height))
         if height != self.height():
             self.restoring = True
             self.resize(self.width(), height)
@@ -466,16 +480,16 @@ class DesktopPanel(QDialog):
         geometry = self.bounds()
         self.move(geometry[0], geometry[1])
         if collapsed:
-            width = geometry[2] if self.option('collapse_style') == 'bar' else max(180, round(geometry[2]*self.option('capsule_ratio')/100))
+            width = geometry[2] if self.option('collapse_style') == 'bar' else max(metric(180,self.ui_factor,100), round(geometry[2]*self.option('capsule_ratio')/100))
             screen = QApplication.screenAt(self.pos()) or QApplication.primaryScreen()
-            self.setFixedSize(min(width, screen.availableGeometry().width()), 44)
+            self.setFixedSize(min(width, screen.availableGeometry().width()), metric(44,self.ui_factor,24))
         else:
             screen = QApplication.screenAt(self.pos()) or QApplication.primaryScreen()
             available = screen.availableGeometry()
             self.resize(min(geometry[2], available.width()), min(geometry[3], available.height()))
             self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
                       max(available.top(), min(self.y(), available.bottom()+1-self.height())))
-            self.setMinimumSize(min(260,available.width()), min(156,available.height()))
+            self.setMinimumSize(min(minimum(self.ui_factor)[0],geometry[2],available.width()), min(minimum(self.ui_factor)[1],geometry[3],available.height()))
             if self.option('locked'): self.setFixedSize(self.size())
         screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
         available = screen.availableGeometry()
@@ -622,7 +636,7 @@ class DesktopPanel(QDialog):
         try:
             # Exclude all collection windows and Dock, so overlapping panels never
             # recursively photograph each other's glass or icons.
-            for window in [self.dock]+list(self.manager.windows.values()):
+            for window in [self.dock]+list(self.manager.windows.values())+list(getattr(getattr(self.runtime,'notes',None),'windows',{}).values()):
                 if window.isVisible() and user.SetWindowDisplayAffinity(int(window.winId()), 0x11):
                     excluded.append(int(window.winId()))
             if int(self.winId()) not in excluded: return
@@ -646,7 +660,7 @@ class DesktopPanel(QDialog):
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         shape = QPainterPath()
         radius = 22 if self.collapsed and self.option('collapse_style') == 'capsule' else (8 if self.collapsed else 18)
-        shape.addRoundedRect(rect, radius, radius)
+        shape.addRoundedRect(rect, radius*self.ui_factor, radius*self.ui_factor)
         colors = self.colors()
         highlight = self.option('highlight')/45
         colors['border'].setAlpha(min(255, round(colors['border'].alpha()*highlight)))
@@ -754,6 +768,7 @@ class PanelOptions(QDialog):
             signal.connect(self.customized)
         self.color.textChanged.connect(self.customized)
         self.fields['material'].currentIndexChanged.connect(self.material_changed)
+        compact_dialog(self)
 
     def material_changed(self):
         if not self.applying_preset and self.fields['material'].currentData()!='clear' and self.fields['opacity'].value()==0 and self.fields['highlight'].value()==0:

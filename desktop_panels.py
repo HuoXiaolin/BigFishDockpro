@@ -26,6 +26,8 @@ class DesktopPanels(QObject):
         self.icons = DesktopIcons(preview=testing, journal_path=None if testing else
                                   os.path.join(runtime.api.CONFIG_DIR, 'desktop_visibility.json'))
         self.icons.setParent(self)
+        from desktop_item_visibility import CollectedDesktopItems
+        self.collected_icons=CollectedDesktopItems(self.roots, None if testing else os.path.join(runtime.api.CONFIG_DIR,'desktop_items_visibility.json'))
         self.watcher = QFileSystemWatcher(self)
         self.watcher.directoryChanged.connect(self.schedule_scan)
         self.scan_timer = QTimer(self)
@@ -78,7 +80,7 @@ class DesktopPanels(QObject):
         if self.worker:
             self.scan_again = True
             return
-        self.worker = DesktopScan(self.roots)
+        self.worker = DesktopScan(self.roots, included_hidden=list(self.collected_icons.records))
         self.worker.ready.connect(self.scanned)
         self.worker.start()
 
@@ -197,8 +199,16 @@ class DesktopPanels(QObject):
         self.active_window = active or None
         layout=getattr(self.runtime,'layout',None)
         if layout:layout.ensure_profiles()
-        self.icons.set_enabled(self.shown and self.cfg['panel_enabled'] and not self.blocked
-                               and any(window.isVisible() for window in self.windows.values()))
+        active=(self.shown and self.cfg['panel_enabled'] and not self.blocked
+                and any(window.isVisible() for window in self.windows.values()))
+        mode=self.cfg.get('desktop_icon_mode','hide_all')
+        self.icons.set_enabled(active and mode=='hide_all')
+        if active and mode=='collected' and self.collected_icons.journal:
+            paths=[row['path'] for model in enabled for row in self.rows(model['id'])]
+            self.collected_icons.apply(paths)
+        else:self.collected_icons.restore()
+        if self.collected_icons.message:self.status(self.collected_icons.message)
+
 
     def rows(self, identity):
         model = self.model(identity)
@@ -361,8 +371,13 @@ class DesktopPanels(QObject):
 
     def reposition(self):
         for window in self.windows.values():
-            window.set_collapsed_geometry(window.collapsed)
-            window.resize_timer.stop()
+            window.restoring=True
+            try:
+                window.apply_options()
+                window.set_collapsed_geometry(window.collapsed)
+                window.manual_resize=False
+                window.resize_timer.stop()
+            finally:window.restoring=False
 
     def close(self):
         if self.closed: return
@@ -381,6 +396,7 @@ class DesktopPanels(QObject):
         if panels != self.cfg['desktop_panels']: self.commit(desktop_panels=panels)
         self.closed = True
         self.icons.close()
+        self.collected_icons.close()
         self.scan_timer.stop()
         if self.watcher.directories(): self.watcher.removePaths(self.watcher.directories())
         if self.worker: self.worker.close()

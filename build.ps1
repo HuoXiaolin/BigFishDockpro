@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$Toolchain = 'D:\Agant\toolchain',
     [string]$Iscc = '',
     [switch]$Deliver,
@@ -14,7 +14,14 @@ if (-not (Test-Path -LiteralPath $taskPython)) { throw 'Run bootstrap.ps1 first.
 if (-not (Test-Path -LiteralPath $Iscc)) { throw "Missing shared Inno Setup compiler: $Iscc" }
 New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 $taskLock = [IO.File]::Open((Join-Path $PSScriptRoot 'artifacts\release.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+$taskPriorFixture = $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE
 try {
+    $taskGcc = Join-Path $Toolchain 'mingw\mingw64\bin\gcc.exe'
+    if (Test-Path -LiteralPath $taskGcc) {
+        & $taskGcc -static -municode native_launch_probe.c -o artifacts/native_launch_probe.exe
+        if ($LASTEXITCODE -ne 0) { throw 'Native launch fixture compilation failed' }
+        $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = (Resolve-Path -LiteralPath artifacts/native_launch_probe.exe).Path
+    }
     $taskVersion = & $taskPython release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
     & $taskPython run_isolated_test.py --target dock.py --timeout 100 --output artifacts/source-test
@@ -51,4 +58,4 @@ try {
         & $taskPython release_tools.py deliver --source $SourceDirectory --release $ReleaseDirectory
         if ($LASTEXITCODE -ne 0) { throw 'Delivery verification failed' }
     }
-} finally { $taskLock.Dispose() }
+} finally { $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = $taskPriorFixture; $taskLock.Dispose() }

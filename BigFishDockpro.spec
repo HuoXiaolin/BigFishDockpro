@@ -36,6 +36,6 @@ exe = EXE(pyz, a.scripts, *( [a.binaries, a.datas] if single_file else [[]] ),
           exclude_binaries=not single_file,
           name='BigFishDockpro',
           debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
-          console=False, icon=str(root / 'dock.ico'), version=str(root / 'artifacts/generated/version_info.txt'))
+          console=False, manifest=str(root/'BigFishDockpro.manifest'), icon=str(root / 'dock.ico'), version=str(root / 'artifacts/generated/version_info.txt'))
 if not single_file:
     coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='BigFishDockpro')

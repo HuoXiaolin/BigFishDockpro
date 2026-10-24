@@ -1,3 +1,4 @@
+from ui_style import compact_dialog, compact_px
 """Edit one pinned Dock entry without changing the underlying shortcut/file."""
 import copy
 import os
@@ -56,6 +57,7 @@ class IconSettings(QDialog):
         self.icon.textChanged.connect(self.refresh_preview)
         self.path.editingFinished.connect(self.refresh_preview)
         self.refresh_preview()
+        compact_dialog(self)
 
     def refresh_preview(self):
         custom = self.icon.text().strip()

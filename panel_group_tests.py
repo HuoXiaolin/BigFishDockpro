@@ -285,7 +285,7 @@ def run(api,runtime,root,output,checks):
                 app.processEvents()
                 app.setActiveWindow(settings);combo.setFocus()
                 combo.showPopup();app.processEvents()
-                assert combo.view().isVisible() and combo.view().sizeHintForRow(0)>=30, (number,combo.currentText(),combo.view().isVisible(),combo.view().sizeHintForRow(0),type(combo.view().itemDelegate()),settings.isVisible(),settings.isMinimized(),combo.isVisible(),combo.isEnabled())
+                assert combo.view().isVisible() and combo.view().sizeHintForRow(0)>=combo.view().fontMetrics().height()+4, (number,combo.currentText(),combo.view().isVisible(),combo.view().sizeHintForRow(0),type(combo.view().itemDelegate()),settings.isVisible(),settings.isMinimized(),combo.isVisible(),combo.isEnabled())
                 if number<3:combo.view().window().grab().save(str(Path(output)/('popup-%s-%d.png'%(theme,number))))
                 from PyQt5.QtGui import QKeyEvent
                 from PyQt5.QtCore import QEvent

@@ -29,6 +29,8 @@ class RuntimeController:
         app = QApplication.instance()
         app.aboutToQuit.connect(self.close)
         from screen_layout import DisplayLayout
+        from sticky_notes import NotesManager
+        self.notes=NotesManager(self)
         self.layout = DisplayLayout(self)
         self.apply_settings()
         if self.dock.cfg.get('runtime_lite'): self.set_lite(True, persist=False)
@@ -109,6 +111,7 @@ class RuntimeController:
                 self.panels.set_lite(False)
                 self.dock.cfg['lite_restore'] = {}
                 self.api.save_config(self.dock.cfg)
+        self.notes.set_lite()
         self.dock._recalc(uniform=True)
         self.dock._kick()
         self.tray.setToolTip('大肥鱼Dock · '+('精简模式' if self.lite else '完整模式'))
@@ -196,6 +199,7 @@ class RuntimeController:
                 self.dock.proc_timer.start(8000)
         self.game_active = active
         self.panels.set_blocked(active)
+        self.notes.sync()
         self.refresh_corners()
 
     def apply_settings(self):
@@ -203,15 +207,25 @@ class RuntimeController:
             self.set_lite(False)
         self.tray.setVisible(not self.dock.cfg['hide_tray'])
         self.panels.apply_settings()
+        self.notes.sync()
         self.configure_fullscreen_timer()
         self.apply_visibility()
         self.refresh_corners()
         set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
         if not self.settings_open: self.arm_lite()
 
+    def request_exit(self):
+        if not self.notes.flush() and not self.notes.backup():
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(None,'便签尚未保存','无法保存便签或恢复备份。请先复制内容或修复数据目录，再退出。')
+            return False
+        QApplication.instance().quit()
+        return True
+
     def close(self):
         if self.closed: return
         self.closed = True
+        self.notes.close()
         self.layout.close()
         if not self.game_active: self.dock.cfg['dock_visible'] = self.dock.isVisible()
         self.dock.cfg['runtime_lite'] = self.lite

@@ -1,3 +1,4 @@
+from ui_style import compact_dialog
 """Panel group switches, merged navigation and non-exclusive file format rules."""
 import copy
 from PyQt5.QtCore import Qt
@@ -24,6 +25,8 @@ class PanelDefinition(QDialog):
         body.addWidget(label('格式规则作用于桌面内容，也识别快捷方式目标格式。同一文件可以同时出现在默认分组和多个自定义面板中，原文件保持原位。','muted'))
         self.status=label('','muted');body.addWidget(self.status)
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('取消',self.reject));actions.addWidget(button('确定',self.validate,'primary'));body.addLayout(actions)
+
+        compact_dialog(self)
 
     def extensions(self): return parse_extensions(self.formats.text())
 
@@ -61,6 +64,8 @@ class GroupDialog(QDialog):
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存分组',self.commit,'primary'));body.addLayout(actions)
         self.populate()
         self.list.setCurrentRow(0)
+
+        compact_dialog(self)
 
     def select_member(self, current, previous=None):
         self.member.blockSignals(True)

@@ -1,5 +1,6 @@
 """Verify the actual application entry point without touching personal data."""
 import json
+import os
 import time
 from pathlib import Path
 
@@ -36,6 +37,8 @@ class StartupProbe:
         import traceback
         try:
             dock, tray, runtime = state['dock'], state['tray'], state['runtime']
+            from dpi_support import awareness
+            assert awareness()==2 and awareness(int(dock.winId()))==2 and dock.ui_mult==1.0
             if self.fresh:
                 assert dock.isVisible() and not dock.cfg['panel_enabled']
                 assert not runtime.panels.windows and not runtime.lite and tray.isVisible()
@@ -66,6 +69,24 @@ class StartupProbe:
                       'fresh profile: visible Dock, cards disabled, tray visible, modern drag/context guidance' if self.fresh else 'login start restores visible Dock, hidden tray, lite mode and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
                       'actual settings-open wake and finished-signal starts 60-second timer'],
                       'elapsed_seconds':round(elapsed,2)}
+            fixture=os.environ.get('FISHDOCK_EXIT_LAUNCH_FIXTURE')
+            if fixture:
+                from external_launch import launch
+                from desktop_panel_tests import wait_for
+                import sys
+                process=launch(fixture)
+                report=Path(fixture+'.library.txt')
+                wait_for(QApplication.instance(),lambda:report.exists() and report.stat().st_size>0,6)
+                library=report.read_text(encoding='utf-8')
+                assert not Path(library).resolve().is_relative_to(Path(sys._MEIPASS).resolve()),library
+                assert process.poll() is None
+                result['exit_cleanup']={'directory':sys._MEIPASS,'child_pid':process.pid,'library':library,'fixture':fixture}
+                result['checks'].append('external native child remains alive using runtime outside this onefile payload before actual GUI quit')
+                identity=runtime.notes.new()
+                assert identity
+                runtime.notes.windows[identity].editor.insertPlainText('退出前待保存的演示便签')
+                assert runtime.notes.pending
+                result['exit_note']={'id':identity,'configuration':str(self.output/'test-config/config.json'),'text':'退出前待保存的演示便签'}
         except Exception:
             result = {'passed':False, 'error':traceback.format_exc()}
         (self.output/'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2),encoding='utf-8')

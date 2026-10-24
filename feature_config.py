@@ -2,12 +2,13 @@
 import re
 DEFAULTS = {
     'display_layout': {},
+    'notes_enabled': False, 'notes_visible': True, 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
     'dock_visible': True, 'panels_visible': True, 'runtime_lite': False, 'hide_tray': False,
     'dock_page': 0, 'merged_panels': False, 'merged_active': '', 'merged_geometry': [],
     'merged_collapsed': False, 'merged_compact': True, 'disabled_categories': [], 'lite_restore': {},
     'screen_corners': False, 'corner_radius': 28,
     'lite_enabled': True,
-    'panel_enabled': False, 'panel_opacity': 38, 'panel_blur': 8,
+    'desktop_icon_mode': 'hide_all', 'panel_enabled': False, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
     'panel_collapse_style': 'capsule', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
@@ -42,7 +43,9 @@ def normalize(cfg):
                          ('dock_material', tuple(value for _,value in MATERIALS)),
                          ('panel_collapse_style', ('bar', 'capsule')),
                          ('panel_theme', ('auto', 'light', 'dark')),
-                         ('startup_priority', ('low', 'normal', 'high'))]:
+                         ('desktop_icon_mode', ('both', 'collected', 'hide_all')),
+                         ('note_style', ('glass', 'paper', 'plain')),
+                           ('startup_priority', ('low', 'normal', 'high'))]:
         if result[key] not in allowed:
             result[key] = DEFAULTS[key]
     for key, value in DEFAULTS.items():
@@ -64,6 +67,9 @@ def normalize(cfg):
     for key in ('theme_color', 'panel_color'):
         color = str(result.get(key) or '').strip()
         result[key] = color.lower() if re.fullmatch(r'#[0-9a-fA-F]{6}', color) else ''
+    from sticky_notes_store import normalize_notes
+    result['sticky_notes']=normalize_notes(result.get('sticky_notes',[]))
+    result['notes_trash']=normalize_notes(result.get('notes_trash',[]),limit=32)
     from screen_layout import normalize_layout
     result['display_layout']=normalize_layout(result.get('display_layout'))
     from desktop_catalog import normalize_desktop

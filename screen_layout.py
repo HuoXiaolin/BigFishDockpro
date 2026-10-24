@@ -10,6 +10,8 @@ def valid_record(value):
         if not isinstance(raw,list) or len(raw)!=4 or not all(type(n) is int and abs(n)<=1000000 for n in raw) or not 0<raw[2]<=131072 or not 0<raw[3]<=131072:return {}
         result[field]=list(raw)
     result['screen']=str(value.get('screen',''))[:240]
+    ui=value.get('ui_scale')
+    if type(ui) in (int,float) and 0.125<=ui<=8:result['ui_scale']=float(ui)
     return result
 
 
@@ -36,24 +38,29 @@ def choose_screen(record,screens):
     return next((screen for screen in screens if screen['screen']==record.get('screen')),screens[0]) if screens else None
 
 
-def capture(rect,screens):
+def capture(rect,screens,ui_scale=1.0):
     if not screens:return {}
     cx,cy=rect[0]+rect[2]/2,rect[1]+rect[3]/2
     def distance(screen):
         x,y,w,h=screen['area']
         return max(x-cx,0,cx-x-w)**2+max(y-cy,0,cy-y-h)**2
     screen=min(screens,key=distance)
-    return dict(screen=screen['screen'],area=list(screen['area']),rect=list(rect))
+    result=dict(screen=screen['screen'],area=list(screen['area']),rect=list(rect))
+    if ui_scale!=1.0:result['ui_scale']=float(ui_scale)
+    return result
 
 
 def scale(record,target):
     return min(target['area'][2]/record['area'][2],target['area'][3]/record['area'][3]) if record and target else 1.0
 
 
-def project(record,screens,minimum=(260,156)):
+def project(record,screens,minimum=None):
     target=choose_screen(record,screens)
     if not record or not target:return None
     bx,by,bw,bh=record['area'];x,y,w,h=record['rect'];tx,ty,tw,th=target['area']
+    if minimum is None:
+        from dpi_support import minimum as minimum_size
+        minimum=minimum_size(scale(record,target)*record.get('ui_scale',1.0))
     factor=min(max(scale(record,target),minimum[0]/w,minimum[1]/h),tw/w,th/h)
     nw=max(1,round(w*factor));nh=max(1,round(h*factor))
     # Preserve edge/centre anchoring within the available travel area.
@@ -100,9 +107,15 @@ class DisplayLayout:
     def panel_bounds(self,identity,fallback):
         return project(self.record(identity),self.screens()) or list(fallback)
 
+    def panel_scale(self,identity):
+        record=self.record(identity)
+        projected=project(record,self.screens())
+        return projected[2]/record['rect'][2]*record.get('ui_scale',1.0) if record and projected else 1.0
+
     def panel_update(self,identity,rect):
         state=copy.deepcopy(self.dock.cfg.get('display_layout',{}))
-        record=capture(rect,self.screens())
+        window=self.runtime.panels.windows.get(identity)
+        record=capture(rect,self.screens(),getattr(window,'ui_factor',1.0))
         if self.runtime.panels.is_merged(identity):state['merged']=record
         else:state.setdefault('panels',{})[identity]=record
         return state
@@ -142,6 +155,7 @@ class DisplayLayout:
         try:
             self.update_dock()
             self.runtime.panels.reposition()
+            if getattr(self.runtime,'notes',None):self.runtime.notes.reposition()
             self.runtime.refresh_corners()
         finally:self.applying=False;self.pending=False
         self.ensure_profiles()

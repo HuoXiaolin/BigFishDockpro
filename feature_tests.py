@@ -373,6 +373,59 @@ def run(api, dock, tray, root, output, checks):
     run_group_tests(api, runtime, root, output, checks)
     from material_tests import run as run_material_tests
     run_material_tests(api,runtime,output,checks)
+    from config_transfer_tests import run as run_transfer_tests
+    run_transfer_tests(api,runtime,root,output,checks)
+    from running_apps_tests import run as run_running_tests
+    run_running_tests(api,runtime,root,output,checks)
+    from external_launch_tests import run as run_external_tests
+    run_external_tests(api,runtime,root,output,checks)
+    from desktop_visibility_tests import run as run_visibility_tests
+    run_visibility_tests(api,runtime,root,output,checks)
+    from sticky_notes_tests import run as run_notes_tests
+    run_notes_tests(api,runtime,root,output,checks)
+    # Fresh default geometry, reopen and theme changes must not accumulate scaling.
+    from settings_dialog import SettingsDialog
+    from ui_style import compact_dialog
+    from PyQt5.QtCore import QPoint, QSize
+    dense=SettingsDialog(runtime.tray,api)
+    try:
+        assert dense.size()==QSize(560,448), dense.size()
+        dense.reveal();app.processEvents()
+        assert dense.width()<=570 and dense.height()<=458, dense.size()
+        original_size=dense.size()
+        for theme in ('light','dark'):
+            apply_theme(app,theme=='light');compact_dialog(dense);app.processEvents()
+            assert dense.size()==original_size,(theme,dense.size(),original_size)
+            for number in range(dense.tabs.count()):
+                dense.tabs.setCurrentIndex(number);app.processEvents()
+                scroll=dense.tabs.pages.currentWidget()
+                for edge in (0,scroll.verticalScrollBar().maximum()):
+                    scroll.verticalScrollBar().setValue(edge);app.processEvents()
+                dense.grab().save(str(output/('settings-density-%s-%d.png'%(theme,number))))
+            assert dense.save.width()>=dense.save.fontMetrics().horizontalAdvance(dense.save.text())+8
+            spin=dense.fields['dock_highlight']
+            dense.tabs.setCurrentIndex(0);app.processEvents()
+            assert spin.plus.geometry().right()<spin.width() and spin.minus.geometry().left()>0
+            assert not spin.plus.geometry().intersects(spin.minus.geometry())
+            runtime.tray.rebuild();menu=runtime.tray.menu
+            menu.popup(QPoint(40,40));app.processEvents()
+            assert menu.width()<=190 and menu.height()<=230,menu.size()
+            for action in menu.actions():
+                if action.isSeparator():continue
+                assert menu.actionGeometry(action).height()>=menu.fontMetrics().height()+4
+                assert menu.fontMetrics().horizontalAdvance(action.text())+40<=menu.width(),action.text()
+                if action.menu():
+                    submenu=action.menu();submenu.popup(QPoint(250,40));app.processEvents()
+                    assert submenu.width()<=300
+                    submenu.hide()
+            menu.grab().save(str(output/('menu-density-'+theme+'.png')));menu.hide()
+        dense.reject();dense.reveal();app.processEvents()
+        assert dense.size()==original_size
+        assert runtime.dock.cfg['icon_size']==api.load_config()['icon_size']
+        checks.append('compact interface: default settings 560x448 (49 percent former area), all six pages in both themes, menu/submenu text and row hitboxes, spin button separation, save text, reopen/theme idempotence; Dock/card configuration unchanged')
+    finally:
+        dense.reject();runtime.updater.changed.disconnect(dense.update_changed);dense.deleteLater()
+        apply_theme(app,runtime.dock.is_light())
     from screen_layout_tests import run as run_layout_tests
     run_layout_tests(api,runtime,root,output,checks)
     runtime.close()

@@ -50,7 +50,8 @@ def desktop_roots():
     return list(dict.fromkeys(roots))
 
 
-def scan_desktop(roots, cancelled=lambda: False):
+def scan_desktop(roots, cancelled=lambda: False, included_hidden=()):
+    included_hidden=set(included_hidden)
     rows, errors, seen = [], [], set()
     for root in roots:
         if cancelled(): break
@@ -63,7 +64,8 @@ def scan_desktop(roots, cancelled=lambda: False):
                     try:
                         # Respect hidden/system files; don't recurse into folders or junctions.
                         info = entry.stat(follow_symlinks=False)
-                        if getattr(info, 'st_file_attributes', 0) & 6: continue
+                        attrs=getattr(info,'st_file_attributes',0)
+                        if attrs&4 or (attrs&2 and path_key(entry.path) not in included_hidden):continue
                         key = path_key(entry.path)
                         if key not in seen:
                             seen.add(key)
@@ -168,16 +170,17 @@ def normalize_desktop(cfg):
 class DesktopScan(QObject):
     ready = pyqtSignal(object, object)
 
-    def __init__(self, roots):
+    def __init__(self, roots, included_hidden=()):
         super().__init__()
         self.roots = list(roots)
+        self.included_hidden=tuple(included_hidden)
         self.cancelled = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def start(self): self.thread.start()
 
     def run(self):
-        rows, errors = scan_desktop(self.roots, self.cancelled.is_set)
+        rows, errors = scan_desktop(self.roots, self.cancelled.is_set, self.included_hidden)
         if not self.cancelled.is_set(): self.ready.emit(rows, errors)
 
     def close(self):

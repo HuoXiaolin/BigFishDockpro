@@ -36,6 +36,9 @@ def run(output):
         app = QApplication.instance() or QApplication(['BigFishDockpro test'])
         app.setQuitOnLastWindowClosed(False)
         apply_theme(app, True)
+        from dpi_support import awareness
+        assert awareness()==2
+        checks.append('DPI startup: GUI thread is per-monitor aware before native windows, Qt high-DPI attributes and fractional scaling configured')
         with tempfile.TemporaryDirectory(prefix='fishdock-test-') as root:
             api.CONFIG_DIR = root
             api.CONFIG_PATH = os.path.join(root, 'config.json')
@@ -49,6 +52,7 @@ def run(output):
                 files.append(str(path))
             cfg = dict(api.DEFAULT_CONFIG, items=[])
             dock = api.Dock(cfg, preview=True)
+            assert awareness(int(dock.winId()))==2
             tray = api.DockTray(dock)
             dock.tray = tray
             importer = tray.importer = BatchImporter(dock, tray, api.save_config)

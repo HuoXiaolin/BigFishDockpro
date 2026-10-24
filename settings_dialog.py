@@ -1,10 +1,12 @@
+from ui_style import compact_dialog, compact_px
 """Settings for existing upstream features; edits apply only on Save."""
 import os
+import copy
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QSpinBox, QCheckBox, QComboBox, QScrollArea, QApplication, QLineEdit, QColorDialog,
-    QListWidget, QStackedWidget, QSizePolicy)
+    QListWidget, QStackedWidget, QSizePolicy, QFileDialog)
 from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
@@ -36,7 +38,7 @@ class SettingsPages(QWidget):
     def setCurrentIndex(self, index): self.nav.setCurrentRow(index)
 
     def resizeEvent(self, event):
-        self.nav.setFixedWidth(118 if self.width() < 620 else 132)
+        self.nav.setFixedWidth(compact_px(118 if self.width() < compact_px(620) else 132))
         super().resizeEvent(event)
 
 
@@ -47,6 +49,7 @@ class SettingsDialog(QDialog):
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
         self.fields = {}
+        self.import_candidate=None;self.import_path=None
         self.applying_dock_preset = False
         self.setWindowTitle('设置 · 大肥鱼Dock')
         self.resize(800, 640)
@@ -101,6 +104,8 @@ class SettingsDialog(QDialog):
         self.check(panel, 'panel_auto_hide', '默认鼠标离开后自动收起')
         self.combo(panel, 'panel_collapse_style', '默认收起形状', [('胶囊', 'capsule'), ('方条', 'bar')])
         self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
+        self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('仅隐藏已收纳项目', 'collected'), ('隐藏全部桌面图标', 'hide_all')])
+        panel.addRow(label('同时显示时，可直接将桌面图标拖入卡片。按项隐藏会临时设置桌面文件的隐藏属性，移出收纳、隐藏卡片或退出后恢复；不会移动或删除文件。若系统开启显示隐藏项目，图标可能显示为半透明。', 'muted'))
         panel.addRow(label('这里设置面板默认外观；材质决定表面质感，颜色模式决定明暗，主题色只控制配色。各面板可独立覆盖。', 'muted'))
         panel.addRow(label('比例相对于面板展开宽度，最窄 180 像素；每个面板的外观设置中可单独调整。方条保持展开宽度。', 'muted'))
         panel.addRow(label('标题处拖动，右下角调整大小；每个面板可独立锁定、设置外观并保存位置。收起仍常驻桌面，点击或悬停展开。沿用 Dock 液态玻璃绘制；模糊不支持时保留半透明。', 'muted'))
@@ -108,12 +113,20 @@ class SettingsDialog(QDialog):
         panel.addRow(button('分组与合并管理', lambda: self.tray.runtime.panels.manage_groups()))
         panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，选择部分卡片合并并在顶部切换，其余卡片独立显示。','muted'))
 
+        panel.addRow(label('便签卡片','section'))
+        self.check(panel,'notes_enabled','启用便签卡片（独立于文件收纳面板）')
+        from sticky_notes_store import STYLES
+        self.combo(panel,'note_style','新便签默认样式',STYLES)
+        panel.addRow(button('新建便签',self.new_note))
+        panel.addRow(button('便签管理与搜索',lambda:self.tray.runtime.notes.manage()))
+        panel.addRow(label('每张便签可单独选择液态玻璃、经典纸张、极简纯色。支持文字格式、待办、自动保存、搜索、置顶、锁定和收起；删除后可从最近删除恢复。内容保存在本机，配置导出会包含便签。','muted'))
+
         apps = self.section('应用管理')
         apps.addRow(label('Dock 的应用批量管理独立保留；桌面收纳面板不再与 Dock 共用列表。', 'muted'))
         apps.addRow(button('打开应用批量管理', self.open_batch))
         self.check(apps, 'reorder', '允许拖动 Dock 图标排序')
         self.check(apps, 'running_dots', '显示 Dock 应用的运行标记')
-        apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。启用面板后自动隐藏系统桌面图标，关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
+        apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。桌面图标可选择同时显示、仅隐藏已收纳项目或全部隐藏；关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
 
         running = self.section('启动与运行')
         self.check(running, 'lite_enabled', '启用自动精简：关闭设置 1 分钟后进入')
@@ -164,16 +177,25 @@ class SettingsDialog(QDialog):
         info.addRow('平台', label('Windows 10 / 11 · x64'))
         info.addRow('第三方许可', label('PyQt5 GPLv3；Qt、Python 等许可见发行文件 licenses。'))
         self.project = label('')
-        self.project.setOpenExternalLinks(True)
+        self.project.setOpenExternalLinks(False)
+        self.project.linkActivated.connect(lambda url: self.tray.dock.launch(url))
         info.addRow('项目地址', self.project)
         upstream = label('<a href="https://github.com/WKaleXD/iOS-style-Dock">查看原始基础项目</a>')
-        upstream.setOpenExternalLinks(True)
+        upstream.setOpenExternalLinks(False)
+        upstream.linkActivated.connect(lambda url: self.tray.dock.launch(url))
         info.addRow('基础项目', upstream)
         path = label(api.CONFIG_DIR)
         path.setTextInteractionFlags(Qt.TextSelectableByMouse)
         info.addRow('数据目录', path)
-        info.addRow(label('config.json 保存 Dock、桌面收纳记录与面板布局；dock.log 为日志。desktop_visibility.json 是临时图标恢复记录，正常退出会清除。卸载默认保留个人配置。', 'muted'))
+        info.addRow(label('config.json 保存 Dock、桌面收纳记录与面板布局；dock.log 为日志。desktop_visibility.json 等保存桌面显示恢复记录，正常退出会清除。卸载默认保留个人配置。', 'muted'))
         info.addRow(button('打开数据目录', self.open_data))
+        transfer=QHBoxLayout()
+        transfer.addWidget(button('导入配置…',self.import_configuration))
+        transfer.addWidget(button('导出配置…',self.export_configuration))
+        info.addRow('配置迁移',transfer)
+        self.transfer_help='导出已保存的应用、卡片、便签正文和偏好；导入先预览，保存后替换当前配置并保留一份导入前备份。应用和桌面文件仅保存路径引用。便签正文包含在导出文件中，请妥善保管。'
+        self.transfer_status=label(self.transfer_help,'muted')
+        info.addRow(self.transfer_status)
         self.status = label('未保存的修改会在关闭时放弃。', 'muted')
         actions = QHBoxLayout()
         actions.setSpacing(10)
@@ -199,6 +221,8 @@ class SettingsDialog(QDialog):
         runtime = getattr(tray, 'runtime', None)
         if runtime:
             runtime.updater.changed.connect(self.update_changed)
+
+        compact_dialog(self)
 
     def section(self, name):
         scroll = QScrollArea()
@@ -290,10 +314,7 @@ class SettingsDialog(QDialog):
     def position_changed(self):
         self.fields['custom_bottom'].setEnabled(self.fields['position'].currentData() == 'custom')
 
-    def reveal(self):
-        link_color = QApplication.palette().color(QPalette.Link).name()
-        self.project.setText('<a style="color:%s" href="%s">BigFishDockpro</a>' % (link_color, PROJECT_URL))
-        cfg = self.tray.cfg
+    def fill_fields(self,cfg):
         self.applying_dock_preset = True
         for key, field in self.fields.items():
             if isinstance(field, QComboBox):
@@ -311,6 +332,14 @@ class SettingsDialog(QDialog):
         self.dock_preset.setCurrentIndex(matching)
         self.dock_preset.blockSignals(False)
         self.position_changed()
+
+    def reveal(self):
+        link_color = QApplication.palette().color(QPalette.Link).name()
+        self.project.setText('<a style="color:%s" href="%s">BigFishDockpro</a>' % (link_color, PROJECT_URL))
+        cfg = self.tray.cfg
+        self.import_candidate=None;self.import_path=None
+        self.transfer_status.setText(self.transfer_help)
+        self.fill_fields(cfg)
         runtime = getattr(self.tray, 'runtime', None)
         if runtime:
             self.update_changed(runtime.updater.message)
@@ -321,17 +350,75 @@ class SettingsDialog(QDialog):
         self.raise_()
         self.activateWindow()
 
+    def import_configuration(self):
+        path,_=QFileDialog.getOpenFileName(self,'导入 BigFishDockpro 配置','','JSON 配置 (*.json);;所有文件 (*)')
+        if path:self.stage_import(path)
+
+    def stage_import(self,path):
+        try:
+            from config_transfer import read_configuration
+            cfg=read_configuration(path,self.api)
+        except (OSError,ValueError,TypeError,RecursionError) as error:
+            self.api.log('导入配置失败: '+str(error))
+            self.status.setText('导入失败，当前配置未更改：'+str(error)[:80]);return False
+        # Runtime-only wake/collapse snapshots belong to this live settings session.
+        for key in ('runtime_lite','lite_restore'):cfg[key]=copy.deepcopy(self.tray.cfg[key])
+        self.fill_fields(cfg);self.import_candidate=cfg;self.import_path=path
+        self.transfer_status.setText('已载入 %d 个 Dock 入口、%d 个卡片、%d 张便签。保存后替换当前配置，关闭则放弃；文件仅保存路径引用，便签包含正文。'%(len(cfg['items']),len(cfg['desktop_panels']),len(cfg['sticky_notes'])))
+        self.status.setText('配置已预览，尚未应用；点击“保存设置”生效。');return True
+
+    def export_configuration(self):
+        path,_=QFileDialog.getSaveFileName(self,'导出 BigFishDockpro 配置','BigFishDockpro-配置.json','JSON 配置 (*.json)')
+        if path:self.export_to(path)
+
+    def export_to(self,path):
+        try:
+            from config_transfer import export_configuration
+            export_configuration(path,self.tray.cfg,self.api)
+        except (OSError,ValueError,TypeError) as error:
+            self.api.log('导出配置失败: '+str(error))
+            self.status.setText('导出失败：'+str(error)[:80]);return False
+        self.status.setText('已导出当前已保存的配置，未保存的修改未包含。');return True
+
+    def apply_imported_state(self):
+        self.api.set_lang(self.tray.cfg['lang'])
+        self.tray.dock._sys_light=self.api.system_is_light()
+        apply_theme(QApplication.instance(),self.tray.dock.is_light())
+        runtime=getattr(self.tray,'runtime',None)
+        if runtime:
+            runtime.panels.shown=self.tray.cfg['panels_visible']
+            runtime.was_dock_visible=self.tray.cfg['dock_visible']
+            runtime.apply_settings()
+            if getattr(runtime,'notes',None):runtime.notes.reload()
+            runtime.layout.apply()
+            self.tray.dock.setVisible(self.tray.cfg['dock_visible'] and not runtime.game_active)
+        else:self.tray.dock.reload()
+        self.tray.dock.apply_layer()
+        importer=getattr(self.tray,'importer',None)
+        if importer and importer.dialog:importer.dialog.render()
+
+    def reject(self):
+        self.import_candidate=None;self.import_path=None
+        self.transfer_status.setText(self.transfer_help)
+        super().reject()
+
     def open_data(self):
         try:
             os.makedirs(self.api.CONFIG_DIR, exist_ok=True)
-            os.startfile(self.api.CONFIG_DIR)
+            from external_launch import startfile
+            startfile(self.api.CONFIG_DIR)
         except OSError as error:
             self.api.log('打开数据目录失败: ' + str(error))
             self.status.setText('无法打开数据目录，请检查目录是否可用。')
 
     def commit(self):
         import re
-        cfg = dict(self.tray.cfg)
+        notes=getattr(getattr(self.tray,'runtime',None),'notes',None)
+        if notes and not notes.flush():
+            self.status.setText('便签尚未保存，请先保存便签后重试。');return
+        imported=self.import_candidate is not None
+        previous=copy.deepcopy(self.tray.cfg)
+        cfg = copy.deepcopy(self.import_candidate) if imported else dict(self.tray.cfg)
         for key, field in self.fields.items():
             cfg[key] = (field.currentData() if isinstance(field, QComboBox) else
                         field.value() if isinstance(field, QSpinBox) else
@@ -345,23 +432,56 @@ class SettingsDialog(QDialog):
         if cfg['update_source'] and not cfg['update_source'].startswith('https://'):
             self.status.setText('更新源必须是 HTTPS 版本清单地址。')
             return
+        backup=None
+        if imported:
+            runtime=getattr(self.tray,'runtime',None)
+            importer=getattr(self.tray,'importer',None)
+            dialog=importer.dialog if importer else None
+            if dialog and (dialog.pending_add or dialog.pending_remove):
+                self.status.setText('请先保存或关闭应用批量管理中的待保存改动，再保存导入配置。');return
+            if runtime and (runtime.layout.pending or not runtime.layout.screens()):
+                self.status.setText('显示器正在切换，请稍后再保存导入配置。');return
+            try:
+                from config_transfer import backup_before_import
+                backup=backup_before_import(self.api,previous,self.import_path)
+            except (OSError,ValueError) as error:
+                self.api.log('配置备份失败: '+str(error))
+                self.status.setText('无法备份当前配置，未导入：'+str(error)[:80]);return
         startup_changed = cfg['autostart'] != self.tray.cfg['autostart']
         if startup_changed and not self.api.set_autostart(cfg['autostart']):
             self.status.setText('启动项保存失败，设置尚未应用。请查看日志。')
             return
         if self.api.save_config(cfg) is False:
-            if startup_changed:
-                self.api.set_autostart(self.tray.cfg['autostart'])
+            if startup_changed and not self.api.set_autostart(self.tray.cfg['autostart']):
+                self.status.setText('配置保存失败，且自启动恢复失败，请检测修复启动项。');return
             self.status.setText('配置保存失败，设置尚未应用。请检查数据目录权限。')
             return
         self.tray.cfg.update(cfg)
-        self.api.set_lang(cfg['lang'])
-        self.tray.dock._sys_light = self.api.system_is_light()
-        apply_theme(QApplication.instance(), self.tray.dock.is_light())
-        self.tray.dock.reload()
-        self.tray.dock.apply_layer()
-        if hasattr(self.tray, 'runtime'):
-            self.tray.runtime.apply_settings()
+        if imported:
+            try:self.apply_imported_state()
+            except Exception as error:
+                self.api.log('导入配置应用失败: '+str(error))
+                self.tray.cfg.clear();self.tray.cfg.update(previous)
+                restored=self.api.save_config(previous)
+                startup_restored=not startup_changed or self.api.set_autostart(previous['autostart'])
+                ui_restored=True
+                try:self.apply_imported_state()
+                except Exception as rollback_error:
+                    ui_restored=False;self.api.log('导入后界面恢复失败: '+str(rollback_error))
+                message='导入应用失败，原配置已恢复，可重新尝试。' if ui_restored else '原配置已恢复，请重启程序以恢复界面。'
+                if not startup_restored:message='原配置已恢复，但自启动恢复失败，请检测修复启动项。'
+                self.status.setText(message if restored else '恢复配置失败，请从导入前备份恢复。')
+                return
+            self.import_candidate=None;self.import_path=None
+            self.transfer_status.setText('导入已保存。导入前备份：'+backup.name+'；可从数据目录重新导入恢复。')
+        else:
+            self.api.set_lang(cfg['lang'])
+            self.tray.dock._sys_light = self.api.system_is_light()
+            apply_theme(QApplication.instance(), self.tray.dock.is_light())
+            self.tray.dock.reload()
+            self.tray.dock.apply_layer()
+            if hasattr(self.tray, 'runtime'):
+                self.tray.runtime.apply_settings()
         self.check_startup()
         self.status.setText('设置已保存并生效，可继续调整。')
 
@@ -386,6 +506,10 @@ class SettingsDialog(QDialog):
         self.check_startup()
         self.startup_status.setText(message)
         self.status.setText(message)
+
+    def new_note(self):
+        identity=self.tray.runtime.notes.new()
+        if identity:self.fields['notes_enabled'].setChecked(True)
 
     def open_batch(self):
         runtime = getattr(self.tray, 'runtime', None)
