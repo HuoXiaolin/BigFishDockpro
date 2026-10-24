@@ -22,7 +22,7 @@ class StartupProbe:
             (self.output/'test-config').mkdir(parents=True,exist_ok=True)
             Path(api.CONFIG_PATH).unlink(missing_ok=True)
             return
-        cfg = dict(api.DEFAULT_CONFIG, items=[], autostart=False, glass=False, running_dots=False,
+        cfg = dict(api.DEFAULT_CONFIG, card_scale=100,settings_size='small', items=[], autostart=False, glass=False, running_dots=False,
                    startup_delay=1, screen_corners=False, check_updates_on_start=False,
                    dock_visible=self.autostart, panels_visible=self.autostart, hide_tray=self.autostart,
                    runtime_lite=self.autostart, panel_enabled=True, panel_auto_hide=False, desktop_auto_sort=False,

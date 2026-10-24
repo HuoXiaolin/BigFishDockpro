@@ -173,15 +173,17 @@ class DesktopPanels(QObject):
             active = members[0]['id'] if members else ''
             if self.cfg.get('merged_active') != active: self.commit(merged_active=active)
         geo = QApplication.primaryScreen().availableGeometry()
-        columns = max(1, min(4, (geo.width()-32)//336))
+        from screen_layout import initial_card_factor
+        base_factor=initial_card_factor(list(geo.getRect()));cell_width=round(336*base_factor)
+        columns = max(1, min(4, (geo.width()-32)//cell_width))
         rows = max(1, (len(models)+columns-1)//columns)
-        height = max(180, min(240, (geo.height()-48)//rows-16))
+        height = max(round(180*base_factor), min(round(240*base_factor), (geo.height()-48)//rows-round(16*base_factor)))
         enabled_ids = {model['id'] for model in enabled}
         for index, model in enumerate(models.values()):
             identity = model['id']
             if identity not in self.windows:
-                default = [geo.left()+20+(index % columns)*336,
-                           geo.top()+20+(index//columns)*(height+16), 320, height]
+                default = [geo.left()+20+(index % columns)*cell_width,
+                           geo.top()+20+(index//columns)*(height+round(16*base_factor)), round(320*base_factor), height]
                 self.windows[identity] = DesktopPanel(self, identity, default)
             window = self.windows[identity]
             merged = self.is_merged(identity)

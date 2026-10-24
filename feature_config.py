@@ -1,7 +1,7 @@
 """Persisted options and validation shared by startup, settings and panels."""
 import re
 DEFAULTS = {
-    'display_layout': {},
+    'display_layout': {}, 'card_scale':70, 'settings_size':'auto', 'settings_manual_size':[], 'settings_custom_density':100,
     'notes_enabled': False, 'notes_visible': True, 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
     'dock_visible': True, 'panels_visible': True, 'runtime_lite': False, 'hide_tray': False,
     'dock_page': 0, 'merged_panels': False, 'merged_active': '', 'merged_geometry': [],
@@ -45,6 +45,7 @@ def normalize(cfg):
                          ('panel_theme', ('auto', 'light', 'dark')),
                          ('desktop_icon_mode', ('both', 'collected', 'hide_all')),
                          ('note_style', ('glass', 'paper', 'plain')),
+                         ('settings_size',('auto','small','medium','large','custom')),
                            ('startup_priority', ('low', 'normal', 'high'))]:
         if result[key] not in allowed:
             result[key] = DEFAULTS[key]
@@ -67,6 +68,10 @@ def normalize(cfg):
     for key in ('theme_color', 'panel_color'):
         color = str(result.get(key) or '').strip()
         result[key] = color.lower() if re.fullmatch(r'#[0-9a-fA-F]{6}', color) else ''
+    for key,default,low,high in [('card_scale',70,50,150),('settings_custom_density',100,50,150)]:
+        value=result.get(key);result[key]=max(low,min(high,value)) if type(value) is int else default
+    size=result.get('settings_manual_size')
+    result['settings_manual_size']=list(size) if isinstance(size,list) and len(size)==2 and all(type(v) is int and 200<=v<=10000 for v in size) else []
     from sticky_notes_store import normalize_notes
     result['sticky_notes']=normalize_notes(result.get('sticky_notes',[]))
     result['notes_trash']=normalize_notes(result.get('notes_trash',[]),limit=32)

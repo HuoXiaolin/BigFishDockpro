@@ -15,6 +15,7 @@ from app_catalog import path_key
 
 def run(api, dock, tray, root, output, checks):
     app, cfg = QApplication.instance(), dock.cfg
+    cfg.update(card_scale=100,settings_size='small');api.save_config(cfg)
     from app_version import VERSION, PROJECT_ID, DISPLAY_NAME, METADATA
     assert VERSION == METADATA['version'] and PROJECT_ID == 'BigFishDockpro' and DISPLAY_NAME == '大肥鱼Dock'
     assert api.APP_NAME == PROJECT_ID and api.APP_TITLE == DISPLAY_NAME and api.COMPAT_NAME == 'BigFishDock'
@@ -426,6 +427,8 @@ def run(api, dock, tray, root, output, checks):
     finally:
         dense.reject();runtime.updater.changed.disconnect(dense.update_changed);dense.deleteLater()
         apply_theme(app,runtime.dock.is_light())
+    from card_sizing_tests import run as run_sizing_tests
+    run_sizing_tests(api,runtime,root,output,checks)
     from screen_layout_tests import run as run_layout_tests
     run_layout_tests(api,runtime,root,output,checks)
     runtime.close()

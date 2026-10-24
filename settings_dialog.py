@@ -38,11 +38,15 @@ class SettingsPages(QWidget):
     def setCurrentIndex(self, index): self.nav.setCurrentRow(index)
 
     def resizeEvent(self, event):
-        self.nav.setFixedWidth(compact_px(118 if self.width() < compact_px(620) else 132))
+        factor=float(self.window().property('interfaceScale') or .7)
+        self.nav.setFixedWidth(round((118 if self.width()<620*factor else 132)*factor))
         super().resizeEvent(event)
 
 
-class SettingsDialog(QDialog):
+from settings_layout import SettingsSizingMixin
+
+
+class SettingsDialog(SettingsSizingMixin,QDialog):
     def __init__(self, tray, api):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.setObjectName('SettingsDialog')
@@ -58,6 +62,7 @@ class SettingsDialog(QDialog):
         body.setContentsMargins(18, 12, 18, 12)
         body.setSpacing(12)
         self.header = SettingsHeader(self)
+        self.create_size_selector()
         body.addWidget(self.header)
         body.addWidget(label('管理 Dock、桌面收纳与运行偏好，保存后生效。', 'muted'))
         self.tabs = SettingsPages()
@@ -113,6 +118,9 @@ class SettingsDialog(QDialog):
         panel.addRow(button('分组与合并管理', lambda: self.tray.runtime.panels.manage_groups()))
         panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，选择部分卡片合并并在顶部切换，其余卡片独立显示。','muted'))
 
+        self.number(panel,'card_scale','卡片整体缩放（%）',50,150)
+        panel.addRow(button('卡片尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
+        panel.addRow(label('桌面卡片和便签共用紧凑比例，默认70%；每张卡片的宽高和文字可单独调整，换屏保持比例。','muted'))
         panel.addRow(label('便签卡片','section'))
         self.check(panel,'notes_enabled','启用便签卡片（独立于文件收纳面板）')
         from sticky_notes_store import STYLES
@@ -223,6 +231,7 @@ class SettingsDialog(QDialog):
             runtime.updater.changed.connect(self.update_changed)
 
         compact_dialog(self)
+        self.initialize_size_behavior()
 
     def section(self, name):
         scroll = QScrollArea()
@@ -339,7 +348,8 @@ class SettingsDialog(QDialog):
         cfg = self.tray.cfg
         self.import_candidate=None;self.import_path=None
         self.transfer_status.setText(self.transfer_help)
-        self.fill_fields(cfg)
+        self._manual_dimensions=list(cfg.get('settings_manual_size',[]));self._custom_density=cfg.get('settings_custom_density',100)
+        self.fill_fields(cfg);self.adapt_interface()
         runtime = getattr(self.tray, 'runtime', None)
         if runtime:
             self.update_changed(runtime.updater.message)
@@ -424,6 +434,8 @@ class SettingsDialog(QDialog):
                         field.value() if isinstance(field, QSpinBox) else
                         field.text().strip() if isinstance(field, QLineEdit) else field.isChecked())
             if key == 'transparency': cfg[key] = 100-cfg[key]
+        cfg['settings_manual_size']=list(self._manual_dimensions)
+        cfg['settings_custom_density']=self._custom_density
         for key in ('theme_color', 'panel_color'):
             if cfg[key] and not re.fullmatch(r'#[0-9a-fA-F]{6}', cfg[key]):
                 self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。')

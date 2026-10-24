@@ -72,7 +72,7 @@ def run(api,runtime,root,output,checks):
         geometry=[area[0]+40,area[1]+50,360,270]
         manager.update(identity,geometry=geometry,layout=capture(geometry,reference));manager.flush()
         note.reposition();note.apply_style();assert note.ui_factor<.75 and note.editor.document().defaultFont().pixelSize()<=9
-        note.save_geometry();manager.flush();assert manager.row(identity)['layout']['ui_scale']<.75
+        note.move(note.x()+5,note.y()+3);note.save_geometry();manager.flush();assert manager.row(identity)['layout']['ui_scale']<.75
         # JSON migration carries notes; bad styles and duplicate identities are rejected.
         import config_transfer
         normalized=config_transfer.normalize(copy.deepcopy(cfg),api);assert normalized['sticky_notes']==cfg['sticky_notes']

@@ -9,6 +9,15 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushBu
 # Half the former screen area, while retaining readable text at normal DPI.
 UI_DENSITY = 0.70
 
+def widget_px(widget,value):
+    node=widget
+    while node is not None:
+        factor=node.property('interfaceScale')
+        if factor:return max(1,round(value*float(factor)))
+        node=node.parent()
+    return compact_px(value)
+
+
 def compact_px(value):
     return max(1, round(value * UI_DENSITY)) if value > 0 else value
 
@@ -49,7 +58,7 @@ def compact_dialog(dialog):
     dialog.resize(compact_px(size.width()),compact_px(size.height()))
 
 
-def density_stylesheet(stylesheet):
+def density_stylesheet(stylesheet,factor=UI_DENSITY):
     """Scope compact metrics to dialogs/menus; desktop card metrics remain local."""
     import re
     rules=[]
@@ -62,7 +71,7 @@ def density_stylesheet(stylesheet):
             else:scoped.append('QDialog '+selector)
         def scale(match):
             number=int(match.group(1));prefix=body[:match.start()].rsplit(';',1)[-1]
-            value=max(10,compact_px(number)) if 'font-size' in prefix else compact_px(number)
+            value=max(10,round(number*factor)) if 'font-size' in prefix else max(1,round(number*factor)) if number>0 else 0
             return str(value)+'px'
         rules.append(', '.join(scoped)+' {'+re.sub(r'(\d+)px',scale,body)+'}')
     return '\n'.join(rules)
@@ -299,7 +308,7 @@ class ModernComboBox(QComboBox):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(QPen(self.palette().color(QPalette.Text if self.isEnabled() else QPalette.Mid), 1.5))
-        cx, cy = self.width()-compact_px(18), self.height()/2
+        cx, cy = self.width()-widget_px(self,18), self.height()/2
         path = QPainterPath()
         path.moveTo(cx-4, cy-2)
         path.lineTo(cx, cy+2)
@@ -335,10 +344,10 @@ class ModernSpinBox(QSpinBox):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        step=compact_px(26)
+        step=widget_px(self,26)
         y = (self.height()-step)//2
-        self.minus.setGeometry(self.width()-compact_px(62), y, step, step)
-        self.plus.setGeometry(self.width()-compact_px(32), y, step, step)
+        self.minus.setGeometry(self.width()-widget_px(self,62), y, step, step)
+        self.plus.setGeometry(self.width()-widget_px(self,32), y, step, step)
 
 
 class ModernCheckBox(QCheckBox):
@@ -350,14 +359,14 @@ class ModernCheckBox(QCheckBox):
         self.setSizePolicy(policy)
 
     def heightForWidth(self, width):
-        return max(compact_px(30), self.fontMetrics().boundingRect(QRect(0,0,max(compact_px(50),width-compact_px(30)),1000),
-                    Qt.TextWordWrap, self.text()).height()+compact_px(10))
+        return max(widget_px(self,30), self.fontMetrics().boundingRect(QRect(0,0,max(widget_px(self,50),width-widget_px(self,30)),1000),
+                    Qt.TextWordWrap, self.text()).height()+widget_px(self,10))
 
     def sizeHint(self):
-        width = min(compact_px(340), self.fontMetrics().horizontalAdvance(self.text())+compact_px(32))
+        width = min(widget_px(self,340), self.fontMetrics().horizontalAdvance(self.text())+widget_px(self,32))
         return QSize(width, self.heightForWidth(width))
 
-    def minimumSizeHint(self): return QSize(compact_px(110), compact_px(30))
+    def minimumSizeHint(self): return QSize(widget_px(self,110), widget_px(self,30))
 
     def hitButton(self, point): return self.rect().contains(point)
 
@@ -368,7 +377,7 @@ class ModernCheckBox(QCheckBox):
         option.text = ''
         self.style().drawControl(QStyle.CE_CheckBox, option, painter, self)
         painter.setPen(self.palette().color(QPalette.Text if self.isEnabled() else QPalette.Mid))
-        painter.drawText(self.rect().adjusted(compact_px(30),compact_px(4),0,-compact_px(4)), Qt.TextWordWrap | Qt.AlignVCenter, self.text())
+        painter.drawText(self.rect().adjusted(widget_px(self,30),widget_px(self,4),0,-widget_px(self,4)), Qt.TextWordWrap | Qt.AlignVCenter, self.text())
 
 
 class ReadableChecks(QProxyStyle):
@@ -549,7 +558,10 @@ def apply_theme(app, light):
         QMenu::separator {height:1px; background:%(line)s; margin:5px 10px;}
         QToolTip {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; padding:6px;}
     ''' % colors
+    app._base_stylesheet=stylesheet
     app.setStyleSheet(stylesheet + density_stylesheet(stylesheet))
+    for window in app.topLevelWidgets():
+        if window.isVisible() and hasattr(window,'refresh_interface_style'):window.refresh_interface_style()
     if not hasattr(app, '_chrome_filter'):
         app._chrome_filter = DialogChrome(app)
         app.installEventFilter(app._chrome_filter)

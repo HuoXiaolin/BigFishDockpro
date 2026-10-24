@@ -130,6 +130,8 @@ def normalize_desktop(cfg):
         if identity in seen: continue
         seen.add(identity)
         panel = {'id': identity, 'name': str(raw.get('name') or '收纳面板')[:40]}
+        if type(raw.get('font_size')) is int and 8<=raw['font_size']<=48:panel['font_size']=raw['font_size']
+        if type(raw.get('font_scale')) in (int,float) and .125<=raw['font_scale']<=8:panel['font_scale']=float(raw['font_scale'])
         geo = raw.get('geometry')
         if isinstance(geo, list) and len(geo) == 4 and all(type(n) is int for n in geo):
             panel['geometry'] = [geo[0], geo[1], max(260, min(2400, geo[2])), max(156, min(1800, geo[3]))]

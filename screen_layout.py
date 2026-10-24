@@ -12,6 +12,8 @@ def valid_record(value):
     result['screen']=str(value.get('screen',''))[:240]
     ui=value.get('ui_scale')
     if type(ui) in (int,float) and 0.125<=ui<=8:result['ui_scale']=float(ui)
+    density=value.get('density')
+    if type(density) in (int,float) and .25<=density<=2:result['density']=float(density)
     return result
 
 
@@ -34,11 +36,15 @@ def screen_records():
     return records
 
 
+def initial_card_factor(area):
+    return max(1.0,min(2.5,min(area[2]/1536,area[3]/816)))
+
+
 def choose_screen(record,screens):
     return next((screen for screen in screens if screen['screen']==record.get('screen')),screens[0]) if screens else None
 
 
-def capture(rect,screens,ui_scale=1.0):
+def capture(rect,screens,ui_scale=1.0,density=1.0):
     if not screens:return {}
     cx,cy=rect[0]+rect[2]/2,rect[1]+rect[3]/2
     def distance(screen):
@@ -47,6 +53,7 @@ def capture(rect,screens,ui_scale=1.0):
     screen=min(screens,key=distance)
     result=dict(screen=screen['screen'],area=list(screen['area']),rect=list(rect))
     if ui_scale!=1.0:result['ui_scale']=float(ui_scale)
+    if density!=1.0:result['density']=float(density)
     return result
 
 
@@ -54,14 +61,15 @@ def scale(record,target):
     return min(target['area'][2]/record['area'][2],target['area'][3]/record['area'][3]) if record and target else 1.0
 
 
-def project(record,screens,minimum=None):
+def project(record,screens,minimum=None,density=1.0):
     target=choose_screen(record,screens)
     if not record or not target:return None
     bx,by,bw,bh=record['area'];x,y,w,h=record['rect'];tx,ty,tw,th=target['area']
+    density_ratio=density/record.get('density',1.0)
     if minimum is None:
         from dpi_support import minimum as minimum_size
-        minimum=minimum_size(scale(record,target)*record.get('ui_scale',1.0))
-    factor=min(max(scale(record,target),minimum[0]/w,minimum[1]/h),tw/w,th/h)
+        minimum=minimum_size(scale(record,target)*density_ratio*record.get('ui_scale',1.0))
+    factor=min(max(scale(record,target)*density_ratio,minimum[0]/w,minimum[1]/h),tw/w,th/h)
     nw=max(1,round(w*factor));nh=max(1,round(h*factor))
     # Preserve edge/centre anchoring within the available travel area.
     ax=max(0,min(1,(x-bx)/max(1,bw-w)));ay=max(0,min(1,(y-by)/max(1,bh-h)))
@@ -98,6 +106,8 @@ class DisplayLayout:
         self.bind_screens()
         for window in self.runtime.panels.windows.values():
             window.resize_timer.stop();window.fit_timer.stop();window.manual_resize=False
+        for window in getattr(getattr(self.runtime,'notes',None),'windows',{}).values():
+            window.geometry_timer.stop();window.refresh_timer.stop()
         self.timer.start()
 
     def record(self,identity):
@@ -105,17 +115,19 @@ class DisplayLayout:
         return state.get('merged',{}) if self.runtime.panels.is_merged(identity) else state.get('panels',{}).get(identity,{})
 
     def panel_bounds(self,identity,fallback):
-        return project(self.record(identity),self.screens()) or list(fallback)
+        screens=self.screens();window=self.runtime.panels.windows.get(identity)
+        record=self.record(identity) or capture(list(fallback),screens,getattr(window,'default_ui_factor',1.0))
+        return project(record,screens,density=self.dock.cfg.get('card_scale',70)/100) or list(fallback)
 
     def panel_scale(self,identity):
         record=self.record(identity)
-        projected=project(record,self.screens())
-        return projected[2]/record['rect'][2]*record.get('ui_scale',1.0) if record and projected else 1.0
+        projected=project(record,self.screens(),density=self.dock.cfg.get('card_scale',70)/100)
+        return projected[2]/record['rect'][2]*record.get('ui_scale',1.0) if record and projected else self.dock.cfg.get('card_scale',70)/100*getattr(self.runtime.panels.windows.get(identity),'default_ui_factor',1.0)
 
     def panel_update(self,identity,rect):
         state=copy.deepcopy(self.dock.cfg.get('display_layout',{}))
         window=self.runtime.panels.windows.get(identity)
-        record=capture(rect,self.screens(),getattr(window,'ui_factor',1.0))
+        record=capture(rect,self.screens(),getattr(window,'ui_factor',1.0),self.dock.cfg.get('card_scale',70)/100)
         if self.runtime.panels.is_merged(identity):state['merged']=record
         else:state.setdefault('panels',{})[identity]=record
         return state
@@ -132,10 +144,10 @@ class DisplayLayout:
         for model in self.dock.cfg['desktop_panels']:
             window=self.runtime.panels.windows.get(model['id'])
             if window and model['id'] not in panels:
-                panels[model['id']]=capture(model.get('geometry',window.default_geometry),screens)
+                panels[model['id']]=capture(model.get('geometry',window.default_geometry),screens,window.default_ui_factor if not model.get('geometry') else 1.0)
         if self.dock.cfg['merged_panels'] and not state.get('merged'):
             window=self.runtime.panels.windows.get(self.runtime.panels.active_window)
-            if window:state['merged']=capture(self.dock.cfg.get('merged_geometry') or window.default_geometry,screens)
+            if window:state['merged']=capture(self.dock.cfg.get('merged_geometry') or window.default_geometry,screens,window.default_ui_factor if not self.dock.cfg.get('merged_geometry') else 1.0)
         if state!=self.dock.cfg.get('display_layout'):
             if self.runtime.api.save_config(dict(self.dock.cfg,display_layout=state)) is not False:self.dock.cfg['display_layout']=state
 
@@ -156,6 +168,8 @@ class DisplayLayout:
             self.update_dock()
             self.runtime.panels.reposition()
             if getattr(self.runtime,'notes',None):self.runtime.notes.reposition()
+            dialog=getattr(self.runtime.tray,'settings_dialog',None)
+            if dialog and hasattr(dialog,'adapt_interface'):dialog.adapt_interface()
             self.runtime.refresh_corners()
         finally:self.applying=False;self.pending=False
         self.ensure_profiles()

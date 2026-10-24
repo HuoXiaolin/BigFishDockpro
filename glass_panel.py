@@ -70,6 +70,7 @@ class DesktopPanel(QDialog):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
         self.manager, self.runtime, self.dock = manager, manager.runtime, manager.dock
         self.identity, self.default_geometry = identity, list(geometry)
+        self.default_ui_factor=geometry[2]/320 if not self.model.get('geometry') else 1.0
         self.ui_factor = 1.0
         self.disposed = False
         self.restoring = True
@@ -216,7 +217,8 @@ class DesktopPanel(QDialog):
 
     def apply_options(self):
         layout=getattr(self.runtime,'layout',None)
-        self.ui_factor=layout.panel_scale(self.identity) if layout else 1.0
+        self.ui_factor=layout.panel_scale(self.identity) if layout else self.default_ui_factor
+        if layout and not layout.record(self.identity):self.ui_factor=self.default_ui_factor*self.dock.cfg.get('card_scale',70)/100
         factor=self.ui_factor
         self.layout().setContentsMargins(metric(10,factor),metric(6,factor),metric(10,factor),metric(6,factor))
         self.layout().setSpacing(metric(4,factor))
@@ -260,13 +262,19 @@ class DesktopPanel(QDialog):
             QPushButton#PanelButton {background:transparent; border:0; padding:0; min-height:24px; max-width:26px; min-width:26px;}
             QPushButton#PanelButton:hover {background:rgba(128,128,128,40);}
             QLineEdit#PanelSearch {background:%s; border:0; padding:3px 8px; min-height:20px;}
-        ''' % (ink, search_background),factor)+'''QLabel#PanelLabel, QLineEdit#PanelSearch, QListWidget#PanelFiles, QPushButton#PanelButton, QTabBar#PanelTabs {font-size:%dpx;}'''%metric(13,factor,7))
+        ''' % (ink, search_background),factor)+'''QLabel#PanelLabel, QLineEdit#PanelSearch, QListWidget#PanelFiles, QPushButton#PanelButton, QTabBar#PanelTabs {font-size:%dpx;}'''%self.text_pixels())
         palette = self.query.palette()
         palette.setColor(QPalette.PlaceholderText, QColor('#5c626c' if colors['light'] else '#b4b8c0'))
         self.query.setPalette(palette)
+        height=self.list.fontMetrics().height();icon=self.list.iconSize().height()
+        if view!='list':
+            grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*2+metric(6,factor))))
         self.render()
         self.refresh_timer.start(100)
         self.update()
+
+    def text_pixels(self):
+        return max(7,min(72,round(self.model.get('font_size',13)*self.ui_factor/self.model.get('font_scale',1.0))))
 
     def visible_items(self):
         query = self.query.text().strip().casefold()
@@ -288,7 +296,7 @@ class DesktopPanel(QDialog):
         self.list.clear()
         for row in rows:
             item = QListWidgetItem(QIcon(self.dock.icons.get(row['path'], 64)), row['name'])
-            if self.model.get('view')=='list': item.setSizeHint(QSize(metric(80,self.ui_factor),metric(34,self.ui_factor,18)))
+            if self.model.get('view')=='list': item.setSizeHint(QSize(metric(80,self.ui_factor),max(metric(34,self.ui_factor,18),self.list.fontMetrics().height()+metric(8,self.ui_factor),self.list.iconSize().height()+metric(6,self.ui_factor))))
             item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
             item.setData(Qt.UserRole, row)
             self.list.addItem(item)
@@ -307,7 +315,7 @@ class DesktopPanel(QDialog):
         self.layout().activate()
         grid = self.list.gridSize()
         list_view = self.model.get('view')=='list'
-        if list_view: grid = QSize(max(1,self.list.width()),metric(34,self.ui_factor,18))
+        if list_view: grid = QSize(max(1,self.list.width()),max(metric(34,self.ui_factor,18),self.list.fontMetrics().height()+metric(8,self.ui_factor),self.list.iconSize().height()+metric(6,self.ui_factor)))
         available = (QApplication.screenAt(self.pos()) or QApplication.primaryScreen()).availableGeometry()
         limit = min(available.height(), max(240, self.bounds()[3]))
         margins = self.layout().contentsMargins()
@@ -409,6 +417,7 @@ class DesktopPanel(QDialog):
 
     def build_panel_menu(self):
         menu = QMenu(self)
+        menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
         menu.addAction('添加文件…').triggered.connect(self.add_files)
         menu.addAction('添加文件夹…').triggered.connect(self.add_folder)
         menu.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)

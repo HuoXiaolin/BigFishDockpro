@@ -33,8 +33,11 @@ def normalize(data,api):
         if not low<=cfg[key]<=high:raise ValueError('配置数值超出范围：'+key)
     for key,allowed in [('position',{'top','bottom','custom'}),('layer',{'top','bottom'}),
                         ('theme',{'auto','light','dark','fog','gloss'}),('blur_mode',{'smart','fast','normal','slow','off'}),
-                        ('note_style',{'glass','paper','plain'}),('desktop_icon_mode',{'both','collected','hide_all'}),('lang',{'zh','en'}),('bump_level',{'low','mid','high'})]:
+                        ('settings_size',{'auto','small','medium','large','custom'}),('note_style',{'glass','paper','plain'}),('desktop_icon_mode',{'both','collected','hide_all'}),('lang',{'zh','en'}),('bump_level',{'low','mid','high'})]:
         if cfg[key] not in allowed:raise ValueError('配置选项不受支持：'+key)
+    if not 50<=cfg['card_scale']<=150 or not 50<=cfg['settings_custom_density']<=150:raise ValueError('界面缩放比例无效。')
+    manual=cfg['settings_manual_size']
+    if manual and (len(manual)!=2 or not all(type(v) is int and 200<=v<=10000 for v in manual)):raise ValueError('设置窗口尺寸无效。')
     for key,limit in [('items',4096),('desktop_panels',256),('desktop_entries',20000),('groups',256)]:
         if len(cfg[key])>limit:raise ValueError('配置条目过多：'+key)
     from sticky_notes_store import normalize_notes

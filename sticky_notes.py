@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QLineEdit,QT
 from PyQt5.QtGui import QKeySequence
 from ui_style import AlignedMenu,button,label,SettingsHeader,compact_dialog
 from sticky_notes_store import STYLES,COLORS,normalize_notes,clean_editor_html
-from screen_layout import capture,project,screen_records
+from screen_layout import capture,project,screen_records,initial_card_factor
 from liquid_glass import paint_liquid_glass,tint_palette
 
 
@@ -109,7 +109,9 @@ class NoteWindow(QWidget):
         else:self.manager.update(self.identity,**{key:value})
         self.apply_style();self.manager.flush()
     def build_menu(self):
-        menu=AlignedMenu(self);menu.addAction('新建便签').triggered.connect(self.manager.new)
+        menu=AlignedMenu(self)
+        menu.addAction('尺寸与文字…').triggered.connect(lambda:self.runtime.open_card_sizing('note',self.identity))
+        menu.addAction('新建便签').triggered.connect(self.manager.new)
         styles=menu.addMenu('外观样式')
         for title,key in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.row()['style']==key);action.triggered.connect(lambda checked=False,value=key:self.set_option('style',value))
@@ -134,15 +136,25 @@ class NoteWindow(QWidget):
         return super().eventFilter(widget,event)
     def save_geometry(self):
         if self.loading or self.disposed:return
-        row=self.row();geometry=[self.x(),self.y(),self.width(),self.expanded_height if row['collapsed'] else self.height()]
+        layout=getattr(self.runtime,'layout',None)
+        if layout and (layout.pending or layout.applying):return
+        row=self.row()
+        if row.get('layout') and self.geometry().getRect()==getattr(self,'_saved_geometry',None):return
+        geometry=[self.x(),self.y(),self.width(),self.expanded_height if row['collapsed'] else self.height()]
         self.expanded_height=geometry[3]
-        self.manager.update(self.identity,geometry=geometry,layout=capture(geometry,screen_records(),self.ui_factor))
+        self.manager.update(self.identity,geometry=geometry,layout=capture(geometry,screen_records(),self.ui_factor,self.dock.cfg.get('card_scale',70)/100))
+        self._saved_geometry=self.geometry().getRect()
     def reposition(self):
-        row=self.row();geometry=project(row.get('layout',{}),screen_records(),minimum=(160,96)) or row.get('geometry')
-        if not geometry:
-            screen=QApplication.primaryScreen().availableGeometry();offset=list(self.manager.rows()).index(row)*18
-            geometry=[screen.left()+40+offset%180,screen.top()+50+offset%180,300,260]
-        record=row.get('layout',{})
+        self.geometry_timer.stop();row=self.row();screens=screen_records();record=row.get('layout',{})
+        if not record:
+            geometry=row.get('geometry')
+            if not geometry:
+                screen=QApplication.primaryScreen().availableGeometry();offset=list(self.manager.rows()).index(row)*18
+                factor=initial_card_factor(list(screen.getRect()))
+                geometry=[screen.left()+40+offset%180,screen.top()+50+offset%180,round(300*factor),round(260*factor)]
+                record=capture(geometry,screens,ui_scale=factor)
+            if not record:record=capture(geometry,screens)
+        geometry=project(record,screens,minimum=(160,96),density=self.dock.cfg.get('card_scale',70)/100) or row.get('geometry',[40,50,300,260])
         self.ui_factor=geometry[2]/record['rect'][2]*record.get('ui_scale',1.0) if record else 1.0
         self.expanded_height=geometry[3]
         self.loading=True
@@ -163,10 +175,14 @@ class NoteWindow(QWidget):
         self.setStyleSheet('QWidget#StickyNote {background:transparent;} QLineEdit,QTextEdit,QLabel,QToolButton {background:transparent;color:'+ink+';border:0;font-family:"Microsoft YaHei UI";font-size:12px;} QLineEdit {font-weight:600;padding:0;min-height:20px;} QTextEdit {padding:3px;selection-background-color:rgba(90,140,180,80);} QToolButton {border-radius:5px;} QToolButton:hover {background:rgba(120,130,150,28);} QLabel {font-size:10px;}')
         from dpi_support import panel_css
         self.setStyleSheet(panel_css(self.styleSheet(),self.ui_factor))
-        size=max(8,round(12*self.ui_factor));self.editor.setStyleSheet('font-size:%dpx;'%size)
+        size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;'%size)
         font=QFont('Microsoft YaHei UI');font.setPixelSize(size);self.editor.document().setDefaultFont(font)
         palette=self.editor.palette();palette.setColor(QPalette.Text,QColor(ink));palette.setColor(QPalette.Base,QColor(0,0,0,0));self.editor.setPalette(palette)
         self.setWindowTitle(row['title']+' · 大肥鱼Dock便签');self.layer();self.loading=False;self.update();self.refresh_timer.start()
+        if not self.geometry_timer.isActive():self._saved_geometry=self.geometry().getRect()
+    def text_pixels(self):
+        row=self.row();return max(8,min(72,round(row.get('font_size',12)*self.ui_factor/row.get('font_scale',1.0))))
+
     def layer(self):
         user=ctypes.windll.user32
         from ctypes import wintypes
@@ -293,7 +309,7 @@ class NotesManager(QObject):
     def new(self):
         if len(self.rows())>=64:self.message='最多保留64张便签。';self.status();return None
         cfg=self.runtime.dock.cfg;style=cfg['note_style'];identity=uuid.uuid4().hex
-        row={'id':identity,'title':'新便签','html':'','text':'','style':style,'color':{'glass':cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[style],'pinned':False,'locked':False,'collapsed':False,'visible':True,'updated':''}
+        row={'id':identity,'title':'新便签','html':'','text':'','style':style,'color':{'glass':cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[style],'pinned':False,'locked':False,'collapsed':False,'visible':True,'updated':'','font_size':12,'font_scale':1.0}
         self.pending[identity]=row
         if not self.persist(sticky_notes=self.rows(),notes_enabled=True,notes_visible=True):return None
         self.pending.clear();self.sync();window=self.windows[identity];window.raise_();window.editor.setFocus();self.changed.emit();return identity

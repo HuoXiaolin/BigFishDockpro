@@ -36,6 +36,11 @@ def normalize_notes(rows,strict=False,limit=64):
             style,color='glass','#cfe8fa'
         row={'id':identity,'title':str(raw.get('title') or '新便签')[:60],'html':html,'text':text,
              'style':style,'color':color.lower(),'updated':str(raw.get('updated',''))[:40]}
+        size=raw.get('font_size',12);scale=raw.get('font_scale',1.0)
+        if type(size) is not int or not 8<=size<=48 or type(scale) not in (int,float) or not .125<=scale<=8:
+            if strict:raise ValueError('便签文字大小无效。')
+            size,scale=12,1.0
+        row.update(font_size=size,font_scale=float(scale))
         for key in ('pinned','locked','collapsed'):row[key]=raw.get(key) is True
         row['visible']=raw.get('visible',True) is True
         geometry=raw.get('geometry')

@@ -208,11 +208,18 @@ class RuntimeController:
         self.tray.setVisible(not self.dock.cfg['hide_tray'])
         self.panels.apply_settings()
         self.notes.sync()
+        density=self.dock.cfg.get('card_scale',70)
+        if getattr(self,'_card_density',None)!=density:
+            self.panels.reposition();self.notes.reposition();self._card_density=density
         self.configure_fullscreen_timer()
         self.apply_visibility()
         self.refresh_corners()
         set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
         if not self.settings_open: self.arm_lite()
+
+    def open_card_sizing(self,kind=None,identity=None):
+        from card_sizing import CardSizingDialog
+        dialog=CardSizingDialog(self,kind,identity);dialog.exec_()
 
     def request_exit(self):
         if not self.notes.flush() and not self.notes.backup():
