@@ -639,27 +639,13 @@ class DesktopPanel(QDialog):
         if self.option('material') in ('solid', 'clear'):
             self.update()
             return
-        user = ctypes.windll.user32
-        user.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
-        excluded = []
-        try:
-            # Exclude all collection windows and Dock, so overlapping panels never
-            # recursively photograph each other's glass or icons.
-            for window in [self.dock]+list(self.manager.windows.values())+list(getattr(getattr(self.runtime,'notes',None),'windows',{}).values()):
-                if window.isVisible() and user.SetWindowDisplayAffinity(int(window.winId()), 0x11):
-                    excluded.append(int(window.winId()))
-            if int(self.winId()) not in excluded: return
-            screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
-            geometry = self.frameGeometry()
-            if not screen.geometry().contains(geometry): return
-            image = screen.grabWindow(0, geometry.x()-screen.geometry().x(), geometry.y()-screen.geometry().y(), geometry.width(), geometry.height())
-            if not image.isNull():
-                from liquid_glass import material_blur
-                ratio, divisor = image.devicePixelRatio(), material_blur(self.option('blur'), self.option('material'))
-                self.backdrop = image.scaled(max(1,image.width()//divisor), max(1,image.height()//divisor), Qt.IgnoreAspectRatio, Qt.SmoothTransformation).scaled(image.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-                self.backdrop.setDevicePixelRatio(ratio)
-        finally:
-            for handle in excluded: user.SetWindowDisplayAffinity(handle, 0)
+        from glass_capture import capture_behind,surface_windows
+        image=capture_behind(self,surface_windows(self.dock))
+        if image is not None:
+            from liquid_glass import material_blur
+            ratio,divisor=image.devicePixelRatio(),material_blur(self.option('blur'),self.option('material'))
+            self.backdrop=image.scaled(max(1,image.width()//divisor),max(1,image.height()//divisor),Qt.IgnoreAspectRatio,Qt.SmoothTransformation).scaled(image.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
+            self.backdrop.setDevicePixelRatio(ratio)
         self.update()
 
     def paintEvent(self, event):

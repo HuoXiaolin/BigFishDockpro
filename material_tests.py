@@ -8,6 +8,8 @@ from appearance_presets import MATERIALS
 
 
 def run(api,runtime,output,checks):
+    from glass_capture_tests import run as check_capture
+    check_capture(checks)
     dock=runtime.dock;output=Path(output)
     wallpaper=QImage(300,112,QImage.Format_ARGB32_Premultiplied)
     p=QPainter(wallpaper);gradient=QLinearGradient(0,0,300,112);gradient.setColorAt(0,QColor('#6eb7d9'));gradient.setColorAt(1,QColor('#d7a7c3'));p.fillRect(wallpaper.rect(),gradient)

@@ -75,7 +75,12 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
     p.setClipPath(path)
     if surface.cfg["glass"] and surface.backdrop is not None:
         # 只画这一段所在的那块区域，避免整窗重绘浪费性能
-        p.drawPixmap(path_rect, surface.backdrop, path_rect)
+        # QPainter's explicit source rectangle uses physical pixmap pixels,
+        # even when the pixmap carries a DPR. The target remains logical.
+        ratio=surface.backdrop.devicePixelRatio()
+        source=QRectF(path_rect.x()*ratio,path_rect.y()*ratio,
+                      path_rect.width()*ratio,path_rect.height()*ratio)
+        p.drawPixmap(path_rect, surface.backdrop, source)
         if tint_a > 0:
             col = QColor(c["tint"])
             col.setAlpha(tint_a)

@@ -2066,31 +2066,9 @@ class Dock(QWidget):
         抓完立刻恢复原状，所以你自己截图时 Dock 依然会正常出现。
         返回 (截图, 是否成功)。
         """
-        hwnd = wintypes.HWND(int(self.winId()))
-        ok = False
-        try:
-            user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
-            user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
-            ok = bool(user32.SetWindowDisplayAffinity(hwnd, 0x11))
-            if not ok:
-                return None, False
-            scr = QGuiApplication.primaryScreen()
-            dpr = float(scr.devicePixelRatio())
-            g = self.frameGeometry()
-            x = int(round(g.x() * dpr))
-            y = int(round(g.y() * dpr))
-            w = max(1, int(round(g.width() * dpr)))
-            h = max(1, int(round(g.height() * dpr)))
-            return scr.grabWindow(0, x, y, w, h), True
-        except Exception:
-            log("抓取背景失败: " + traceback.format_exc())
-            return None, ok
-        finally:
-            if ok:
-                try:
-                    user32.SetWindowDisplayAffinity(hwnd, 0)
-                except Exception:
-                    pass
+        from glass_capture import capture_behind,surface_windows
+        pixmap=capture_behind(self,surface_windows(self))
+        return pixmap,pixmap is not None
 
     def blur_divisor(self):
         """毛玻璃模糊程度：把背景缩小到 1/div 再放大回来，div 越大越糊。"""
@@ -2120,15 +2098,14 @@ class Dock(QWidget):
             if self.backdrop_ok is not False:
                 self.backdrop_ok = False
                 log("本机不支持屏幕捕获排除，毛玻璃降级为普通半透明（不影响使用）")
-            self.blur_timer.stop()
+            self.backdrop = None
             self.update()
             return
         if pm is None or pm.isNull():
             return
         self.backdrop_ok = True
         try:
-            scr = QGuiApplication.primaryScreen()
-            dpr = float(scr.devicePixelRatio()) or 1.0
+            dpr = float(pm.devicePixelRatio()) or 1.0
             div = self.blur_divisor()
             w, h = max(2, pm.width() // div), max(2, pm.height() // div)
             small = pm.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)

@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parent
-SOURCE_FILES = ['card_sizing_tests.py', 'settings_layout.py', 'card_sizing.py', 'sticky_notes_tests.py', 'sticky_notes.py', 'sticky_notes_store.py', 'external_launch_tests.py', 'desktop_visibility_tests.py', 'native_launch_probe.c', 'external_launch.py', 'desktop_item_visibility.py', 'config_transfer.py', 'config_transfer_tests.py', 'running_apps.py', 'running_apps_tests.py', 'dpi_support.py', 'BigFishDockpro.manifest', 'screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
+SOURCE_FILES = ['glass_capture_tests.py', 'glass_capture.py', 'card_sizing_tests.py', 'settings_layout.py', 'card_sizing.py', 'sticky_notes_tests.py', 'sticky_notes.py', 'sticky_notes_store.py', 'external_launch_tests.py', 'desktop_visibility_tests.py', 'native_launch_probe.c', 'external_launch.py', 'desktop_item_visibility.py', 'config_transfer.py', 'config_transfer_tests.py', 'running_apps.py', 'running_apps_tests.py', 'dpi_support.py', 'BigFishDockpro.manifest', 'screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
     'feature_config.py', 'runtime_controller.py', 'platform_services.py', 'screen_corners.py',
     'glass_panel.py', 'desktop_panels.py', 'panel_management.py', 'panel_group_tests.py', 'material_tests.py', 'desktop_catalog.py', 'desktop_icons.py', 'desktop_panel_tests.py', 'liquid_glass.py', 'appearance_presets.py',
     'tray_menu.py', 'update_service.py', 'feature_tests.py', 'startup_probe.py',

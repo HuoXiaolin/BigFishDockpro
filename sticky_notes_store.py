@@ -41,7 +41,9 @@ def normalize_notes(rows,strict=False,limit=64):
             if strict:raise ValueError('便签文字大小无效。')
             size,scale=12,1.0
         row.update(font_size=size,font_scale=float(scale))
-        for key in ('pinned','locked','collapsed'):row[key]=raw.get(key) is True
+        for key in ('pinned','locked','collapsed','auto_hide'):
+            if strict and key in raw and type(raw[key]) is not bool:raise ValueError('便签开关格式不正确。')
+            row[key]=raw.get(key) is True
         row['visible']=raw.get('visible',True) is True
         geometry=raw.get('geometry')
         if isinstance(geometry,list) and len(geometry)==4 and all(type(n) is int and abs(n)<1000000 for n in geometry) and 1<=geometry[2]<=10000 and 1<=geometry[3]<=10000:row['geometry']=list(geometry)

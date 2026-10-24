@@ -52,6 +52,27 @@ def run(api,runtime,root,output,checks):
         assert len(set(screenshots))==3
         width,height=note.width(),note.height();note.toggle_collapse();assert manager.row(identity)['collapsed'] and note.height()<height
         note.toggle_collapse();assert note.height()==height,(note.height(),height,note.expanded_height)
+        # Exercise the actual single-shot leave/enter timers without moving the user's cursor.
+        from PyQt5.QtCore import QPoint
+        import sticky_notes
+        menu=note.build_menu();auto=next(a for a in menu.actions() if a.text().startswith('自动收起'))
+        assert not auto.isChecked();auto.trigger();menu.deleteLater()
+        assert manager.row(identity)['auto_hide'] and api.load_config()['sticky_notes'][0]['auto_hide']
+        with patch.object(sticky_notes.QCursor,'pos',return_value=note.mapToGlobal(QPoint(-30,-30))),patch.object(note,'isActiveWindow',return_value=False):
+            note.leaveEvent(QEvent(QEvent.Leave));wait_for(app,lambda:manager.row(identity)['collapsed'])
+        assert note.height()<height and note.expanded_height==height
+        with patch.object(sticky_notes.QCursor,'pos',return_value=note.mapToGlobal(QPoint(10,10))):
+            note.enterEvent(QEvent(QEvent.Enter));wait_for(app,lambda:not manager.row(identity)['collapsed'])
+        assert note.height()==height
+        with patch.object(sticky_notes.QCursor,'pos',return_value=note.mapToGlobal(QPoint(-30,-30))),patch.object(note,'isActiveWindow',return_value=True),patch.object(note.editor,'hasFocus',return_value=True):
+            note.collapse_if_outside();assert not manager.row(identity)['collapsed']
+        note.drag=QPoint(0,0)
+        with patch.object(sticky_notes.QCursor,'pos',return_value=note.mapToGlobal(QPoint(-30,-30))):note.collapse_if_outside()
+        assert not manager.row(identity)['collapsed'];note.drag=None
+        note.hide();assert not note.collapse_timer.isActive() and not note.expand_timer.isActive();note.show()
+        note.set_option('auto_hide',False);assert not note.collapse_timer.isActive() and not note.expand_timer.isActive()
+        assert not normalize_notes([{'id':'old','html':'','text':''}])[0]['auto_hide']
+        checks.append('note auto-collapse: independent persisted menu switch, actual 650ms leave and 160ms enter timers, expanded size restored, keyboard edit/drag protected, hidden/disposed timers stopped, legacy default off')
         note.set_option('locked',True);assert note.minimumSize()==note.maximumSize()
         note.set_option('locked',False);note.set_option('pinned',True);assert manager.row(identity)['pinned']
         note.set_option('pinned',False)
@@ -79,8 +100,10 @@ def run(api,runtime,root,output,checks):
         try:normalize_notes([dict(manager.row(identity),style='unknown')],strict=True)
         except ValueError:pass
         else:raise AssertionError('Bad note style accepted')
+        note.set_option('auto_hide',True);note.collapse_timer.stop()
         manager.flush();manager.close();before=copy.deepcopy(cfg['sticky_notes']);manager=runtime.notes=NotesManager(runtime);manager.sync()
         assert len(manager.windows)==2 and cfg['sticky_notes']==before
+        assert manager.row(identity)['auto_hide'];manager.windows[identity].set_option('auto_hide',False)
         assert '确认图纸' in manager.windows[identity].editor.toPlainText()
         # Failed shutdown write is backed up and recovered on the next controller.
         manager.windows[identity].editor.insertPlainText(' 恢复演示')
