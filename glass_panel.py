@@ -267,7 +267,7 @@ class DesktopPanel(QDialog):
     def model(self): return self.manager.model(self.identity)
 
     def option(self, key):
-        return self.model.get(key, self.dock.cfg['panel_'+key])
+        return self.dock.cfg['panel_'+key]
 
     def colors(self):
         theme = self.option('theme')
@@ -758,96 +758,73 @@ class DesktopPanel(QDialog):
 
 
 class PanelOptions(QDialog):
-    def __init__(self, panel):
-        super().__init__(panel)
-        self.panel, self.fields = panel, {}
-        self.applying_preset = False
-        self.setWindowTitle('面板外观 · '+panel.model['name'])
-        self.resize(440, 530)
-        form = QFormLayout(self)
-        form.setContentsMargins(22, 22, 22, 18)
-        form.setVerticalSpacing(12)
-        self.preset = ModernComboBox()
-        self.preset.addItem('自定义 / 保留当前设置')
-        self.preset.addItems([name for name, _ in PANEL_PRESETS])
-        form.addRow('外观预设', self.preset)
-        for key, title, lower, upper in [('opacity','不透明度（%）',0,100), ('blur','模糊强度',2,30), ('highlight','高光（%）',0,100), ('capsule_ratio','胶囊宽度比例（%）',30,100)]:
-            field = ModernSpinBox()
-            field.setRange(lower, upper)
-            field.setValue(panel.option(key))
-            self.fields[key] = field
-            form.addRow(title, field)
-        from appearance_presets import MATERIALS, COLOR_MODES
-        for key, title, options in [('material','材质', MATERIALS), ('theme','颜色模式',COLOR_MODES),
-                 ('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar')])]:
-            field = ModernComboBox()
-            for name, value in options: field.addItem(name, value)
-            field.setCurrentIndex(max(0, field.findData(panel.option(key))))
-            self.fields[key] = field
-            form.addRow(title, field)
-        color_row = QHBoxLayout()
-        color_row.setSpacing(8)
-        self.color = QLineEdit(panel.option('color'))
-        self.color.setPlaceholderText('留空使用默认色，或 #RRGGBB')
-        color_row.addWidget(self.color, 1)
-        color_row.addWidget(button('选择', self.choose_color))
+    def __init__(self,panel):
+        super().__init__(panel,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
+        from ui_style import SettingsHeader
+        from appearance_presets import MATERIALS,COLOR_MODES
+        self.panel,self.fields=panel,{};self.applying_preset=True
+        self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
+        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
+        self.preset=ModernComboBox();self.preset.addItem('自定义 / 保留当前设置');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('外观预设',self.preset)
+        def choice(key,title,options):
+            field=ModernComboBox()
+            for name,value in options:field.addItem(name,value)
+            self.fields[key]=field;form.addRow(title,field)
+        def number(key,title,low,high):
+            field=ModernSpinBox();field.setRange(low,high);self.fields[key]=field;form.addRow(title,field)
+        choice('material','材质',MATERIALS);choice('theme','颜色模式',COLOR_MODES)
+        self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');colors=QVBoxLayout();row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
         from ui_style import ThemeSwatches
-        colors = QVBoxLayout()
-        colors.setSpacing(4)
-        colors.addLayout(color_row)
-        colors.addWidget(ThemeSwatches(self.color))
-        form.addRow('主题色', colors)
-        self.auto = ModernCheckBox('鼠标离开后自动收起')
-        self.auto.setChecked(panel.option('auto_hide'))
-        form.addRow(self.auto)
-        self.status = label('只调整当前面板。胶囊宽度为展开宽度的 30–100%，最窄 180 像素。', 'muted')
-        form.addRow(self.status)
-        actions = QHBoxLayout()
-        actions.setSpacing(10)
-        actions.addWidget(button('取消', self.reject))
-        actions.addWidget(button('保存', self.commit, 'primary'))
-        form.addRow(actions)
-        matching = next((index for index, (_, values) in enumerate(PANEL_PRESETS, 1)
-                         if all(panel.option(key) == value for key, value in values.items())), 0)
-        self.preset.setCurrentIndex(matching)
+        colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',colors)
+        number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',2,30)
+        self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
+        self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
+        choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar')]);number('capsule_ratio','胶囊宽度比例（%）',30,100)
+        self.status=label('所有桌面卡片共用此设置；保存后同步主设置。位置、大小和内容分别保留。','muted');body.addWidget(self.status)
+        actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
+        self.refresh_shared()
         self.preset.currentIndexChanged.connect(self.apply_preset)
         for field in self.fields.values():
-            signal = field.currentIndexChanged if isinstance(field, QComboBox) else field.valueChanged
+            signal=field.currentIndexChanged if isinstance(field,QComboBox) else field.valueChanged
             signal.connect(self.customized)
-        self.color.textChanged.connect(self.customized)
-        self.fields['material'].currentIndexChanged.connect(self.material_changed)
+        self.color.textChanged.connect(self.customized);self.fields['material'].currentIndexChanged.connect(self.material_changed)
+        panel.manager.shared_settings_changed.connect(self.refresh_shared)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         compact_dialog(self)
-
+        from settings_layout import fit_auxiliary_dialog
+        fit_auxiliary_dialog(self,panel.dock.cfg)
+    def refresh_shared(self):
+        if self.panel.disposed:return
+        self.applying_preset=True
+        for key,field in self.fields.items():
+            value=self.panel.option(key)
+            if isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
+            else:field.setValue(value)
+        self.color.setText(self.panel.option('color'));self.auto.setChecked(self.panel.option('auto_hide'));self.locked.setChecked(self.panel.option('locked'))
+        matching=next((i for i,(_,values) in enumerate(PANEL_PRESETS,1) if all(self.panel.option(key)==value for key,value in values.items())),0)
+        self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
+        self.applying_preset=False
     def material_changed(self):
         if not self.applying_preset and self.fields['material'].currentData()!='clear' and self.fields['opacity'].value()==0 and self.fields['highlight'].value()==0:
-            self.fields['opacity'].setValue(38)
-            self.fields['highlight'].setValue(45)
-
-    def customized(self, *args):
-        if not self.applying_preset: self.preset.setCurrentIndex(0)
-
-    def apply_preset(self, index):
-        if index <= 0: return
-        self.applying_preset = True
-        for key, value in PANEL_PRESETS[index-1][1].items():
-            if key == 'color': self.color.setText(value)
-            else:
-                field = self.fields[key]
-                if isinstance(field, QComboBox): field.setCurrentIndex(field.findData(value))
-                else: field.setValue(value)
-        self.applying_preset = False
-
+            self.fields['opacity'].setValue(38);self.fields['highlight'].setValue(45)
+    def customized(self,*args):
+        if not self.applying_preset:self.preset.setCurrentIndex(0)
+    def apply_preset(self,index):
+        if index<=0:return
+        self.applying_preset=True
+        for key,value in PANEL_PRESETS[index-1][1].items():
+            if key=='color':self.color.setText(value)
+            elif isinstance(self.fields[key],QComboBox):self.fields[key].setCurrentIndex(self.fields[key].findData(value))
+            else:self.fields[key].setValue(value)
+        self.applying_preset=False
     def choose_color(self):
-        color = QColorDialog.getColor(QColor(self.color.text() or '#b8d9ef'), self, '选择面板主题色')
-        if color.isValid(): self.color.setText(color.name())
-
+        color=QColorDialog.getColor(QColor(self.color.text() or '#b8d9ef'),self,'选择卡片主题色')
+        if color.isValid():self.color.setText(color.name())
     def commit(self):
         import re
-        color = self.color.text().strip()
-        if color and not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
-            self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。')
-            return
-        values = {key: field.currentData() if isinstance(field, QComboBox) else field.value() for key, field in self.fields.items()}
-        if self.panel.manager.update_panel(self.panel.identity, color=color.lower(), auto_hide=self.auto.isChecked(), **values):
-            self.status.setText('当前面板设置已保存并生效，可继续调整。')
-        else: self.status.setText('保存失败，当前调整已保留，可重试。')
+        color=self.color.text().strip()
+        if color and not re.fullmatch(r'#[0-9a-fA-F]{6}',color):self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。');return False
+        values={key:field.currentData() if isinstance(field,QComboBox) else field.value() for key,field in self.fields.items()}
+        values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked())
+        if self.panel.manager.update_panel(self.panel.identity,**values):self.status.setText('已保存，所有桌面卡片及主设置已同步。');return True
+        self.status.setText('保存失败，原设置保持不变，可重试。');return False

@@ -81,4 +81,6 @@ def normalize(cfg):
     result['display_layout']=normalize_layout(result.get('display_layout'))
     from desktop_catalog import normalize_desktop
     result.update(normalize_desktop(result))
+    from panel_preferences import without_overrides
+    result['desktop_panels']=without_overrides(result['desktop_panels'])
     return result

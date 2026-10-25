@@ -3,13 +3,14 @@ import copy
 import os
 import uuid
 from pathlib import Path
-from PyQt5.QtCore import QObject, QFileSystemWatcher, QTimer
+from PyQt5.QtCore import QObject, QFileSystemWatcher, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QApplication, QInputDialog, QMessageBox
 from app_catalog import path_key
 from desktop_catalog import CATEGORIES, DesktopScan, desktop_roots, reconcile
 
 
 class DesktopPanels(QObject):
+    shared_settings_changed=pyqtSignal()
     def __init__(self, runtime, roots=None):
         super().__init__(runtime.dock)
         self.runtime, self.dock = runtime, runtime.dock
@@ -56,7 +57,10 @@ class DesktopPanels(QObject):
         if self.cfg['panel_enabled'] and not self.cfg['desktop_panels'] and not self.cfg.get('disabled_categories'):
             self.commit(desktop_panels=[{'id': 'other', 'name': '其他'}])
         self.sync_windows()
-        for window in self.windows.values(): window.apply_options()
+        for window in self.windows.values():
+            window.apply_options();window.collapse_timer.stop()
+            if window.isVisible() and window.option('auto_hide'):window.collapse_timer.start()
+        self.shared_settings_changed.emit()
         self.update_watchers()
         if self.cfg['panel_enabled'] and self.cfg['desktop_auto_sort']:
             self.schedule_scan()
@@ -260,15 +264,24 @@ class DesktopPanels(QObject):
 
     def update_panel(self, identity, _layout=None, **values):
         panels = copy.deepcopy(self.cfg['desktop_panels'])
-        next(model for model in panels if model['id'] == identity).update(values)
-        changes = {'desktop_panels': panels}
+        from panel_preferences import KEYS,without_overrides
+        shared={key:value for key,value in values.items() if key in KEYS}
+        local={key:value for key,value in values.items() if key not in KEYS}
+        panels=without_overrides(panels)
+        next(model for model in panels if model['id']==identity).update(local)
+        changes={'desktop_panels':panels,**{'panel_'+key:value for key,value in shared.items()}}
         layout=getattr(self.runtime,'layout',None)
         if _layout is None and 'geometry' in values and layout:
             _layout=layout.panel_update(identity,values['geometry'])
         if isinstance(_layout,dict):changes['display_layout']=_layout
         if self.is_merged(identity) and 'collapsed' in values: changes['merged_collapsed'] = values['collapsed']
         if self.commit(**changes):
-            if identity in self.windows: self.windows[identity].apply_options()
+            if shared:
+                for window in self.windows.values():
+                    window.apply_options();window.collapse_timer.stop()
+                    if window.isVisible() and window.option('auto_hide'):window.collapse_timer.start()
+                self.shared_settings_changed.emit()
+            elif identity in self.windows:self.windows[identity].apply_options()
             return True
         return False
 

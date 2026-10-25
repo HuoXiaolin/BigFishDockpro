@@ -96,7 +96,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.number(layout, 'corner_radius', '屏幕圆角半径（像素）', 0, 120)
 
         panel = self.section('桌面收纳')
-        panel.addRow(label('这里设置面板的默认外观；各面板可单独覆盖。', 'muted'))
+        panel.addRow(label('所有桌面卡片共用这些外观与收起设置，卡片设置入口同步读写。', 'muted'))
         self.check(panel, 'panel_enabled', '启用桌面悬浮收纳面板')
         self.check(panel, 'desktop_auto_sort', '自动将桌面内容按类型归入多个面板')
         self.combo(panel, 'panel_material', '材质', MATERIALS)
@@ -105,15 +105,15 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.number(panel, 'panel_highlight', '高光（%）', 0, 100)
         self.number(panel, 'panel_opacity', '不透明度（%）', 0, 100)
         self.number(panel, 'panel_blur', '模糊强度', 2, 30)
-        self.check(panel, 'panel_locked', '默认锁定面板位置与大小')
-        self.check(panel, 'panel_auto_hide', '默认鼠标离开后自动收起')
-        self.combo(panel, 'panel_collapse_style', '默认收起形状', [('胶囊', 'capsule'), ('方条', 'bar')])
+        self.check(panel, 'panel_locked', '锁定卡片位置与大小')
+        self.check(panel, 'panel_auto_hide', '鼠标离开后自动收起')
+        self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('方条', 'bar')])
         self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
         self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('仅隐藏已收纳项目', 'collected'), ('隐藏全部桌面图标', 'hide_all')])
         self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标。按项隐藏会临时设置桌面文件隐藏属性，移出收纳、隐藏卡片或退出后恢复；不会移动或删除文件。系统开启显示隐藏项目时，图标可能显示为半透明。')
-        self.fields['panel_material'].setToolTip('材质控制表面质感；颜色模式控制明暗，主题色控制配色。各面板可独立覆盖。')
-        self.fields['panel_capsule_ratio'].setToolTip('相对于展开宽度，最窄180像素。每张卡片可在外观设置覆盖；方条保持展开宽度。')
-        panel.addRow(label('拖动标题移动，右下角调整大小；外观、位置与锁定分别保存。', 'muted'))
+        self.fields['panel_material'].setToolTip('材质控制质感，颜色模式控制明暗，主题色控制配色；全部桌面卡片同步。')
+        self.fields['panel_capsule_ratio'].setToolTip('相对于展开宽度，最窄180像素；全部桌面卡片同步，方条保持展开宽度。')
+        panel.addRow(label('外观与收起选项全部卡片共用；位置、大小和内容分别保存。', 'muted'))
         self.action_row(panel,'面板管理',button('新建面板',lambda:self.tray.runtime.panels.new_panel()),button('分组与合并',lambda:self.tray.runtime.panels.manage_groups()))
         panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，选择部分卡片合并并在顶部切换，其余卡片独立显示。','muted'))
 
@@ -226,6 +226,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         runtime = getattr(tray, 'runtime', None)
         if runtime:
             runtime.updater.changed.connect(self.update_changed)
+            runtime.panels.shared_settings_changed.connect(self.refresh_shared_panel_fields)
 
         compact_dialog(self)
         self.initialize_size_behavior()
@@ -326,6 +327,16 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
 
     def position_changed(self):
         self.fields['custom_bottom'].setEnabled(self.fields['position'].currentData() == 'custom')
+
+    def refresh_shared_panel_fields(self):
+        if self.import_candidate is not None:return
+        from panel_preferences import CONFIG_KEYS
+        for key in CONFIG_KEYS:
+            field=self.fields[key];value=self.tray.cfg[key]
+            if isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
+            elif isinstance(field,QSpinBox):field.setValue(value)
+            elif isinstance(field,QLineEdit):field.setText(value)
+            else:field.setChecked(value)
 
     def fill_fields(self,cfg):
         self.applying_dock_preset = True

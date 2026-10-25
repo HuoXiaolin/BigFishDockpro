@@ -159,6 +159,39 @@ def run(output):
         settings.tabs.pages.currentWidget().ensureWidgetVisible(controls['新建便签']);app.processEvents()
         settings.grab().save(str(output/'settings-grouped-actions.png'));settings.reject();settings.deleteLater()
         checks.append('settings runtime: note and panel actions share logical rows without overlapping; sizing entry and scale control grouped; desktop page screenshot')
+        # Both entry points edit one shared set; an open peer receives saved values.
+        main=SettingsDialog(tray,api);main.reveal();main.tabs.setCurrentIndex(1)
+        panel=runtime.panels.windows[runtime.panels.active_window];options=PanelOptions(panel);options.show();app.processEvents()
+        icon_before=cfg['icon_size'];main.fields['icon_size'].setValue(icon_before+1)
+        options.fields['opacity'].setValue(78);options.fields['blur'].setValue(10);options.fields['capsule_ratio'].setValue(30)
+        options.fields['collapse_style'].setCurrentIndex(options.fields['collapse_style'].findData('capsule'))
+        options.color.setText('#8fc8df');options.auto.setChecked(False);assert options.commit()
+        assert cfg['panel_opacity']==78 and cfg['panel_collapse_style']=='capsule'
+        assert main.fields['panel_opacity'].value()==78 and main.fields['panel_collapse_style'].currentData()=='capsule'
+        assert main.fields['icon_size'].value()==icon_before+1
+        assert all(window.option('opacity')==78 and window.option('collapse_style')=='capsule' for window in runtime.panels.windows.values())
+        options.fields['opacity'].setValue(99)
+        main.fields['panel_collapse_style'].setCurrentIndex(main.fields['panel_collapse_style'].findData('bar'))
+        main.fields['panel_locked'].setChecked(False);main.commit();app.processEvents()
+        assert cfg['panel_collapse_style']=='bar' and options.fields['collapse_style'].currentData()=='bar'
+        assert options.fields['opacity'].value()==78
+        assert all(window.option('collapse_style')=='bar' for window in runtime.panels.windows.values())
+        old=copy.deepcopy(cfg)
+        options.fields['opacity'].setValue(31)
+        with patch.object(api,'save_config',return_value=False):assert not options.commit()
+        assert cfg==old and main.fields['panel_opacity'].value()==78
+        options.refresh_shared()
+        from panel_preferences import KEYS
+        assert all(not set(model).intersection(KEYS) for model in cfg['desktop_panels'])
+        legacy=copy.deepcopy(cfg);legacy['desktop_panels'][0].update(opacity=2,collapse_style='capsule')
+        migrated=api.normalize_features(legacy)
+        assert 'opacity' not in migrated['desktop_panels'][0] and migrated['panel_opacity']==78
+        assert api.load_config()['panel_collapse_style']=='bar'
+        assert note.text_pixels()==22 and note.size()==note_size
+        options.grab().save(str(output/'shared-card-options.png'));main.grab().save(str(output/'shared-main-options.png'))
+        options.reject();main.reject();main.deleteLater()
+        checks.append('shared card preferences: card save refreshes main and every card; main save refreshes open card dialog, last saved shared values win without changing unrelated main drafts; obsolete overrides migrated, failed write retains saved values, local dimensions and note body font preserved')
+
         tray.rebuild()
         for menu in (tray.menu,dock.icon_context_menu(-1)):
             titles={action.text() for action in menu.actions()}
