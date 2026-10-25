@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parent
-SOURCE_FILES = ['card_metrics.py', 'glass_capture_tests.py', 'glass_capture.py', 'card_sizing_tests.py', 'settings_layout.py', 'card_sizing.py', 'sticky_notes_tests.py', 'sticky_notes.py', 'sticky_notes_store.py', 'external_launch_tests.py', 'desktop_visibility_tests.py', 'native_launch_probe.c', 'external_launch.py', 'desktop_item_visibility.py', 'config_transfer.py', 'config_transfer_tests.py', 'running_apps.py', 'running_apps_tests.py', 'dpi_support.py', 'BigFishDockpro.manifest', 'screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
+SOURCE_FILES = ['current_ui_tests.py', 'card_metrics.py', 'glass_capture_tests.py', 'glass_capture.py', 'card_sizing_tests.py', 'settings_layout.py', 'card_sizing.py', 'sticky_notes_tests.py', 'sticky_notes.py', 'sticky_notes_store.py', 'external_launch_tests.py', 'desktop_visibility_tests.py', 'native_launch_probe.c', 'external_launch.py', 'desktop_item_visibility.py', 'config_transfer.py', 'config_transfer_tests.py', 'running_apps.py', 'running_apps_tests.py', 'dpi_support.py', 'BigFishDockpro.manifest', 'screen_layout.py', 'screen_layout_tests.py', 'dock.py', 'app_catalog.py', 'batch_import.py', 'settings_dialog.py',
     'feature_config.py', 'runtime_controller.py', 'platform_services.py', 'screen_corners.py',
     'glass_panel.py', 'desktop_panels.py', 'panel_management.py', 'panel_group_tests.py', 'material_tests.py', 'desktop_catalog.py', 'desktop_icons.py', 'desktop_panel_tests.py', 'liquid_glass.py', 'appearance_presets.py',
     'tray_menu.py', 'update_service.py', 'feature_tests.py', 'startup_probe.py',
@@ -73,9 +73,17 @@ def deliver(source_dir, release_dir, skip_tests=False):
     if receipt.get('tests_skipped') and not skip_tests:raise RuntimeError('This build skipped tests; explicit --skip-tests is required.')
     if not installer.exists():raise RuntimeError('Build the installer before delivery.')
     if receipt and hashlib.sha256(installer.read_bytes()).hexdigest()!=receipt.get('installer_sha256'):raise RuntimeError('Installer does not match the current build receipt.')
-    if not skip_tests and not (ROOT/'artifacts/bundle-test/result.json').exists():
+    current_results=receipt.get('validation_results')
+    if not skip_tests and current_results is not None:
+        if not isinstance(current_results,list) or not current_results:raise RuntimeError('Current build has no validation results.')
+        for item in current_results:
+            result_path=(ROOT/item['path']).resolve()
+            if not result_path.is_relative_to((ROOT/'artifacts').resolve()):raise RuntimeError('Validation path is outside project artifacts.')
+            if hashlib.sha256(result_path.read_bytes()).hexdigest()!=item['sha256']:raise RuntimeError('Validation result changed after this build.')
+            if not json.loads(result_path.read_text(encoding='utf-8-sig')).get('passed'):raise RuntimeError('Current build validation failed.')
+    if not skip_tests and current_results is None and not (ROOT/'artifacts/bundle-test/result.json').exists():
         raise RuntimeError('A verified installer is required before delivery.')
-    if not skip_tests and not json.loads((ROOT/'artifacts/bundle-test/result.json').read_text(encoding='utf-8'))['passed']:
+    if not skip_tests and current_results is None and not json.loads((ROOT/'artifacts/bundle-test/result.json').read_text(encoding='utf-8'))['passed']:
         raise RuntimeError('Bundle test did not pass.')
     # Verify the delivered installer before committing the successful release date.
     release.mkdir(parents=True, exist_ok=True)
@@ -90,7 +98,7 @@ def deliver(source_dir, release_dir, skip_tests=False):
         if single.stat().st_mtime < installer.stat().st_mtime:
             raise RuntimeError('Rebuild the single-file artifact alongside the current installer before delivery.')
         result = ROOT/'artifacts/singlefile-test/result.json'
-        if not skip_tests and (not result.exists() or not json.loads(result.read_text(encoding='utf-8')).get('passed')):
+        if not skip_tests and current_results is None and (not result.exists() or not json.loads(result.read_text(encoding='utf-8')).get('passed')):
             raise RuntimeError('Single-file verification is required before delivery.')
         single_digest = hashlib.sha256(single.read_bytes()).hexdigest()
         if receipt and single_digest!=receipt.get('singlefile_sha256'):raise RuntimeError('Single file does not match the current build receipt.')
@@ -117,7 +125,7 @@ def deliver(source_dir, release_dir, skip_tests=False):
         (directory/'SHA256SUMS.txt').write_text('\n'.join(manifest)+'\n', encoding='utf-8')
     report = {'development': str(ROOT), 'source': str(source), 'release': str(release),
               'installer': installer.name, 'sha256': digest, 'source_files': len(source_hashes),
-              'version': json.loads((ROOT/'version.json').read_text(encoding='utf-8'))['version'], 'tests_skipped':bool(skip_tests)}
+              'version': json.loads((ROOT/'version.json').read_text(encoding='utf-8'))['version'], 'tests_skipped':bool(skip_tests), 'test_scope':receipt.get('test_scope','full' if not skip_tests else 'none')}
     (ROOT/'artifacts/delivery.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

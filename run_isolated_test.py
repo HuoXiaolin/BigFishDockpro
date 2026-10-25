@@ -66,6 +66,7 @@ def main():
     parser.add_argument('--python', default=sys.executable)
     parser.add_argument('--target', default='dock.py')
     parser.add_argument('--output', required=True)
+    parser.add_argument('--runtime-check',action='store_true')
     parser.add_argument('--startup', action='store_true')
     parser.add_argument('--autostart', action='store_true')
     parser.add_argument('--fresh-profile', action='store_true')
@@ -85,7 +86,7 @@ def main():
     try:
         target = Path(args.target).resolve()
         command = ([str(Path(args.python).resolve()), str(target)] if target.suffix.lower() == '.py' else [str(target)])
-        command += ['--startup-test' if args.startup else '--self-test', str(output)]
+        command += ['--startup-test' if args.startup else '--runtime-check' if args.runtime_check else '--self-test', str(output)]
         if args.autostart:
             command.append('--autostart')
         if args.fresh_profile:

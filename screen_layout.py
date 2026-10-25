@@ -116,7 +116,7 @@ class DisplayLayout:
 
     def panel_bounds(self,identity,fallback):
         screens=self.screens();window=self.runtime.panels.windows.get(identity)
-        record=self.record(identity) or capture(list(fallback),screens,getattr(window,'default_ui_factor',1.0))
+        record=self.record(identity) or capture(list(fallback),screens,getattr(window,'default_ui_factor',1.0),self.dock.cfg.get('card_scale',70)/100 if not self.runtime.panels.model(identity).get('geometry') else 1.0)
         from card_metrics import metrics
         bounds=project(record,screens,density=self.dock.cfg.get('card_scale',70)/100) or list(fallback)
         return metrics(self.dock.cfg,bounds,screens,choose_screen(record,screens))[0]
@@ -149,10 +149,10 @@ class DisplayLayout:
         for model in self.dock.cfg['desktop_panels']:
             window=self.runtime.panels.windows.get(model['id'])
             if window and model['id'] not in panels:
-                panels[model['id']]=capture(model.get('geometry',window.default_geometry),screens,window.default_ui_factor if not model.get('geometry') else 1.0)
+                panels[model['id']]=capture(model.get('geometry',window.default_geometry),screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not model.get('geometry') else 1.0)
         if self.dock.cfg['merged_panels'] and not state.get('merged'):
             window=self.runtime.panels.windows.get(self.runtime.panels.active_window)
-            if window:state['merged']=capture(self.dock.cfg.get('merged_geometry') or window.default_geometry,screens,window.default_ui_factor if not self.dock.cfg.get('merged_geometry') else 1.0)
+            if window:state['merged']=capture(self.dock.cfg.get('merged_geometry') or window.default_geometry,screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not self.dock.cfg.get('merged_geometry') else 1.0)
         if state!=self.dock.cfg.get('display_layout'):
             if self.runtime.api.save_config(dict(self.dock.cfg,display_layout=state)) is not False:self.dock.cfg['display_layout']=state
 

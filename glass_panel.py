@@ -5,7 +5,7 @@ import os
 from ctypes import wintypes
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, QMimeData, QUrl
-from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette
+from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QAbstractItemView, QSizeGrip, QApplication,
     QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy, QTabBar)
@@ -15,6 +15,54 @@ from liquid_glass import paint_liquid_glass, tint_palette
 from appearance_presets import PANEL_PRESETS
 from ui_style import label, button, ModernComboBox, ModernSpinBox, ModernCheckBox
 from dpi_support import metric, minimum, panel_css
+
+
+CATEGORY_COLORS={
+    'apps':('#2f75d9','#80b5ff'),'folders':('#b97713','#f3c56c'),
+    'documents':('#148577','#72d8c5'),'images':('#8958ca','#c7a3ff'),
+    'media':('#c45479','#ffa0be'),'archives':('#ae6a27','#edb77c'),
+    'other':('#55738d','#adc5da')}
+
+
+def category_color(category,light=True):
+    return CATEGORY_COLORS.get(category,CATEGORY_COLORS['other'])[0 if light else 1]
+
+
+def category_icon(category,ink,size,dpr):
+    return _category_icon(category,ink,size,round(dpr,2))
+
+
+from functools import lru_cache
+@lru_cache(maxsize=96)
+def _category_icon(category,ink,size,dpr):
+    pixmap=QPixmap(max(1,round(size*dpr)),max(1,round(size*dpr)));pixmap.fill(Qt.transparent);pixmap.setDevicePixelRatio(dpr)
+    painter=QPainter(pixmap);painter.setRenderHint(QPainter.Antialiasing);painter.scale(size/24,size/24)
+    pen=QPen(QColor(ink));pen.setWidthF(1.7);pen.setCapStyle(Qt.RoundCap);pen.setJoinStyle(Qt.RoundJoin);painter.setPen(pen);painter.setBrush(Qt.NoBrush)
+    if category=='apps':
+        for x in (4,14):
+            for y in (4,14):painter.drawRoundedRect(QRectF(x,y,6,6),1.5,1.5)
+    elif category=='documents':
+        path=QPainterPath();path.moveTo(6,3);path.lineTo(14,3);path.lineTo(19,8);path.lineTo(19,21);path.lineTo(6,21);path.closeSubpath();painter.drawPath(path)
+        painter.drawLine(14,3,14,8);painter.drawLine(14,8,19,8);painter.drawLine(9,12,16,12);painter.drawLine(9,16,14,16)
+    elif category=='images':
+        painter.drawRoundedRect(QRectF(3,4,18,16),2,2);painter.drawEllipse(QRectF(6,7,3,3))
+        path=QPainterPath();path.moveTo(4,18);path.lineTo(10,12);path.lineTo(13,15);path.lineTo(17,10);path.lineTo(21,15);painter.drawPath(path)
+    elif category=='media':
+        painter.drawRoundedRect(QRectF(3,4,18,16),3,3)
+        path=QPainterPath();path.moveTo(10,8);path.lineTo(16,12);path.lineTo(10,16);path.closeSubpath();painter.drawPath(path)
+    elif category=='settings':
+        painter.drawLine(4,6,8,6);painter.drawLine(14,6,20,6);painter.drawEllipse(QRectF(8,3,6,6))
+        painter.drawLine(4,17,12,17);painter.drawLine(18,17,20,17);painter.drawEllipse(QRectF(12,14,6,6))
+    elif category=='note':
+        path=QPainterPath();path.moveTo(4,3);path.lineTo(20,3);path.lineTo(20,15);path.lineTo(14,21);path.lineTo(4,21);path.closeSubpath();painter.drawPath(path)
+        painter.drawLine(14,21,14,15);painter.drawLine(14,15,20,15);painter.drawLine(8,8,16,8);painter.drawLine(8,12,13,12)
+    elif category=='archives':
+        painter.drawRoundedRect(QRectF(5,3,14,18),2,2)
+        for y in (6,10,14):painter.drawLine(10,y,14,y)
+        painter.drawRoundedRect(QRectF(10,16,4,3),.5,.5)
+    else:
+        path=QPainterPath();path.moveTo(3,7);path.lineTo(3,5);path.lineTo(10,5);path.lineTo(12,8);path.lineTo(21,8);path.lineTo(21,20);path.lineTo(3,20);path.closeSubpath();painter.drawPath(path)
+    painter.end();return pixmap
 
 
 class CollectionList(QListWidget):
@@ -36,12 +84,14 @@ class PanelTabs(QTabBar):
         self.pressing = False
         self.pressed_identity = None
         self.setMovable(True)
+        self.setDrawBase(False)
         self.setToolTip('拖动分组栏目调整顺序，自动保存；点击切换分组')
         self.tabMoved.connect(self.save_order)
 
     def mousePressEvent(self, event):
         if event.button()==Qt.LeftButton:
             self.pressing = True
+            self.setProperty('pointerDown',True);self.style().unpolish(self);self.style().polish(self)
             self.pressed_identity = self.tabData(self.tabAt(event.pos()))
         super().mousePressEvent(event)
 
@@ -50,12 +100,14 @@ class PanelTabs(QTabBar):
         super().mouseReleaseEvent(event)
         if event.button()==Qt.LeftButton:
             self.pressing = False
+            self.setProperty('pointerDown',False);self.style().unpolish(self);self.style().polish(self)
             self.pressed_identity = None
             index = next((i for i in range(self.count()) if self.tabData(i)==identity),self.currentIndex())
             self.panel.select_tab(index)
 
     def hideEvent(self, event):
         self.pressing = False
+        self.setProperty('pointerDown',False)
         self.pressed_identity = None
         super().hideEvent(event)
 
@@ -109,15 +161,17 @@ class DesktopPanel(QDialog):
         body.setSizeConstraint(QLayout.SetNoConstraint)
         header = self.header_layout = QHBoxLayout()
         header.setSpacing(4)
+        self.header_icon=label('');self.header_icon.setAttribute(Qt.WA_TransparentForMouseEvents);header.addWidget(self.header_icon)
         self.title = label('')
         self.title.setObjectName('PanelLabel')
-        self.title.setStyleSheet('font-weight:600;')
+        self.title.setStyleSheet('font-weight:600;');self.title.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred)
         self.title.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.count = label('')
         self.count.setObjectName('PanelLabel')
         self.count.setAttribute(Qt.WA_TransparentForMouseEvents)
         header.addWidget(self.title, 1)
         header.addWidget(self.count)
+        self.settings_button=button('',self.edit_options);self.settings_button.setObjectName('PanelButton');self.settings_button.setToolTip('卡片设置');self.settings_button.setAccessibleName('卡片设置');header.addWidget(self.settings_button)
         self.menu_button = button('⋯', self.open_menu)
         self.menu_button.setObjectName('PanelButton')
         self.menu_button.setToolTip('面板选项')
@@ -190,8 +244,17 @@ class DesktopPanel(QDialog):
                 self.tabs.setTabData(index, identity)
         for index,(identity,name) in enumerate(expected):
             if identity==self.identity and not self.tabs.pressing: self.tabs.setCurrentIndex(index)
+        self.update_tab_icons()
         self.tabs.setVisible(self.manager.is_merged(self.identity))
         self.tabs.blockSignals(False)
+
+    def update_tab_icons(self):
+        size=metric(15,self.ui_factor,11);self.tabs.setIconSize(QSize(size,size))
+        light=self.colors()['light'];dpr=self.devicePixelRatioF()
+        for index in range(self.tabs.count()):
+            identity=self.tabs.tabData(index)
+            self.tabs.setTabIcon(index,QIcon(category_icon(identity,category_color(identity,light),size,dpr)))
+            self.tabs.setTabToolTip(index,self.tabs.tabText(index))
 
     def select_tab(self, index):
         if self.tabs.pressing: return
@@ -223,7 +286,7 @@ class DesktopPanel(QDialog):
         factor=self.ui_factor
         self.layout().setContentsMargins(metric(10,factor),metric(6,factor),metric(10,factor),metric(6,factor))
         self.layout().setSpacing(metric(4,factor))
-        self.header_layout.setSpacing(metric(4,factor))
+        self.header_layout.setSpacing(metric(5,factor))
         self.content.layout().setSpacing(metric(4,factor))
         self.footer.setSpacing(metric(4,factor))
         self.grip.setFixedSize(metric(12,factor,6),metric(12,factor,6))
@@ -240,14 +303,15 @@ class DesktopPanel(QDialog):
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWindowTitle(self.model['name']+' · 桌面收纳')
-        self.grip.setVisible(False)
+        self.grip.setVisible(not self.option('locked'))
         # Use min/max constraints as well as hiding the grip: native resize is locked too.
         if self.collapsed:
             self.set_collapsed_geometry(True)
         else:
             self.setMinimumSize(1,1)
             self.setMaximumSize(16777215,16777215)
-            bounds=self.bounds();self.resize(bounds[2],bounds[3]);self.setFixedSize(self.size())
+            self.setMinimumSize(min(minimum(factor)[0],self.width()),min(minimum(factor)[1],self.height()))
+            if self.option('locked'):self.setFixedSize(self.size())
         colors = self.colors()
         ink = colors['fg'].name()
         search_background = 'transparent' if self.is_clear() else 'rgba(128,128,128,20)'
@@ -264,6 +328,27 @@ class DesktopPanel(QDialog):
             QPushButton#PanelButton:hover {background:rgba(128,128,128,40);}
             QLineEdit#PanelSearch {background:%s; border:0; padding:3px 8px; min-height:20px;}
         ''' % (ink, search_background),factor)+'''QLabel#PanelLabel, QLineEdit#PanelSearch, QListWidget#PanelFiles, QPushButton#PanelButton, QTabBar#PanelTabs {font-size:%dpx;}'''%self.text_pixels())
+        hover='rgba(255,255,255,85)' if colors['light'] else 'rgba(255,255,255,25)'
+        selected='rgba(255,255,255,145)' if colors['light'] else 'rgba(255,255,255,45)'
+        pressed='rgba(255,255,255,205)' if colors['light'] else 'rgba(255,255,255,72)'
+        self.setStyleSheet(self.styleSheet()+panel_css("""
+            QTabBar#PanelTabs::tab {padding:4px 8px;margin:1px 3px 2px 0;border:1px solid transparent;border-radius:7px;background:transparent;}
+            QTabBar#PanelTabs::tab:hover {background:%s;}
+            QTabBar#PanelTabs::tab:selected {background:%s;border:1px solid rgba(255,255,255,110);font-weight:600;}
+            QTabBar#PanelTabs::tab:selected:hover {background:%s;}
+            QTabBar#PanelTabs[pointerDown="true"]::tab:selected {background:%s;}
+            QPushButton#PanelButton {padding:0;min-width:24px;max-width:24px;min-height:24px;max-height:24px;border:0;border-radius:6px;outline:0;background:transparent;}
+            QPushButton#PanelButton:hover {background:%s;}
+            QPushButton#PanelButton:pressed {background:%s;}
+            QPushButton#PanelButton:focus {border:0;outline:0;}
+        """%(hover,selected,pressed,pressed,hover,pressed),factor))
+        icon_size=metric(17,factor,12);self.header_icon.setFixedSize(icon_size,icon_size)
+        self.header_icon.setPixmap(category_icon(self.identity,category_color(self.identity,colors['light']),icon_size,self.devicePixelRatioF()))
+        self.update_tab_icons()
+        self.title.setToolTip(self.model['name']);self.count.setToolTip('此分组项目数量')
+        self.count.setStyleSheet(panel_css('padding:1px 5px;border-radius:5px;background:rgba(128,128,128,16);',factor))
+        self.settings_button.setIcon(QIcon(category_icon('settings',ink,metric(16,factor,12),self.devicePixelRatioF())));self.settings_button.setIconSize(QSize(metric(16,factor,12),metric(16,factor,12)))
+        for control in (self.settings_button,self.menu_button,self.collapse_button):control.setFixedSize(metric(24,factor,16),metric(24,factor,16))
         palette = self.query.palette()
         palette.setColor(QPalette.PlaceholderText, QColor('#5c626c' if colors['light'] else '#b4b8c0'))
         self.query.setPalette(palette)
@@ -310,41 +395,7 @@ class DesktopPanel(QDialog):
         self.fit_timer.start(0)
 
     def fit_content(self):
-        return  # Width and height are shared by every card.
-        # Fit the full collection, so filtering never moves the window under the cursor.
-        if (self.disposed or self.collapsed or self.restoring or self.manual_resize
-                or self.option('locked') or not (self.dock.cfg['merged_compact'] if self.manager.is_merged(self.identity) else self.model.get('compact', True))):
-            return
-        self.layout().activate()
-        grid = self.list.gridSize()
-        list_view = self.model.get('view')=='list'
-        if list_view: grid = QSize(max(1,self.list.width()),max(metric(34,self.ui_factor,18),self.list.fontMetrics().height()+metric(8,self.ui_factor),self.list.iconSize().height()+metric(6,self.ui_factor)))
-        available = (QApplication.screenAt(self.pos()) or QApplication.primaryScreen()).availableGeometry()
-        limit = min(available.height(), max(240, self.bounds()[3]))
-        margins = self.layout().contentsMargins()
-        chrome = (margins.top()+margins.bottom()+self.layout().itemAt(0).sizeHint().height()
-                  + self.layout().spacing()+self.query.sizeHint().height()
-                  + self.footer.sizeHint().height()+2*self.content.layout().spacing())
-        if self.manager.is_merged(self.identity): chrome += self.tabs.sizeHint().height()+self.content.layout().spacing()
-        width = self.list.contentsRect().width()
-        count = max(1, len(self.manager.rows(self.identity)))
-        columns = 1 if list_view else max(1, width//grid.width())
-        height = chrome + ((count+columns-1)//columns)*grid.height()+2
-        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if height > limit else Qt.ScrollBarAlwaysOff)
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        if height > limit:
-            width -= self.style().pixelMetric(self.style().PM_ScrollBarExtent)
-            columns = 1 if list_view else max(1, width//grid.width())
-            height = chrome + ((count+columns-1)//columns)*grid.height()+2
-        height = max(min(minimum(self.ui_factor)[1],available.height()), min(limit, height))
-        if height != self.height():
-            self.restoring = True
-            self.resize(self.width(), height)
-            self.move(self.x(), max(available.top(), min(self.y(), available.bottom()+1-height)))
-            self.restoring = False
-            self.backdrop = None
-            self.refresh_timer.start(100)
-        self._layout_geometry=self.geometry().getRect()
+        # Preserve freely chosen dimensions, including when merged pages switch.
         self.list.doItemsLayout()
 
     def set_compact(self, enabled):
@@ -420,7 +471,7 @@ class DesktopPanel(QDialog):
 
     def build_panel_menu(self):
         menu = QMenu(self)
-        menu.addAction('统一尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
+        menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
         menu.addAction('添加文件…').triggered.connect(self.add_files)
         menu.addAction('添加文件夹…').triggered.connect(self.add_folder)
         menu.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)
@@ -501,7 +552,7 @@ class DesktopPanel(QDialog):
             self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
                       max(available.top(), min(self.y(), available.bottom()+1-self.height())))
             self.setMinimumSize(min(minimum(self.ui_factor)[0],geometry[2],available.width()), min(minimum(self.ui_factor)[1],geometry[3],available.height()))
-            self.setFixedSize(self.size())
+            if self.option('locked'):self.setFixedSize(self.size())
         screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
         available = screen.availableGeometry()
         self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),

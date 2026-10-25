@@ -52,7 +52,8 @@ class StartupProbe:
                 panel = runtime.panels.windows['images']
                 assert panel.collapsed
                 if self.autostart:
-                    assert runtime.panels.active_window=='images' and panel.width()==max(180,round(360*.7))
+                    assert runtime.panels.active_window=='images' and panel.width()<=360 and panel.height()<240
+                    assert panel.bounds()[2:]==[360,240]
                     assert runtime.dock.cfg['merged_geometry']==[88,96,360,240]
             elapsed = time.monotonic()-self.started
             if self.autostart:

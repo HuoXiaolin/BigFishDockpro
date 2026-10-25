@@ -184,6 +184,10 @@ class DesktopPanels(QObject):
             if identity not in self.windows:
                 default = [geo.left()+20+(index % columns)*cell_width,
                            geo.top()+20+(index//columns)*(height+round(16*base_factor)), round(320*base_factor), height]
+                if not model.get('geometry'):
+                    from card_metrics import new_geometry
+                    from screen_layout import screen_records
+                    default=new_geometry(self.cfg,default,screen_records())
                 self.windows[identity] = DesktopPanel(self, identity, default)
             window = self.windows[identity]
             merged = self.is_merged(identity)

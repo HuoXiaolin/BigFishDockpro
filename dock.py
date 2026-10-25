@@ -1823,17 +1823,14 @@ class Dock(QWidget):
             m.addAction('图标设置…').triggered.connect(lambda _=False, index=self.page_offset+idx: self.edit_icon(index))
             m.addAction('移除').triggered.connect(lambda _=False, index=self.page_offset+idx, entry=dict(self.cfg['items'][self.page_offset+idx]): self.remove_icon(index, entry))
             m.addSeparator()
-        runtime = getattr(self.tray, 'runtime', None)
         if self.tray:
-            m.addAction('设置…').triggered.connect(runtime.show_settings if runtime else self.tray.show_settings)
-            m.addAction('应用批量管理…').triggered.connect(runtime.show_batch if runtime else self.tray.importer.show)
-            if runtime:
-                notes=m.addMenu('便签卡片')
-                notes.addAction('新建便签').triggered.connect(runtime.notes.new)
-                notes.addAction('便签管理与搜索…').triggered.connect(runtime.notes.manage)
-            m.addSeparator()
-        m.addAction('隐藏 Dock').triggered.connect(lambda: runtime.set_dock_visible(False) if runtime else self.hide())
-        m.addAction("退出").triggered.connect(lambda: runtime.request_exit() if getattr(getattr(self,'tray',None),'runtime',None) else QApplication.instance().quit())
+            if 0<=idx<len(self.items) and self.items[idx].get('sep'):
+                snapshot=[dict(item) for item in self.cfg['items']]
+                index=self.page_offset+idx
+                m.addAction('移除此分隔符').triggered.connect(lambda checked=False:self.tray.remove_separator(index,snapshot));m.addSeparator()
+            from tray_menu import common_actions
+            insert_at=self.page_offset+idx+1 if 0<=idx<len(self.items) else None
+            common_actions(m,self.tray,dock_context=True,insert_at=insert_at)
         return m
 
     def edit_icon(self, index):
@@ -1850,7 +1847,15 @@ class Dock(QWidget):
             self.tray.importer.apply_items(items)
 
     def contextMenuEvent(self, e):
-        menu = self.icon_context_menu(self._hit(e.pos()))
+        index=self._hit(e.pos())
+        if index<0:
+            x,y=float(e.pos().x()),float(e.pos().y())
+            for i,rect in enumerate(self.rects):
+                if not rect[4] or abs(x-rect[0])>max(7,rect[1]/2):continue
+                by,h=rect[3],rect[2]
+                hit=(by-6<=y<=by+h+10) if self.bump_down() else (by-h-10<=y<=by+6)
+                if hit:index=i;break
+        menu = self.icon_context_menu(index)
         menu.exec_(e.globalPos())
         menu.deleteLater()
 
@@ -2337,11 +2342,21 @@ class DockTray(QSystemTrayIcon):
         if added:
             self.showMessage(APP_TITLE, T("已添加 %d 个图标到 Dock") % added, make_tray_icon(), 2000)
 
-    def add_separator(self):
-        self.cfg["items"].append({"sep": True})
-        save_config(self.cfg)
-        self.dock.reload()
-        self._show_dock()
+    def add_separator(self,index=None):
+        items=[dict(item) for item in self.cfg['items']]
+        slot=max(0,min(len(items),index)) if type(index) is int else len(items)
+        items.insert(slot,{'sep':True})
+        if self.importer.apply_items(items):self._show_dock()
+
+    def remove_separator(self,index=None,snapshot=None):
+        current=self.cfg['items']
+        if snapshot is not None and current!=snapshot:
+            self.showMessage(APP_TITLE,'Dock 列表已变化，请重新打开菜单后操作。',self.icon(),3000);return False
+        if index is None:items=[dict(item) for item in current if not item.get('sep')]
+        elif type(index) is int and 0<=index<len(current) and current[index].get('sep'):
+            items=[dict(item) for i,item in enumerate(current) if i!=index]
+        else:return False
+        return self.importer.apply_items(items)
 
     def remove_index(self, idx):
         try:
@@ -2550,6 +2565,10 @@ def main():
     if '--startup-test' in args:
         from startup_probe import StartupProbe
         probe = StartupProbe(args, sys.modules[__name__])
+
+    if '--runtime-check' in args:
+        from current_ui_tests import run
+        return run(args[args.index('--runtime-check')+1])
 
     if '--self-test' in args:
         from smoke_test import run
