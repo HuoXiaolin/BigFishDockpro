@@ -2,7 +2,7 @@
 import math
 from PyQt5.QtCore import QVariantAnimation,QEasingCurve,Qt
 from PyQt5.QtGui import QPainter
-from PyQt5.QtWidgets import QStackedWidget
+from PyQt5.QtWidgets import QStackedWidget,QWidget
 
 
 class FlipStack(QStackedWidget):
@@ -24,3 +24,25 @@ class FlipStack(QStackedWidget):
         painter=QPainter(self);painter.setRenderHint(QPainter.SmoothPixmapTransform);painter.translate(self.width()/2,self.height()/2)
         painter.scale(max(.015,abs(math.cos(math.pi*self.progress))),1)
         image=self.frames[0 if self.progress<.5 else 1];painter.drawPixmap(-self.width()//2,-self.height()//2,self.width(),self.height(),image)
+
+
+class ContentTransition(QWidget):
+    """Short content-only dissolve; no top-level opacity or background recapture."""
+    def __init__(self,view):
+        super().__init__(view);self.frame=None;self.progress=0;self.hide()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.animation=QVariantAnimation(self);self.animation.setDuration(160)
+        self.animation.setStartValue(0.0);self.animation.setEndValue(1.0)
+        self.animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.animation.valueChanged.connect(self.advance);self.animation.finished.connect(self.cancel)
+    def begin(self,frame):
+        self.cancel()
+        if frame is None or frame.isNull():return
+        self.frame=frame;self.progress=0;self.setGeometry(self.parentWidget().rect());self.show();self.raise_();self.animation.start()
+    def advance(self,value):self.progress=float(value);self.update()
+    def cancel(self):
+        self.animation.stop();self.frame=None;self.hide()
+    def paintEvent(self,event):
+        if self.frame is None:return
+        painter=QPainter(self);painter.setOpacity(1-self.progress);painter.drawPixmap(self.rect(),self.frame)

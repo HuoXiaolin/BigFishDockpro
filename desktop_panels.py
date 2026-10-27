@@ -209,9 +209,24 @@ class DesktopPanels(QObject):
 
     def select_page(self, identity):
         if not self.is_merged(identity) or identity not in {model['id'] for model in self.enabled_models()}:return
-        current=self.windows.get(self.active_for(identity))
+        current=self.windows.get(self.active_for(identity));target=self.windows.get(identity)
+        if current is target:return
         if current:current.store_geometry()
-        if self.update_group(identity,active=identity):self.sync_windows()
+        if not self.update_group(identity,active=identity):return
+        if current and target and current.isVisible() and not target.isVisible():
+            # Keep the visible native window, desktop ownership and captured glass.
+            # Exchange page identities with its hidden placeholder, never hide/show.
+            current.page_transition.cancel();front=current.list.grab() if not current.collapsed and not self.runtime.lite else None
+            previous=current.identity;old_state=current.page_state();new_state=target.page_state()
+            current.identity=identity;target.identity=previous
+            current.default_geometry,target.default_geometry=target.default_geometry,current.default_geometry
+            self.windows[identity],self.windows[previous]=current,target
+            current.resize_timer.stop();target.resize_timer.stop()
+            current.apply_options();current.refresh_timer.stop()
+            target.restore_page_state(old_state);current.restore_page_state(new_state)
+            self.sync_windows();current.list.doItemsLayout();current.list.verticalScrollBar().setValue(new_state[2])
+            current.page_transition.begin(front)
+        else:self.sync_windows()
 
     def manage_groups(self):
         from panel_management import GroupDialog

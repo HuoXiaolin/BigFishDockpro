@@ -11,11 +11,12 @@ def blend(left,right,amount):
     return QColor(*(round(a*(1-amount)+b*amount) for a,b in zip(left.getRgb()[:3],right.getRgb()[:3])))
 
 
-def paint_design(painter,rect,cfg,design=None,clear=False,body_top=None,body_inset=4):
+def paint_design(painter,rect,cfg,design=None,clear=False,body_top=None,body_inset=4,corner_radius=None):
     if clear:return
     design=design if design and design!='follow' else cfg.get('card_design','aurora')
     accent=accent_color(cfg);white=QColor('#ffffff');painter.save();painter.setRenderHint(painter.Antialiasing)
-    radius=min(20,rect.height()*.12);path=QPainterPath();path.addRoundedRect(rect,radius,radius)
+    radius=min(20,rect.height()*.12) if corner_radius is None else corner_radius
+    path=QPainterPath();path.addRoundedRect(rect,radius,radius)
     painter.setClipPath(path,Qt.IntersectClip)
     if design=='aurora':
         wash=QLinearGradient(rect.topLeft(),rect.bottomRight());a=QColor(accent);a.setAlpha(28);b=QColor('#ffffff');b.setAlpha(8)

@@ -41,6 +41,18 @@ def run(api,runtime,root,output,checks):
         assert manager.set_merged('a',False);app.processEvents();panel.layout().activate()
         assert not panel.tabs.isVisible() and panel.design_body_top()<edge
         panel.grab().save(str(Path(output)/'panel-gradient-independent.png'))
+        old_collapse_style=cfg.get('panel_collapse_style','bar');cfg['panel_collapse_style']='bar'
+        panel.set_collapsed_geometry(False);panel.layout().activate();app.processEvents()
+        expanded_radius=panel.surface_radius();expanded=panel.grab().toImage()
+        panel.set_collapsed_geometry(True);panel.layout().activate();app.processEvents()
+        assert panel.surface_radius()==expanded_radius
+        collapsed=panel.grab().toImage()
+        for x,y in [(2,2),(5,5),(10,2)]:assert abs(expanded.pixelColor(x,y).alpha()-collapsed.pixelColor(x,y).alpha())<=2
+        panel.grab().save(str(Path(output)/'panel-gradient-collapsed-bar.png'))
+        panel.set_collapsed_geometry(False);panel.layout().activate();app.processEvents()
+        panel.grab().save(str(Path(output)/'panel-gradient-expanded-corners.png'))
+        cfg['panel_collapse_style']=old_collapse_style
+        checks.append('bar and expanded card share exact glass/design corner radius and top-corner alpha; capsule retains its distinct radius')
         cfg['card_design']=old_design;panel.apply_options()
         assert manager.set_merged('a',True);app.processEvents()
         checks.append('gradient collection surface follows live header/tabs/search boundary at wide and narrow sizes; independent cards omit tab gap')
@@ -50,7 +62,20 @@ def run(api,runtime,root,output,checks):
         assert {key for key,w in manager.windows.items() if w.isVisible()}=={'a','c'}
         assert [manager.windows['a'].tabs.tabData(i) for i in range(2)]==['a','b']
         assert [manager.windows['c'].tabs.tabData(i) for i in range(2)]==['c','d']
-        manager.select_page('b');assert manager.windows['b'].isVisible() and manager.windows['c'].isVisible()
+        host=manager.windows['a'];host_id=int(host.winId());host_geometry=host.geometry();before_state=host.page_state()
+        with patch.object(host,'capture_backdrop') as capture:
+            manager.select_page('b');assert manager.windows['b'].isVisible() and manager.windows['c'].isVisible()
+            assert manager.windows['b'] is host and int(host.winId())==host_id and host.geometry()==host_geometry
+            assert not host.refresh_timer.isActive() and not capture.called
+            assert host.page_transition.frame is not None
+            from desktop_panel_tests import wait_for
+            wait_for(app,lambda:host.page_transition.frame is None)
+            assert host.page_transition.animation.state()==host.page_transition.animation.Stopped
+        with patch.object(api,'save_config',return_value=False):manager.select_page('a')
+        assert manager.windows['b'] is host and manager.active_for('b')=='b'
+        manager.select_page('a');manager.select_page('b');app.processEvents()
+        assert manager.windows['b'] is host and int(host.winId())==host_id
+        checks.append('merged tabs retain visible native window/geometry, no new backdrop capture; finite content dissolve releases snapshot, rapid switching works, failed save preserves page')
         manager.select_page('d');assert manager.windows['b'].isVisible() and manager.windows['d'].isVisible()
         # Persist different real widget sizes and group-relative monitor records.
         first=manager.windows['b'];first.set_collapsed_geometry(False);first.move(90,100);first.resize(360,230);first.store_geometry();first.resize_timer.stop()
@@ -64,6 +89,14 @@ def run(api,runtime,root,output,checks):
         manager.windows['b'].tabs.moveTab(0,1);app.processEvents()
         assert [m['id'] for m in manager.merged_models('a')]==['b','a'] and [m['id'] for m in manager.merged_models('c')]==['c','d']
         assert manager.add_paths('a',[str(sample)]) and manager.add_paths('c',[str(sample)])
+        manager.select_page('a');host=manager.windows['a'];host.query.setText('group')
+        manager.select_page('b');host.query.setText('empty-page-filter')
+        manager.select_page('a');assert manager.windows['a'] is host and host.query.text()=='group' and host.list.count()==1
+        host.page_transition.animation.setCurrentTime(80);host.grab().save(str(Path(output)/'panel-tab-transition.png'))
+        wait_for(app,lambda:host.page_transition.frame is None)
+        host.grab().save(str(Path(output)/'panel-tab-transition-finished.png'))
+        host.query.clear();manager.select_page('b');assert host.query.text()=='empty-page-filter'
+        host.query.clear()
         entries=copy.deepcopy(cfg['desktop_entries'])
         dialog=GroupDialog(manager);dialog.show();app.processEvents()
         third=dialog.create_group('临时合并组');assert third!=second and third!='default'

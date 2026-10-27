@@ -237,6 +237,8 @@ class DesktopPanel(QDialog):
         self.list.customContextMenuRequested.connect(self.item_menu)
         self.list.itemDoubleClicked.connect(self.launch_item)
         content.addWidget(self.list, 1)
+        from flip_stack import ContentTransition
+        self.page_transition=ContentTransition(self.list)
         footer = self.footer = QHBoxLayout()
         self.notice = label('拖入文件、文件夹或快捷方式', 'muted')
         self.notice.setObjectName('PanelLabel')
@@ -276,6 +278,15 @@ class DesktopPanel(QDialog):
             identity=self.tabs.tabData(index)
             self.tabs.setTabIcon(index,QIcon(category_icon(identity,category_color(identity,light),size,dpr)))
             self.tabs.setTabToolTip(index,self.tabs.tabText(index))
+
+    def page_state(self):
+        return (self.query.text(),self.selected_keys(),self.list.verticalScrollBar().value())
+
+    def restore_page_state(self,state):
+        query,selected,scroll=state
+        self.query.blockSignals(True);self.query.setText(query);self.query.blockSignals(False)
+        self.list.clearSelection();self._released_selection=set(selected)
+        self.render();self.list.doItemsLayout();self.list.verticalScrollBar().setValue(scroll)
 
     def select_tab(self, index):
         if self.tabs.pressing: return
@@ -799,6 +810,7 @@ class DesktopPanel(QDialog):
                 user.SetWindowLongPtrW(int(self.winId()), -8, int(owner))
 
     def hideEvent(self, event):
+        self.page_transition.cancel()
         if not self.disposed and not self.restoring: self.store_geometry()
         for timer in (self.refresh_timer, self.resize_timer, self.collapse_timer, self.expand_timer, self.fit_timer): timer.stop()
         self.backdrop = None
@@ -825,8 +837,8 @@ class DesktopPanel(QDialog):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         shape = QPainterPath()
-        radius = 22 if self.collapsed and self.option('collapse_style') == 'capsule' else (8 if self.collapsed else 18)
-        shape.addRoundedRect(rect, radius*self.ui_factor, radius*self.ui_factor)
+        radius=self.surface_radius()
+        shape.addRoundedRect(rect,radius,radius)
         colors = self.colors()
         highlight = self.option('highlight')/45
         colors['border'].setAlpha(min(255, round(colors['border'].alpha()*highlight)))
@@ -842,7 +854,10 @@ class DesktopPanel(QDialog):
         paint_liquid_glass(surface, painter, shape, rect, rect, colors, int(alpha), stops)
         from card_design import paint_design
         paint_design(painter,rect,self.dock.cfg,clear=self.is_clear(),
-                     body_top=self.design_body_top(),body_inset=metric(4,self.ui_factor))
+                     body_top=self.design_body_top(),body_inset=metric(4,self.ui_factor),corner_radius=radius)
+
+    def surface_radius(self):
+        return (22 if self.collapsed and self.option('collapse_style')=='capsule' else 18)*self.ui_factor
 
     def design_body_top(self):
         # Start the porcelain content surface below the entire live header/tab area.
@@ -877,6 +892,7 @@ class DesktopPanel(QDialog):
             self.collapse()
 
     def dispose(self):
+        self.page_transition.cancel()
         self.disposed = True
         for timer in (self.refresh_timer, self.resize_timer, self.collapse_timer, self.expand_timer, self.fit_timer): timer.stop()
         self.backdrop = None
