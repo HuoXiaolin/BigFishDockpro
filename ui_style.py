@@ -6,6 +6,24 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushBu
     QAbstractSpinBox, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip,
     QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView)
 
+class SubtleSizeGrip(QSizeGrip):
+    """Use the standard resize target with a restrained two-stroke mark."""
+    def __init__(self,parent,color_provider=None):
+        super().__init__(parent);self.hovered=False;self.color_provider=color_provider
+        self.setToolTip('拖动调整大小');self.setAccessibleName('调整大小')
+    def enterEvent(self,event):
+        self.hovered=True;self.update();super().enterEvent(event)
+    def leaveEvent(self,event):
+        self.hovered=False;self.update();super().leaveEvent(event)
+    def paintEvent(self,event):
+        from PyQt5.QtCore import QPointF
+        light=self.color_provider() if self.color_provider else self.palette().color(QPalette.Window).lightness()>110
+        color=QColor('#263c50' if light else '#ffffff');color.setAlpha(130 if self.hovered else 48)
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setPen(QPen(color,1,Qt.SolidLine,Qt.RoundCap))
+        x=self.width()-4;y=self.height()-4
+        p.drawLine(QPointF(x-6,y),QPointF(x,y-6));p.drawLine(QPointF(x-3,y+1),QPointF(x+1,y-3))
+
+
 # Half the former screen area, while retaining readable text at normal DPI.
 UI_DENSITY = 0.70
 

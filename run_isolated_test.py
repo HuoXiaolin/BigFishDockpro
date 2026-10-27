@@ -23,10 +23,19 @@ def desktop_name(handle):
 
 def assert_isolated():
     expected = os.environ.get('FISHDOCK_TEST_DESKTOP')
+    station_name=os.environ.get('FISHDOCK_TEST_STATION')
     if not expected:
         raise RuntimeError('GUI tests require run_isolated_test.py; foreground fallback is prohibited.')
     user32 = ctypes.WinDLL('user32', use_last_error=True)
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    if station_name:
+        user32.OpenWindowStationW.argtypes=[wintypes.LPCWSTR,wintypes.BOOL,wintypes.DWORD];user32.OpenWindowStationW.restype=wintypes.HANDLE
+        user32.SetProcessWindowStation.argtypes=[wintypes.HANDLE]
+        station=user32.OpenWindowStationW(station_name,False,0x37f)
+        if not station or not user32.SetProcessWindowStation(station):raise RuntimeError('Cannot attach isolated clipboard station: '+str(ctypes.WinError(ctypes.get_last_error())))
+        # Keep the station handle open until process exit.
+        user32.GetProcessWindowStation.restype=wintypes.HANDLE
+        if desktop_name(user32.GetProcessWindowStation())!=station_name:raise RuntimeError('Clipboard station isolation failed.')
     user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
     user32.GetThreadDesktop.restype = wintypes.HANDLE
     actual = desktop_name(user32.GetThreadDesktop(kernel32.GetCurrentThreadId()))
@@ -67,9 +76,12 @@ def main():
     parser.add_argument('--target', default='dock.py')
     parser.add_argument('--output', required=True)
     parser.add_argument('--runtime-check',action='store_true')
+    parser.add_argument('--clipboard-test',action='store_true')
     parser.add_argument('--startup', action='store_true')
     parser.add_argument('--autostart', action='store_true')
     parser.add_argument('--fresh-profile', action='store_true')
+    parser.add_argument('--visibility-profile',action='store_true')
+    parser.add_argument('--resume-profile',action='store_true')
     parser.add_argument('--timeout', type=int, default=55)
     args = parser.parse_args()
     output = Path(args.output).resolve()
@@ -80,22 +92,37 @@ def main():
     user32.CreateDesktopW.restype = wintypes.HANDLE
     user32.CloseDesktop.argtypes = [wintypes.HANDLE]
     name = 'Fishdock_Test_' + uuid.uuid4().hex
-    handle = user32.CreateDesktopW(name, None, None, 0, 0x01ff, None)
+    station=None;station_name=''
+    if args.clipboard_test:
+        station_name='Fishdock_Clipboard_'+uuid.uuid4().hex
+        user32.CreateWindowStationW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p];user32.CreateWindowStationW.restype=wintypes.HANDLE
+        user32.GetProcessWindowStation.restype=wintypes.HANDLE;user32.SetProcessWindowStation.argtypes=[wintypes.HANDLE]
+        user32.CloseWindowStation.argtypes=[wintypes.HANDLE]
+        original=user32.GetProcessWindowStation();station=user32.CreateWindowStationW(station_name,0,0x37f,None)
+        if not station or not user32.SetProcessWindowStation(station):raise RuntimeError('Cannot create isolated clipboard station: '+str(ctypes.WinError(ctypes.get_last_error())))
+        try:handle=user32.CreateDesktopW(name,None,None,0,0x01ff,None)
+        finally:
+            if not user32.SetProcessWindowStation(original):raise RuntimeError('Cannot restore test launcher window station.')
+    else:handle=user32.CreateDesktopW(name,None,None,0,0x01ff,None)
     if not handle:
+        if station:user32.CloseWindowStation(station)
         raise RuntimeError('Cannot create isolated desktop; no foreground fallback: ' + str(ctypes.WinError(ctypes.get_last_error())))
     try:
         target = Path(args.target).resolve()
         command = ([str(Path(args.python).resolve()), str(target)] if target.suffix.lower() == '.py' else [str(target)])
-        command += ['--startup-test' if args.startup else '--runtime-check' if args.runtime_check else '--self-test', str(output)]
+        command += ['--clipboard-test' if args.clipboard_test else '--startup-test' if args.startup else '--runtime-check' if args.runtime_check else '--self-test', str(output)]
         if args.autostart:
             command.append('--autostart')
         if args.fresh_profile:
             command.append('--fresh-profile')
+        if args.visibility_profile:command.append('--visibility-profile')
+        if args.resume_profile:command.append('--resume-profile')
         startup = subprocess.STARTUPINFO()
         startup.lpDesktop = name
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0
         env = dict(os.environ, FISHDOCK_TEST_DESKTOP=name, PYTHONIOENCODING='utf-8')
+        if station_name:env['FISHDOCK_TEST_STATION']=station_name
         result_path = output/'result.json'
         if result_path.exists():
             result_path.unlink()
@@ -116,6 +143,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         user32.CloseDesktop(handle)
+        if station:user32.CloseWindowStation(station)
 
 
 if __name__ == '__main__':

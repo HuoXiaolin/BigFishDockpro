@@ -1,9 +1,13 @@
 """Persisted options and validation shared by startup, settings and panels."""
 import re
 DEFAULTS = {
+    'card_design':'aurora',
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'auto', 'settings_manual_size':[], 'settings_custom_density':100,
+    'calendar_enabled':False,'calendar_locked':False,'calendar_layout':{},'calendar_appearance':{},
+    'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
     'notes_enabled': False, 'notes_visible': True, 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
     'dock_visible': True, 'panels_visible': True, 'runtime_lite': False, 'hide_tray': False,
+    'merge_groups': [], 'merge_initialized': False,
     'dock_page': 0, 'merged_panels': False, 'merged_active': '', 'merged_geometry': [],
     'merged_collapsed': False, 'merged_compact': True, 'disabled_categories': [], 'lite_restore': {},
     'screen_corners': False, 'corner_radius': 28,
@@ -31,6 +35,8 @@ def normalize(cfg):
         if result.get(theme) == 'follow': result[theme] = 'auto'
     for key, value in DEFAULTS.items():
         result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
+    # Retired selective hiding is migrated to the safe co-display mode.
+    if result.get('desktop_icon_mode')=='collected':result['desktop_icon_mode']='both'
     for key, lower, upper in [('corner_radius', 0, 120), ('panel_opacity', 0, 100),
                               ('panel_blur', 2, 30), ('panel_highlight', 0, 100), ('dock_highlight', 0, 100),
                               ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100), ('startup_delay', 0, 300)]:
@@ -43,12 +49,14 @@ def normalize(cfg):
                          ('dock_material', tuple(value for _,value in MATERIALS)),
                          ('panel_collapse_style', ('bar', 'capsule')),
                          ('panel_theme', ('auto', 'light', 'dark')),
-                         ('desktop_icon_mode', ('both', 'collected', 'hide_all')),
+                         ('desktop_icon_mode', ('both', 'hide_all')),
                          ('note_style', ('glass', 'paper', 'plain')),
                          ('settings_size',('auto','small','medium','large','custom')),
                            ('startup_priority', ('low', 'normal', 'high'))]:
         if result[key] not in allowed:
             result[key] = DEFAULTS[key]
+    from card_design import DESIGNS
+    if result.get('card_design') not in {value for _,value in DESIGNS}:result['card_design']='aurora'
     for key, value in DEFAULTS.items():
         if isinstance(value, bool):
             result[key] = result[key] if isinstance(result[key], bool) else value
@@ -72,6 +80,16 @@ def normalize(cfg):
         value=result.get(key);result[key]=max(low,min(high,value)) if type(value) is int else default
     size=result.get('settings_manual_size')
     result['settings_manual_size']=list(size) if isinstance(size,list) and len(size)==2 and all(type(v) is int and 200<=v<=10000 for v in size) else []
+    from clock_appearance import STYLES
+    if result['clock_style'] not in {value for _,value in STYLES}: result['clock_style']='digital'
+    from clock_appearance import normalize as normalize_clock
+    result['clock_appearance']=normalize_clock(result.get('clock_appearance'),result)
+    calendar_options=result.get('calendar_appearance')
+    result['calendar_appearance']=normalize_clock(calendar_options,result)
+    if not calendar_options:result['calendar_appearance'].update(theme='light',color='')
+    from screen_layout import valid_record
+    result['clock_layout']=valid_record(result.get('clock_layout'))
+    result['calendar_layout']=valid_record(result.get('calendar_layout'))
     from card_metrics import normalize_profile
     result['card_sizing']=normalize_profile(result.get('card_sizing'))
     from sticky_notes_store import normalize_notes
@@ -83,4 +101,6 @@ def normalize(cfg):
     result.update(normalize_desktop(result))
     from panel_preferences import without_overrides
     result['desktop_panels']=without_overrides(result['desktop_panels'])
+    from panel_merge import normalize as normalize_merge_groups
+    normalize_merge_groups(result)
     return result

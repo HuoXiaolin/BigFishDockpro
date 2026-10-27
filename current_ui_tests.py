@@ -36,6 +36,124 @@ def run(output):
         runtime=tray.runtime=RuntimeController(dock,tray,api)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
         checks.append('private Windows desktop: '+desktop+'; temporary configuration and synthetic entries only')
+        # Sample this test process before/after enabling one clock; this is not a power measurement.
+        import ctypes
+        from ctypes import wintypes
+        class MemoryCounters(ctypes.Structure):
+            _fields_=[('cb',wintypes.DWORD),('PageFaultCount',wintypes.DWORD)]+[(name,ctypes.c_size_t) for name in ('PeakWorkingSetSize','WorkingSetSize','QuotaPeakPagedPoolUsage','QuotaPagedPoolUsage','QuotaPeakNonPagedPoolUsage','QuotaNonPagedPoolUsage','PagefileUsage','PeakPagefileUsage','PrivateUsage')]
+        def memory():
+            data=MemoryCounters();data.cb=ctypes.sizeof(data)
+            kernel=ctypes.windll.kernel32;kernel.GetCurrentProcess.restype=wintypes.HANDLE
+            get_info=ctypes.windll.psapi.GetProcessMemoryInfo;get_info.argtypes=[wintypes.HANDLE,ctypes.c_void_p,wintypes.DWORD];get_info.restype=wintypes.BOOL
+            if not get_info(kernel.GetCurrentProcess(),ctypes.byref(data),data.cb):return None
+            return {'working_set':data.WorkingSetSize,'private_bytes':data.PrivateUsage}
+        before=memory();clock=runtime.clock
+        assert not clock.isVisible() and not clock.tick.isActive()
+        clock.set_enabled(True);app.processEvents();assert clock.isVisible() and clock.tick.isActive()
+        assert 0<clock.tick.remainingTime()<=60000
+        clock.grab().save(str(output/'desktop-clock-digital.png'))
+        clock.set_style('analog');app.processEvents();clock.grab().save(str(output/'desktop-clock-analog.png'))
+        clock.move(clock.x()-12,clock.y()+10);clock.resize(260,170);clock.save_geometry()
+        assert cfg['clock_layout'] and api.load_config()['clock_style']=='analog'
+        after=memory()
+        if before and after:(output/'clock-memory-sample.json').write_text(json.dumps({'scope':'one isolated UI process, immediate before and after opening one clock; preview mode, not steady state','before':before,'after':after,'delta':{key:after[key]-before[key] for key in before}},indent=2),encoding='utf-8')
+        from desktop_clock import ClockOptions,format_clock_time
+        import datetime
+        assert format_clock_time(datetime.datetime(2026,10,27,0,5),'12')==('12:05','上午')
+        assert format_clock_time(datetime.datetime(2026,10,27,12,5),'12')==('12:05','下午')
+        assert format_clock_time(datetime.datetime(2026,10,27,15,5),'24')==('15:05','')
+        original_style=cfg['clock_style'];original_appearance=copy.deepcopy(cfg['clock_appearance'])
+        for style in ('digital','analog','stacked'):
+            cfg['clock_style']=style
+            for hour_format in ('12','24'):
+                cfg['clock_appearance']['hour_format']=hour_format;clock.update();app.processEvents()
+                clock.grab().save(str(output/('clock-format-'+style+'-'+hour_format+'.png')))
+        cfg['clock_style']=original_style;cfg['clock_appearance']=original_appearance
+        checks.append('clock format: midnight and noon labels verified, 24-hour has no period; all three styles rendered in both formats')
+        # With a transparent card, backdrop differences must appear inside glass glyphs only.
+        from desktop_clock import draw_clock
+        from PyQt5.QtCore import QRectF
+        from PyQt5.QtGui import QImage,QPixmap,QPainter,QColor
+        optical=dict(cfg['clock_appearance'],material='clear',opacity=0,highlight=0,show_date=False,text_effect='glass',text_color='#ffffff')
+        red=QPixmap(260,170);red.fill(QColor('#cc3355'));blue=QPixmap(260,170);blue.fill(QColor('#3377cc'))
+        def render_clock(backdrop,effect):
+            image=QImage(260,170,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+            painter=QPainter(image);draw_clock(painter,QRectF(0,0,260,170),dock,dict(optical,text_effect=effect),'digital',backdrop);painter.end();return image
+        red_image=render_clock(red,'glass');blue_image=render_clock(blue,'glass')
+        differences=[(x,y) for y in range(170) for x in range(260) if red_image.pixel(x,y)!=blue_image.pixel(x,y)]
+        assert len(differences)>100 and all(red_image.pixelColor(x,y).alpha()>0 for x,y in differences)
+        assert red_image.pixelColor(2,2).alpha()==0 and blue_image.pixelColor(2,2).alpha()==0
+        clear_red=render_clock(red,'clear');clear_blue=render_clock(blue,'clear')
+        assert clear_red==clear_blue
+        red_image.save(str(output/'clock-glass-text-synthetic.png'))
+        checks.append('glass lettering: synthetic background is sampled inside glyphs only, transparent card stays transparent, clear lettering ignores the backdrop')
+        from desktop_clock import contrast_ink
+        assert contrast_ink(QColor('#00aa36'),QColor('#2477d7'))!=QColor('#00aa36')
+        assert contrast_ink(QColor('#ffffff'),QColor('#14273e'))==QColor('#ffffff')
+        # Render against representative wallpapers, including the reported green-on-blue combination.
+        for name,bg,foreground in [('blue-green','#2477d7','#00aa36'),('white','#f5f7f9',''),('dark','#14273e','')]:
+            backdrop=QPixmap(354,195);backdrop.fill(QColor(bg));image=QImage(354,195,QImage.Format_ARGB32_Premultiplied);image.fill(QColor(bg))
+            test_options=dict(optical,text_color=foreground,show_date=True,theme='dark' if name=='dark' else 'light')
+            painter=QPainter(image);draw_clock(painter,QRectF(0,0,354,195),dock,test_options,'analog',backdrop);painter.end()
+            image.save(str(output/('clock-contrast-'+name+'.png')))
+        # The reported transparent white clock may have no screen capture available.
+        fallback_options=dict(optical,text_color='#ffffff',show_date=True,theme='auto',material='clear')
+        fallback=QImage(354,195,QImage.Format_ARGB32_Premultiplied);fallback.fill(QColor('#2477d7'))
+        painter=QPainter(fallback);draw_clock(painter,QRectF(0,0,354,195),dock,fallback_options,'analog',None);painter.end()
+        white_pixels=sum(1 for y in range(45,150) for x in range(200,338) if min(fallback.pixelColor(x,y).red(),fallback.pixelColor(x,y).green(),fallback.pixelColor(x,y).blue())>200)
+        assert white_pixels>300,white_pixels
+        fallback.save(str(output/'clock-transparent-white-no-capture.png'))
+        checks.append('transparent white clock without screen capture: rendered time remains bright on a saturated blue background')
+        checks.append('clock contrast: transparent clock rendered over light, dark and saturated blue test backgrounds, including custom green text')
+        dialog=ClockOptions(clock);dialog.show();app.processEvents()
+        dialog.fields['style'].setCurrentIndex(dialog.fields['style'].findData('stacked'))
+        dialog.fields['font'].setCurrentIndex(dialog.fields['font'].findData('Bahnschrift'))
+        assert dialog.fields['text_effect'].currentData()=='glass' and dialog.fields['text_color'].text()==''
+        dialog.fields['text_effect'].setCurrentIndex(dialog.fields['text_effect'].findData('clear'))
+        dialog.fields['font_scale'].setValue(120);dialog.fields['text_color'].setText('#1a3355')
+        dialog.fields['color'].setText('#ddbbcc');dialog.fields['opacity'].setValue(53)
+        dialog.preview.grab().save(str(output/'clock-settings-preview.png'));dialog.grab().save(str(output/'clock-settings.png'))
+        original_panel=cfg['panel_color'];assert dialog.commit();app.processEvents()
+        assert cfg['clock_style']=='stacked' and cfg['clock_appearance']['font']=='Bahnschrift' and cfg['clock_appearance']['font_scale']==120
+        assert cfg['panel_color']==original_panel and api.load_config()['clock_appearance']['text_color']=='#1a3355' and cfg['clock_appearance']['text_effect']=='clear'
+        clock.grab().save(str(output/'desktop-clock-stacked.png'))
+        saved=copy.deepcopy(cfg['clock_appearance']);cfg['panel_color']='#123456';clock.sync();app.processEvents();assert cfg['clock_appearance']==saved
+        dialog.fields['opacity'].setValue(20)
+        with patch.object(api,'save_config',return_value=False):assert not dialog.commit()
+        assert cfg['clock_appearance']==saved
+        dialog.fields['text_color'].setText('bad');assert not dialog.commit() and cfg['clock_appearance']==saved
+        dialog.reject();dialog.deleteLater();cfg['panel_color']=original_panel
+        old=copy.deepcopy(cfg);old['clock_appearance']={};old['panel_color']='#123456'
+        assert api.normalize_features(old)['clock_appearance']['color']=='#123456'
+        checks.append('clock appearance: independent live preview, three styles, font/size/text/background settings, persisted restore, legacy migration, failed and invalid saves retained')
+        # Use the actual context-menu action and mouse events for lock semantics.
+        app.processEvents();assert clock.grip.isVisible() and clock.grip.size().width()==18
+        clock.grab().save(str(output/'clock-unlocked-grip.png'))
+        with patch.object(api,'save_config',return_value=False):assert not clock.set_locked(True)
+        assert not cfg['clock_locked'] and clock.grip.isVisible()
+        menu=clock.build_menu();action=next(item for item in menu.actions() if item.text()=='锁定位置与大小')
+        assert action.isCheckable() and not action.isChecked();action.trigger();menu.deleteLater();app.processEvents()
+        assert cfg['clock_locked'] and api.load_config()['clock_locked'] and not clock.grip.isVisible()
+        locked_geometry=clock.geometry();point=QPoint(40,40);global_point=clock.mapToGlobal(point)
+        for event_type,pos,global_pos,buttons in [(QEvent.MouseButtonPress,point,global_point,Qt.LeftButton),(QEvent.MouseMove,point+QPoint(40,30),global_point+QPoint(40,30),Qt.LeftButton),(QEvent.MouseButtonRelease,point+QPoint(40,30),global_point+QPoint(40,30),Qt.NoButton)]:
+            button=Qt.NoButton if event_type==QEvent.MouseMove else Qt.LeftButton
+            QApplication.sendEvent(clock,QMouseEvent(event_type,QPointF(pos),QPointF(global_pos),button,buttons,Qt.NoModifier))
+        clock.resize(clock.width()+30,clock.height()+30);assert clock.geometry()==locked_geometry
+        clock.grab().save(str(output/'clock-locked.png'))
+        cfg['clock_locked']=False;clock.sync();assert clock.grip.isVisible() and clock.maximumWidth()>clock.width()
+        cfg['clock_locked']=True;clock.sync();assert not clock.grip.isVisible() and clock.maximumSize()==clock.minimumSize()
+        from screen_layout import screen_records
+        screens=screen_records();reduced=[dict(screens[0],area=[screens[0]['area'][0],screens[0]['area'][1],max(500,screens[0]['area'][2]//2),max(350,screens[0]['area'][3]//2)])]
+        with patch('desktop_clock.screen_records',return_value=reduced):clock.reposition()
+        assert clock.maximumSize()==clock.minimumSize() and cfg['clock_locked']
+        menu=clock.build_menu();action=next(item for item in menu.actions() if item.text()=='锁定位置与大小');assert action.isChecked();action.trigger();menu.deleteLater();app.processEvents()
+        assert not cfg['clock_locked'] and not api.load_config()['clock_locked'] and clock.grip.isVisible()
+        width=clock.width();clock.resize(width+20,clock.height());assert clock.width()==width+20
+        checks.append('clock lock: actual context-menu action persists state, blocks mouse drag and resizing; failed save preserves unlocked state; screen projection remains possible while locked; unlocking restores resize')
+        with patch.object(api,'save_config',return_value=False):clock.set_enabled(False)
+        assert cfg['clock_enabled'] and clock.isVisible()
+        clock.set_enabled(False);app.processEvents();assert not clock.isVisible() and not clock.tick.isActive() and not clock.refresh_timer.isActive()
+        checks.append('desktop clock: digital and analog rendered; position, size and style persisted; failed save retained; hidden clock stops timers')
         assert len({category_color(key,True) for key,_ in CATEGORIES})==7
         assert len({category_color(key,False) for key,_ in CATEGORIES})==7
         for theme in ('light','dark'):
@@ -151,6 +269,7 @@ def run(output):
 
         from settings_dialog import SettingsDialog
         settings=SettingsDialog(tray,api);settings.reveal();settings.tabs.setCurrentIndex(1);app.processEvents()
+        modes=settings.fields['desktop_icon_mode'];assert [modes.itemData(i) for i in range(modes.count())]==['both','hide_all']
         controls={b.text():b for b in settings.findChildren(QPushButton)}
         for left,right in [('新建便签','管理与搜索'),('新建面板','分组与合并')]:
             a,b=controls[left],controls[right]
@@ -224,6 +343,16 @@ def run(output):
         checks.append('note permanent deletion: actual confirmation modal defaults to Cancel; cancel retains active note, confirmed deletion removes it, trash removal supported, failed write retains trash content')
         from glass_capture_tests import run as capture_checks
         capture_checks(checks)
+        from desktop_reliability_tests import run as desktop_reliability_checks
+        desktop_reliability_checks(api,runtime,root.name,checks)
+        from card_file_tests import run as card_file_checks
+        card_file_checks(api,runtime,root.name,checks,output)
+        from merge_clock_tests import run as merge_clock_checks
+        merge_clock_checks(api,runtime,root.name,output,checks)
+        from visibility_runtime_tests import run as visibility_checks
+        visibility_checks(api,runtime,checks)
+        from calendar_design_tests import run as calendar_design_checks
+        calendar_design_checks(api,runtime,root.name,output,checks)
         runtime.close();runtime=None
         checks.append('normal controller shutdown persists synthetic configuration and closes owned windows/timers')
         result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events are simulated on a private desktop; tab reordering uses moveTab and its real persistence signal','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}

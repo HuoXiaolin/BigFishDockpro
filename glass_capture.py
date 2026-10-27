@@ -52,5 +52,6 @@ def capture_behind(window,windows):
 
 def surface_windows(dock):
     runtime=getattr(getattr(dock,'tray',None),'runtime',None)
-    return [dock]+[window for manager in (getattr(runtime,'panels',None),getattr(runtime,'notes',None))
+    clock=getattr(runtime,'clock',None);calendar=getattr(runtime,'calendar',None)
+    return [dock]+([clock] if clock else [])+([calendar] if calendar else [])+[window for manager in (getattr(runtime,'panels',None),getattr(runtime,'notes',None))
                    for window in getattr(manager,'windows',{}).values()]

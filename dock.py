@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import traceback
 from ctypes import wintypes
@@ -312,17 +313,18 @@ def load_config():
 
 
 def save_config(cfg):
+    temporary=None
     try:
-        if not os.path.isdir(CONFIG_DIR):
-            os.makedirs(CONFIG_DIR, exist_ok=True)
-        tmp = CONFIG_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, CONFIG_PATH)
-        return True
+        os.makedirs(CONFIG_DIR,exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=CONFIG_DIR,prefix='config.',suffix='.tmp',delete=False) as stream:
+            temporary=stream.name;json.dump(cfg,stream,ensure_ascii=False,indent=2);stream.flush();os.fsync(stream.fileno())
+        os.replace(temporary,CONFIG_PATH);temporary=None;return True
     except Exception:
-        log("保存配置失败: " + traceback.format_exc())
-        return False
+        log('保存配置失败: '+traceback.format_exc());return False
+    finally:
+        if temporary:
+            try:os.unlink(temporary)
+            except OSError:pass
 
 
 # ----------------------------------------------------------------------------
@@ -694,12 +696,28 @@ class IconProvider(object):
         self.max_cache_bytes = 6*1024*1024
         self.max_cache_entries = 128
 
-    def get(self, path, px, custom=False):
-        key = (path.lower(), int(px), custom)
+    def get(self, path, px, custom=False, shell_state=False, hide_shortcut=False):
+        state=None
+        if shell_state:
+            import time
+            try:
+                stat=os.stat(path,follow_symlinks=False)
+                state=(stat.st_mtime_ns,stat.st_ctime_ns,getattr(stat,'st_file_attributes',0),int(time.monotonic()//15))
+            except OSError:state=('unavailable',int(time.monotonic()//15))
+        key = (path.lower(), int(px), custom, state, bool(hide_shortcut))
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]
         pm = None
+        if shell_state:
+            try:
+                from card_file_ui import extract_card_hicon
+                api=sys.modules[__name__]
+                hicon=extract_card_hicon(api,path,px,hide_shortcut=hide_shortcut)
+                if hicon:
+                    img=hicon_to_qimage(hicon)
+                    if img is not None and not img.isNull():pm=QPixmap.fromImage(img)
+            except Exception:log('卡片 Shell 状态图标读取失败：'+traceback.format_exc())
         if custom and path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp', '.gif')):
             pm = QPixmap(path)
         # 1) exe / dll / ico：直接抠出大图标，最清晰
@@ -2180,6 +2198,9 @@ class Dock(QWidget):
         super(Dock, self).hideEvent(e)
 
     def closeEvent(self, e):
+        # Session shutdown must not turn a temporary native hide into user intent.
+        if QApplication.instance().isSavingSession():
+            e.accept();return
         # 关闭 Dock 窗口 = 退出整个程序
         try:
             QApplication.instance().quit()
@@ -2325,7 +2346,7 @@ class DockTray(QSystemTrayIcon):
             return
         if hasattr(self, 'importer'):
             self.importer.pin([{'path': f} for f in files])
-            self._show_dock()
+            self.runtime.set_dock_visible(True) if hasattr(self,'runtime') else self._show_dock()
             return
         added = 0
         for f in files:
@@ -2338,7 +2359,7 @@ class DockTray(QSystemTrayIcon):
             added += 1
         save_config(self.cfg)
         self.dock.reload()
-        self._show_dock()
+        self.runtime.set_dock_visible(True) if hasattr(self,'runtime') else self._show_dock()
         if added:
             self.showMessage(APP_TITLE, T("已添加 %d 个图标到 Dock") % added, make_tray_icon(), 2000)
 
@@ -2346,7 +2367,8 @@ class DockTray(QSystemTrayIcon):
         items=[dict(item) for item in self.cfg['items']]
         slot=max(0,min(len(items),index)) if type(index) is int else len(items)
         items.insert(slot,{'sep':True})
-        if self.importer.apply_items(items):self._show_dock()
+        if self.importer.apply_items(items):
+            self.runtime.set_dock_visible(True) if hasattr(self,'runtime') else self._show_dock()
 
     def remove_separator(self,index=None,snapshot=None):
         current=self.cfg['items']
@@ -2565,6 +2587,10 @@ def main():
     if '--startup-test' in args:
         from startup_probe import StartupProbe
         probe = StartupProbe(args, sys.modules[__name__])
+
+    if '--clipboard-test' in args:
+        from clipboard_tests import run
+        return run(args[args.index('--clipboard-test')+1])
 
     if '--runtime-check' in args:
         from current_ui_tests import run

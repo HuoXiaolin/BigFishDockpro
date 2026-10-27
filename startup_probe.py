@@ -13,11 +13,23 @@ class StartupProbe:
         self.output.mkdir(parents=True, exist_ok=True)
         self.autostart = '--autostart' in args
         self.fresh = '--fresh-profile' in args
+        self.visibility = '--visibility-profile' in args
+        self.resume = '--resume-profile' in args
         self.started = time.monotonic()
         api.CONFIG_DIR = str(self.output/'test-config')
         api.CONFIG_PATH = str(self.output/'test-config/config.json')
         api.LOG_PATH = str(self.output/'test-config/dock.log')
         api.RUN_KEY = r'Software\BigFishDockpro_Test_'+self.desktop
+        if self.visibility:
+            self.api=api
+            if self.resume:
+                self.expected=api.load_config();return
+            cfg=api.normalize_features(dict(api.DEFAULT_CONFIG,items=[],autostart=False,glass=False,running_dots=False,startup_delay=0,
+                screen_corners=False,check_updates_on_start=False,fullscreen_detection=False,game_mode=False,lite_enabled=False,runtime_lite=False,
+                dock_visible=True,panel_enabled=True,panels_visible=True,notes_enabled=True,notes_visible=True,clock_enabled=True,desktop_auto_sort=False,panel_auto_hide=False,
+                desktop_panels=[{'id':'images','name':'恢复测试','geometry':[70,90,340,220]}]))
+            assert api.save_config(cfg);self.expected=cfg
+            (self.output/'visibility-phase.json').write_text('0',encoding='utf-8');return
         if self.fresh:
             (self.output/'test-config').mkdir(parents=True,exist_ok=True)
             Path(api.CONFIG_PATH).unlink(missing_ok=True)
@@ -35,6 +47,7 @@ class StartupProbe:
     def complete(self, state):
         from PyQt5.QtWidgets import QApplication
         import traceback
+        if self.visibility:return self.complete_visibility(state)
         try:
             dock, tray, runtime = state['dock'], state['tray'], state['runtime']
             from dpi_support import awareness
@@ -91,4 +104,32 @@ class StartupProbe:
         except Exception:
             result = {'passed':False, 'error':traceback.format_exc()}
         (self.output/'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2),encoding='utf-8')
+        QApplication.instance().quit()
+
+    def complete_visibility(self,state):
+        from PyQt5.QtWidgets import QApplication
+        import traceback
+        try:
+            api=self.api;dock=state['dock'];runtime=state['runtime'];cfg=dock.cfg
+            expected=self.expected;phase=int((self.output/'visibility-phase.json').read_text(encoding='utf-8'))
+            assert dock.isVisible()==expected['dock_visible']
+            assert runtime.panels.windows['images'].isVisible()==expected['panels_visible']
+            assert runtime.clock.isVisible()==expected['clock_enabled']
+            if runtime.notes.windows:assert all(w.isVisible()==expected['notes_visible'] for w in runtime.notes.windows.values())
+            if phase==0:
+                assert runtime.notes.new()
+                runtime.set_dock_visible(False);runtime.panels.toggle();runtime.notes.toggle();runtime.clock.set_enabled(False)
+            elif phase==1:
+                runtime.set_dock_visible(True);runtime.panels.reveal();runtime.notes.toggle();runtime.clock.set_enabled(True)
+            assert runtime.checkpoint_session()
+            # Simulate native hiding after the save. aboutToQuit must retain intent.
+            dock.hide()
+            for window in runtime.panels.windows.values():window.hide()
+            for window in runtime.notes.windows.values():window.hide()
+            runtime.clock.hide()
+            result={'passed':True,'scope':'actual-process-visibility-restart','phase':phase,'checks':['actual app entry restores saved Dock/card/note/clock visibility','explicit toggles persisted before native shutdown hides','aboutToQuit persistence checked by the next cold process'],
+                    'expected_on_entry':{key:expected[key] for key in ('dock_visible','panels_visible','notes_visible','clock_enabled')}}
+            (self.output/'visibility-phase.json').write_text(str(phase+1),encoding='utf-8')
+        except Exception:result={'passed':False,'error':traceback.format_exc()}
+        (self.output/'result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         QApplication.instance().quit()

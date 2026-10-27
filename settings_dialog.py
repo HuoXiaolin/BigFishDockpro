@@ -52,6 +52,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','hide_tray','game_mode','lite_enabled')
+        self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = {}
         self.import_candidate=None;self.import_path=None
         self.applying_dock_preset = False
@@ -97,6 +99,9 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
 
         panel = self.section('桌面收纳')
         panel.addRow(label('所有桌面卡片共用这些外观与收起设置，卡片设置入口同步读写。', 'muted'))
+        from card_design import DESIGNS
+        self.combo(panel,'card_design','卡片风格',DESIGNS)
+        panel.addRow(label('四种浅色风格沿用当前主题色；时钟和日历可在各自设置中另选。','muted'))
         self.check(panel, 'panel_enabled', '启用桌面悬浮收纳面板')
         self.check(panel, 'desktop_auto_sort', '自动将桌面内容按类型归入多个面板')
         self.combo(panel, 'panel_material', '材质', MATERIALS)
@@ -109,17 +114,24 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.check(panel, 'panel_auto_hide', '鼠标离开后自动收起')
         self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('方条', 'bar')])
         self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
-        self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('仅隐藏已收纳项目', 'collected'), ('隐藏全部桌面图标', 'hide_all')])
-        self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标。按项隐藏会临时设置桌面文件隐藏属性，移出收纳、隐藏卡片或退出后恢复；不会移动或删除文件。系统开启显示隐藏项目时，图标可能显示为半透明。')
+        self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')])
+        self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标；隐藏全部只影响桌面图标视图，不修改文件属性。')
         self.fields['panel_material'].setToolTip('材质控制质感，颜色模式控制明暗，主题色控制配色；全部桌面卡片同步。')
         self.fields['panel_capsule_ratio'].setToolTip('相对于展开宽度，最窄180像素；全部桌面卡片同步，方条保持展开宽度。')
         panel.addRow(label('外观与收起选项全部卡片共用；位置、大小和内容分别保存。', 'muted'))
         self.action_row(panel,'面板管理',button('新建面板',lambda:self.tray.runtime.panels.new_panel()),button('分组与合并',lambda:self.tray.runtime.panels.manage_groups()))
-        panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，选择部分卡片合并并在顶部切换，其余卡片独立显示。','muted'))
+        panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，建立多个合并组，每组在顶部切换页面，其余卡片独立显示。','muted'))
 
         scale=ModernSpinBox();scale.setRange(50,150);scale.setAccessibleName('卡片整体缩放（%）');self.fields['card_scale']=scale
         self.action_row(panel,'卡片缩放（%）',scale,button('尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
-        panel.addRow(label('卡片与便签标题共用字号，便签正文可独立调整。宽高可拖动调整，独立卡片分别保存，合并页面共用宽高。','muted'))
+        panel.addRow(label('卡片与便签标题共用字号，便签正文可独立调整。宽高可拖动调整，独立卡片分别保存，每个合并组内的页面共用宽高。','muted'))
+        panel.addRow(label('桌面时钟','section'))
+        self.check(panel,'clock_enabled','显示桌面时钟')
+        self.action_row(panel,'时钟外观',button('时钟设置…',lambda:self.tray.runtime.clock.open_settings()))
+        panel.addRow(label('时钟样式、字体和背景独立设置；可拖动或调整大小。','muted'))
+        panel.addRow(label('桌面日历','section'))
+        self.check(panel,'calendar_enabled','显示独立日历卡片')
+        self.action_row(panel,'日历外观',button('日历设置…',lambda:self.tray.runtime.calendar.open_settings()))
         panel.addRow(label('便签卡片','section'))
         self.check(panel,'notes_enabled','启用便签卡片（独立于文件收纳面板）')
         from sticky_notes_store import STYLES
@@ -132,7 +144,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.action_row(apps,'应用列表',button('批量管理…',self.open_batch))
         self.check(apps, 'reorder', '允许拖动 Dock 图标排序')
         self.check(apps, 'running_dots', '显示 Dock 应用的运行标记')
-        apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。桌面图标可选择同时显示、仅隐藏已收纳项目或全部隐藏；关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
+        apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。桌面图标可选择同时显示或全部隐藏；关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
 
         running = self.section('启动与运行')
         self.check(running, 'lite_enabled', '启用自动精简：关闭设置 1 分钟后进入')
@@ -339,6 +351,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             else:field.setChecked(value)
 
     def fill_fields(self,cfg):
+        self._runtime_switch_baseline={key:cfg[key] for key in self._runtime_switch_keys}
         self.applying_dock_preset = True
         for key, field in self.fields.items():
             if isinstance(field, QComboBox):
@@ -445,6 +458,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         previous=copy.deepcopy(self.tray.cfg)
         cfg = copy.deepcopy(self.import_candidate) if imported else dict(self.tray.cfg)
         for key, field in self.fields.items():
+            if not imported and key in self._runtime_switch_baseline and field.isChecked()==self._runtime_switch_baseline[key]:continue
             cfg[key] = (field.currentData() if isinstance(field, QComboBox) else
                         field.value() if isinstance(field, QSpinBox) else
                         field.text().strip() if isinstance(field, QLineEdit) else field.isChecked())
@@ -509,6 +523,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             self.tray.dock.apply_layer()
             if hasattr(self.tray, 'runtime'):
                 self.tray.runtime.apply_settings()
+        for key in self._runtime_switch_keys:
+            self.fields[key].setChecked(self.tray.cfg[key]);self._runtime_switch_baseline[key]=self.tray.cfg[key]
         self.check_startup()
         self.status.setText('设置已保存并生效，可继续调整。')
 

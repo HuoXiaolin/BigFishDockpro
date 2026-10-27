@@ -38,6 +38,14 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     action=notes.addAction('显示 / 隐藏便签');action.setCheckable(True)
     action.setChecked(bool(runtime and any(window.isVisible() for window in runtime.notes.windows.values())))
     action.triggered.connect(lambda:runtime.notes.toggle() if runtime else None)
+    clock_menu=menu.addMenu('桌面时钟');clock_menu.menuAction().setEnabled(runtime is not None)
+    clock=clock_menu.addAction('显示 / 隐藏时钟');clock.setCheckable(True);clock.setChecked(bool(runtime and tray.cfg['clock_enabled']))
+    clock.triggered.connect(lambda checked:runtime.clock.set_enabled(checked) if runtime else None)
+    clock_menu.addAction('时钟设置…').triggered.connect(lambda:runtime.clock.open_settings() if runtime else None)
+    calendar_menu=menu.addMenu('桌面日历');calendar_menu.menuAction().setEnabled(runtime is not None)
+    calendar=calendar_menu.addAction('显示 / 隐藏日历');calendar.setCheckable(True);calendar.setChecked(bool(runtime and tray.cfg['calendar_enabled']))
+    calendar.triggered.connect(lambda checked:runtime.calendar.set_enabled(checked) if runtime else None)
+    calendar_menu.addAction('日历设置…').triggered.connect(lambda:runtime.calendar.open_settings() if runtime else None)
     modes=menu.addMenu('运行模式');modes.menuAction().setEnabled(runtime is not None)
     for title,state,callback in [('精简模式',bool(runtime and runtime.lite),lambda checked:runtime.set_lite(checked) if runtime else None),('游戏模式',tray.cfg.get('game_mode',False),lambda checked:runtime.toggle_game(checked) if runtime else None)]:
         action=modes.addAction(title);action.setCheckable(True);action.setChecked(state);action.triggered.connect(callback)
@@ -46,6 +54,7 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     def refresh():
         tray.refresh_now()
         if runtime:
+            runtime.clock.refresh_timer.start(50);runtime.calendar.refresh_timer.start(50)
             for manager in (runtime.panels,runtime.notes):
                 for window in manager.windows.values():window.refresh_timer.start(50)
     help_menu.addAction('刷新玻璃背景').triggered.connect(refresh)

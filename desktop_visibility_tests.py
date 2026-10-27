@@ -40,9 +40,9 @@ def run(api,runtime,root,output,checks):
         drop=QDropEvent(QPointF(20,65),Qt.CopyAction|Qt.MoveAction,mime,Qt.LeftButton,Qt.NoModifier)
         panel.dropEvent(drop);assert drop.isAccepted() and drop.dropAction()==Qt.CopyAction
         assert len(manager.rows('selected'))==2 and not hidden(files[0]) and outside.exists()
-        cfg['desktop_icon_mode']='collected';manager.apply_settings();app.processEvents()
-        assert hidden(files[0]) and not hidden(files[1]) and hidden(files[2]) and not hidden(outside)
-        assert journal.exists() and len(manager.collected_icons.records)==1
+        cfg['desktop_icon_mode']=api.normalize_features(dict(cfg,desktop_icon_mode='collected'))['desktop_icon_mode'];manager.apply_settings();app.processEvents()
+        assert not hidden(files[0]) and not hidden(files[1]) and hidden(files[2]) and not hidden(outside)
+        assert not journal.exists() and not manager.collected_icons.records
         scanned,errors=scan_desktop([str(desktop)],included_hidden=manager.collected_icons.records)
         assert not errors and {row['path'] for row in scanned}=={str(files[0]),str(files[1])}
         worker=DesktopScan([str(desktop)],manager.collected_icons.records);received=[]
@@ -52,9 +52,9 @@ def run(api,runtime,root,output,checks):
         # Excluding the item restores it, while the independent desktop item stays visible.
         manager.remove_entries([path_key(str(files[0]))],'selected')
         assert not hidden(files[0]) and not journal.exists()
-        manager.add_paths('selected',[str(files[0])]);assert hidden(files[0])
+        manager.add_paths('selected',[str(files[0])]);assert not hidden(files[0])
         manager.shown=False;manager.sync_windows();assert not hidden(files[0])
-        manager.shown=True;manager.sync_windows();assert hidden(files[0])
+        manager.shown=True;manager.sync_windows();assert not hidden(files[0])
         cfg['desktop_icon_mode']='both';manager.apply_settings();assert not hidden(files[0]) and not manager.icons.enabled
         assert api.save_config(cfg) and api.load_config()['desktop_icon_mode']=='both'
         # Simulated interrupted session: another controller recovers the durable record.
@@ -76,10 +76,10 @@ def run(api,runtime,root,output,checks):
         invalid=Path(root)/'bad-visibility.json';invalid.write_text('{bad',encoding='utf-8')
         blocked=CollectedDesktopItems([str(desktop)],invalid);assert not blocked.apply([str(files[1])]) and invalid.read_text()=='{bad';blocked.close()
         runtime.show_settings();settings=runtime.tray.settings_dialog
-        field=settings.fields['desktop_icon_mode'];assert field.count()==3
+        field=settings.fields['desktop_icon_mode'];assert field.count()==2
         settings.tabs.setCurrentIndex(1);scroll=settings.tabs.pages.currentWidget();scroll.ensureWidgetVisible(field,10,10);app.processEvents()
         settings.grab().save(str(Path(output)/'desktop-icon-modes.png'));settings.reject()
-        checks.append('desktop visibility modes: co-display and desktop-to-card Copy drop preserve originals; selective hiding affects only collected direct desktop files, uncollected/external/pre-hidden files preserved; scanner and worker retain owned hidden items; exclude/panel-hide/mode switch/exit restore, restart journal recovery, rename/move/file identity and backup-failure safety; three staged settings options persist')
+        checks.append('desktop visibility modes: co-display and desktop-to-card Copy drop preserve originals; old selective mode migrates to co-display and files remain unchanged; scanner and worker retain owned hidden items; exclude/panel-hide/mode switch/exit restore, restart journal recovery, rename/move/file identity and backup-failure safety; two staged settings options persist')
     finally:
         if manager:manager.close()
         for path in files:

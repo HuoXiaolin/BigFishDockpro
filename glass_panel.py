@@ -5,7 +5,7 @@ import os
 from ctypes import wintypes
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, QMimeData, QUrl
-from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen
+from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QAbstractItemView, QSizeGrip, QApplication,
     QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy, QTabBar)
@@ -66,6 +66,24 @@ def _category_icon(category,ink,size,dpr):
 
 
 class CollectionList(QListWidget):
+    def keyPressEvent(self,event):
+        panel=self.window()
+        if event.matches(QKeySequence.Copy):panel.copy_files(False);event.accept();return
+        if event.matches(QKeySequence.Cut):panel.copy_files(True);event.accept();return
+        if event.matches(QKeySequence.Paste):panel.paste_files();event.accept();return
+        key=event.key();modifiers=event.modifiers()
+        if modifiers==Qt.ControlModifier and key==Qt.Key_A:self.selectAll();event.accept();return
+        if modifiers==Qt.AltModifier and key in (Qt.Key_Return,Qt.Key_Enter):panel.shell_file_action('properties');event.accept();return
+        if modifiers==Qt.NoModifier:
+            if key==Qt.Key_F2:panel.rename_file();event.accept();return
+            if key==Qt.Key_Delete:panel.shell_file_action('delete');event.accept();return
+            if key in (Qt.Key_Return,Qt.Key_Enter):
+                for item in list(self.selectedItems()):panel.launch_item(item)
+                event.accept();return
+            if key==Qt.Key_F5:
+                panel.dock.icons.clear();panel.manager.schedule_scan();panel.render();event.accept();return
+        super().keyPressEvent(event)
+
     def startDrag(self, actions):
         urls = [QUrl.fromLocalFile(item.data(Qt.UserRole)['path']) for item in self.selectedItems()]
         if not urls: return
@@ -114,7 +132,7 @@ class PanelTabs(QTabBar):
     def save_order(self, source, destination):
         order = [self.tabData(index) for index in range(self.count())]
         if not self.panel.manager.reorder_panels(order):
-            self.panel.update_tabs(self.panel.manager.merged_models())
+            self.panel.update_tabs(self.panel.manager.merged_models(self.panel.identity))
 
 
 class DesktopPanel(QDialog):
@@ -208,7 +226,9 @@ class DesktopPanel(QDialog):
         self.list.setIconSize(QSize(34, 34))
         self.list.setGridSize(QSize(78, 78))
         self.list.setTextElideMode(Qt.ElideRight)
-        self.list.setWordWrap(False)
+        self.list.setWordWrap(True)
+        from card_file_ui import FileNameDelegate
+        self.list.setItemDelegate(FileNameDelegate(self.list))
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setDragEnabled(True)
         self.list.setAcceptDrops(False)
@@ -222,7 +242,8 @@ class DesktopPanel(QDialog):
         self.notice.setObjectName('PanelLabel')
         self.notice.setStyleSheet('font-size:11px;')
         footer.addWidget(self.notice, 1)
-        self.grip = QSizeGrip(self)
+        from ui_style import SubtleSizeGrip
+        self.grip = SubtleSizeGrip(self,lambda:self.colors().get('light',True))
         footer.addWidget(self.grip)
         content.addLayout(footer)
         body.addWidget(self.content, 1)
@@ -261,7 +282,7 @@ class DesktopPanel(QDialog):
         identity = self.tabs.tabData(index)
         if identity and identity!=self.identity:
             self.manager.select_page(identity)
-            if self.manager.active_window!=identity: self.update_tabs(self.manager.merged_models())
+            if self.manager.active_for(identity)!=identity: self.update_tabs(self.manager.merged_models(identity))
 
     @property
     def model(self): return self.manager.model(self.identity)
@@ -275,6 +296,7 @@ class DesktopPanel(QDialog):
         if theme == 'follow':
             theme = None
             color = color or self.dock.cfg.get('theme_color', '')
+        if self.dock.cfg.get('card_design') in ('gradient','paper','minimal'):theme='light'
         from liquid_glass import material_palette
         return material_palette(tint_palette(self.dock.base_theme_colors(theme), color), self.option('material'))
 
@@ -354,7 +376,7 @@ class DesktopPanel(QDialog):
         self.query.setPalette(palette)
         height=self.list.fontMetrics().height();icon=self.list.iconSize().height()
         if view!='list':
-            grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*2+metric(6,factor))))
+            grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*3+metric(12,factor))))
         self.render()
         self.refresh_timer.start(100)
         self.update()
@@ -381,9 +403,10 @@ class DesktopPanel(QDialog):
         selected |= getattr(self, '_released_selection', set())
         self._released_selection = set()
         self.list.clear()
+        from card_file_ui import card_display_name
+        icon_view=self.list.viewMode()==QListWidget.IconMode
         for row in rows:
-            item = QListWidgetItem(QIcon(self.dock.icons.get(row['path'], 64)), row['name'])
-            if self.model.get('view')=='list': item.setSizeHint(QSize(metric(80,self.ui_factor),max(metric(34,self.ui_factor,18),self.list.fontMetrics().height()+metric(8,self.ui_factor),self.list.iconSize().height()+metric(6,self.ui_factor))))
+            item = QListWidgetItem(QIcon(self.dock.icons.get(row['path'], max(24,self.list.iconSize().width()), shell_state=True,hide_shortcut=icon_view)), card_display_name(row,icon_view))
             item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
             item.setData(Qt.UserRole, row)
             self.list.addItem(item)
@@ -400,7 +423,7 @@ class DesktopPanel(QDialog):
 
     def set_compact(self, enabled):
         self.manual_resize = False
-        if self.manager.is_merged(self.identity): self.manager.commit(merged_compact=enabled)
+        if self.manager.is_merged(self.identity): self.manager.update_group(self.identity,compact=enabled)
         if not enabled: self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         if self.manager.update_panel(self.identity, compact=enabled): self.fit_timer.start(0)
 
@@ -424,14 +447,103 @@ class DesktopPanel(QDialog):
             item.setSelected(True)
         if not self.selected_keys(): return
         self.collapse_timer.stop()
-        menu = self.build_item_menu()
-        menu.exec_(self.list.viewport().mapToGlobal(point))
-        menu.deleteLater()
-        if self.option('auto_hide'): self.collapse_timer.start()
+        from native_file_menu import NativeFileMenu
+        menu=None;shown=False
+        try:
+            menu=NativeFileMenu(int(self.winId()),self.selected_paths());menu.add_card_commands(self.card_item_commands())
+            paths=tuple(self.selected_paths());menu.verb_handlers['rename']=lambda:self.rename_file(paths)
+            self._active_file_menu=menu;shown=True
+            result=menu.track()
+            if result=='shell':self.manager.schedule_scan()
+        except Exception as error:
+            self.runtime.api.log('系统文件菜单或操作失败：'+str(error))
+            if shown:self.notice.setText('系统文件操作未完成，请检查后重试。')
+            else:
+                self.notice.setText('系统菜单不可用，已显示卡片操作。')
+                fallback=self.build_item_menu();fallback.exec_(self.list.viewport().mapToGlobal(point));fallback.deleteLater()
+        finally:
+            self._active_file_menu=None
+            if menu:menu.close()
+            if not self.disposed and self.option('auto_hide'):self.collapse_timer.start()
+
+    def nativeEvent(self,event_type,message):
+        menu=getattr(self,'_active_file_menu',None)
+        if menu:
+            import ctypes
+            from ctypes import wintypes
+            msg=ctypes.cast(int(message),ctypes.POINTER(wintypes.MSG)).contents
+            result=menu.handle_message(msg.message,msg.wParam,msg.lParam)
+            if result is not None:return True,result
+        return super().nativeEvent(event_type,message)
+
+    def card_item_commands(self):
+        keys=self.selected_keys();paths=self.selected_paths();identity=self.identity
+        rows=self.manager.rows(identity)
+        pinned=all(row.get('pinned',False) for row in rows if path_key(row['path']) in keys)
+        references=[(model['name'],lambda target=model['id']:self.manager.add_paths(target,paths))
+                    for model in self.dock.cfg['desktop_panels'] if model['id']!=identity]
+        commands=[('取消置顶' if pinned else '置顶',lambda:self.manager.pin_entries(keys,not pinned,identity))]
+        if references:commands.append(('引用到其他面板',references))
+        views=[(title+('（当前）' if self.model.get('view','small')==key else ''),
+                lambda mode=key:self.manager.update_panel(identity,view=mode))
+               for key,title in [('small','小图标'),('large','大图标'),('list','列表')]]
+        commands.append(('显示方式',views));commands.append(('粘贴到桌面',lambda:self.paste_files()))
+        if len(paths)==1 and os.path.isdir(paths[0]):commands.append(('粘贴到此文件夹',lambda:self.paste_files(paths[0])))
+        commands.append(('移除收纳引用（保留原文件）',lambda:self.manager.remove_entries(keys,identity)))
+        return commands
+
+    def rename_file(self,paths=None):
+        from card_file_actions import rename_file
+        return rename_file(self,paths)
+
+    def shell_file_action(self,verb):
+        from card_file_actions import shell_action
+        return shell_action(self,verb)
+
+    def selected_paths(self):
+        return [item.data(Qt.UserRole)['path'] for item in self.list.selectedItems()]
+
+    def copy_files(self,cut=False):
+        from shell_file_clipboard import set_file_clipboard
+        try:
+            set_file_clipboard(self.selected_paths(),cut,int(self.winId()))
+            self.notice.setText('已剪切，可在文件夹中粘贴。' if cut else '已复制，可在文件夹中粘贴。')
+            return True
+        except (OSError,ValueError) as error:
+            self.notice.setText(str(error));return False
+
+    def paste_files(self,folder=None):
+        from shell_file_clipboard import paste_into_folder,preferred_effect,clipboard_paths,MOVE
+        try:
+            destination=folder or (self.manager.roots[0] if self.manager.roots else '')
+            if not destination:raise ValueError('未找到桌面文件夹，无法粘贴。')
+            import ctypes
+            clipboard=QApplication.clipboard();sequence=ctypes.windll.user32.GetClipboardSequenceNumber()
+            mime=clipboard.mimeData();effect=preferred_effect(mime);paths=clipboard_paths(mime)
+            if sequence!=ctypes.windll.user32.GetClipboardSequenceNumber():raise ValueError('剪贴板内容已变化，请重新粘贴。')
+            result=paste_into_folder(destination,int(self.winId()),effect,paths)
+            if result=='same-folder':self.notice.setText('文件已经在目标文件夹中，无需移动。');return False
+            if result=='cancelled':self.notice.setText('文件操作已取消，可能有部分项目已处理。');self.manager.schedule_scan();return False
+            # A cut is cleared only if no one replaced the clipboard and every source moved.
+            if effect==MOVE and sequence==ctypes.windll.user32.GetClipboardSequenceNumber() and all(not os.path.exists(path) for path in paths):clipboard.clear()
+            self.notice.setText('已粘贴到'+('选定文件夹。' if folder else '桌面。'))
+            self.manager.schedule_scan();return True
+        except (OSError,ValueError) as error:
+            self.notice.setText(str(error));return False
 
     def build_item_menu(self):
         menu = QMenu(self)
         keys = self.selected_keys()
+        paths=self.selected_paths()
+        menu.addAction('复制').triggered.connect(lambda:self.copy_files(False))
+        menu.addAction('剪切').triggered.connect(lambda:self.copy_files(True))
+        menu.addAction('粘贴到桌面').triggered.connect(lambda:self.paste_files())
+        menu.addAction('重命名（F2）').triggered.connect(lambda:self.rename_file())
+        menu.addAction('删除文件（Delete）').triggered.connect(lambda:self.shell_file_action('delete'))
+        menu.addAction('属性（Alt+Enter）').triggered.connect(lambda:self.shell_file_action('properties'))
+        if len(paths)==1 and os.path.isdir(paths[0]):
+            menu.addAction('粘贴到此文件夹').triggered.connect(lambda:self.paste_files(paths[0]))
+        menu.addSeparator()
         pinned = all(row.get('pinned', False) for row in self.manager.rows(self.identity) if path_key(row['path']) in keys)
         menu.addAction('取消置顶' if pinned else '置顶').triggered.connect(
             lambda: self.manager.pin_entries(keys, not pinned, self.identity))
@@ -472,11 +584,18 @@ class DesktopPanel(QDialog):
     def build_panel_menu(self):
         menu = QMenu(self)
         menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
+        menu.addAction('粘贴到桌面').triggered.connect(lambda:self.paste_files())
         menu.addAction('添加文件…').triggered.connect(self.add_files)
         menu.addAction('添加文件夹…').triggered.connect(self.add_folder)
         menu.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)
         merge = menu.addAction('独立显示此卡片' if self.manager.is_merged(self.identity) else '加入合并卡片')
         merge.triggered.connect(lambda: self.manager.set_merged(self.identity, not self.manager.is_merged(self.identity)))
+        groups=menu.addMenu('加入合并组')
+        for group in self.dock.cfg['merge_groups']:
+            action=groups.addAction(group['name']);action.setCheckable(True)
+            action.setChecked(self.manager.is_merged(self.identity) and self.manager.group_id(self.identity)==group['id'])
+            action.triggered.connect(lambda checked=False,key=group['id']:self.manager.assign_group(self.identity,key))
+        groups.addSeparator();groups.addAction('新建合并组…').triggered.connect(lambda:self.manager.new_merge_group(identity=self.identity))
         if self.identity not in dict(__import__('desktop_catalog').CATEGORIES):
             menu.addAction('自动归入格式…').triggered.connect(self.edit_definition)
         menu.addAction('设置…').triggered.connect(self.runtime.show_settings)
@@ -525,7 +644,7 @@ class DesktopPanel(QDialog):
         if self.option('auto_hide'): self.collapse_timer.start()
 
     def bounds(self):
-        raw=(self.dock.cfg['merged_geometry'] if self.manager.is_merged(self.identity) and self.dock.cfg.get('merged_geometry')
+        raw=(self.manager.group_value(self.identity,'geometry') if self.manager.is_merged(self.identity) and self.manager.group_value(self.identity,'geometry')
              else self.model.get('geometry',self.default_geometry))
         layout=getattr(self.runtime,'layout',None)
         if layout:return layout.panel_bounds(self.identity,raw)
@@ -639,16 +758,15 @@ class DesktopPanel(QDialog):
         layout=getattr(self.runtime,'layout',None)
         if layout and (layout.pending or layout.applying):return
         if self.merged_view != self.manager.is_merged(self.identity): return
-        if self.merged_view and self.manager.active_window != self.identity: return
+        if self.merged_view and self.manager.active_for(self.identity) != self.identity: return
         geometry = self.bounds()
         geometry[0:2] = [self.x(), self.y()]
         if not self.collapsed: geometry[2:4] = [self.width(), self.height()]
         changed=self.geometry().getRect()!=getattr(self,'_layout_geometry',None)
         anchor=layout.panel_update(self.identity,geometry) if layout and (changed or not layout.record(self.identity)) else None
         if self.manager.is_merged(self.identity):
-            changes = {'merged_geometry': geometry}
+            changes = self.manager.group_changes(self.identity,geometry=geometry,**({'compact':False} if self.manual_resize else {}))
             if anchor is not None:changes['display_layout']=anchor
-            if self.manual_resize: changes['merged_compact'] = False
             if any(self.dock.cfg.get(key)!=value for key,value in changes.items()) and not self.manager.commit(**changes):return
             self.manual_resize = False
             self._layout_geometry=self.geometry().getRect()
@@ -722,6 +840,15 @@ class DesktopPanel(QDialog):
         surface = SimpleNamespace(cfg={'glass': material not in ('clear','solid'), 'clear_background': self.is_clear(), 'dock_material': material}, backdrop=self.backdrop,
                                   spec_x=self.spec_x, spec_alpha=self.spec_alpha)
         paint_liquid_glass(surface, painter, shape, rect, rect, colors, int(alpha), stops)
+        from card_design import paint_design
+        paint_design(painter,rect,self.dock.cfg,clear=self.is_clear(),
+                     body_top=self.design_body_top(),body_inset=metric(4,self.ui_factor))
+
+    def design_body_top(self):
+        # Start the porcelain content surface below the entire live header/tab area.
+        if self.collapsed:return self.height()
+        return self.query.mapTo(self,self.query.rect().topLeft()).y()-metric(4,self.ui_factor)
+
 
     def is_clear(self):
         return self.option('material') == 'clear' and self.option('opacity') == 0 and self.option('highlight') == 0
@@ -744,7 +871,7 @@ class DesktopPanel(QDialog):
         else: event.ignore()
 
     def closeEvent(self, event):
-        if self.disposed: event.accept()
+        if self.disposed or QApplication.instance().isSavingSession(): event.accept()
         else:
             event.ignore()
             self.collapse()

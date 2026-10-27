@@ -11,7 +11,7 @@ class CollectedDesktopItems:
     def __init__(self, roots, journal=None):
         self.roots={path_key(str(root)) for root in roots}
         self.journal=Path(journal) if journal else None
-        self.records={};self.handles={};self.message='';self.recovery_invalid=False
+        self.records={};self.unresolved=[];self.handles={};self.message='';self.recovery_invalid=False
         self.kernel=ctypes.WinDLL('kernel32',use_last_error=True)
         self.kernel.SetFileAttributesW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD]
         self.kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
@@ -21,12 +21,16 @@ class CollectedDesktopItems:
         if self.journal and self.journal.exists():
             try:
                 data=json.loads(self.journal.read_text(encoding='utf-8'))
-                if data.get('project')!='BigFishDockpro' or not isinstance(data.get('items'),list):raise ValueError('invalid visibility journal')
-                for row in data['items'][:4096]:
-                    if not isinstance(row,dict) or not isinstance(row.get('path'),str):continue
-                    if path_key(str(Path(row['path']).parent)) not in self.roots:continue
-                    if type(row.get('dev')) is not int or type(row.get('ino')) is not int:continue
-                    self.records[path_key(row['path'])]=row
+                if data.get('project')!='BigFishDockpro' or not isinstance(data.get('items'),list) or len(data['items'])>4096:raise ValueError('invalid visibility journal')
+                for row in data['items']:
+                    if (not isinstance(row,dict) or not isinstance(row.get('path'),str) or
+                        type(row.get('dev')) is not int or type(row.get('ino')) is not int):
+                        self.unresolved.append(row);continue
+                    if path_key(str(Path(row['path']).parent)) not in self.roots:
+                        self.unresolved.append(row);continue
+                    key=path_key(row['path'])
+                    if key in self.records:self.unresolved.append(row)
+                    else:self.records[key]=row
                 self.restore()
             except (OSError,ValueError,TypeError):
                 self.recovery_invalid=True
@@ -36,7 +40,7 @@ class CollectedDesktopItems:
         if not self.journal:raise OSError('A durable visibility journal is required')
         self.journal.parent.mkdir(parents=True,exist_ok=True)
         temporary=self.journal.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'project':'BigFishDockpro','items':list(self.records.values())},ensure_ascii=False),encoding='utf-8')
+        temporary.write_text(json.dumps({'project':'BigFishDockpro','items':list(self.records.values())+self.unresolved},ensure_ascii=False),encoding='utf-8')
         os.replace(temporary,self.journal)
 
     @staticmethod
@@ -70,18 +74,21 @@ class CollectedDesktopItems:
         for key,row in list(self.records.items()):
             if key in keep and self.same(row['path'],row):continue
             path=self.actual_path(key,row)
-            if path:
-                try:
-                    attrs=os.stat(path,follow_symlinks=False).st_file_attributes
-                    if attrs&2 and not self.kernel.SetFileAttributesW(path,(attrs&~2) or 0x80):raise ctypes.WinError(ctypes.get_last_error())
-                except OSError:failed=True;continue
+            if not path:
+                # It may be offline, renamed or moved; retain its recovery identity.
+                failed=True;continue
+            try:
+                attrs=os.stat(path,follow_symlinks=False).st_file_attributes
+                if attrs&2 and not self.kernel.SetFileAttributesW(path,(attrs&~2) or 0x80):raise ctypes.WinError(ctypes.get_last_error())
+            except OSError:failed=True;continue
             self.records.pop(key,None)
             handle=self.handles.pop(key,None)
             if handle:self.kernel.CloseHandle(handle)
         try:
-            if self.records:self.persist()
+            if self.records or self.unresolved:self.persist()
             elif self.journal:self.journal.unlink(missing_ok=True)
         except OSError:failed=True
+        failed=failed or bool(self.unresolved)
         self.message='部分桌面项目未恢复，请检查数据目录的 desktop_items_visibility.json。' if failed else ''
         return not failed
 

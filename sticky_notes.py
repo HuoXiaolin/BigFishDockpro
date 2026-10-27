@@ -42,7 +42,7 @@ class NoteEditor(QTextEdit):
         super().mouseReleaseEvent(event)
         cursor=self.cursorForPosition(event.pos())
         if event.button()==Qt.LeftButton and hasattr(self,'press_point') and (event.pos()-self.press_point).manhattanLength()<4 and not self.textCursor().hasSelection() and cursor.positionInBlock()<=1 and cursor.block().text().startswith(('☐ ','☑ ')):
-            cursor.movePosition(QTextCursor.StartOfBlock);self.setTextCursor(cursor);self.parent().format_text('todo')
+            cursor.movePosition(QTextCursor.StartOfBlock);self.setTextCursor(cursor);self.window().format_text('todo')
     def insertFromMimeData(self,source):
         if source.hasText():self.insertPlainText(source.text())
 
@@ -82,6 +82,7 @@ class NoteWindow(QWidget):
         header=QHBoxLayout();header.setSpacing(4)
         self.handle=QLabel('');self.handle.setToolTip('拖动便签');self.handle.setAccessibleName('便签图标，拖动移动便签');self.handle.installEventFilter(self);header.addWidget(self.handle)
         self.title=NoteTitle();header.addWidget(self.title);header.addStretch(1)
+        self.flip_button=self.tool('↔','点击翻面：正文 / 待办',self.flip);header.addWidget(self.flip_button)
         self.settings_button=self.tool('','便签设置',self.open_settings);header.addWidget(self.settings_button)
         self.more=self.tool('⋯','便签菜单',self.show_menu);header.addWidget(self.more)
         self.collapse_button=self.tool('−','收起 / 展开',self.toggle_collapse);header.addWidget(self.collapse_button)
@@ -91,10 +92,17 @@ class NoteWindow(QWidget):
         for text,tip,key in [('B','加粗 Ctrl+B','bold'),('I','斜体 Ctrl+I','italic'),('U','下划线 Ctrl+U','underline'),('S','删除线','strike'),('•','项目符号','bullet'),('☐','切换待办完成状态','todo')]:
             widget=self.tool(text,tip,lambda checked=False,k=key:self.format_text(k));toolbar.addWidget(widget);self.format_buttons[key]=widget
         toolbar.addStretch();self.layout_box.addWidget(self.tools)
-        self.editor=NoteEditor(self);self.layout_box.addWidget(self.editor,1)
+        from flip_stack import FlipStack
+        self.pages=FlipStack(self);self.editor=NoteEditor(self);self.pages.addWidget(self.editor)
+        self.todo_page=QWidget();todo_layout=QVBoxLayout(self.todo_page);todo_layout.setContentsMargins(0,0,0,0);todo_layout.setSpacing(5)
+        todo_layout.addWidget(label('待办清单','section'));self.todos=QListWidget();self.todos.setObjectName('NoteTodos');todo_layout.addWidget(self.todos,1)
+        self.todo_input=QLineEdit();self.todo_input.setPlaceholderText('输入待办，按 Enter 添加');self.todo_input.returnPressed.connect(self.add_todo);todo_layout.addWidget(self.todo_input)
+        self.pages.addWidget(self.todo_page);self.layout_box.addWidget(self.pages,1);self.todos.itemChanged.connect(self.toggle_todo)
+
         footer=QHBoxLayout();self.status=QLabel('');self.status.setWordWrap(True);footer.addWidget(self.status,1)
         self.retry=self.tool('↻','立即保存 / 重试',self.manager.flush);footer.addWidget(self.retry)
-        self.grip=QSizeGrip(self);self.grip.setFixedSize(12,12);footer.addWidget(self.grip,0,Qt.AlignBottom)
+        from ui_style import SubtleSizeGrip
+        self.grip=SubtleSizeGrip(self,lambda:QColor(self.row()['color']).lightness()>110);self.grip.setFixedSize(12,12);footer.addWidget(self.grip,0,Qt.AlignBottom)
         self.footer=QWidget();self.footer.setLayout(footer);self.layout_box.addWidget(self.footer)
         self.title.committed.connect(self.changed);self.title.textChanged.connect(self.fit_title);self.editor.textChanged.connect(self.changed)
         self.title.installEventFilter(self);self.editor.installEventFilter(self)
@@ -105,7 +113,7 @@ class NoteWindow(QWidget):
         for keys,kind in [('Ctrl+B','bold'),('Ctrl+I','italic'),('Ctrl+U','underline'),('Ctrl+Shift+L','bullet')]:
             shortcut=QShortcut(QKeySequence(keys),self);shortcut.activated.connect(lambda k=kind:self.format_text(k))
         shortcut=QShortcut(QKeySequence('Ctrl+S'),self);shortcut.activated.connect(manager.flush)
-        row=self.row();self.title.setText(row['title']);self.editor.setHtml(clean_editor_html(row['html']))
+        row=self.row();self.title.setText(row['title']);self.editor.setHtml(clean_editor_html(row['html']));self.pages.setCurrentIndex(1 if row.get('flipped') else 0);self.rebuild_todos()
         self.resize(300,260);self.reposition();self.apply_style();self.loading=False
 
     def tool(self,text,tip,callback):
@@ -113,8 +121,45 @@ class NoteWindow(QWidget):
     def row(self):return self.manager.row(self.identity)
     def changed(self):
         if self.loading or self.disposed or self.manager.closed:return
+        if self.row().get('flipped') and not getattr(self,'_toggling_todo',False):self.rebuild_todos()
         text=self.editor.toPlainText()
         self.manager.update(self.identity,title=self.row()['title'] if self.title.editing else self.title.text().strip() or '新便签',html=clean_editor_html(self.editor.toHtml()),text=text)
+    def flip(self):
+        if self.disposed or self.row()['collapsed']:return
+        target=not self.row().get('flipped',False)
+        if target:self.rebuild_todos()
+        if not self.manager.update_and_save(self.identity,flipped=target):
+            self.manager.update(self.identity,flipped=not target);return
+        self.pages.flip_to(1 if target else 0);self.tools.setVisible(not target)
+        self.flip_button.setToolTip('点击翻面：'+('返回正文' if target else '查看待办'))
+
+    def rebuild_todos(self):
+        self.todos.blockSignals(True);self.todos.clear();block=self.editor.document().begin()
+        while block.isValid():
+            value=block.text()
+            if value.startswith(('☐ ','☑ ')):
+                item=QListWidgetItem(value[2:]);item.setFlags(item.flags()|Qt.ItemIsUserCheckable);item.setCheckState(Qt.Checked if value.startswith('☑') else Qt.Unchecked);item.setData(Qt.UserRole,block.blockNumber());self.todos.addItem(item)
+            block=block.next()
+        if not self.todos.count():
+            item=QListWidgetItem('暂无待办，可在下方直接添加');item.setFlags(Qt.NoItemFlags);self.todos.addItem(item)
+        self.todos.blockSignals(False)
+
+    def add_todo(self):
+        value=self.todo_input.text().strip()
+        if not value:return
+        cursor=self.editor.textCursor();cursor.movePosition(QTextCursor.End)
+        if self.editor.toPlainText():cursor.insertBlock()
+        cursor.insertText('☐ '+value);self.todo_input.clear();self.changed();self.manager.flush()
+
+    def toggle_todo(self,item):
+        block=self.editor.document().findBlockByNumber(item.data(Qt.UserRole))
+        if not block.isValid() or not block.text().startswith(('☐ ','☑ ')):return
+        self._toggling_todo=True
+        try:
+            cursor=QTextCursor(block);cursor.movePosition(QTextCursor.Right,QTextCursor.KeepAnchor);cursor.insertText('☑' if item.checkState()==Qt.Checked else '☐')
+        finally:self._toggling_todo=False
+        self.changed();self.manager.flush()
+
     def fit_title(self,*args):
         self.title.ensurePolished()
         limit=max(60,min(round(140*self.ui_factor),round(self.width()*.45)))
@@ -157,7 +202,7 @@ class NoteWindow(QWidget):
     def collapse_if_outside(self):
         if self.disposed or not self.row()['auto_hide'] or not self.isVisible() or self.row()['collapsed']:return
         if self.drag is not None or self.rect().contains(self.mapFromGlobal(QCursor.pos())):return
-        if QApplication.activeModalWidget() or QApplication.activePopupWidget() or (self.isActiveWindow() and (self.editor.hasFocus() or self.title.hasFocus())):return
+        if QApplication.activeModalWidget() or QApplication.activePopupWidget() or (self.isActiveWindow() and (self.editor.hasFocus() or self.title.hasFocus() or self.todo_input.hasFocus() or self.todos.hasFocus())):return
         layout=getattr(self.runtime,'layout',None)
         if layout and (layout.pending or layout.applying):return
         self.set_collapsed(True)
@@ -257,16 +302,16 @@ class NoteWindow(QWidget):
         self.loading=False
     def apply_style(self):
         row=self.row();collapsed=row['collapsed'];self.loading=True
-        self.tools.setVisible(not collapsed);self.editor.setVisible(not collapsed);self.footer.setVisible(not collapsed)
+        self.tools.setVisible(not collapsed and not row.get('flipped'));self.pages.setVisible(not collapsed);self.footer.setVisible(not collapsed)
         factor=self.ui_factor;bar=max(30,round(42*factor));small_before=self.height()<max(80,bar+2)
         self.setMinimumSize(max(160,round(230*min(1,factor))),bar if collapsed else max(96,round(150*min(1,factor))));self.setMaximumSize(16777215,16777215)
         if collapsed:self.resize(self.width(),bar)
         elif small_before:self.resize(self.width(),self.expanded_height)
         self.layout_box.setContentsMargins(*(max(5,round(v*factor)) for v in (12,9,12,9)));self.layout_box.setSpacing(max(3,round(6*factor)))
-        for widget in [self.settings_button,self.more,self.collapse_button,self.retry]+list(self.format_buttons.values()):widget.setFixedSize(max(16,round(23*factor)),max(16,round(23*factor)))
+        for widget in [self.flip_button,self.settings_button,self.more,self.collapse_button,self.retry]+list(self.format_buttons.values()):widget.setFixedSize(max(16,round(23*factor)),max(16,round(23*factor)))
         if row['locked']:self.setFixedSize(self.size())
         self.grip.setVisible(not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
-        color=QColor(row['color']);ink='#20252b' if color.lightness()>110 else '#f5f7fa'
+        color=QColor(row['color']);ink='#20252b' if color.lightness()>110 or self.dock.cfg.get('card_design') in ('gradient','paper','minimal') else '#f5f7fa'
         from glass_panel import category_icon
         icon_size=max(12,round(17*factor));self.handle.setFixedSize(icon_size,icon_size)
         self.handle.setPixmap(category_icon('note',note_icon_color(row['color']),icon_size,self.devicePixelRatioF()))
@@ -274,6 +319,7 @@ class NoteWindow(QWidget):
         from dpi_support import panel_css
         self.setStyleSheet(panel_css(self.styleSheet(),self.ui_factor))
         size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;'%size)
+        self.todos.setStyleSheet('QListWidget {background:transparent;border:0;color:%s;font-size:%dpx;} QListWidget::item {padding:5px 2px;} QListWidget::indicator:unchecked {background:rgba(255,255,255,180);border:1px solid #98a7b4;border-radius:4px;width:14px;height:14px;}'%(ink,size))
         from card_metrics import font_pixels
         self.title.setStyleSheet('font-size:%dpx;padding:0 2px;'%font_pixels(self.dock.cfg,self.ui_factor));self.fit_title()
         self.settings_button.setIcon(QIcon(category_icon('settings',ink,max(12,round(16*factor)),self.devicePixelRatioF())));self.settings_button.setIconSize(self.handle.size())
@@ -326,10 +372,13 @@ class NoteWindow(QWidget):
                 p.setPen(QPen(color.darker(118),1));p.drawLine(12,round(43*self.ui_factor),self.width()-12,round(43*self.ui_factor))
             else:p.fillRect(rect,color)
             p.setClipping(False);p.setBrush(Qt.NoBrush);p.setPen(QPen(color.darker(120),1));p.drawPath(shape)
+        from card_design import paint_design
+        paint_design(p,rect,self.dock.cfg)
     def closeEvent(self,event):
-        if self.disposed:event.accept()
+        if self.disposed or QApplication.instance().isSavingSession():event.accept()
         else:event.ignore();self.manager.update_and_save(self.identity,visible=False)
     def dispose(self):
+        self.pages.animation.stop();self.pages.frames=None
         self.disposed=True;self.collapse_timer.stop();self.expand_timer.stop();self.geometry_timer.stop();self.refresh_timer.stop();self.backdrop=None;self.close();self.deleteLater()
 
 

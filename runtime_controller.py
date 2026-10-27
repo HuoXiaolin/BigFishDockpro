@@ -28,9 +28,20 @@ class RuntimeController:
         self.fullscreen_timer.timeout.connect(self.check_fullscreen)
         app = QApplication.instance()
         app.aboutToQuit.connect(self.close)
+        # Qt fallback closes every top-level window during logout. Our close
+        # buttons mean hide/collapse, so session shutdown must save separately.
+        app.setFallbackSessionManagementEnabled(False)
+        self._session_signals=[]
+        for name in ('commitDataRequest','saveStateRequest'):
+            signal=getattr(app,name,None)
+            if signal is not None:signal.connect(self.checkpoint_session);self._session_signals.append(signal)
         from screen_layout import DisplayLayout
         from sticky_notes import NotesManager
         self.notes=NotesManager(self)
+        from desktop_clock import DesktopClock
+        self.clock=DesktopClock(self)
+        from desktop_calendar import DesktopCalendar
+        self.calendar=DesktopCalendar(self)
         self.layout = DisplayLayout(self)
         self.apply_settings()
         if self.dock.cfg.get('runtime_lite'): self.set_lite(True, persist=False)
@@ -68,6 +79,8 @@ class RuntimeController:
         if enabled and not (not persist and restore):
             restore = {key:window.collapsed for key,window in self.panels.windows.items()}
             restore['__merged__'] = self.dock.cfg['merged_collapsed']
+            for group in self.dock.cfg.get('merge_groups',[]):
+                if group['id']!='default':restore['__merge_group__'+group['id']]=group.get('collapsed',False)
         candidate = dict(self.dock.cfg,runtime_lite=enabled,lite_restore=restore)
         if persist and self.api.save_config(candidate) is False:
             self.api.log('运行模式保存失败，未切换模式。')
@@ -108,10 +121,13 @@ class RuntimeController:
             self.refresh_corners()
             if was_lite:
                 self.dock.cfg['merged_collapsed'] = self.dock.cfg.get('lite_restore',{}).get('__merged__',self.dock.cfg['merged_collapsed'])
+                for group in self.dock.cfg.get('merge_groups',[]):
+                    if group['id']!='default':group['collapsed']=self.dock.cfg.get('lite_restore',{}).get('__merge_group__'+group['id'],group.get('collapsed',False))
                 self.panels.set_lite(False)
                 self.dock.cfg['lite_restore'] = {}
                 self.api.save_config(self.dock.cfg)
         self.notes.set_lite()
+        self.clock.sync();self.calendar.sync()
         self.dock._recalc(uniform=True)
         self.dock._kick()
         self.tray.setToolTip('大肥鱼Dock · '+('精简模式' if self.lite else '完整模式'))
@@ -185,21 +201,16 @@ class RuntimeController:
 
     def apply_visibility(self):
         active = bool(self.dock.cfg['game_mode'] or self.auto_game) and not self.settings_open
-        if active == self.game_active:
-            self.refresh_corners()
-            return
-        if active:
-            self.was_dock_visible = self.dock.isVisible()
-            self.dock.hide()
-            self.dock.proc_timer.stop()
-        else:
-            if self.was_dock_visible:
-                self.tray._show_dock()
-            if not self.lite and not self.dock.preview and self.dock.cfg['running_dots']:
-                self.dock.proc_timer.start(8000)
-        self.game_active = active
-        self.panels.set_blocked(active)
-        self.notes.sync()
+        changed=active!=self.game_active;self.game_active=active
+        # Saved intent owns visibility; temporary game/shutdown hides never do.
+        self.was_dock_visible=bool(self.dock.cfg['dock_visible'])
+        wanted=self.was_dock_visible and not active
+        if wanted and not self.dock.isVisible():self.tray._show_dock()
+        elif not wanted and self.dock.isVisible():self.dock.hide()
+        if changed:
+            if active:self.dock.proc_timer.stop()
+            elif not self.lite and not self.dock.preview and self.dock.cfg['running_dots']:self.dock.proc_timer.start(8000)
+            self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync()
         self.refresh_corners()
 
     def apply_settings(self):
@@ -208,9 +219,10 @@ class RuntimeController:
         self.tray.setVisible(not self.dock.cfg['hide_tray'])
         self.panels.apply_settings()
         self.notes.sync()
+        self.clock.sync();self.calendar.sync()
         density=self.dock.cfg.get('card_scale',70)
         if getattr(self,'_card_density',None)!=density:
-            self.panels.reposition();self.notes.reposition();self._card_density=density
+            self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=density
         self.configure_fullscreen_timer()
         self.apply_visibility()
         self.refresh_corners()
@@ -220,6 +232,15 @@ class RuntimeController:
     def open_card_sizing(self,kind=None,identity=None):
         from card_sizing import CardSizingDialog
         dialog=CardSizingDialog(self,kind,identity);dialog.exec_()
+
+    def checkpoint_session(self,*args):
+        if self.closed:return False
+        if not self.notes.flush() and not self.notes.backup():self.api.log('结束会话前保存便签失败。')
+        self.panels.save_visible_geometry();self.clock.save_geometry();self.calendar.save_geometry()
+        candidate=dict(self.dock.cfg,runtime_lite=self.lite)
+        if self.api.save_config(candidate) is False:
+            self.api.log('结束会话前保存运行状态失败。');return False
+        self.dock.cfg['runtime_lite']=self.lite;return True
 
     def request_exit(self):
         if not self.notes.flush() and not self.notes.backup():
@@ -232,9 +253,13 @@ class RuntimeController:
     def close(self):
         if self.closed: return
         self.closed = True
+        for signal in self._session_signals:
+            try:signal.disconnect(self.checkpoint_session)
+            except (TypeError,RuntimeError):pass
+        self._session_signals.clear()
         self.notes.close()
+        self.clock.dispose();self.calendar.dispose()
         self.layout.close()
-        if not self.game_active: self.dock.cfg['dock_visible'] = self.dock.isVisible()
         self.dock.cfg['runtime_lite'] = self.lite
         self.api.save_config(self.dock.cfg)
         self.lite_timer.stop()

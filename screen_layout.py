@@ -21,7 +21,9 @@ def normalize_layout(value):
     if not isinstance(value,dict):return {}
     panels=value.get('panels',{})
     panels={str(key)[:80]:record for key,raw in list(panels.items())[:256] if (record:=valid_record(raw))} if isinstance(panels,dict) else {}
-    return {'dock':valid_record(value.get('dock')), 'merged':valid_record(value.get('merged')), 'panels':panels}
+    groups=value.get('merge_groups',{})
+    groups={str(key)[:80]:record for key,raw in list(groups.items())[:64] if (record:=valid_record(raw))} if isinstance(groups,dict) else {}
+    return {'dock':valid_record(value.get('dock')), 'merged':valid_record(value.get('merged')), 'panels':panels,'merge_groups':groups}
 
 
 def screen_records():
@@ -108,11 +110,17 @@ class DisplayLayout:
             window.resize_timer.stop();window.fit_timer.stop();window.manual_resize=False
         for window in getattr(getattr(self.runtime,'notes',None),'windows',{}).values():
             window.geometry_timer.stop();window.refresh_timer.stop()
+        for name in ('clock','calendar'):
+            clock=getattr(self.runtime,name,None)
+            if clock:clock.geometry_timer.stop();clock.refresh_timer.stop()
         self.timer.start()
 
     def record(self,identity):
         state=self.dock.cfg.get('display_layout',{})
-        return state.get('merged',{}) if self.runtime.panels.is_merged(identity) else state.get('panels',{}).get(identity,{})
+        if self.runtime.panels.is_merged(identity):
+            group=self.runtime.panels.group_id(identity)
+            return state.get('merged',{}) if group=='default' else state.get('merge_groups',{}).get(group,{})
+        return state.get('panels',{}).get(identity,{})
 
     def panel_bounds(self,identity,fallback):
         screens=self.screens();window=self.runtime.panels.windows.get(identity)
@@ -133,7 +141,10 @@ class DisplayLayout:
         state=copy.deepcopy(self.dock.cfg.get('display_layout',{}))
         window=self.runtime.panels.windows.get(identity)
         record=capture(rect,self.screens(),getattr(window,'ui_factor',1.0),self.dock.cfg.get('card_scale',70)/100)
-        if self.runtime.panels.is_merged(identity):state['merged']=record
+        if self.runtime.panels.is_merged(identity):
+            group=self.runtime.panels.group_id(identity)
+            if group=='default':state['merged']=record
+            else:state.setdefault('merge_groups',{})[group]=record
         else:state.setdefault('panels',{})[identity]=record
         return state
 
@@ -150,9 +161,17 @@ class DisplayLayout:
             window=self.runtime.panels.windows.get(model['id'])
             if window and model['id'] not in panels:
                 panels[model['id']]=capture(model.get('geometry',window.default_geometry),screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not model.get('geometry') else 1.0)
-        if self.dock.cfg['merged_panels'] and not state.get('merged'):
-            window=self.runtime.panels.windows.get(self.runtime.panels.active_window)
-            if window:state['merged']=capture(self.dock.cfg.get('merged_geometry') or window.default_geometry,screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not self.dock.cfg.get('merged_geometry') else 1.0)
+        manager=self.runtime.panels
+        valid={group['id'] for group in self.dock.cfg.get('merge_groups',[])}
+        state['merge_groups']={key:record for key,record in state.get('merge_groups',{}).items() if key in valid}
+        for group,identity in getattr(manager,'active_windows',{}).items():
+            window=manager.windows.get(identity)
+            existing=state.get('merged') if group=='default' else state['merge_groups'].get(group)
+            if window and not existing:
+                geometry=manager.group_value(identity,'geometry')
+                record=capture(geometry or window.default_geometry,screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not geometry else 1.0)
+                if group=='default':state['merged']=record
+                else:state['merge_groups'][group]=record
         if state!=self.dock.cfg.get('display_layout'):
             if self.runtime.api.save_config(dict(self.dock.cfg,display_layout=state)) is not False:self.dock.cfg['display_layout']=state
 
@@ -173,6 +192,9 @@ class DisplayLayout:
             self.update_dock()
             self.runtime.panels.reposition()
             if getattr(self.runtime,'notes',None):self.runtime.notes.reposition()
+            for name in ('clock','calendar'):
+                component=getattr(self.runtime,name,None)
+                if component:component.reposition();component.refresh_timer.start()
             dialog=getattr(self.runtime.tray,'settings_dialog',None)
             if dialog and hasattr(dialog,'adapt_interface'):dialog.adapt_interface()
             self.runtime.refresh_corners()

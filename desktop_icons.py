@@ -22,6 +22,9 @@ class DesktopIcons(QObject):
         self.user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
         self.user.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         self.user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        self.user.GetParent.argtypes = [wintypes.HWND]
+        self.user.GetParent.restype = wintypes.HWND
+        self.user.IsWindow.argtypes = [wintypes.HWND]
         self.user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         self.enum_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         self.user.EnumWindows.argtypes = [self.enum_type, wintypes.LPARAM]
@@ -50,6 +53,10 @@ class DesktopIcons(QObject):
         if self.preview: return []
         views = []
         def visit(hwnd, data):
+            # Only Explorer desktop hosts; folder windows may also contain DefView.
+            name=ctypes.create_unicode_buffer(128)
+            self.user.GetClassNameW(hwnd,name,len(name))
+            if name.value not in ('Progman','WorkerW'):return True
             view = self.user.FindWindowExW(hwnd, None, 'SHELLDLL_DefView', None)
             if view:
                 icons = self.user.FindWindowExW(view, None, 'SysListView32', None)
@@ -101,20 +108,37 @@ class DesktopIcons(QObject):
         for hwnd in views:
             self.user.ShowWindow(hwnd, 0)
 
+    def legacy_view(self, hwnd):
+        # An old journal may include a folder view. Restore only the exact
+        # surviving Explorer list view recorded by that version.
+        if self.finder is not None or not self.user.IsWindow(hwnd):return False
+        name=ctypes.create_unicode_buffer(128);self.user.GetClassNameW(hwnd,name,len(name))
+        if name.value!='SysListView32':return False
+        parent=self.user.GetParent(hwnd)
+        if not parent:return False
+        self.user.GetClassNameW(parent,name,len(name))
+        return name.value=='SHELLDLL_DefView'
+
     def restore_native(self):
         self.enabled = False
         if self.hook:
             self.user.UnhookWinEvent(self.hook)
             self.hook = None
         if not self.hidden: return
-        current = set(self.views())
+        current = set(self.views());remaining={}
         for hwnd, (pid, was_visible) in self.hidden.items():
-            if hwnd in current and self.pid(hwnd) == pid and was_visible:
+            if (hwnd in current or self.legacy_view(hwnd)) and self.pid(hwnd) == pid and was_visible:
                 self.user.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
-        self.hidden.clear()
+                if not self.user.GetWindowLongW(hwnd,-16)&0x10000000:remaining[hwnd]=(pid,was_visible)
+        self.hidden=remaining
         if self.journal:
-            try: self.journal.unlink(missing_ok=True)
-            except OSError: logging.warning('Unable to remove desktop-icon visibility journal')
+            try:
+                if remaining:
+                    temporary=self.journal.with_suffix('.tmp')
+                    temporary.write_text(json.dumps([[hwnd,pid,visible] for hwnd,(pid,visible) in remaining.items()]),encoding='utf-8')
+                    os.replace(temporary,self.journal)
+                else:self.journal.unlink(missing_ok=True)
+            except OSError: logging.warning('Unable to update desktop-icon visibility journal')
 
     def close(self):
         self.timer.stop()

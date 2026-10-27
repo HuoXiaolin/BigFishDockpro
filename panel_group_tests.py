@@ -58,9 +58,7 @@ def run(api,runtime,root,output,checks):
         assert definition.extensions()==['.png','.txt'] and definition.result()==definition.Accepted
         definition.deleteLater()
         dialog=GroupDialog(manager);dialog.show();app.processEvents()
-        for index in range(dialog.list.count()):
-            item=dialog.list.item(index)
-            if item.data(Qt.UserRole)=='images':item.setCheckState(Qt.Unchecked)
+        dialog.find_card('images').setCheckState(0,Qt.Unchecked)
         dialog.merged.setChecked(True);dialog.commit();app.processEvents()
         assert 'images' in cfg['disabled_categories'] and not manager.windows['images'].isVisible()
         visible=[window for window in manager.windows.values() if window.isVisible()]
@@ -147,11 +145,9 @@ def run(api,runtime,root,output,checks):
         app.processEvents();assert window.isVisible() and window.geometry().getRect()==independent
         assert manager.active_window!=collection and manager.windows[manager.active_window].isVisible()
         dialog=GroupDialog(manager)
-        for i in range(dialog.list.count()):
-            if dialog.list.item(i).data(Qt.UserRole)==second:dialog.list.setCurrentRow(i);break
-        dialog.member.setChecked(False);dialog.commit();dialog.reject();dialog.deleteLater();app.processEvents()
+        dialog.move_cards([second],'independent');dialog.commit();dialog.reject();dialog.deleteLater();app.processEvents()
         assert manager.windows[second].isVisible() and not manager.windows[second].tabs.isVisible()
-        assert not api.load_config()['desktop_panels'][-1]['merged']
+        assert not next(m for m in api.load_config()['desktop_panels'] if m['id']==second)['merged']
         window.grab().save(str(Path(output)/'independent-list-card.png'))
         manager.windows[manager.active_window].grab().save(str(Path(output)/'partial-merged-card.png'))
         saved=api.load_config();manager.close();cfg.update(saved)
@@ -229,14 +225,14 @@ def run(api,runtime,root,output,checks):
         app.sendEvent(tab,QKeyEvent(QEvent.KeyPress,Qt.Key_Right if next_index>index else Qt.Key_Left,Qt.NoModifier))
         app.processEvents();assert manager.active_window==next_identity
         dialog=GroupDialog(manager);dialog.show();app.processEvents()
-        initial=[dialog.list.item(i).data(Qt.UserRole) for i in range(dialog.list.count())]
-        dialog.list.setCurrentRow(0);dialog.move_selected(1)
+        initial=[item.data(0,Qt.UserRole) for item in dialog.card_items()]
+        dialog.move_cards([initial[0]],'default',before=initial[2])
         staged=[initial[1],initial[0]]+initial[2:]
-        assert [dialog.list.item(i).data(Qt.UserRole) for i in range(dialog.list.count())]==staged
-        dialog.populate();assert [dialog.list.item(i).data(Qt.UserRole) for i in range(dialog.list.count())]==staged
+        assert [item.data(0,Qt.UserRole) for item in dialog.card_items()]==staged
+        dialog.populate();assert [item.data(0,Qt.UserRole) for item in dialog.card_items()]==staged
         previous=[m['id'] for m in cfg['desktop_panels']];dialog.reject();dialog.deleteLater()
         assert [m['id'] for m in cfg['desktop_panels']]==previous
-        dialog=GroupDialog(manager);dialog.list.setCurrentRow(0);dialog.move_selected(1);dialog.commit()
+        dialog=GroupDialog(manager);dialog.move_cards([initial[0]],'default',before=initial[2]);dialog.commit()
         app.processEvents();dialog.show();dialog.grab().save(str(Path(output)/'group-order-controls.png'));dialog.reject();dialog.deleteLater()
         assert [m['id'] for m in cfg['desktop_panels']]==[key for key in staged if key in set(previous)]
         order=[m['id'] for m in cfg['desktop_panels']];active=manager.active_window
@@ -245,7 +241,7 @@ def run(api,runtime,root,output,checks):
         runtime.panels=manager=DesktopPanels(runtime,roots=[str(demo)]);manager.apply_settings();manager.scan_timer.stop();app.processEvents()
         assert [m['id'] for m in cfg['desktop_panels']]==order and manager.active_window==active
         assert cfg['desktop_entries']==entries
-        checks.append('group order: tabMoved forward/back, Qt mouse press/move/release defers page switching, keyboard navigation, synchronized bars, independent/disabled slots, save-failure rollback, staged up/down cancel/save and restart persist order without changing file references')
+        checks.append('group order: tabMoved forward/back, Qt mouse press/move/release defers page switching, keyboard navigation, synchronized bars, independent/disabled slots, save-failure rollback, staged drag-order cancel/save and restart persist order without changing file references')
         runtime.set_dock_visible(False);assert not api.load_config()['dock_visible'] and not runtime.dock.isVisible()
         runtime.set_dock_visible(True);assert api.load_config()['dock_visible'] and runtime.dock.isVisible()
         cfg['hide_tray']=True;runtime.apply_settings();assert not runtime.tray.isVisible()

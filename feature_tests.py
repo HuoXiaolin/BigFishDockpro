@@ -137,18 +137,18 @@ def run(api, dock, tray, root, output, checks):
     runtime.check_fullscreen()
     assert runtime.corners.widgets[0] is corner
     checks.append('screen corners: desktop and ordinary fullscreen both visible, no extra polling, stable click-through masks and alpha geometry')
-    dock.show()
+    runtime.set_dock_visible(True)
     runtime.panels.reveal()
     runtime.toggle_game(True)
     assert not dock.isVisible() and not panel.isVisible() and not runtime.corners.widgets
     assert not runtime.corners.hooks and not runtime.corners.raise_timer.isActive()
     runtime.toggle_game(False)
     assert dock.isVisible() and panel.isVisible()
-    dock.hide()
+    runtime.set_dock_visible(False)
     runtime.toggle_game(True)
     runtime.toggle_game(False)
     assert not dock.isVisible()
-    dock.show()
+    runtime.set_dock_visible(True)
     assert covers_monitor((0,0,1920,1080),(0,0,1920,1080))
     assert not covers_monitor((0,0,1920,1040),(0,0,1920,1080))
     cfg['fullscreen_detection'] = True
