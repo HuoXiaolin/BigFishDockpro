@@ -4,7 +4,6 @@ build/
 dist/
 release/
 references/
-tools/
 tools-*.exe
 *.zip
 artifacts/
