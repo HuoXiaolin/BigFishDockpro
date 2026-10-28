@@ -46,6 +46,9 @@ def normalize_notes(rows,strict=False,limit=64):
             if type(body_size) is not int or not 8<=body_size<=72 or type(body_scale) not in (int,float) or not .125<=body_scale<=8:
                 if strict:raise ValueError('便签正文字号无效。')
             else:row.update(body_font_size=body_size,body_font_scale=float(body_scale))
+        if isinstance(raw.get('fold'),dict):
+            from fold_options import normalize as normalize_fold
+            row['fold']=normalize_fold(raw['fold'])
         for key in ('pinned','locked','collapsed','auto_hide','flipped'):
             if strict and key in raw and type(raw[key]) is not bool:raise ValueError('便签开关格式不正确。')
             row[key]=raw.get(key) is True

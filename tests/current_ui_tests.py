@@ -210,7 +210,7 @@ def run(output):
             note.set_option('style',style);assert not note.handle.pixmap().isNull()
             note.grab().save(str(output/('note-icon-'+style+'.png')))
         checks.append('note header: sticky-note vector icon remains the drag handle, follows seven distinct note accents and all three note styles; runtime screenshots')
-        note.resize(370,275);note.save_geometry();assert runtime.notes.flush();note_size=note.size()
+        note.resize(370,275);note.save_geometry();assert runtime.notes.flush(),runtime.notes.message;note_size=note.size()
         from card_sizing import CardSizingDialog
         sizing=CardSizingDialog(runtime);sizing.text_field.setValue(16);assert sizing.commit()
         assert independent.size()==first_size and note.size()==note_size
@@ -285,16 +285,17 @@ def run(output):
         options.fields['opacity'].setValue(78);options.fields['blur'].setValue(10);options.fields['capsule_ratio'].setValue(30)
         options.fields['collapse_style'].setCurrentIndex(options.fields['collapse_style'].findData('capsule'))
         options.color.setText('#8fc8df');options.auto.setChecked(False);assert options.commit()
-        assert cfg['panel_opacity']==78 and cfg['panel_collapse_style']=='capsule'
-        assert main.fields['panel_opacity'].value()==78 and main.fields['panel_collapse_style'].currentData()=='capsule'
+        assert cfg['panel_opacity']==78
+        assert __import__('fold_options').settings(panel)=={'style':'capsule','ratio':30}
+        assert main.fields['panel_opacity'].value()==78
         assert main.fields['icon_size'].value()==icon_before+1
         assert all(window.option('opacity')==78 and window.option('collapse_style')=='capsule' for window in runtime.panels.windows.values())
         options.fields['opacity'].setValue(99)
         main.fields['panel_collapse_style'].setCurrentIndex(main.fields['panel_collapse_style'].findData('bar'))
         main.fields['panel_locked'].setChecked(False);main.commit();app.processEvents()
-        assert cfg['panel_collapse_style']=='bar' and options.fields['collapse_style'].currentData()=='bar'
+        assert cfg['panel_collapse_style']=='bar' and options.fields['collapse_style'].currentData()=='capsule'
         assert options.fields['opacity'].value()==78
-        assert all(window.option('collapse_style')=='bar' for window in runtime.panels.windows.values())
+        assert all(window.option('collapse_style')=='capsule' for window in runtime.panels.windows.values())
         old=copy.deepcopy(cfg)
         options.fields['opacity'].setValue(31)
         with patch.object(api,'save_config',return_value=False):assert not options.commit()
@@ -353,6 +354,8 @@ def run(output):
         visibility_checks(api,runtime,checks)
         from calendar_design_tests import run as calendar_design_checks
         calendar_design_checks(api,runtime,root.name,output,checks)
+        from folding_tests import run as run_folding
+        run_folding(api,runtime,root.name,output,checks)
         from clock_redesign_tests import run as run_clock_redesign
         run_clock_redesign(api,runtime,root.name,output,checks)
         from panel_transition_tests import run as run_panel_transition

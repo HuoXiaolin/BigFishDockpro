@@ -344,9 +344,13 @@ class DesktopPanels(QObject):
         from panel_preferences import KEYS,without_overrides
         shared={key:value for key,value in values.items() if key in KEYS}
         local={key:value for key,value in values.items() if key not in KEYS}
+        if self.is_merged(identity):local.pop('fold',None)
         panels=without_overrides(panels)
         next(model for model in panels if model['id']==identity).update(local)
         changes={'desktop_panels':panels,**{'panel_'+key:value for key,value in shared.items()}}
+        if 'fold' in values and self.is_merged(identity):
+            groups=copy.deepcopy(self.cfg['merge_groups']);group=next(row for row in groups if row['id']==self.group_id(identity));group['fold']=values['fold']
+            changes['merge_groups']=groups
         layout=getattr(self.runtime,'layout',None)
         if _layout is None and 'geometry' in values and layout:
             _layout=layout.panel_update(identity,values['geometry'])

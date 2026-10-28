@@ -138,6 +138,9 @@ def normalize_desktop(cfg):
             panel['geometry'] = [geo[0], geo[1], max(260, min(2400, geo[2])), max(156, min(1800, geo[3]))]
         for key, low, high in [('opacity', 0, 100), ('blur', 2, 30), ('highlight', 0, 100), ('capsule_ratio', 30, 100)]:
             if type(raw.get(key)) is int: panel[key] = max(low, min(high, raw[key]))
+        if isinstance(raw.get('fold'),dict):
+            from fold_options import normalize as normalize_fold
+            panel['fold']=normalize_fold(raw['fold'])
         for key in ('locked', 'auto_hide', 'collapsed', 'compact', 'enabled', 'merged'):
             if isinstance(raw.get(key), bool): panel[key] = raw[key]
         if raw.get('collapse_style') in ('bar', 'capsule'): panel['collapse_style'] = raw['collapse_style']

@@ -301,6 +301,9 @@ class DesktopPanel(QDialog):
     def model(self): return self.manager.model(self.identity)
 
     def option(self, key):
+        if key in ('collapse_style','capsule_ratio'):
+            from fold_options import settings
+            return settings(self)['style' if key=='collapse_style' else 'ratio']
         return self.dock.cfg['panel_'+key]
 
     def colors(self):
@@ -484,6 +487,8 @@ class DesktopPanel(QDialog):
             if not self.disposed and self.option('auto_hide'):self.collapse_timer.start()
 
     def nativeEvent(self,event_type,message):
+        from fold_options import native_minimum
+        if native_minimum(self,message):return True,0
         menu=getattr(self,'_active_file_menu',None)
         if menu:
             import ctypes
@@ -600,6 +605,8 @@ class DesktopPanel(QDialog):
 
     def build_panel_menu(self):
         menu = QMenu(self)
+        from fold_options import FoldOptions
+        menu.addAction('收起样式…').triggered.connect(lambda:FoldOptions(self).exec_())
         menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
         menu.addAction('粘贴到桌面').triggered.connect(lambda:self.paste_files())
         menu.addAction('添加文件…').triggered.connect(self.add_files)
@@ -678,9 +685,9 @@ class DesktopPanel(QDialog):
         geometry = self.bounds()
         self.move(geometry[0], geometry[1])
         if collapsed:
-            width = geometry[2] if self.option('collapse_style') == 'bar' else max(metric(180,self.ui_factor,100), round(geometry[2]*self.option('capsule_ratio')/100))
-            screen = QApplication.screenAt(self.pos()) or QApplication.primaryScreen()
-            self.setFixedSize(min(width, screen.availableGeometry().width()), metric(44,self.ui_factor,24))
+            from fold_options import geometry as fold_geometry,settings
+            target=fold_geometry(geometry,settings(self),metric(44,self.ui_factor,24))
+            self.setFixedSize(target[2],target[3]);self.move(*target[:2]);self._fold_offset=(target[0]-geometry[0],target[1]-geometry[1])
         else:
             screen = QApplication.screenAt(self.pos()) or QApplication.primaryScreen()
             available = screen.availableGeometry()
@@ -693,6 +700,14 @@ class DesktopPanel(QDialog):
         available = screen.availableGeometry()
         self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
                   max(available.top(), min(self.y(), available.bottom()+1-self.height())))
+        from fold_options import header
+        header(self,collapsed)
+        if collapsed:
+            self.layout().activate()
+            from fold_options import apply_compact_size
+            apply_compact_size(self,target)
+            header(self,collapsed)
+        self._fold_offset=(self.x()-geometry[0],self.y()-geometry[1]) if collapsed else (0,0)
         self._layout_geometry=self.geometry().getRect()
         self.collapse_button.setText('+' if collapsed else '−')
         if not collapsed: self.fit_timer.start(0)
@@ -778,7 +793,8 @@ class DesktopPanel(QDialog):
         if self.merged_view != self.manager.is_merged(self.identity): return
         if self.merged_view and self.manager.active_for(self.identity) != self.identity: return
         geometry = self.bounds()
-        geometry[0:2] = [self.x(), self.y()]
+        offset=getattr(self,'_fold_offset',(0,0)) if self.collapsed else (0,0)
+        geometry[0:2] = [self.x()-offset[0], self.y()-offset[1]]
         if not self.collapsed: geometry[2:4] = [self.width(), self.height()]
         changed=self.geometry().getRect()!=getattr(self,'_layout_geometry',None)
         anchor=layout.panel_update(self.identity,geometry) if layout and (changed or not layout.record(self.identity)) else None
@@ -864,7 +880,7 @@ class DesktopPanel(QDialog):
                      body_top=self.design_body_top(),body_inset=metric(4,self.ui_factor),corner_radius=radius)
 
     def surface_radius(self):
-        return (22 if self.collapsed and self.option('collapse_style')=='capsule' else 18)*self.ui_factor
+        return (22 if self.collapsed and self.option('collapse_style') in ('capsule','ball') else 18)*self.ui_factor
 
     def design_body_top(self):
         # Start the porcelain content surface below the entire live header/tab area.
@@ -929,7 +945,7 @@ class PanelOptions(QDialog):
         number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',2,30)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
-        choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar')]);number('capsule_ratio','胶囊宽度比例（%）',30,100)
+        choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar'),('圆球','ball')]);number('capsule_ratio','胶囊宽度比例（%）',1,100)
         self.status=label('所有桌面卡片共用此设置；保存后同步主设置。位置、大小和内容分别保留。','muted');body.addWidget(self.status)
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
         self.refresh_shared()
@@ -976,5 +992,6 @@ class PanelOptions(QDialog):
         if color and not re.fullmatch(r'#[0-9a-fA-F]{6}',color):self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。');return False
         values={key:field.currentData() if isinstance(field,QComboBox) else field.value() for key,field in self.fields.items()}
         values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked())
-        if self.panel.manager.update_panel(self.panel.identity,**values):self.status.setText('已保存，所有桌面卡片及主设置已同步。');return True
+        values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio')}
+        if self.panel.manager.update_panel(self.panel.identity,**values):self.status.setText('已保存：外观共用，收起样式仅用于当前卡片或合并组。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

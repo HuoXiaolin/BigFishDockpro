@@ -118,6 +118,10 @@ class NoteWindow(QWidget):
 
     def tool(self,text,tip,callback):
         widget=QToolButton(self);widget.setText(text);widget.setToolTip(tip);widget.setAccessibleName(tip);widget.setFixedSize(23,23);widget.clicked.connect(callback);return widget
+    def nativeEvent(self,event_type,message):
+        from fold_options import native_minimum
+        if native_minimum(self,message):return True,0
+        return super().nativeEvent(event_type,message)
     def row(self):return self.manager.row(self.identity)
     def changed(self):
         if self.loading or self.disposed or self.manager.closed:return
@@ -196,7 +200,7 @@ class NoteWindow(QWidget):
     def set_collapsed(self,value):
         if self.disposed or self.row()['collapsed']==value:return
         self.collapse_timer.stop();self.expand_timer.stop()
-        if value:self.save_geometry()
+        if value:self.save_geometry();self._fold_expanded=list(self.geometry().getRect())
         self.manager.update(self.identity,collapsed=value);self.apply_style();self.manager.flush()
     def toggle_collapse(self):self.set_collapsed(not self.row()['collapsed'])
     def collapse_if_outside(self):
@@ -245,6 +249,8 @@ class NoteWindow(QWidget):
         for title,color in COLORS:colors.addAction(title).triggered.connect(lambda checked=False,value=color:self.set_option('color',value))
         for key,title in [('auto_hide','自动收起（鼠标离开后）'),('pinned','置顶显示'),('locked','锁定位置与大小')]:
             action=menu.addAction(title);action.setCheckable(True);action.setChecked(self.row()[key]);action.triggered.connect(lambda checked,k=key:self.set_option(k,checked))
+        from fold_options import FoldOptions
+        menu.addAction('收起样式…').triggered.connect(lambda:FoldOptions(self).exec_())
         menu.addAction('展开便签' if self.row()['collapsed'] else '收起便签').triggered.connect(self.toggle_collapse)
         menu.addAction('隐藏便签（保留内容）').triggered.connect(lambda:self.manager.update_and_save(self.identity,visible=False))
         menu.addAction('便签管理…').triggered.connect(self.manager.manage)
@@ -275,7 +281,10 @@ class NoteWindow(QWidget):
         if layout and (layout.pending or layout.applying):return
         row=self.row()
         if row.get('layout') and self.geometry().getRect()==getattr(self,'_saved_geometry',None):return
-        geometry=[self.x(),self.y(),self.width(),self.expanded_height if row['collapsed'] else self.height()]
+        offset=getattr(self,'_fold_offset',(0,0)) if row['collapsed'] else (0,0)
+        expanded=getattr(self,'_fold_expanded',[self.x(),self.y(),self.width(),self.expanded_height])
+        geometry=[self.x()-offset[0],self.y()-offset[1],expanded[2] if row['collapsed'] else self.width(),expanded[3] if row['collapsed'] else self.height()]
+        self._fold_expanded=list(geometry)
         self.expanded_height=geometry[3]
         self.manager.update(self.identity,geometry=geometry,layout=capture(geometry,screen_records(),self.ui_factor,self.dock.cfg.get('card_scale',70)/100))
         self._saved_geometry=self.geometry().getRect()
@@ -296,7 +305,7 @@ class NoteWindow(QWidget):
         from card_metrics import metrics
         from screen_layout import choose_screen
         geometry,self.ui_factor,_=metrics(self.dock.cfg,geometry,screens,choose_screen(record,screens))
-        self.expanded_height=geometry[3]
+        self.expanded_height=geometry[3];self._fold_expanded=list(geometry)
         self.loading=True
         self.setMinimumSize(1,1);self.setMaximumSize(16777215,16777215);self.setGeometry(*geometry)
         self.loading=False
@@ -325,6 +334,8 @@ class NoteWindow(QWidget):
         self.settings_button.setIcon(QIcon(category_icon('settings',ink,max(12,round(16*factor)),self.devicePixelRatioF())));self.settings_button.setIconSize(self.handle.size())
         font=QFont('Microsoft YaHei UI');font.setPixelSize(size);self.editor.document().setDefaultFont(font)
         palette=self.editor.palette();palette.setColor(QPalette.Text,QColor(ink));palette.setColor(QPalette.Base,QColor(0,0,0,0));self.editor.setPalette(palette)
+        from fold_options import note_geometry
+        note_geometry(self,collapsed)
         self.setWindowTitle(row['title']+' · 大肥鱼Dock便签');self.layer();self.loading=False;self.update();self.refresh_timer.start()
         if not self.geometry_timer.isActive():self._saved_geometry=self.geometry().getRect()
     def text_pixels(self):
@@ -360,7 +371,7 @@ class NoteWindow(QWidget):
             ratio=image.devicePixelRatio();self.backdrop=image.scaled(max(1,image.width()//8),max(1,image.height()//8),Qt.IgnoreAspectRatio,Qt.SmoothTransformation).scaled(image.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation);self.backdrop.setDevicePixelRatio(ratio)
         self.update()
     def paintEvent(self,event):
-        row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,14*self.ui_factor,14*self.ui_factor);color=QColor(row['color'])
+        row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor);color=QColor(row['color'])
         if row['style']=='glass':
             colors=tint_palette(self.dock.base_theme_colors('light'),row['color'])
             surface=SimpleNamespace(cfg={'glass':True,'clear_background':False,'dock_material':'liquid'},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
@@ -373,7 +384,7 @@ class NoteWindow(QWidget):
             else:p.fillRect(rect,color)
             p.setClipping(False);p.setBrush(Qt.NoBrush);p.setPen(QPen(color.darker(120),1));p.drawPath(shape)
         from card_design import paint_design
-        paint_design(p,rect,self.dock.cfg)
+        paint_design(p,rect,self.dock.cfg,corner_radius=self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,body_top=rect.bottom() if row['collapsed'] else None,header_separator=not row['collapsed'])
     def closeEvent(self,event):
         if self.disposed or QApplication.instance().isSavingSession():event.accept()
         else:event.ignore();self.manager.update_and_save(self.identity,visible=False)

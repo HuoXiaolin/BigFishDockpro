@@ -15,6 +15,9 @@ def normalize(cfg):
         row['active']=str(value.get('active') or '')[:80]
         geo=value.get('geometry');row['geometry']=list(geo) if isinstance(geo,list) and len(geo)==4 and all(type(n) is int and abs(n)<=1000000 for n in geo) and 0<geo[2]<=8192 and 0<geo[3]<=8192 else []
         for field,default in [('collapsed',False),('compact',True)]:row[field]=value.get(field) if type(value.get(field)) is bool else default
+        if isinstance(value.get('fold'),dict):
+            from fold_options import normalize as normalize_fold
+            row['fold']=normalize_fold(value['fold'])
         groups.append(row)
     if DEFAULT_GROUP not in seen:groups.insert(0,{'id':DEFAULT_GROUP,'name':'合并组 1','active':'','geometry':[],'collapsed':False,'compact':True})
     groups=groups[:64]
