@@ -426,7 +426,9 @@ class DesktopPanel(QDialog):
         from card_file_ui import card_display_name
         icon_view=self.list.viewMode()==QListWidget.IconMode
         for row in rows:
-            item = QListWidgetItem(QIcon(self.dock.icons.get(row['path'], max(24,self.list.iconSize().width()), shell_state=True,hide_shortcut=icon_view)), card_display_name(row,icon_view))
+            from card_file_ui import picture_thumbnail
+            pixels=max(24,self.list.iconSize().width());thumbnail=picture_thumbnail(row['path'],pixels)
+            item = QListWidgetItem(QIcon(thumbnail if thumbnail is not None else self.dock.icons.get(row['path'],pixels,shell_state=True,hide_shortcut=icon_view)),card_display_name(row,icon_view))
             item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
             item.setData(Qt.UserRole, row)
             self.list.addItem(item)
@@ -455,7 +457,7 @@ class DesktopPanel(QDialog):
         if not os.path.exists(path):
             self.notice.setText('原文件已移动或不存在，请重新拖入。')
             return
-        self.dock.launch(path)
+        self.dock.launch(path,source='file_open')
 
     def item_menu(self, point):
         item = self.list.itemAt(point)
@@ -535,13 +537,20 @@ class DesktopPanel(QDialog):
             self.notice.setText(str(error));return False
 
     def paste_files(self,folder=None):
-        from shell_file_clipboard import paste_into_folder,preferred_effect,clipboard_paths,MOVE
+        from shell_file_clipboard import paste_into_folder,paste_shell_clipboard,preferred_effect,clipboard_paths,MOVE
         try:
             destination=folder or (self.manager.roots[0] if self.manager.roots else '')
             if not destination:raise ValueError('未找到桌面文件夹，无法粘贴。')
             import ctypes
             clipboard=QApplication.clipboard();sequence=ctypes.windll.user32.GetClipboardSequenceNumber()
-            mime=clipboard.mimeData();effect=preferred_effect(mime);paths=clipboard_paths(mime)
+            mime=clipboard.mimeData();effect=preferred_effect(mime)
+            try:paths=clipboard_paths(mime)
+            except ValueError:
+                result=paste_shell_clipboard(destination,int(self.winId()),effect,sequence)
+                self.manager.schedule_scan()
+                if result=='cancelled':self.notice.setText('Windows 文件传输已取消。');return False
+                self.notice.setText('已交给 Windows 粘贴，远程文件将在传输完成后显示。')
+                return True
             if sequence!=ctypes.windll.user32.GetClipboardSequenceNumber():raise ValueError('剪贴板内容已变化，请重新粘贴。')
             result=paste_into_folder(destination,int(self.winId()),effect,paths)
             if result=='same-folder':self.notice.setText('文件已经在目标文件夹中，无需移动。');return False
@@ -831,6 +840,8 @@ class DesktopPanel(QDialog):
             if owner:
                 user.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
                 user.SetWindowLongPtrW(int(self.winId()), -8, int(owner))
+                user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
+                user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
 
     def hideEvent(self, event):
         self.page_transition.cancel()

@@ -2,23 +2,41 @@
 import math
 from PyQt5.QtCore import QVariantAnimation,QEasingCurve,Qt,QPoint
 from PyQt5.QtGui import QPainter,QPixmap,QRegion
-from PyQt5.QtWidgets import QStackedWidget,QWidget
+from PyQt5.QtWidgets import QStackedWidget,QWidget,QFrame
 
 
 class FlipStack(QStackedWidget):
     def __init__(self,parent=None):
         super().__init__(parent);self.frames=None;self.progress=0
+        self.setObjectName('NoteFlipStack');self.setFrameShape(QFrame.NoFrame);self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setStyleSheet('QStackedWidget#NoteFlipStack {background:transparent;border:0;}')
         self.animation=QVariantAnimation(self);self.animation.setDuration(240);self.animation.setStartValue(0.0);self.animation.setEndValue(1.0);self.animation.setEasingCurve(QEasingCurve.InOutCubic)
         self.animation.valueChanged.connect(self.advance);self.animation.finished.connect(self.finish)
     def flip_to(self,index):
         if index==self.currentIndex() and not self.frames:return
-        if self.frames:self.animation.stop();self.finish()
-        self.target=index;front=self.currentWidget().grab();other=self.widget(index);other.resize(self.size());back=other.grab()
-        self.frames=(front,back);self.currentWidget().hide();self.progress=0;self.animation.start()
+        if getattr(self,'frames',None):self.animation.stop();self.finish()
+        self.target=index
+        def snapshot(page):
+            page.resize(self.size());ratio=self.devicePixelRatioF();image=QPixmap(max(1,round(self.width()*ratio)),max(1,round(self.height()*ratio)))
+            image.setDevicePixelRatio(ratio);image.fill(Qt.transparent);painter=QPainter(image)
+            try:page.render(painter,QPoint(),QRegion(),QWidget.DrawChildren)
+            finally:painter.end()
+            return image
+        front=snapshot(self.currentWidget());back=snapshot(self.widget(index));self.frames=(front,back)
+        for i in range(self.count()):self.widget(i).hide()
+        self.progress=0;self.animation.start()
     def advance(self,value):self.progress=float(value);self.update()
     def finish(self):
-        if self.frames:self.setCurrentIndex(self.target);self.currentWidget().show()
-        self.frames=None;self.update()
+        target=self.target if self.frames else None;self.frames=None
+        if target is not None:self.setCurrentIndex(target);self.currentWidget().show()
+        self.update()
+    def resizeEvent(self,event):
+        if getattr(self,'frames',None):self.animation.stop();self.finish()
+        super().resizeEvent(event)
+    def hideEvent(self,event):
+        if getattr(self,'frames',None):self.animation.stop();self.finish()
+        super().hideEvent(event)
     def paintEvent(self,event):
         if not self.frames:return super().paintEvent(event)
         painter=QPainter(self);painter.setRenderHint(QPainter.SmoothPixmapTransform);painter.translate(self.width()/2,self.height()/2)

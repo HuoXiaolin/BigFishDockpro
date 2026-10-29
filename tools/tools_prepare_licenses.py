@@ -36,6 +36,8 @@ in the accompanying Fishdock source directory. Original MIT notices remain appli
   Source: https://www.python.org/downloads/release/python-31214/
 - PyInstaller 6.16.0 bootloader: GPL v2 with bootloader distribution exception.
   Source and license: https://github.com/pyinstaller/pyinstaller/tree/v6.16.0
+- lunardate 0.3.0: LI Daobing and contributors, GPL-3.0-or-later; license included in lunardate-LICENSE.txt.
+  Source: https://pypi.org/project/lunardate/0.3.0/
 - Microsoft Visual C++ redistributable DLLs: Microsoft Corporation, distributed
   as runtime dependencies of the Python / Qt binary wheels.
 
@@ -52,3 +54,8 @@ for package, version in [('PyQt5-sip', '12.20.0'), ('pyinstaller', '6.16.0')]:
             if Path(member.name).name in ('LICENSE', 'LICENSE.txt', 'COPYING.txt') and member.isfile() and len(Path(member.name).parts) == 2:
                 (dest / f'{package}-LICENSE.txt').write_bytes(tar.extractfile(member).read())
                 break
+
+import importlib.metadata as metadata
+package=metadata.distribution('lunardate')
+license_file=next(package.locate_file(item) for item in metadata.files('lunardate') if str(item).endswith('licenses/LICENSE.txt'))
+(dest/'lunardate-LICENSE.txt').write_bytes(license_file.read_bytes())

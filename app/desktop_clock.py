@@ -3,8 +3,8 @@ import ctypes
 import datetime
 import os
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, QVariantAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter, QPainterPath, QColor, QPen, QFont
+from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, QSize, QVariantAnimation, QEasingCurve
+from PyQt5.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QPixmap, QIcon
 from PyQt5.QtWidgets import (QWidget, QSizeGrip, QApplication, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QScrollArea, QLineEdit, QColorDialog, QComboBox)
 from ui_style import (SettingsHeader, ModernComboBox, ModernSpinBox, ModernCheckBox, ThemeSwatches, button, label, compact_dialog)
 from clock_appearance import STYLES, FONTS, PRESETS, normalize as normalize_appearance
@@ -20,7 +20,7 @@ class DesktopClock(QWidget):
         self.kind=kind;self.component_name="日历" if kind=="calendar" else "时钟"
         self.minimum=(260,230) if kind=="calendar" else (160,100)
         self.backdrop = None; self.drag = None; self.loading = True; self.closed = False
-        self.setAttribute(Qt.WA_TranslucentBackground); self.setWindowTitle('桌面'+self.component_name+' · 大肥鱼Dock')
+        self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground); self.setWindowTitle('桌面'+self.component_name+' · 大肥鱼Dock')
         self.setMinimumSize(*self.minimum)
         from ui_style import SubtleSizeGrip
         self.grip = SubtleSizeGrip(self,lambda:self.dock.base_theme_colors(self.option('appearance')['theme']).get('light',True))
@@ -31,7 +31,7 @@ class DesktopClock(QWidget):
         self.reposition(); self.loading = False; self.apply_lock()
         if self.kind=='clock':
             self.flipped=self.dock.cfg.get('clock_flipped',False);self.flip_progress=None
-            self.flip_button=button('↔',self.flip);self.flip_button.setParent(self);self.flip_button.setFixedSize(24,24);self.flip_button.setToolTip('点击翻面：时钟 / 月历');self.flip_button.show()
+            self.flip_button=button('↔',self.flip);self.flip_button.setParent(self);self.flip_button.setFixedSize(12,12);self.flip_button.setToolTip('点击翻面：时钟 / 月历');self.flip_button.show()
             self.flip_animation=QVariantAnimation(self);self.flip_animation.setDuration(240);self.flip_animation.setStartValue(0.0);self.flip_animation.setEndValue(1.0);self.flip_animation.setEasingCurve(QEasingCurve.InOutCubic)
             self.flip_animation.valueChanged.connect(self.advance_flip);self.flip_animation.finished.connect(self.finish_flip);self.position_flip()
 
@@ -123,6 +123,8 @@ class DesktopClock(QWidget):
         if owner:
             user.SetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_ssize_t]
             user.SetWindowLongPtrW(int(self.winId()),-8,int(owner))
+            user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
+            user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
 
     def showEvent(self,event):
         super().showEvent(event); self.layer(); self.refresh_timer.start()
@@ -142,6 +144,8 @@ class DesktopClock(QWidget):
     def mouseReleaseEvent(self,event):
         if self.drag is not None: self.drag=None; self.save_geometry(); event.accept()
     def open_settings(self):
+        from usage_stats import record
+        record(self.dock,'clock_settings')
         dialog=ClockOptions(self);dialog.exec_();dialog.deleteLater()
     def build_menu(self):
         from ui_style import AlignedMenu
@@ -162,8 +166,20 @@ class DesktopClock(QWidget):
 
     def position_flip(self):
         if hasattr(self,'flip_button'):
-            self.flip_button.move(self.width()-34,10)
-            self.flip_button.setStyleSheet('QPushButton {background:rgba(140,170,195,26);color:#41617a;border:0;border-radius:6px;padding:0;font-size:17px;} QPushButton:hover {background:rgba(140,170,195,65);}')
+            self.grip.move(self.width()-20,self.height()-20)
+            self.flip_button.setFixedSize(20,20)
+            self.flip_button.setText('');self.flip_button.setIconSize(QSize(12,12))
+            ratio=max(2.0,self.devicePixelRatioF())
+            if getattr(self,'_flip_icon_ratio',None)!=ratio:
+                pixmap=QPixmap(round(12*ratio),round(12*ratio));pixmap.setDevicePixelRatio(ratio);pixmap.fill(Qt.transparent)
+                painter=QPainter(pixmap);painter.scale(2,2);painter.setRenderHint(QPainter.Antialiasing);painter.setPen(QPen(QColor('#41617a'),.7,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+                painter.drawLine(QPointF(.6,3),QPointF(5.4,3))
+                for x,direction in ((.6,1),(5.4,-1)):
+                    painter.drawLine(QPointF(x+1.4*direction,1.6),QPointF(x,3));painter.drawLine(QPointF(x,3),QPointF(x+1.4*direction,4.4))
+                painter.end();self.flip_button.setIcon(QIcon(pixmap));self._flip_icon_ratio=ratio
+
+            self.flip_button.move(self.width()-26,14)
+            self.flip_button.setStyleSheet('QPushButton {background:transparent;color:#41617a;border:0;border-radius:6px;padding:0;font-size:15px;min-width:0;min-height:0;max-width:12px;max-height:12px;} QPushButton:hover {background:transparent;}')
 
     def flip(self):
         if self.kind!='clock' or self.flip_progress is not None:return
@@ -181,7 +197,7 @@ class DesktopClock(QWidget):
         if getattr(self,'flip_progress',None) is not None:
             face=self._flip_to if self.flip_progress>=.5 else self._flip_from
             painter.translate(self.width()/2,0);painter.scale(max(.015,abs(math.cos(math.pi*self.flip_progress))),1);painter.translate(-self.width()/2,0)
-        draw_clock(painter,QRectF(self.rect()).adjusted(1,1,-1,-1),self.dock,self.option('appearance'),'calendar_card' if face else self.option('style'),self.backdrop)
+        draw_clock(painter,QRectF(self.rect()).adjusted(1,1,-1,-1),self.dock,dict(self.option('appearance'),_header_controls=self.kind=='clock'),'calendar_card' if face else self.option('style'),self.backdrop)
 
     def dispose(self):
         if self.closed:return
@@ -263,7 +279,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         f.setStyleStrategy(QFont.PreferAntialias);return f
     def text(box,value,size,color,weight=QFont.Normal,align=Qt.AlignLeft|Qt.AlignVCenter,fit=True):
         f=font(size,weight)
-        if any('\u3400'<=character<='\u9fff' for character in value) or size<21:
+        if any('\u3400'<=character<='\u9fff' for character in value) or (size<21 and not (style in ('month','calendar_card') and value.isdigit())):
             f.setFamily(options['date_font']);f.setPixelSize(max(8,round(f.pixelSize()*options['date_scale']/100)));f.setStretch(100);f.setLetterSpacing(QFont.PercentageSpacing,100);f.setWeight(weight)
         if fit:
             while f.pixelSize()>8 and (QFontMetricsF(f).horizontalAdvance(value)>box.width() or QFontMetricsF(f).height()>box.height()):f.setPixelSize(f.pixelSize()-1)

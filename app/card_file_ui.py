@@ -78,6 +78,10 @@ class FileNameDelegate(QStyledItemDelegate):
         opt=QStyleOptionViewItem(option);self.initStyleOption(opt,index)
         view=opt.widget;is_list=view.viewMode()==QListView.ListMode
         text=opt.text;icon=QIcon(opt.icon);opt.text='';opt.icon=QIcon()
+        # Only the selection/hover surface is native; names and icons are drawn below.
+        # An empty native label still gets a focus mark over our custom filename.
+        opt.state &= ~QStyle.State_HasFocus
+        opt.features &= ~(QStyleOptionViewItem.HasDisplay|QStyleOptionViewItem.HasDecoration)
         style=view.style() if view else QApplication.style()
         painter.save();painter.setClipRect(opt.rect);style.drawControl(QStyle.CE_ItemViewItem,opt,painter,view)
         margin=max(2,round(option.fontMetrics.height()*.2));size=view.iconSize()
@@ -104,3 +108,22 @@ class FileNameDelegate(QStyledItemDelegate):
             from dpi_support import metric
             return QSize(80,max(metric(34,view.window().ui_factor,18),view.iconSize().height()+margin*2,len(file_name_lines(opt.text,opt.font,width))*opt.fontMetrics.height()+margin*2))
         return super().sizeHint(option,index)
+
+
+def picture_thumbnail(path,pixels):
+    from functools import lru_cache
+    try:return _picture_thumbnail(path,os.stat(path).st_mtime_ns,os.stat(path).st_size,pixels)
+    except OSError:return None
+
+
+from functools import lru_cache
+@lru_cache(maxsize=96)
+def _picture_thumbnail(path,stamp,length,pixels):
+    from PyQt5.QtGui import QImageReader,QPixmap,QPainter
+    if os.path.splitext(path)[1].lower() not in ('.jpg','.jpeg','.png','.webp','.bmp','.gif','.tif','.tiff','.ico'):return None
+    reader=QImageReader(path);reader.setAutoTransform(True);size=reader.size()
+    if not size.isValid():return None
+    reader.setScaledSize(size.scaled(QSize(pixels,pixels),Qt.KeepAspectRatio));image=reader.read()
+    if image.isNull():return None
+    image=image.scaled(pixels,pixels,Qt.KeepAspectRatio,Qt.SmoothTransformation)
+    result=QPixmap(pixels,pixels);result.fill(Qt.transparent);painter=QPainter(result);painter.drawImage((pixels-image.width())//2,(pixels-image.height())//2,image);painter.end();return result

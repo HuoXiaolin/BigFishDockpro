@@ -38,11 +38,23 @@ class CornerManager(QObject):
         self.watching = False
         self.raise_timer = QTimer(self)
         self.raise_timer.setSingleShot(True)
-        self.raise_timer.setInterval(50)
+        self.raise_timer.setInterval(0)
         self.raise_timer.timeout.connect(self.ensure_topmost)
+        self.restacking = False
         self.user = ctypes.windll.user32
         self.user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
                                           ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        self.user.GetTopWindow.argtypes = [wintypes.HWND]
+        self.user.GetTopWindow.restype = wintypes.HWND
+        self.user.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        self.user.GetWindow.restype = wintypes.HWND
+        self.user.IsWindowVisible.argtypes = [wintypes.HWND]
+        self.user.BeginDeferWindowPos.argtypes = [ctypes.c_int]
+        self.user.BeginDeferWindowPos.restype = wintypes.HANDLE
+        self.user.DeferWindowPos.argtypes = [wintypes.HANDLE, wintypes.HWND, wintypes.HWND,
+                                            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        self.user.DeferWindowPos.restype = wintypes.HANDLE
+        self.user.EndDeferWindowPos.argtypes = [wintypes.HANDLE]
         self.user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         self.user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
         self.event_type = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD,
@@ -68,8 +80,12 @@ class CornerManager(QObject):
             relevant = name.value in ('Shell_TrayWnd', 'Shell_SecondaryTrayWnd')
             if event in (0x8002, 0x8004):  # Another topmost surface was shown/reordered.
                 relevant = relevant or bool(self.user.GetWindowLongW(hwnd, -20) & 8)
-        if relevant and not self.raise_timer.isActive():
-            self.raise_timer.start()
+        if relevant and not self.restacking:
+            # Repair in the event callback, not 50 ms (several frames) later.
+            # One zero-delay pass also covers the rest of an activation burst.
+            self.ensure_topmost()
+            if not self.raise_timer.isActive():
+                self.raise_timer.start()
 
     def watch_stacking(self):
         # OUTOFCONTEXT callbacks run on this Qt message-loop thread. No injected
@@ -89,12 +105,44 @@ class CornerManager(QObject):
                 logging.warning('Unable to release screen-corner window event hook')
         self.hooks.clear()
 
+    def stacking_current(self, handles):
+        remaining = set(handles)
+        current = self.user.GetTopWindow(None)
+        for _ in range(4096):
+            if not current:
+                return not remaining
+            if current in remaining:
+                remaining.remove(current)
+                if not remaining:
+                    return True
+            elif self.user.IsWindowVisible(current):
+                return False
+            current = self.user.GetWindow(current, 2)  # GW_HWNDNEXT
+        return False
+
     def ensure_topmost(self):
-        for widget in self.widgets:
-            if widget.isVisible():
-                # HWND_TOPMOST; preserve geometry, owner order and foreground focus.
-                if not self.user.SetWindowPos(int(widget.winId()), -1, 0, 0, 0, 0, 0x213):
+        if self.restacking:
+            return
+        handles = [int(w.winId()) for w in self.widgets if w.isVisible()]
+        if not handles or self.stacking_current(handles):
+            return
+        self.restacking = True
+        try:
+            # Commit the four corners together; never hide, repaint or activate
+            # their windows just because another application gained focus.
+            batch = self.user.BeginDeferWindowPos(len(handles))
+            if batch:
+                for handle in handles:
+                    batch = self.user.DeferWindowPos(batch, handle, -1, 0, 0, 0, 0, 0x213)
+                    if not batch:
+                        break
+                if batch and self.user.EndDeferWindowPos(batch):
+                    return
+            for handle in handles:
+                if not self.user.SetWindowPos(handle, -1, 0, 0, 0, 0, 0x213):
                     logging.warning('Unable to restore screen-corner stacking')
+        finally:
+            self.restacking = False
 
     def apply(self, enabled, radius):
         layout = (radius, tuple((s.geometry().x(), s.geometry().y(), s.geometry().width(),

@@ -378,6 +378,8 @@ class BatchImporter:
         QApplication.instance().aboutToQuit.connect(self.close)
 
     def show(self):
+        from usage_stats import record
+        record(self.dock,'batch_open')
         if self.dialog is None:
             self.dialog = BatchDialog(self)
         if self.dialog.isVisible():

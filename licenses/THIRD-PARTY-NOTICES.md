@@ -16,6 +16,8 @@ in the accompanying Fishdock source directory. Original MIT notices remain appli
   Source: https://www.python.org/downloads/release/python-31214/
 - PyInstaller 6.16.0 bootloader: GPL v2 with bootloader distribution exception.
   Source and license: https://github.com/pyinstaller/pyinstaller/tree/v6.16.0
+- lunardate 0.3.0: LI Daobing and contributors, GPL-3.0-or-later; license included in lunardate-LICENSE.txt.
+  Source: https://pypi.org/project/lunardate/0.3.0/
 - Microsoft Visual C++ redistributable DLLs: Microsoft Corporation, distributed
   as runtime dependencies of the Python / Qt binary wheels.
 

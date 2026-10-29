@@ -439,6 +439,13 @@ class ReadableChecks(QProxyStyle):
 
 class DialogChrome(QObject):
     def eventFilter(self, widget, event):
+        # Construction/destruction events can arrive during Python cyclic GC.
+        # Never inspect or repolish those partially constructed Qt objects.
+        kind=event.type()
+        if kind not in (QEvent.FocusIn,QEvent.FocusOut,QEvent.MouseButtonPress,QEvent.KeyPress,QEvent.Show):return False
+        from PyQt5 import sip
+        if sip.isdeleted(widget) or getattr(self,'_polishing',False):return False
+
         if isinstance(widget, (QPushButton, QToolButton, QCheckBox)):
             keyboard = None
             if event.type() == QEvent.FocusIn:
@@ -447,9 +454,12 @@ class DialogChrome(QObject):
             elif event.type() == QEvent.KeyPress: keyboard = True
             if keyboard is not None and widget.property('keyboardFocus') != keyboard:
                 widget.setProperty('keyboardFocus', keyboard)
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
-                widget.update()
+                self._polishing=True
+                try:
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
+                    widget.update()
+                finally:self._polishing=False
         if event.type() == QEvent.Show and isinstance(widget, QDialog) and not widget.windowFlags() & Qt.FramelessWindowHint:
             import ctypes
             from ctypes import wintypes
@@ -527,7 +537,7 @@ def apply_theme(app, light):
         QPushButton[role="danger"] {color:%(danger)s;}
         QPushButton[keyboardFocus="true"] {border:1px solid %(text)s;}
         QPushButton:disabled {color:%(muted)s; background:%(ground)s; border-color:%(line)s;}
-        QLineEdit, QSpinBox, QComboBox {background:%(surface)s; color:%(text)s;
+        QLineEdit, QPlainTextEdit, QSpinBox, QComboBox {background:%(surface)s; color:%(text)s;
             border:1px solid %(line)s; border-radius:8px; padding:8px 12px; min-height:22px;}
         QComboBox {padding-right:34px;}
         QComboBox[modern="true"]::drop-down {border:0; width:32px; background:transparent;}

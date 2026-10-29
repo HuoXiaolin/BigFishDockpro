@@ -82,7 +82,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.number(appearance, 'blur_px', '模糊强度', 3, 30)
         self.check(appearance, 'glass', '启用背景模糊')
         self.check(appearance, 'clear_background', '背景全透明（仅保留图标与文字）')
-        self.combo(appearance, 'blur_mode', '背景抓取', api.BLUR_MODES)
+        self.combo(appearance, 'blur_mode', '壁纸取样刷新', api.BLUR_MODES)
         self.number(appearance, 'icon_size', '图标大小（像素）', 20, 256)
         self.check(appearance, 'magnify', '鼠标悬停时放大图标')
         self.combo(appearance, 'bump_level', '拉伸鼓包', [(title, key) for key, title, _ in api.BUMP_LEVELS])
@@ -185,6 +185,9 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         updates.addRow(self.update_status)
         self.update_link=button('打开下载页面',self.open_update_link);self.update_link.setEnabled(False)
         self.action_row(updates,'更新操作',button('检查更新',self.check_update),self.update_link)
+        from usage_stats import UsagePage
+        self.usage_page=UsagePage(self,self.section('使用统计'))
+        self.tabs.nav.currentRowChanged.connect(lambda index:self.usage_page.refresh() if self.tabs.nav.item(index) and self.tabs.nav.item(index).text()=='使用统计' else None)
         info = self.section('关于与数据')
         info.addRow(label('大肥鱼Dock  ' + VERSION, 'section'))
         info.addRow(label('用液态玻璃 Dock 启动常用应用，用桌面悬浮面板分类收纳文件与快捷方式。', 'muted'))

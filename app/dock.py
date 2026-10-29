@@ -1778,7 +1778,7 @@ class Dock(QWidget):
             self.pressed = -1
         super(Dock, self).mouseReleaseEvent(e)
 
-    def launch(self, path):
+    def launch(self, path, source='dock_launch'):
         log("启动: " + path)
         try:
             from external_launch import launch
@@ -1790,6 +1790,9 @@ class Dock(QWidget):
                 startfile(path)
             except Exception:
                 log("启动彻底失败: " + traceback.format_exc())
+                return
+        from usage_stats import record
+        record(self,source)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -2192,7 +2195,10 @@ class Dock(QWidget):
     def showEvent(self, e):
         super(Dock, self).showEvent(e)
         QTimer.singleShot(50, self.start_backdrop)
-        QTimer.singleShot(60, self.apply_layer)
+        self.apply_layer()
+        QTimer.singleShot(0,self.apply_layer)
+        QTimer.singleShot(250,self.apply_layer)
+        QTimer.singleShot(1000,self.apply_layer)
 
     def hideEvent(self, e):
         self.blur_timer.stop()
@@ -2311,10 +2317,12 @@ class DockTray(QSystemTrayIcon):
     def _show_dock(self):
         self.dock.reposition()
         self.dock.show()
-        self.dock.raise_()
+        self.dock.apply_layer()
         self.dock.start_backdrop()
 
     def show_settings(self):
+        from usage_stats import record
+        record(self.dock,'settings_open')
         if hasattr(self, 'runtime'):
             self.runtime.settings_open = True
             self.runtime.lite_timer.stop()

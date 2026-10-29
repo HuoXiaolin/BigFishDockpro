@@ -27,7 +27,8 @@ def retain(entry):
         return False
     if '/plugins/' in name:
         return name.endswith(('/platforms/qwindows.dll', '/imageformats/qico.dll',
-                              '/imageformats/qjpeg.dll'))
+                              '/imageformats/qjpeg.dll','/imageformats/qgif.dll',
+                              '/imageformats/qwebp.dll','/imageformats/qtiff.dll'))
     return True
 a.binaries = [e for e in a.binaries if retain(e)]
 a.datas = [e for e in a.datas if retain(e)]

@@ -76,7 +76,7 @@ class NoteWindow(QWidget):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint)
         self.manager,self.runtime,self.dock=manager,manager.runtime,manager.runtime.dock
         self.identity=identity;self.loading=True;self.disposed=False;self.drag=None;self.backdrop=None;self.ui_factor=1.0;self.expanded_height=260
-        self.setObjectName('StickyNote');self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setObjectName('StickyNote');self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(230,150)
         self.layout_box=QVBoxLayout(self);self.layout_box.setSizeConstraint(QLayout.SetNoConstraint);self.layout_box.setContentsMargins(12,9,12,9);self.layout_box.setSpacing(6)
         header=QHBoxLayout();header.setSpacing(4)
@@ -94,7 +94,7 @@ class NoteWindow(QWidget):
         toolbar.addStretch();self.layout_box.addWidget(self.tools)
         from flip_stack import FlipStack
         self.pages=FlipStack(self);self.editor=NoteEditor(self);self.pages.addWidget(self.editor)
-        self.todo_page=QWidget();todo_layout=QVBoxLayout(self.todo_page);todo_layout.setContentsMargins(0,0,0,0);todo_layout.setSpacing(5)
+        self.todo_page=QWidget();self.todo_page.setObjectName('NoteTodoPage');self.todo_page.setAutoFillBackground(False);self.todo_page.setStyleSheet('QWidget#NoteTodoPage {background:transparent;border:0;}');todo_layout=QVBoxLayout(self.todo_page);todo_layout.setContentsMargins(0,0,0,0);todo_layout.setSpacing(5)
         todo_layout.addWidget(label('待办清单','section'));self.todos=QListWidget();self.todos.setObjectName('NoteTodos');todo_layout.addWidget(self.todos,1)
         self.todo_input=QLineEdit();self.todo_input.setPlaceholderText('输入待办，按 Enter 添加');self.todo_input.returnPressed.connect(self.add_todo);todo_layout.addWidget(self.todo_input)
         self.pages.addWidget(self.todo_page);self.layout_box.addWidget(self.pages,1);self.todos.itemChanged.connect(self.toggle_todo)
@@ -134,7 +134,8 @@ class NoteWindow(QWidget):
         if target:self.rebuild_todos()
         if not self.manager.update_and_save(self.identity,flipped=target):
             self.manager.update(self.identity,flipped=not target);return
-        self.pages.flip_to(1 if target else 0);self.tools.setVisible(not target)
+        self.tools.setVisible(not target);self.layout_box.activate()
+        self.pages.flip_to(1 if target else 0)
         self.flip_button.setToolTip('点击翻面：'+('返回正文' if target else '查看待办'))
 
     def rebuild_todos(self):
@@ -328,6 +329,7 @@ class NoteWindow(QWidget):
         from dpi_support import panel_css
         self.setStyleSheet(panel_css(self.styleSheet(),self.ui_factor))
         size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;'%size)
+        self.editor.viewport().setAutoFillBackground(False);self.todos.viewport().setAutoFillBackground(False)
         self.todos.setStyleSheet('QListWidget {background:transparent;border:0;color:%s;font-size:%dpx;} QListWidget::item {padding:5px 2px;} QListWidget::indicator:unchecked {background:rgba(255,255,255,180);border:1px solid #98a7b4;border-radius:4px;width:14px;height:14px;}'%(ink,size))
         from card_metrics import font_pixels
         self.title.setStyleSheet('font-size:%dpx;padding:0 2px;'%font_pixels(self.dock.cfg,self.ui_factor));self.fit_title()
@@ -355,6 +357,7 @@ class NoteWindow(QWidget):
                 user.GetShellWindow.restype=wintypes.HWND;owner=user.GetShellWindow()
                 if owner:
                     user.SetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_ssize_t];user.SetWindowLongPtrW(int(self.winId()),-8,int(owner))
+            user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
     def showEvent(self,event):super().showEvent(event);self.layer();self.refresh_timer.start();self.collapse_timer.start() if self.row()['auto_hide'] else None
     def moveEvent(self,event):
         super().moveEvent(event)
@@ -513,7 +516,9 @@ class NotesManager(QObject):
         row={'id':identity,'title':'新便签','html':'','text':'','style':style,'color':{'glass':cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[style],'pinned':False,'locked':False,'collapsed':False,'auto_hide':False,'visible':True,'updated':'','font_size':12,'font_scale':1.0}
         self.pending[identity]=row
         if not self.persist(sticky_notes=self.rows(),notes_enabled=True,notes_visible=True):return None
-        self.pending.clear();self.sync();window=self.windows[identity];window.raise_();window.editor.setFocus();self.changed.emit();return identity
+        self.pending.clear();self.sync();window=self.windows[identity];window.raise_();window.editor.setFocus();self.changed.emit()
+        from usage_stats import record
+        record(self.runtime,'note_new');return identity
     def update_and_save(self,identity,**changes):
         self.update(identity,**changes)
         if self.flush():self.sync();return True

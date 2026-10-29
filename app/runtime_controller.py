@@ -9,6 +9,8 @@ from update_service import UpdateService
 class RuntimeController:
     def __init__(self, dock, tray, api):
         self.dock, self.tray, self.api = dock, tray, api
+        from usage_stats import UsageStore
+        self.usage=dock.usage=UsageStore(api.CONFIG_DIR,dock,api.log)
         self.lite = False
         self.closed = False
         self.auto_game = False
@@ -253,6 +255,7 @@ class RuntimeController:
     def close(self):
         if self.closed: return
         self.closed = True
+        self.usage.close()
         for signal in self._session_signals:
             try:signal.disconnect(self.checkpoint_session)
             except (TypeError,RuntimeError):pass

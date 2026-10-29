@@ -113,3 +113,74 @@ def paste_into_folder(folder,owner=0,preferred=COPY,paths=None):
     if operation.fAnyOperationsAborted:return 'cancelled'
     if result:raise OSError('Windows 文件操作未完成（错误 0x%08X）。'%(result&0xffffffff))
     return 'completed'
+
+
+def paste_popup_point(owner):
+    """Return native screen coordinates, without mixing Qt logical pixels."""
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
+    user.GetWindowRect.restype=wintypes.BOOL
+    user.GetCursorPos.argtypes=[ctypes.POINTER(wintypes.POINT)]
+    user.GetCursorPos.restype=wintypes.BOOL
+    rect=wintypes.RECT()
+    if owner and user.GetWindowRect(owner,ctypes.byref(rect)) and rect.right>rect.left and rect.bottom>rect.top:
+        return wintypes.POINT((rect.left+rect.right)//2,(rect.top+rect.bottom)//2)
+    point=wintypes.POINT()
+    if not user.GetCursorPos(ctypes.byref(point)):
+        raise OSError('无法确定文件操作菜单的弹出位置，请重试。')
+    return point
+
+
+def paste_shell_clipboard(folder, owner=0, preferred=COPY, sequence=None):
+    """Pass the original OLE data object to the folder's native drop target.
+
+    Remote Desktop may expose FileGroupDescriptor/FileContents instead of paths.
+    Windows owns delayed rendering, streams, conflict UI and transfer feedback.
+    Do not enumerate/extract the payload or clear the clipboard ourselves.
+    """
+    if not os.path.isdir(folder):raise ValueError('粘贴目标文件夹不存在或无法访问。')
+    from native_file_menu import GUID,method,release,NativeFileMenu
+    shell=ctypes.WinDLL('shell32',use_last_error=True)
+    ole=ctypes.WinDLL('ole32',use_last_error=True)
+    ole.OleInitialize.argtypes=[ctypes.c_void_p];ole.OleInitialize.restype=ctypes.c_long
+    ole.OleGetClipboard.argtypes=[ctypes.POINTER(ctypes.c_void_p)];ole.OleGetClipboard.restype=ctypes.c_long
+    ole.CoTaskMemFree.argtypes=[ctypes.c_void_p]
+    shell.SHParseDisplayName.argtypes=[wintypes.LPCWSTR,ctypes.c_void_p,ctypes.POINTER(ctypes.c_void_p),wintypes.DWORD,ctypes.c_void_p]
+    shell.SHParseDisplayName.restype=ctypes.c_long
+    shell.SHGetDesktopFolder.argtypes=[ctypes.POINTER(ctypes.c_void_p)];shell.SHGetDesktopFolder.restype=ctypes.c_long
+    data=ctypes.c_void_p();desktop=ctypes.c_void_p();target=ctypes.c_void_p();drop=ctypes.c_void_p();pidl=ctypes.c_void_p()
+    initialized=False;entered=False;check=NativeFileMenu.check
+    class POINTL(ctypes.Structure):
+        _fields_=[('x',wintypes.LONG),('y',wintypes.LONG)]
+    try:
+        check(ole.OleInitialize(None),'无法初始化 Windows 文件传输');initialized=True
+        check(ole.OleGetClipboard(ctypes.byref(data)),'无法读取 Windows 文件剪贴板')
+        if not data.value:raise ValueError('剪贴板中没有可粘贴的文件。')
+        check(shell.SHParseDisplayName(os.path.abspath(folder),None,ctypes.byref(pidl),0,None),'无法定位粘贴目标')
+        check(shell.SHGetDesktopFolder(ctypes.byref(desktop)),'无法访问 Windows 文件系统')
+        iid=GUID('000214e6-0000-0000-c000-000000000046')
+        bind=method(desktop,5,ctypes.c_long,ctypes.c_void_p,ctypes.c_void_p,ctypes.POINTER(GUID),ctypes.POINTER(ctypes.c_void_p))
+        check(bind(desktop,pidl,None,ctypes.byref(iid),ctypes.byref(target)),'无法打开粘贴目标')
+        iid=GUID('00000122-0000-0000-c000-000000000046')
+        create=method(target,8,ctypes.c_long,wintypes.HWND,ctypes.POINTER(GUID),ctypes.POINTER(ctypes.c_void_p))
+        check(create(target,owner,ctypes.byref(iid),ctypes.byref(drop)),'目标不支持 Windows 文件接收')
+        anchor=paste_popup_point(owner)
+        point=POINTL(anchor.x,anchor.y);effect=wintypes.DWORD(preferred);keys=4 if preferred==MOVE else 8
+        enter=method(drop,3,ctypes.c_long,ctypes.c_void_p,wintypes.DWORD,POINTL,ctypes.POINTER(wintypes.DWORD))
+        entered=True
+        check(enter(drop,data,keys,point,ctypes.byref(effect)),'Windows 无法接收剪贴板文件')
+        if not effect.value:raise ValueError('Windows 未提供可粘贴的文件；请确认远程文件剪贴板已就绪。')
+        if sequence is not None and sequence!=ctypes.windll.user32.GetClipboardSequenceNumber():
+            raise ValueError('剪贴板内容已变化，请重新粘贴。')
+        effect.value=preferred
+        transfer=method(drop,6,ctypes.c_long,ctypes.c_void_p,wintypes.DWORD,POINTL,ctypes.POINTER(wintypes.DWORD))
+        from external_launch import clean_environment
+        # Once Drop is called, Windows owns completion/cancellation and cut feedback.
+        entered=False
+        with clean_environment():check(transfer(drop,data,keys,point,ctypes.byref(effect)),'Windows 文件传输未完成')
+        return 'shell-submitted'
+    finally:
+        if entered and drop.value:method(drop,5,ctypes.c_long)(drop)
+        for pointer in (drop,target,desktop,data):release(pointer)
+        if pidl.value:ole.CoTaskMemFree(pidl)
+        if initialized:ole.OleUninitialize()

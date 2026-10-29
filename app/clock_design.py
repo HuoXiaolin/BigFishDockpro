@@ -13,7 +13,11 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
     weekdays='一二三四五六日';date='%d月%d日'% (now.month,now.day);weekday='星期'+weekdays[now.weekday()]
     def wash(box,alpha=20,r=12,color=accent):
         c=QColor(color);c.setAlpha(alpha);p.setPen(Qt.NoPen);p.setBrush(c);p.drawRoundedRect(box,r,r)
-    def label(box,value,size=12,color=muted,weight=QFont.Medium,align=Qt.AlignLeft|Qt.AlignVCenter):text(box,value,size,color,weight,align)
+    def label(box,value,size=12,color=muted,weight=QFont.Medium,align=Qt.AlignLeft|Qt.AlignVCenter):
+        # Keep the header action inline, with a reserved slot outside text bounds.
+        box=QRectF(box)
+        if o.get('_header_controls') and box.top()<36 and box.right()>w-42:box.setRight(w-42)
+        text(box,value,size,color,weight,align)
     def bar(box,ratio):
         wash(box,24,box.height()/2,ink)
         if ratio and ratio>0:
@@ -147,17 +151,30 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         title_h=max(30,h*.14);header_top=max(42,h*.20);footer=max(20,h*.08)
         label(QRectF(m,8,w-(140 if standalone else 2*m),title_h),'%d 年 %d 月'%(year,month),min(22,h*.075),ink,QFont.DemiBold)
         if not standalone:label(QRectF(w*.62,8,w*.38-m,title_h),(period+' ' if period else '')+time_text,min(24,h*.095)*scale,accent,QFont.Bold,Qt.AlignRight|Qt.AlignVCenter)
-        cw=(w-2*m)/7;ch=(h-header_top-footer-m)/7
-        for i in range(7):label(QRectF(m+i*cw,header_top,cw,ch),weekdays[i],min(13,ch*.56),accent if i>=5 else muted,align=Qt.AlignCenter)
+        from calendar_details import info as calendar_info
+        weeks=len(calendar.monthcalendar(year,month));weekday_h=min(24,max(18,h*.07));footer=max(16,min(24,h*.075));header_top=max(42,h*.18)
+        cw=(w-2*m)/7;ch=(h-footer-m*.25-header_top-weekday_h)/weeks
+        for i in range(7):label(QRectF(m+i*cw,header_top,cw,weekday_h),weekdays[i],min(13,weekday_h*.65),accent if i>=5 else muted,align=Qt.AlignCenter)
         first=datetime.date(year,month,1);first-=datetime.timedelta(days=first.weekday())
-        for i in range(42):
-            day=first+datetime.timedelta(days=i);r,c=divmod(i,7);box=QRectF(m+c*cw,header_top+(r+1)*ch,cw,ch);current=day==now.date();same=day.month==month
+        for i in range(weeks*7):
+            try:day=first+datetime.timedelta(days=i)
+            except OverflowError:continue
+            r,c=divmod(i,7);box=QRectF(m+c*cw,header_top+weekday_h+r*ch,cw,ch);current=day==now.date();same=day.month==month
             if standalone and not same:continue
             if current:wash(box.adjusted(cw*.12,1,-cw*.12,-1),45,8)
             color=QColor(ink if same else muted)
             if not same:color.setAlpha(100)
-            label(box,str(day.day),min(20,ch*.64),color,QFont.Bold if current else QFont.Medium,Qt.AlignCenter)
-            working,name,known=day_info(day,o['work'])
-            if same and (name not in ('工作日','休息日','每日班次')):
-                mark=QColor('#b78c45' if working else '#c17590');mark.setAlpha(220);p.setPen(Qt.NoPen);p.setBrush(mark);p.drawEllipse(QPointF(box.center().x(),box.bottom()-2),1.6,1.6)
-        label(QRectF(m,h-footer,w-2*m,footer*.85),'今天 · '+date+'  '+weekday,min(12,h*.04),muted,align=Qt.AlignCenter)
+            details=calendar_info(day,o['work']);marked=same and o['show_holidays'] and details['marker']
+            subtitle=(details['name'] if o['show_holidays'] else '') or (details['lunar'] if o['show_lunar'] else '')
+            if len(subtitle)>3:subtitle=subtitle[:2]+'…'
+            detail_row=bool(o['show_lunar'] or o['show_holidays'])
+            p.save();p.setClipRect(box)
+            label(QRectF(box.x(),box.y(),cw,ch*(.47 if detail_row else .78)),str(day.day),min(28,ch*(.44 if detail_row else .64)*scale),color,QFont.Bold if current else o['font_weight'],Qt.AlignCenter)
+            if subtitle:label(QRectF(box.x()+2,box.y()+ch*.47,cw-4,ch*.34),subtitle,min(11,ch*.31),accent if marked else muted,QFont.Medium,Qt.AlignCenter)
+            if marked:
+                mark=QColor(accent);mark.setAlpha(230);p.setPen(Qt.NoPen);p.setBrush(mark);p.drawEllipse(QPointF(box.center().x(),box.bottom()-2),1.35,1.35)
+            p.restore()
+        known=calendar_info(datetime.date(year,month,1),o['work'])['known']
+        footer_text='今天 · '+date+'  '+weekday
+        if o['show_holidays'] and not known:footer_text+=' · 本年假期未收录'
+        label(QRectF(m,h-footer,w-2*m,footer*.85),footer_text,min(12,h*.04),muted,align=Qt.AlignCenter)

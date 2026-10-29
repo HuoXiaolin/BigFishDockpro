@@ -84,6 +84,14 @@ def run(api,runtime,root,output,checks):
         viewport=dialog.tabs.currentWidget().viewport()
         for field in dialog.weekdays:assert field.mapTo(viewport,field.rect().bottomRight()).x()<viewport.width(),'weekday selector clipped'
         dialog.grab().save(str(Path(output)/'clock-redesign-settings-3.png'))
+        runtime.clock.resize(320,180);runtime.clock.position_flip();app.processEvents()
+        assert runtime.clock.flip_button.y()==14 and runtime.clock.flip_button.size().width()==12 and runtime.clock.flip_button.size().height()==12 and runtime.clock.flip_button.iconSize().width()==12 and not runtime.clock.flip_button.text()
+        from clock_design import draw
+        from clock_appearance import normalize as clock_options
+        options=clock_options({});options['_header_controls']=True;labels=[];image=QPixmap(320,180);image.fill(Qt.transparent);p=QPainter(image)
+        draw('orbit',p,320,180,now,options,QColor('#19364d'),QColor('#537084'),QColor('#318ab6'),lambda box,value,*args:labels.append((box,value)),'09:30','');p.end()
+        assert all(box.right()<=278 for box,value in labels if value.startswith('星期') and box.top()<36)
+        runtime.clock.grab().save(str(Path(output)/'clock-footer-button.png'))
         checks.append('all six clock faces plus standalone calendar rendered light/dark and landscape/portrait/compact; four grouped settings pages, independent typography/accent/size, valid save, invalid time rejection, failed save and annual-calendar import/configuration reload-transfer checked')
     finally:
         if dialog:dialog.reject();dialog.deleteLater()

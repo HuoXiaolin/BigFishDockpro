@@ -33,6 +33,46 @@ def run(api,runtime,root,checks,output):
                 if path_key(item.data(Qt.UserRole)['path'])==path_key(str(path)):item.setSelected(True);panel.list.setCurrentItem(item);return item
             raise AssertionError('fixture not listed: '+str(path))
         select(first)
+        from shell_file_clipboard import paste_popup_point
+        import ctypes
+        from ctypes import wintypes
+        bounds=wintypes.RECT()
+        user=ctypes.windll.user32
+        user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
+        assert user.GetWindowRect(int(panel.winId()),ctypes.byref(bounds))
+        point=paste_popup_point(int(panel.winId()))
+        assert (point.x,point.y)==((bounds.left+bounds.right)//2,(bounds.top+bounds.bottom)//2)
+        assert (point.x,point.y)!=(0,0)
+        # A secondary monitor can have negative screen coordinates.
+        class NativeCall:
+            def __init__(self,callback):self.callback=callback
+            def __call__(self,*args):return self.callback(*args)
+        class User:
+            GetWindowRect=NativeCall(lambda hwnd,out: set_bounds(out))
+            GetCursorPos=NativeCall(lambda out: set_cursor(out))
+        def set_bounds(out):
+            rect=ctypes.cast(out,ctypes.POINTER(wintypes.RECT)).contents
+            rect.left=-1800;rect.top=180;rect.right=-1200;rect.bottom=580
+            return 1
+        def set_cursor(out):
+            pt=ctypes.cast(out,ctypes.POINTER(wintypes.POINT)).contents;pt.x=725;pt.y=416
+            return 1
+        with patch('shell_file_clipboard.ctypes.WinDLL',return_value=User()):
+            pt=paste_popup_point(1);assert (pt.x,pt.y)==(-1500,380)
+            pt=paste_popup_point(0);assert (pt.x,pt.y)==(725,416)
+        checks.append('native paste popup coordinates: real card HWND center in Windows screen units, negative monitor coordinates and cursor fallback; no fixed screen origin')
+        # RDP data objects need not expose any local URLs to Qt.
+        from PyQt5.QtCore import QMimeData
+        class Clipboard:
+            def mimeData(self):return QMimeData()
+            def clear(self):raise AssertionError('Remote clipboard must remain owned by Windows')
+        with patch('glass_panel.QApplication.clipboard',return_value=Clipboard()),patch('shell_file_clipboard.preferred_effect',return_value=1),patch('shell_file_clipboard.paste_shell_clipboard',return_value='shell-submitted') as receive:
+            assert panel.paste_files()
+            assert receive.call_args.args[:2]==(str(fixture),int(panel.winId()))
+            assert panel.paste_files(str(fixture))
+        with patch('glass_panel.QApplication.clipboard',return_value=Clipboard()),patch('shell_file_clipboard.preferred_effect',return_value=1),patch('shell_file_clipboard.paste_shell_clipboard',return_value='cancelled'):
+            assert not panel.paste_files()
+        checks.append('remote clipboard card routing: no Qt local URLs reaches Shell receiver for desktop and folder destinations; cancellation handled; clipboard never cleared')
         with patch.object(panel,'rename_file') as rename,patch.object(panel,'shell_file_action') as native,patch.object(panel,'launch_item') as launch:
             for key,mods in [(Qt.Key_F2,Qt.NoModifier),(Qt.Key_Delete,Qt.NoModifier),(Qt.Key_Return,Qt.AltModifier),(Qt.Key_Return,Qt.NoModifier)]:
                 QApplication.sendEvent(panel.list,QKeyEvent(QEvent.KeyPress,key,mods))
@@ -98,6 +138,17 @@ def run(api,runtime,root,checks,output):
             local_y=(option.rect.height()-size.height())//2 if view=='list' else margin
             center=painted.toImage().pixelColor(local_x+size.width()//2,local_y+size.height()//2)
             assert center.name()=='#cb3748',(view,center.name())
+            # Focus must not add a native empty-label glyph over the custom filename.
+            from PyQt5.QtWidgets import QStyle
+            item.setText('文析助手');option.state|=QStyle.State_Selected|QStyle.State_Enabled
+            def selected_image(focused):
+                option.state=option.state|QStyle.State_HasFocus if focused else option.state&~QStyle.State_HasFocus
+                image=api.QPixmap(option.rect.size());image.fill(api.QColor('#d9edfa'));painter=api.QPainter(image)
+                panel.list.itemDelegate().paint(painter,option,panel.list.indexFromItem(item));painter.end();return image
+            focused=selected_image(True);unfocused=selected_image(False)
+            assert focused.toImage()==unfocused.toImage(),view
+            focused.save(str(Path(output)/('file-selected-'+view+'.png')))
+
         from card_file_ui import card_display_name,card_overlay_index
         assert card_display_name({'name':'报告.docx','path':str(fixture/'报告.docx')},True)=='报告'
         assert card_display_name({'name':'应用.lnk','path':str(fixture/'应用.lnk')},True)=='应用'
@@ -109,6 +160,7 @@ def run(api,runtime,root,checks,output):
             manager.update_panel('documents',view=view);panel.render()
             text=next(panel.list.item(i).text() for i in range(panel.list.count()) if panel.list.item(i).data(Qt.UserRole)['path']==str(conflict))
             assert text==('collision.txt' if view=='list' else 'collision'),(view,text)
+        checks.append('selected file labels: small/large/list render identical with and without native focus; selection remains visible, custom name and icon dimensions retained; screenshots captured')
         checks.append('icon views hide only filename suffix and standard shortcut arrow; list retains full names; dotted folders and non-shortcut state overlays retained')
         # Inject a Shell-composed image to ensure a cached plain Dock icon cannot win.
         provider=runtime.dock.icons;provider.clear();marker=api.QPixmap(34,34);marker.fill(api.QColor('#eb8d24'))

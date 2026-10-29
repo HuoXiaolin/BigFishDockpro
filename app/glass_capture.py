@@ -1,4 +1,4 @@
-"""Bounded screen capture shared by Dock, collection cards and sticky notes."""
+"""Wallpaper-only backdrop shared by Dock, collection cards and sticky notes."""
 import ctypes
 import sys
 from ctypes import wintypes
@@ -15,39 +15,14 @@ def valid_backdrop(pixmap):
                for x in range(image.width()) for y in range(image.height()))
 
 
-def capture_behind(window,windows):
-    if sys.platform!='win32' or sys.getwindowsversion().build<19041:return None
+def capture_behind(window,windows=()):
+    if sys.platform!='win32':return None
     screen=QApplication.screenAt(window.frameGeometry().center()) or QApplication.primaryScreen()
     if screen is None:return None
-    rect=window.frameGeometry();origin=screen.geometry()
-    # QScreen accepts logical, screen-local coordinates and returns DPR pixels.
-    # A partially off-screen card safely falls back to its existing theme tint.
-    if not origin.contains(rect):return None
-    user=ctypes.windll.user32
-    user.SetWindowDisplayAffinity.argtypes=[wintypes.HWND,wintypes.DWORD]
-    user.SetWindowDisplayAffinity.restype=wintypes.BOOL
-    user.GetWindowDisplayAffinity.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
-    user.GetWindowDisplayAffinity.restype=wintypes.BOOL
-    restored=[];seen=set()
     try:
-        for item in [window]+list(windows):
-            if not item.isVisible():continue
-            hwnd=int(item.winId())
-            if hwnd in seen:continue
-            seen.add(hwnd);original=wintypes.DWORD()
-            if not user.GetWindowDisplayAffinity(hwnd,ctypes.byref(original)):return None
-            # Preserve pre-existing affinity; never undo another component's state.
-            if original.value!=0x11:
-                if not user.SetWindowDisplayAffinity(hwnd,0x11):return None
-                restored.append((hwnd,original.value))
-        if int(window.winId()) not in seen:return None
-        ctypes.windll.dwmapi.DwmFlush()
-        pixmap=screen.grabWindow(0,rect.x()-origin.x(),rect.y()-origin.y(),rect.width(),rect.height())
-        return pixmap if valid_backdrop(pixmap) else None
-    except (OSError,AttributeError,RuntimeError):
-        return None
-    finally:
-        for hwnd,original in reversed(restored):user.SetWindowDisplayAffinity(hwnd,original)
+        from wallpaper_source import capture
+        return capture(window,screen)
+    except (OSError,ValueError,AttributeError,RuntimeError):return None
 
 
 def surface_windows(dock):

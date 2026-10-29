@@ -213,6 +213,8 @@ class DesktopPanels(QObject):
         if current is target:return
         if current:current.store_geometry()
         if not self.update_group(identity,active=identity):return
+        from usage_stats import record
+        record(self.runtime,'panel_switch')
         if current and target and current.isVisible() and not target.isVisible():
             # Keep the visible native window, desktop ownership and captured glass.
             # Exchange page identities with its hidden placeholder, never hide/show.
@@ -422,6 +424,8 @@ class DesktopPanels(QObject):
             self.shown = True
             self.sync_windows()
             self.schedule_scan()
+            from usage_stats import record
+            record(self.runtime,'panel_new')
             return identity
 
     def delete_panel(self, identity):

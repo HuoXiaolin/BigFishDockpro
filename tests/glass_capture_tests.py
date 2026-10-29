@@ -19,30 +19,32 @@ def run(checks):
     assert capture.valid_backdrop(bright) and capture.valid_backdrop(dark)
     assert not capture.valid_backdrop(black) and not capture.valid_backdrop(transparent)
     assert not capture.valid_backdrop(QPixmap())
-    calls=[];states={1:0,2:1}
-    def get(hwnd,value):value._obj.value=states[hwnd];return True
-    def set_(hwnd,value):calls.append((hwnd,value));states[hwnd]=value;return True
-    user=SimpleNamespace(GetWindowDisplayAffinity=Function(get),SetWindowDisplayAffinity=Function(set_))
-    dll=SimpleNamespace(user32=user,dwmapi=SimpleNamespace(DwmFlush=lambda:None))
-    grab=[];pixels=[bright]
-    def grab_window(*args):grab.append(args);return pixels[0]
-    screen=SimpleNamespace(geometry=lambda:QRect(-1920,0,1920,1080),grabWindow=grab_window)
-    def window(hwnd):return SimpleNamespace(isVisible=lambda:True,winId=lambda:hwnd,frameGeometry=lambda:QRect(-1850,20,160,80))
-    first,second=window(1),window(2)
-    with patch.object(capture.sys,'getwindowsversion',return_value=SimpleNamespace(build=19045)),patch.object(capture.ctypes,'windll',dll),patch.object(capture.QApplication,'screenAt',return_value=screen):
-        assert capture.capture_behind(first,[first,second]) is bright
-        assert grab==[(0,70,20,160,80)] and states=={1:0,2:1}
-        assert calls==[(1,17),(2,17),(2,1),(1,0)]
-        pixels[0]=black;assert capture.capture_behind(first,[second]) is None and states=={1:0,2:1}
-        with patch.object(capture.sys,'getwindowsversion',return_value=SimpleNamespace(build=18363)):
-            count=len(calls);assert capture.capture_behind(first,[second]) is None and len(calls)==count
-        calls.clear()
-        def fail_second(hwnd,value):
-            if hwnd==2 and value==17:return False
-            return set_(hwnd,value)
-        user.SetWindowDisplayAffinity=Function(fail_second)
-        assert capture.capture_behind(first,[second]) is None and states=={1:0,2:1}
-        assert calls==[(1,17),(1,0)]
+    from wallpaper_source import render
+    from PyQt5.QtCore import QSize
+    image=QImage(200,100,QImage.Format_ARGB32);p=QPainter(image);g=QLinearGradient(0,0,200,0);g.setColorAt(0,QColor('red'));g.setColorAt(1,QColor('blue'));p.fillRect(image.rect(),g);p.end()
+    monitor=QRect(-1920,0,1920,1080);bounds=QRect(-1920,0,3840,1080);region=QRectF(-1000,100,160,80)
+    for mode in range(6):
+        result=render(image,mode,QColor('#d8eaff'),monitor,bounds,region,QSize(240,120));assert result.size()==QSize(240,120)
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        from pathlib import Path
+        path=Path(directory)/'wallpaper.png';image.save(str(path))
+        import wallpaper_source as source
+        source._metadata.clear()
+        screen=SimpleNamespace(name=lambda:'wallpaper-test',geometry=lambda:monitor,grabWindow=lambda *args:(_ for _ in ()).throw(AssertionError('Foreground capture forbidden')))
+        window=SimpleNamespace(frameGeometry=lambda:QRect(-1850,20,160,80),devicePixelRatioF=lambda:1.5)
+        with patch.object(capture.QApplication,'screenAt',return_value=screen),patch.object(source,'desktop_wallpaper',return_value=(str(path),2,QColor('white'),monitor,bounds)):
+            result=capture.capture_behind(window,[]);assert result is not None and result.devicePixelRatio()==1.5 and result.width()==240
+        from card_file_ui import picture_thumbnail
+        thumb=picture_thumbnail(str(path),54);assert thumb is not None and thumb.size()==QSize(54,54)
+        assert thumb.toImage().pixelColor(27,27).alpha()>0 and thumb.toImage().pixelColor(27,0).alpha()==0
+        path.write_text('invalid image',encoding='utf-8');assert picture_thumbnail(str(path),54) is None
+    checks.append('wallpaper-only material source: six Windows positioning modes, negative monitor origin, spanning bounds and 150% DPR crop; foreground grab forbidden; bounded image thumbnail with preserved aspect and invalid-image fallback')
+    from PyQt5.QtWidgets import QApplication
+    native_window=next(widget for widget in QApplication.topLevelWidgets() if widget.__class__.__name__=='Dock')
+    metadata=source.desktop_wallpaper(native_window)
+    assert len(metadata)==5 and not metadata[3].isEmpty()
+    checks.append('native Windows wallpaper interface read on isolated desktop: monitor, image path, fit mode and desktop color returned without displaying or capturing foreground applications')
     # Explicit source rectangles are in physical pixels, not logical Qt units.
     # A half-width sample of a 200%-DPR gradient gives 64 instead of 128.
     from liquid_glass import paint_liquid_glass
@@ -57,4 +59,4 @@ def run(checks):
         assert 124<=target.pixelColor(50,25).red()<=132,(ratio,target.pixelColor(50,25).red())
         assert target.pixelColor(90,25).red()>225,(ratio,target.pixelColor(90,25).red())
     checks.append('glass DPR drawing: full gradient extent and midpoint preserved at 100/150/200 percent instead of sampling only the top-left fraction')
-    checks.append('glass capture: logical screen-local coordinates at 150 percent and negative monitor origin, DPR retained, all overlapping surfaces excluded, original affinities restored on success and partial failure, pre-2004 Windows bypass, black/transparent rejection with genuine dark tint retained')
+

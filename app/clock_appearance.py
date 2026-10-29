@@ -6,7 +6,7 @@ DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':'#b8d9ef
           'typography_version':2,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
 DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_scale=100,font_weight=63,letter_spacing=100,
                 padding=7,accent_color='',text_opacity=100,shadow='none',auto_contrast=True,bar_width=8,ring_width=9,corner_radius=22,
-                show_work=True,show_week=True,show_month=True,show_year=True,ring_mode='day',work={})
+                show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={})
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
 PRESETS=[('轻透天空',dict(material='liquid',theme='light',color='#d8ebf7',accent_color='#337fad',opacity=56,blur=10,highlight=30,text_color='#19384e',text_effect='clear')),
@@ -42,7 +42,7 @@ def normalize(value, cfg=None):
         value=result[key];result[key]=value.lower() if isinstance(value,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',value) else ''
     for key in ('font','date_font'):
         if not isinstance(result[key],str) or not result[key].strip() or len(result[key])>100:result[key]=DEFAULTS[key]
-    for key in ('show_date','show_work','show_week','show_month','show_year','auto_contrast'):
+    for key in ('show_date','show_work','show_week','show_month','show_year','show_lunar','show_holidays','auto_contrast'):
         if type(result[key]) is not bool:result[key]=DEFAULTS[key]
     from work_schedule import normalize as work_options
     result['work']=work_options(result['work'])

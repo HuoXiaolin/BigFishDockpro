@@ -6,6 +6,12 @@ from unittest.mock import patch
 
 def run(output):
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
+    import faulthandler,gc
+    collect_automatically=gc.isenabled();gc.disable()
+    # Hundreds of temporary Qt fixtures are released explicitly by shutdown_ui.
+    # Do not let cyclic GC destroy native widget trees inside another Qt callback.
+    fault_log=open(output/'native-fault.log','w')
+    faulthandler.enable(file=fault_log,all_threads=True)
     checks=[];runtime=app=tray=None;root=None;result=None
     try:
         from run_isolated_test import assert_isolated
@@ -34,6 +40,10 @@ def run(output):
         from batch_import import BatchImporter
         tray.importer=BatchImporter(dock,tray,api.save_config)
         runtime=tray.runtime=RuntimeController(dock,tray,api)
+        from corner_stacking_tests import run as run_corner_stacking
+        run_corner_stacking(app, output, checks)
+        from usage_stats_tests import run as run_usage_stats
+        run_usage_stats(api,runtime,root.name,output,checks)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
         checks.append('private Windows desktop: '+desktop+'; temporary configuration and synthetic entries only')
         # Sample this test process before/after enabling one clock; this is not a power measurement.
@@ -364,6 +374,8 @@ def run(output):
         run_glass_stability(runtime,output,checks)
         from external_launch_tests import run_routes
         run_routes(checks)
+        from lunar_note_tests import run as run_lunar_notes
+        run_lunar_notes(api,runtime,output,checks)
         runtime.close();runtime=None
         checks.append('normal controller shutdown persists synthetic configuration and closes owned windows/timers')
         result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events are simulated on a private desktop; tab reordering uses moveTab and its real persistence signal','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}
@@ -383,4 +395,10 @@ def run(output):
             try:root.cleanup()
             except OSError:pass
     (output/'result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+    # Quarantine unreachable Python/SIP fixture cycles until this isolated process
+    # exits. Native windows have already been destroyed by shutdown_ui; releasing
+    # many borrowed style/option wrappers in arbitrary GC order is unsafe in Qt5.
+    debug_flags=gc.get_debug();gc.set_debug(debug_flags|gc.DEBUG_SAVEALL)
+    gc.collect();gc.set_debug(debug_flags)
+    if collect_automatically:gc.enable()
     return 0 if result.get('passed') else 1
