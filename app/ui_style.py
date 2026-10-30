@@ -220,6 +220,15 @@ class PopupDelegate(QStyledItemDelegate):
 
 class AlignedMenu(QMenu):
     """One text column for checked, ordinary and submenu actions."""
+    def __init__(self, *args):
+        super().__init__(*args)
+        # The custom rounded surface needs an alpha-capable, borderless popup;
+        # otherwise QMenu's style/native window paints square corners beneath it.
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
+        self.setProperty('roundedPopup', True)
+
     def addMenu(self, title):
         if isinstance(title, str):
             menu = AlignedMenu(title, self)
@@ -233,11 +242,14 @@ class AlignedMenu(QMenu):
 
     def paintEvent(self, event):
         p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.transparent)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.Antialiasing)
         palette = self.palette()
         font = self.font(); font.setUnderline(False); p.setFont(font)
         p.setPen(QPen(palette.color(QPalette.Mid), .7))
-        p.setBrush(palette.color(QPalette.Base))
+        p.setBrush(QApplication.palette().color(QPalette.Base))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5), 7, 7)
         for action in self.actions():
             if not action.isVisible(): continue
@@ -592,6 +604,7 @@ def apply_theme(app, light):
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {width:0;}
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {background:transparent;}
         QMenu {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; padding:5px;}
+        QMenu[roundedPopup="true"] {background:transparent; border:0;}
         QMenu::item {padding:7px 26px 7px 22px; border-radius:4px;}
         QMenu::item:selected {background:%(selection)s;}
         QMenu::separator {height:1px; background:%(line)s; margin:5px 10px;}
