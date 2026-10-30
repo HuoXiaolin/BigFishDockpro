@@ -5,6 +5,7 @@ import threading
 from urllib.parse import urlparse
 from PyQt5.QtCore import QObject, pyqtSignal
 from app_version import VERSION, PROJECT_ID
+from update_sources import DEFAULT_SOURCE,resolve_source,parse_github_release
 
 
 def version_tuple(value):
@@ -29,16 +30,25 @@ def fetch_manifest(url, use_proxy):
     import urllib.request
     if urlparse(url).scheme != 'https':
         raise ValueError('更新源必须是本项目的 HTTPS 版本清单地址。')
+    url,is_github=resolve_source(url)
     handlers = [] if use_proxy else [urllib.request.ProxyHandler({})]
     opener = urllib.request.build_opener(*handlers)
     request = urllib.request.Request(url, headers={'User-Agent': 'BigFishDockpro/'+VERSION, 'Accept':'application/json'})
-    with opener.open(request, timeout=12) as response:
+    import urllib.error
+    try:response=opener.open(request,timeout=12)
+    except urllib.error.HTTPError as error:
+        if not is_github:raise
+        if error.code in (403,429):raise ValueError('GitHub API 访问受限，请稍后重试，或直接打开安装包发布页。') from error
+        if error.code==404:raise ValueError('本仓库暂未提供可读取的正式 Release，请确认已公开发布。') from error
+        raise
+    with response:
         if urlparse(response.geturl()).scheme != 'https':
             raise ValueError('更新源重定向到了非 HTTPS 地址。')
         content = response.read(512*1024+1)
         if len(content) > 512*1024:
             raise ValueError('版本清单超过大小限制。')
-    return parse_manifest(json.loads(content.decode('utf-8-sig')))
+    payload=json.loads(content.decode('utf-8-sig'))
+    return parse_github_release(payload,VERSION,version_tuple) if is_github else parse_manifest(payload)
 
 
 class UpdateWorker(QObject):
@@ -79,8 +89,8 @@ class UpdateService(QObject):
         super().__init__()
         self.runtime = runtime
         self.worker = None
-        self.message = '尚未配置更新源'
-        self.release_url = ''
+        self.message = '已配置本项目安装包发布源，尚未检查'
+        self.release_url = DEFAULT_SOURCE if resolve_source(runtime.dock.cfg.get('update_source',''))[1] else ''
 
     def check(self):
         if self.worker and self.worker.isRunning():
@@ -100,13 +110,14 @@ class UpdateService(QObject):
         self.changed.emit(message)
 
     def completed(self, result):
-        self.release_url = result['release_url'] if result['newer'] else ''
+        self.release_url = result['release_url']
         self.set_message('发现新版本 '+result['version'] if result['newer'] else '当前已是最新版本（'+VERSION+'）')
+        if result.get('installer_available') is False:self.set_message(self.message+'；该版本安装包尚未上传，可打开发布页查看。')
         if result['newer']:
             self.runtime.tray.showMessage('大肥鱼Dock 更新', self.message+'，可在设置中查看下载页面。', self.runtime.tray.icon(), 5000)
 
     def failed(self, error):
-        self.release_url = ''
+        self.release_url = DEFAULT_SOURCE if resolve_source(self.runtime.dock.cfg.get('update_source',''))[1] else ''
         self.runtime.api.log('检查更新失败: ' + error)
         self.set_message('检查失败：'+error[:160])
 

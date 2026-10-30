@@ -705,6 +705,9 @@ class IconProvider(object):
                 stat=os.stat(path,follow_symlinks=False)
                 state=(stat.st_mtime_ns,stat.st_ctime_ns,getattr(stat,'st_file_attributes',0),int(time.monotonic()//15))
             except OSError:state=('unavailable',int(time.monotonic()//15))
+        if not shell_state:
+            try:state=os.stat(path).st_mtime_ns
+            except OSError:state=None
         key = (path.lower(), int(px), custom, state, bool(hide_shortcut))
         if key in self.cache:
             self.cache.move_to_end(key)
@@ -872,6 +875,8 @@ class Dock(QWidget):
         self.blur_timer.setInterval(BLUR_INTERVAL["smart"])
         self.blur_timer.timeout.connect(self.refresh_backdrop)
 
+        from dock_extras import DockExtras
+        self.extras=DockExtras(self)
         self._build_items()
         self.reposition()
         if not preview:
@@ -999,7 +1004,7 @@ class Dock(QWidget):
         return max(12, int(round(v * self.ui_mult * getattr(self,'display_scale',1.0))))
 
     def bar_h(self):
-        height = self.icon_size + self.pad_y * 2
+        height = self.icon_size + self.pad_y + self.extras.bottom_space()
         if not self.items:
             height = max(height,QFontMetrics(QFont("Microsoft YaHei UI",self.font_pt)).height()*3+16)
         return height
@@ -1124,14 +1129,15 @@ class Dock(QWidget):
             w = int(self.pad_x * 2 + body + (n - 1) * gap)
         # 左右各留一条透明带，给"外扩"用
         h = int(self.bar_h() + self.head_room() + self.foot_room())
-        return QSize(w + self.side_room() * 2, h)
+        return QSize(w + self.side_room() * 2 + self.extras.width(), h)
 
     def _build_items(self):
+        previous={it["path"]:it for it in self.items if not it.get("sep")}
         self.items = []
         self.running = set()
         screen = QGuiApplication.primaryScreen()
         available = screen.availableGeometry().width() if screen else 1920
-        page_size = max(1, int((available-self.side_room()*2-self.pad_x*2-40) / (self.icon_size*(1+self.gap_ratio))))
+        page_size = max(1, int((available-self.side_room()*2-self.pad_x*2-self.extras.width()-40) / (self.icon_size*(1+self.gap_ratio))))
         self.page_count = max(1, math.ceil(len(self.cfg['items']) / page_size))
         self.page_index = min(self.page_index, self.page_count-1)
         self.page_offset = self.page_index*page_size
@@ -1141,12 +1147,19 @@ class Dock(QWidget):
                                    "pixmap": None, "exe": ""})
                 continue
             path = it["path"]
-            self.items.append({
-                "path": path,
+            try:path_stamp=os.stat(path).st_mtime_ns
+            except OSError:path_stamp=None
+            loaded={
+                "path": path,"_path_stamp":path_stamp,
                 "name": it.get("name") or os.path.splitext(os.path.basename(path))[0],
                 "pixmap": self.icons.get(it.get("icon") or path, max(96, int(self.icon_size * 2.0)), bool(it.get("icon"))),
-                "exe": self._exe_name(path),
-            })
+                "exe": previous[path]['exe'] if path in previous and previous[path].get('_path_stamp')==path_stamp else self._exe_name(path),
+            }
+            if path in previous:
+                for key in ('_reflected','_reflection_ratio','_reflection_key'):
+                    if key in previous[path]:loaded[key]=previous[path][key]
+            self.items.append(loaded)
+        self.extras.prepare(self.items)
         n = len(self.items)
         self.cur = []
         self.tgt = []
@@ -1186,7 +1199,7 @@ class Dock(QWidget):
         bar_w = (float(self.width()) - self.side_room() * 2
                  + self.side_expand() * 2.0)
         sep_total = sum(self.item_slot_width(i) for i in sep_idx)
-        avail = bar_w - self.pad_x * 2 - gap * (n - 1) - sep_total
+        avail = bar_w - self.pad_x * 2 - gap * (n - 1) - sep_total - self.extras.width()
         avail = max(S * 0.5, avail)
         # 先算"静止状态"下每个图标的中心，鱼眼放大要按它来算。
         # 注意起点要和 _layout 里一致（玻璃条左边 + 内边距），
@@ -1197,7 +1210,7 @@ class Dock(QWidget):
             w = self.item_slot_width(i)
             rest[i] = x + w / 2.0
             x += w + gap
-        if (not uniform) and not self.lite_mode and self.cfg["magnify"] and self.mouse_x > -9000 and m:
+        if (not uniform) and self.cfg["magnify"] and self.mouse_x > -9000 and m:
             R = S * 2.35
             ms = []
             for i in icon_idx:
@@ -1211,7 +1224,7 @@ class Dock(QWidget):
             ms = [1.0] * m
         raw = [S * v for v in ms]
         tot = sum(raw) or 1.0
-        k = avail / tot
+        k = min(1.0,avail / tot)
         tgt = [self.item_slot_width(i) for i in range(n)]
         for j, i in enumerate(icon_idx):
             tgt[i] = raw[j] * k
@@ -1409,11 +1422,11 @@ class Dock(QWidget):
         if self.bump_down():
             base_y = bar.top() + self.pad_y
         else:
-            base_y = bar.top() + self.bar_h() - self.pad_y
+            base_y = bar.bottom() - self.extras.bottom_space()
         widths = [self.cur[i] if i < len(self.cur) else self.icon_size for i in range(n)]
         if n == 1:
             w = widths[0]
-            cx = bar.left() + (bar.width() - w) / 2.0 + w / 2.0
+            cx = bar.left() + (bar.width() - self.extras.width() - w) / 2.0 + w / 2.0
             self.rects = [(cx, w, w, base_y, bool(self.items[0].get("sep")))]
             return
         # 间距用固定公式算（和旧版一致）：图标的尺寸在动画中是连续的，
@@ -1425,7 +1438,7 @@ class Dock(QWidget):
             gap += (2.0 * e) / (n - 1.0)     # 外扩的宽度平摊到各段间距上
         # 安全网：只有在真的放不下时才压缩（正常动画不会触发），
         # 保证图标永远不会排到玻璃条外面
-        usable = bar.width() - self.pad_x * 2.0
+        usable = bar.width() - self.pad_x * 2.0 - self.extras.width()
         need = sum(widths)
         if need + gap * (n - 1.0) > usable:
             gap = max(0.0, (usable - need) / (n - 1.0))
@@ -1646,6 +1659,7 @@ class Dock(QWidget):
         self.stretch_target = 0.0
         self.hover_index = -1
         self.pressed = -1
+        self.extras.hover=None
         self.setCursor(Qt.ArrowCursor)
         QToolTip.hideText()
         self._recalc()
@@ -1654,6 +1668,8 @@ class Dock(QWidget):
 
     def mouseMoveEvent(self, e):
         pos = e.pos()
+        utility=self.extras.move(pos)
+        if utility:self.setCursor(Qt.PointingHandCursor)
         self.mouse_x = float(pos.x())
         self.spec_x = float(pos.x())
         # 拖动排序模式：按住左键移动 = 排序
@@ -1711,6 +1727,8 @@ class Dock(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
+            key=self.extras.hit(e.pos())
+            if key:self.extras.pressed=key;e.accept();return
             self.pressed = self._hit(e.pos())
             self.drag_idx = -1
             self.drag_moved = False
@@ -1760,6 +1778,10 @@ class Dock(QWidget):
         self._kick()
 
     def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self.extras.pressed:
+            key=self.extras.pressed;self.extras.pressed=None
+            if key==self.extras.hit(e.pos()):self.extras.activate(key)
+            e.accept();return
         if e.button() == Qt.LeftButton:
             if self.drag_idx >= 0:
                 if self.drag_moved:
@@ -2012,12 +2034,13 @@ class Dock(QWidget):
             p.drawText(lab, Qt.AlignCenter, name)
             p.restore()
 
+        self.extras.paint(p,c)
         if not self.items:
             hint = EMPTY_DOCK_HINT if LANG["cur"]!="en" else "Drop apps or shortcuts here\nRight-click: Manage Apps · Settings\nEnable desktop cards in Settings"
             f = QFont("Microsoft YaHei UI", self.font_pt)
             p.setFont(f)
             p.setPen(c["fg"])
-            p.drawText(bar, Qt.AlignCenter, hint)
+            p.drawText(bar.adjusted(0,0,-self.extras.width(),0), Qt.AlignCenter, hint)
             return
 
         # 图标 / 分隔符（点击时弹一下：平时以底边为支点往上弹，贴屏幕顶部时反过来）
@@ -2056,7 +2079,11 @@ class Dock(QWidget):
                 else:
                     dy = by + dot * 1.6
                 p.drawEllipse(QPointF(cx, dy), dot, dot)
-            pm = self.icon_scaled(it, dw)
+            reflected=it.get('_reflected') if self.cfg.get('dock_reflections',True) else None
+            pm = reflected if reflected is not None else self.icon_scaled(it, dw)
+            # One precomposed image replaces the original draw; no reflection work
+            # or extra drawPixmap call is performed by the paint/animation path.
+            if reflected is not None:rect.setHeight(rect.height()*(1+it['_reflection_ratio']))
             if pm is None:
                 pass
             elif c.get("tile"):
@@ -2098,7 +2125,7 @@ class Dock(QWidget):
         return pixmap,pixmap is not None
 
     def blur_divisor(self):
-        """毛玻璃模糊程度：把背景缩小到 1/div 再放大回来，div 越大越糊。"""
+        """Material blur radius in logical pixels."""
         try:
             from liquid_glass import material_blur
             return material_blur(int(self.cfg.get("blur_px", 6)),self.cfg.get("dock_material","liquid"))
@@ -2106,7 +2133,7 @@ class Dock(QWidget):
             return 6
 
     def refresh_backdrop(self):
-        """抓背景 → 缩小再放大（等于一次大半径模糊）→ 作为玻璃后面的画面。"""
+        """Sample wallpaper and prepare a smooth native-resolution backdrop."""
         if self.lite_mode:
             self.blur_timer.stop()
             self.backdrop = None
@@ -2132,19 +2159,8 @@ class Dock(QWidget):
             return
         self.backdrop_ok = True
         try:
-            dpr = float(pm.devicePixelRatio()) or 1.0
-            div = self.blur_divisor()
-            w, h = max(2, pm.width() // div), max(2, pm.height() // div)
-            small = pm.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            small = small.scaled(max(1, w // 2), max(1, h // 2),
-                                 Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            # 注意：要还原成"设备像素"尺寸并标好缩放比，
-            # 否则在 125%/150%/200% 缩放的屏幕上玻璃里的画面会被拉糊。
-            out = small.scaled(max(1, int(round(self.width() * dpr))),
-                               max(1, int(round(self.height() * dpr))),
-                               Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            out.setDevicePixelRatio(dpr)
-            self.backdrop = out
+            from glass_capture import smooth_backdrop
+            self.backdrop=smooth_backdrop(pm,self.blur_divisor())
         except Exception:
             log("模糊处理失败: " + traceback.format_exc())
             return
@@ -2195,6 +2211,7 @@ class Dock(QWidget):
     def showEvent(self, e):
         super(Dock, self).showEvent(e)
         QTimer.singleShot(50, self.start_backdrop)
+        self.extras.sync_clock()
         self.apply_layer()
         QTimer.singleShot(0,self.apply_layer)
         QTimer.singleShot(250,self.apply_layer)
@@ -2202,6 +2219,7 @@ class Dock(QWidget):
 
     def hideEvent(self, e):
         self.blur_timer.stop()
+        self.extras.clock.stop()
         super(Dock, self).hideEvent(e)
 
     def closeEvent(self, e):
@@ -2222,10 +2240,10 @@ class Dock(QWidget):
         self.font_pt = max(5, int(round(9 * self.ui_mult * getattr(self,'display_scale',1.0))))
         self.pad_x = int(self.icon_size * 0.36)
         self.pad_y = int(self.icon_size * 0.34)
-        self.icons.clear()
         self._build_items()
         self.reposition()
         self.start_backdrop()
+        self.extras.sync_clock()
         self._kick()
 
     def refresh_geometry(self):

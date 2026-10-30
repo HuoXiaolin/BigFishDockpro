@@ -107,6 +107,7 @@ class FileNameDelegate(QStyledItemDelegate):
             margin=max(2,round(opt.fontMetrics.height()*.2));width=max(1,view.viewport().width()-view.iconSize().width()-margin*4)
             from dpi_support import metric
             return QSize(80,max(metric(34,view.window().ui_factor,18),view.iconSize().height()+margin*2,len(file_name_lines(opt.text,opt.font,width))*opt.fontMetrics.height()+margin*2))
+        if view and view.gridSize().isValid():return view.gridSize()
         return super().sizeHint(option,index)
 
 

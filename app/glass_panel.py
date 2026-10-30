@@ -336,7 +336,12 @@ class DesktopPanel(QDialog):
         # Reset explicit IconMode properties: a zero grid makes list rows overlap.
         self.list.setFlow(QListWidget.TopToBottom if view=='list' else QListWidget.LeftToRight)
         self.list.setWrapping(view!='list')
-        self.list.setGridSize(QSize() if view=='list' else QSize(metric(108,factor),metric(102,factor)) if view=='large' else QSize(metric(78,factor),metric(78,factor)))
+        from PyQt5.QtGui import QFont,QFontMetrics
+        text_font=QFont(self.list.font());text_font.setPixelSize(self.text_pixels())
+        font_height=QFontMetrics(text_font).height();margin=max(2,round(font_height*.2))
+        # Keep icon and column widths; reserve three complete filename lines.
+        grid_height=max(metric(102 if view=='large' else 78,factor),icon+margin*3+font_height*3)
+        self.list.setGridSize(QSize() if view=='list' else QSize(metric(108 if view=='large' else 78,factor),grid_height))
         self.list.setSpacing(0)
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -860,9 +865,8 @@ class DesktopPanel(QDialog):
         image=capture_behind(self,surface_windows(self.dock))
         if image is not None:
             from liquid_glass import material_blur
-            ratio,divisor=image.devicePixelRatio(),material_blur(self.option('blur'),self.option('material'))
-            self.backdrop=image.scaled(max(1,image.width()//divisor),max(1,image.height()//divisor),Qt.IgnoreAspectRatio,Qt.SmoothTransformation).scaled(image.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
-            self.backdrop.setDevicePixelRatio(ratio)
+            from glass_capture import smooth_backdrop
+            self.backdrop=smooth_backdrop(image,material_blur(self.option('blur'),self.option('material')))
         self.update()
 
     def paintEvent(self, event):

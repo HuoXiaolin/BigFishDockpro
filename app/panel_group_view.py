@@ -27,7 +27,7 @@ class GroupTree(QTreeWidget):
         self.setDropIndicatorShown(True);self.setDragDropMode(QAbstractItemView.DragDrop);self.setDefaultDropAction(Qt.MoveAction)
         self.setEditTriggers(QAbstractItemView.DoubleClicked|QAbstractItemView.EditKeyPressed)
         self.setContextMenuPolicy(Qt.CustomContextMenu);self.customContextMenuRequested.connect(dialog.context_menu)
-        self.setStyleSheet('QTreeWidget {border:1px solid rgba(128,128,128,45);border-radius:10px;padding:5px;} QTreeWidget::item {padding:7px 5px;border-radius:6px;} QTreeWidget::item:selected {background:rgba(90,145,200,40);} QTreeWidget::item:hover {background:rgba(128,128,128,18);}')
+        self.setProperty('lightGroupTree',True)
 
     def startDrag(self,actions):
         identities=[item.data(0,ROLE) for item in self.dialog.card_items() if item.isSelected()]

@@ -42,6 +42,10 @@ def run(output):
         runtime=tray.runtime=RuntimeController(dock,tray,api)
         from corner_stacking_tests import run as run_corner_stacking
         run_corner_stacking(app, output, checks)
+        from desktop_shortcut_tests import run as run_desktop_shortcut
+        run_desktop_shortcut(app,api,runtime,root.name,checks)
+        from update_source_tests import run as run_update_sources
+        run_update_sources(api,runtime,output,checks)
         from usage_stats_tests import run as run_usage_stats
         run_usage_stats(api,runtime,root.name,output,checks)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
@@ -376,6 +380,10 @@ def run(output):
         run_routes(checks)
         from lunar_note_tests import run as run_lunar_notes
         run_lunar_notes(api,runtime,output,checks)
+        from quality_custom_tests import run as run_quality_custom
+        run_quality_custom(api,runtime,root.name,output,checks)
+        from dock_extension_tests import run as run_dock_extensions
+        run_dock_extensions(api,runtime,root.name,output,checks)
         runtime.close();runtime=None
         checks.append('normal controller shutdown persists synthetic configuration and closes owned windows/timers')
         result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events are simulated on a private desktop; tab reordering uses moveTab and its real persistence signal','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}

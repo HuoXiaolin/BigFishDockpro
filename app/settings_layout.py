@@ -16,8 +16,10 @@ class SettingsSizingMixin:
         self.size_mode=ModernComboBox()
         for title,key in MODES:self.size_mode.addItem(title,key)
         self.size_mode.setFixedWidth(132);self.size_mode.setAccessibleName('设置窗口大小')
-        self.header.layout().insertWidget(1,label('窗口大小'))
-        self.header.layout().insertWidget(2,self.size_mode)
+        from PyQt5.QtWidgets import QHBoxLayout
+        selector=QWidget();row=QHBoxLayout(selector);row.setContentsMargins(0,0,0,0);row.setSpacing(8)
+        row.addWidget(label('界面尺寸'));row.addWidget(self.size_mode)
+        self.header.layout().insertWidget(self.header.layout().count()-2,selector)
         self.fields['settings_size']=self.size_mode
     def initialize_size_behavior(self):
         self._density_reference=[]

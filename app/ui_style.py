@@ -44,6 +44,8 @@ def compact_dialog(dialog):
     """Apply geometry density once; theme changes and reopens must never rescale."""
     if dialog.property('densityApplied'):
         return
+    from settings_design import prepare_dialog
+    prepare_dialog(dialog)
     dialog.setProperty('densityApplied', True)
     dialog.setProperty('compactDialog', True)
     size = dialog.size()
@@ -74,6 +76,8 @@ def compact_dialog(dialog):
         if layout is not None:compress(layout)
     dialog.setMinimumSize(compact_px(minimum.width()),compact_px(minimum.height()))
     dialog.resize(compact_px(size.width()),compact_px(size.height()))
+    from settings_design import finish_dialog
+    finish_dialog(dialog)
 
 
 def density_stylesheet(stylesheet,factor=UI_DENSITY):
@@ -173,6 +177,12 @@ class SettingsHeader(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
+        icon = QLabel()
+        icon.setFixedSize(24,24)
+        icon.setPixmap(window.windowIcon().pixmap(22,22))
+        icon.setAttribute(Qt.WA_TransparentForMouseEvents)
+        row.addWidget(icon)
+        row.addSpacing(4)
         title = label(caption, 'title')
         title.setAttribute(Qt.WA_TransparentForMouseEvents)
         row.addWidget(title)
@@ -477,10 +487,11 @@ class DialogChrome(QObject):
 
 
 def apply_theme(app, light):
+    if getattr(app, "_fish_theme_light", None)==bool(light) and hasattr(app,"_base_stylesheet"):return
     if not hasattr(app, '_fish_icon'):
         import sys
         from pathlib import Path
-        app._fish_icon = QIcon(str(Path(getattr(sys, '_MEIPASS', Path(__file__).parent))/'dock.ico'))
+        app._fish_icon = QIcon(str(Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))/'assets'/'dock.ico'))
         app.setWindowIcon(app._fish_icon)
     # Keep the base style alive for the entire QApplication. Replacing proxy
     # styles under live stylesheet widgets leaves native cached style pointers
@@ -490,7 +501,7 @@ def apply_theme(app, light):
         app._fish_style = ReadableChecks(QStyleFactory.create('Fusion'))
         app.setStyle(app._fish_style)
     app.setFont(QFont('Microsoft YaHei UI', 10))
-    colors = ({'ground':'#f7f8fa','surface':'#ffffff','text':'#17191c','muted':'#5c626c',
+    colors = ({'ground':'#f0f5f8','surface':'#ffffff','text':'#17191c','muted':'#5c626c',
                'line':'#d5d9df','hover':'#eceff3','primary':'#22262c','on':'#ffffff',
                'danger':'#b4232c','selection':'#e9eaec'} if light else
               {'ground':'#161719','surface':'#202124','text':'#f1f2f4','muted':'#b4b8c0',
@@ -586,8 +597,11 @@ def apply_theme(app, light):
         QMenu::separator {height:1px; background:%(line)s; margin:5px 10px;}
         QToolTip {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; padding:6px;}
     ''' % colors
+    from settings_design import stylesheet as grouped_stylesheet
+    stylesheet += grouped_stylesheet(colors)
     app._base_stylesheet=stylesheet
     app.setStyleSheet(stylesheet + density_stylesheet(stylesheet))
+    app._fish_theme_light=bool(light)
     for window in app.topLevelWidgets():
         if window.isVisible() and hasattr(window,'refresh_interface_style'):window.refresh_interface_style()
     if not hasattr(app, '_chrome_filter'):

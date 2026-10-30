@@ -1,11 +1,12 @@
 """Render Windows wallpaper pixels, without capturing any application window."""
-import ctypes,os,time
+import ctypes,os,time,math
 from ctypes import wintypes
 from functools import lru_cache
 from PyQt5.QtCore import Qt,QRect,QRectF,QSize
 from PyQt5.QtGui import QImage,QImageReader,QPainter,QColor,QPixmap
 
 _metadata={}
+MAX_WALLPAPER_PIXELS=8*1024*1024  # One shared decode, at most about 32 MiB.
 
 
 def desktop_wallpaper(window):
@@ -45,11 +46,16 @@ def desktop_wallpaper(window):
         if initialized:ole.CoUninitialize()
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def image_file(path,stamp):
     reader=QImageReader(path);reader.setAutoTransform(True);size=reader.size()
-    if max(size.width(),size.height())>1024:reader.setScaledSize(size.scaled(QSize(1024,1024),Qt.KeepAspectRatio))
-    image=reader.read();image.setText('source_width',str(size.width()));image.setText('source_height',str(size.height()));return image
+    pixels=size.width()*size.height()
+    if pixels>MAX_WALLPAPER_PIXELS:
+        factor=math.sqrt(MAX_WALLPAPER_PIXELS/pixels)
+        reader.setScaledSize(QSize(max(1,int(size.width()*factor)),max(1,int(size.height()*factor))))
+    image=reader.read()
+    if image.depth()>32:image=image.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    image.setText('source_width',str(size.width()));image.setText('source_height',str(size.height()));return image
 
 
 def render(image,position,color,monitor,bounds,region,size):

@@ -13,6 +13,7 @@ class DesktopIcons(QObject):
         super().__init__()
         self.preview, self.finder = preview, finder
         self.enabled = False
+        self.desired_visible = False
         self.hidden = {}
         self.journal = Path(journal_path) if journal_path and not preview else None
         self.hook = None
@@ -78,14 +79,21 @@ class DesktopIcons(QObject):
             self.timer.start()
 
     def set_enabled(self, enabled):
+        self.set_controlled_visibility(bool(enabled),False)
+
+    def set_visible(self, visible):
+        self.set_controlled_visibility(True,bool(visible))
+
+    def set_controlled_visibility(self, enabled, visible):
         enabled = bool(enabled) and (not self.preview or self.finder is not None)
-        if enabled == self.enabled: return
+        if enabled == self.enabled and (not enabled or visible==self.desired_visible):return
         if not enabled:
             self.timer.stop()
             self.restore_native()
             return
         self.enabled = True
-        self.hook = self.user.SetWinEventHook(0x8002, 0x8002, None, self.callback, 0, 0, 0)
+        self.desired_visible = visible
+        if not self.hook:self.hook = self.user.SetWinEventHook(0x8002, 0x8002, None, self.callback, 0, 0, 0)
         self.hide_icons()
 
     def hide_icons(self):
@@ -106,7 +114,7 @@ class DesktopIcons(QObject):
                 return
         self.hidden = records
         for hwnd in views:
-            self.user.ShowWindow(hwnd, 0)
+            self.user.ShowWindow(hwnd, 4 if self.desired_visible else 0)
 
     def legacy_view(self, hwnd):
         # An old journal may include a folder view. Restore only the exact
@@ -127,9 +135,9 @@ class DesktopIcons(QObject):
         if not self.hidden: return
         current = set(self.views());remaining={}
         for hwnd, (pid, was_visible) in self.hidden.items():
-            if (hwnd in current or self.legacy_view(hwnd)) and self.pid(hwnd) == pid and was_visible:
-                self.user.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
-                if not self.user.GetWindowLongW(hwnd,-16)&0x10000000:remaining[hwnd]=(pid,was_visible)
+            if (hwnd in current or self.legacy_view(hwnd)) and self.pid(hwnd) == pid:
+                self.user.ShowWindow(hwnd, 4 if was_visible else 0)  # Restore the exact initial state.
+                if bool(self.user.GetWindowLongW(hwnd,-16)&0x10000000)!=was_visible:remaining[hwnd]=(pid,was_visible)
         self.hidden=remaining
         if self.journal:
             try:

@@ -292,12 +292,27 @@ class DesktopPanels(QObject):
         active=(self.shown and self.cfg['panel_enabled'] and not self.blocked
                 and any(window.isVisible() for window in self.windows.values()))
         mode=self.cfg.get('desktop_icon_mode','hide_all')
-        self.icons.set_enabled(active and mode=='hide_all')
+        if self.cfg.get('desktop_icons_override'):self.icons.set_visible(mode=='both')
+        else:self.icons.set_enabled(active and mode=='hide_all')
         # Per-file hidden attributes also hide files in Explorer and remote copy.
         # Recover old records, but never set new file attributes for icon display.
         self.collected_icons.restore()
         if self.collected_icons.message:self.status(self.collected_icons.message)
 
+
+    def toggle_desktop_icons(self):
+        if self.closed:return False
+        views=self.icons.views()
+        if not views:return False
+        visible=not any(self.icons.user.GetWindowLongW(hwnd,-16)&0x10000000 for hwnd in views)
+        mode='both' if visible else 'hide_all'
+        if not self.commit(desktop_icon_mode=mode,desktop_icons_override=True):return False
+        self.icons.set_visible(visible)
+        dialog=getattr(self.runtime.tray,'settings_dialog',None)
+        if dialog:
+            field=dialog.fields.get('desktop_icon_mode')
+            if field:field.setCurrentIndex(field.findData(mode))
+        return True
 
     def rows(self, identity):
         model = self.model(identity)

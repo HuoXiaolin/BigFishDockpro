@@ -7,6 +7,7 @@ from ctypes import wintypes
 SHELL_FIRST=1
 SHELL_LAST=0x5fff
 APP_FIRST=0x7000
+CMF_CANRENAME=0x10
 
 
 class GUID(ctypes.Structure):
@@ -94,7 +95,7 @@ class NativeFileMenu:
         self.menu=self.user.CreatePopupMenu()
         if not self.menu:raise OSError('无法创建 Windows 菜单。')
         query=method(self.context,3,ctypes.c_long,wintypes.HMENU,wintypes.UINT,wintypes.UINT,wintypes.UINT,wintypes.UINT)
-        hr=query(self.context,self.menu,0,SHELL_FIRST,SHELL_LAST,0);self.check(hr,'无法生成系统文件菜单')
+        hr=query(self.context,self.menu,0,SHELL_FIRST,SHELL_LAST,CMF_CANRENAME if len(self.paths)==1 else 0);self.check(hr,'无法生成系统文件菜单')
         self.command_count=hr&0xffff
         if self.user.GetMenuItemCount(self.menu)<=0:raise OSError('Windows 未提供此选择的文件菜单。')
         for name,pointer in [('bcfce0a0-ec17-11d0-8d10-00a0c90f2719',self.context3),('000214f4-0000-0000-c000-000000000046',self.context2)]:

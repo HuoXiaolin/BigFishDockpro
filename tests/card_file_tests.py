@@ -149,6 +149,28 @@ def run(api,runtime,root,checks,output):
             assert focused.toImage()==unfocused.toImage(),view
             focused.save(str(Path(output)/('file-selected-'+view+'.png')))
 
+        from PyQt5.QtGui import QFontMetrics
+        from PyQt5.QtWidgets import QStyleOptionViewItem
+        for view in ('small','large'):
+            manager.update_panel('documents',view=view)
+            for pixels in (12,20):
+                with patch.object(panel,'text_pixels',return_value=pixels):
+                    panel.apply_options();panel.render();app.processEvents();panel.list.doItemsLayout()
+                    item=panel.list.item(0);item.setText('IEC104-说明与协议转换工具集')
+                    font_height=panel.list.fontMetrics().height();margin=max(2,round(font_height*.2))
+                    rect=panel.list.visualItemRect(item)
+                    assert rect.height()>=panel.list.iconSize().height()+margin*3+font_height*3,(view,pixels,rect.height(),font_height)
+                    option=QStyleOptionViewItem();option.widget=panel.list
+                    assert panel.list.itemDelegate().sizeHint(option,panel.list.indexFromItem(item))==panel.list.gridSize()
+                    panel.grab().save(str(Path(output)/('filename-lines-'+view+'-'+str(pixels)+'.png')))
+        panel.apply_options();panel.render()
+        from native_file_menu import NativeFileMenu
+        native_menu=NativeFileMenu(int(panel.winId()),[str(conflict)])
+        try:
+            verbs={native_menu.command_verb(i) for i in range(min(native_menu.command_count,512))}
+            assert 'rename' in verbs,verbs
+        finally:native_menu.close()
+        checks.append('filename grid: small/large views at 12px and 20px reserve three full text lines while keeping icon size/column width; screenshots rendered; real Shell IContextMenu includes single-item rename')
         from card_file_ui import card_display_name,card_overlay_index
         assert card_display_name({'name':'报告.docx','path':str(fixture/'报告.docx')},True)=='报告'
         assert card_display_name({'name':'应用.lnk','path':str(fixture/'应用.lnk')},True)=='应用'

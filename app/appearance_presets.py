@@ -9,7 +9,7 @@ PANEL_PRESETS = [
     ('全透明', dict(opacity=0, blur=2, highlight=0, material='clear', theme='auto', color='')),
 ]
 DOCK_PRESETS = [
-    ('轻透液态', dict(theme='light', transparency=68, blur_px=6, dock_highlight=45, theme_color='#b8d9ef', glass=True, clear_background=False)),
+    ('轻透液态', dict(theme='light', transparency=100, blur_px=6, dock_highlight=36, theme_color='#b8d9ef', glass=True, clear_background=False)),
     ('柔雾玻璃', dict(theme='light', transparency=38, blur_px=16, dock_highlight=35, theme_color='#ced9e5', glass=True, clear_background=False)),
     ('高光玻璃', dict(theme='light', transparency=55, blur_px=8, dock_highlight=75, theme_color='#b7ddeb', glass=True, clear_background=False)),
     ('沉静深色', dict(theme='dark', transparency=32, blur_px=12, dock_highlight=25, theme_color='#71869b', glass=True, clear_background=False)),

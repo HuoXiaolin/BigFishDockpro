@@ -33,8 +33,18 @@ class Badge(QToolButton):
         self.setStyleSheet('QToolButton {background:transparent;border:0;padding:0;}');self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.setContextMenuPolicy(Qt.CustomContextMenu);self.customContextMenuRequested.connect(self.menu)
     def paintEvent(self,event):
-        painter=QPainter(self);size=min(round(22*self.owner.ui_factor),self.height()-12,self.width()-12)
-        self.icon().paint(painter,QRect((self.width()-size)//2,(self.height()-size)//2,size,size))
+        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        size=min(round(22*self.owner.ui_factor),self.height()-12,self.width()-12)
+        from glass_panel import category_icon,category_color
+        if hasattr(self.owner,'model'):
+            category=self.owner.identity;ink=category_color(category,self.owner.colors()['light'])
+        else:
+            from sticky_notes import note_icon_color
+            category='note';ink=note_icon_color(self.owner.row()['color'])
+        # Render the vector at the final badge size and actual monitor DPR,
+        # rather than enlarging the smaller title-bar pixmap.
+        pixmap=category_icon(category,ink,size,self.devicePixelRatioF())
+        painter.drawPixmap(QRect((self.width()-size)//2,(self.height()-size)//2,size,size),pixmap)
     def menu(self,point):
         menu=self.owner.build_panel_menu() if hasattr(self.owner,'model') else self.owner.build_menu()
         menu.exec_(self.mapToGlobal(point));menu.deleteLater()

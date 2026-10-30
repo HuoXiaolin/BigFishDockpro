@@ -1,7 +1,11 @@
 """Persisted options and validation shared by startup, settings and panels."""
 import re
+from update_sources import DEFAULT_SOURCE
+from quick_actions import DEFAULT_ORDER,normalize_order
 DEFAULTS = {
     'card_design':'aurora',
+    'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
+    'dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'auto', 'settings_manual_size':[], 'settings_custom_density':100,
     'calendar_enabled':False,'calendar_locked':False,'calendar_layout':{},'calendar_appearance':{},
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
@@ -12,6 +16,7 @@ DEFAULTS = {
     'merged_collapsed': False, 'merged_compact': True, 'disabled_categories': [], 'lite_restore': {},
     'screen_corners': False, 'corner_radius': 28,
     'lite_enabled': True,
+    'desktop_middle_toggle': True, 'desktop_icons_override': False,
     'desktop_icon_mode': 'hide_all', 'panel_enabled': False, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
@@ -23,7 +28,7 @@ DEFAULTS = {
     'groups': ['未分类', '办公', '开发', '网络', '影音', '游戏', '文件夹'],
     'startup_priority': 'normal', 'startup_delay': 0,
     'game_mode': False, 'fullscreen_detection': False,
-    'check_updates_on_start': False, 'update_use_proxy': True, 'update_source': '',
+    'check_updates_on_start': False, 'update_use_proxy': True, 'update_source': DEFAULT_SOURCE,
 }
 
 
@@ -35,6 +40,9 @@ def normalize(cfg):
         if result.get(theme) == 'follow': result[theme] = 'auto'
     for key, value in DEFAULTS.items():
         result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
+    result['dock_quick_order']=normalize_order(result.get('dock_quick_order'))
+    from quick_cycles import normalize_custom
+    result['dock_quick_custom']=normalize_custom(result.get('dock_quick_custom'))
     # Retired live-glass state must not survive old profiles or configuration imports.
     result.pop('realtime_glass',None)
     # Retired selective hiding is migrated to the safe co-display mode.
@@ -74,7 +82,7 @@ def normalize(cfg):
     geometry = result.get('panel_geometry')
     if not isinstance(geometry, list) or len(geometry) != 4 or not all(isinstance(n, int) for n in geometry):
         result['panel_geometry'] = []
-    result['update_source'] = str(result.get('update_source') or '').strip()
+    result['update_source'] = str(result.get('update_source') or '').strip() or DEFAULT_SOURCE
     for key in ('theme_color', 'panel_color'):
         color = str(result.get(key) or '').strip()
         result[key] = color.lower() if re.fullmatch(r'#[0-9a-fA-F]{6}', color) else ''

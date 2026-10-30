@@ -20,6 +20,10 @@ class RuntimeController:
         self.settings_open = False
         self.was_dock_visible = self.dock.cfg['dock_visible']
         self.corners = CornerManager()
+        from desktop_shortcut import DesktopMiddleShortcut
+        import os
+        self.desktop_shortcut=DesktopMiddleShortcut(dock,disabled=dock.preview or bool(os.environ.get('FISHDOCK_TEST_DESKTOP')))
+        self.desktop_shortcut.triggered.connect(lambda:self.panels.toggle_desktop_icons())
         self.updater = UpdateService(self)
         self.lite_timer = QTimer(dock)
         self.lite_timer.setSingleShot(True)
@@ -105,6 +109,8 @@ class RuntimeController:
             from app_catalog import clear_discovery_cache
             from PyQt5.QtGui import QPixmapCache
             clear_discovery_cache()
+            from wallpaper_source import image_file
+            image_file.cache_clear()
             QPixmapCache.clear()
             self.dock.running.clear()
             set_priority('low')
@@ -215,9 +221,29 @@ class RuntimeController:
             self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync()
         self.refresh_corners()
 
-    def apply_settings(self):
+    def apply_settings(self,changed=None):
+        if changed is not None and not set(changed)&{'game_mode','lite_enabled','runtime_lite'}:
+            changed=set(changed)
+            if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
+            if 'hide_tray' in changed:self.tray.setVisible(not self.dock.cfg['hide_tray'])
+            panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
+            if panel_keys or changed&{'card_scale','card_sizing','display_layout'}:self.panels.apply_settings()
+            if changed&{'note_style','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing'}:self.notes.sync()
+            if any(key.startswith('clock_') for key in changed) or 'card_scale' in changed:self.clock.sync()
+            if any(key.startswith('calendar_') for key in changed) or 'card_scale' in changed:self.calendar.sync()
+            if 'card_scale' in changed:
+                self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=self.dock.cfg['card_scale']
+            if changed&{'screen_corners','corner_radius'}:self.refresh_corners()
+            if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
+            if 'startup_priority' in changed:set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
+            if changed&{'update_source','update_use_proxy'}:
+                from update_sources import DEFAULT_SOURCE,resolve_source
+                self.updater.release_url=DEFAULT_SOURCE if resolve_source(self.dock.cfg['update_source'])[1] else ''
+                self.updater.set_message('更新设置已保存，尚未检查')
+            return
         if self.lite and not self.dock.cfg['lite_enabled']:
             self.set_lite(False)
+        self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
         self.tray.setVisible(not self.dock.cfg['hide_tray'])
         self.panels.apply_settings()
         self.notes.sync()
@@ -255,6 +281,10 @@ class RuntimeController:
     def close(self):
         if self.closed: return
         self.closed = True
+        from wallpaper_source import image_file
+        image_file.cache_clear()
+        self.dock.extras.close()
+        self.desktop_shortcut.close()
         self.usage.close()
         for signal in self._session_signals:
             try:signal.disconnect(self.checkpoint_session)

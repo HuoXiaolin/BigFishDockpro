@@ -111,9 +111,8 @@ class DesktopClock(QWidget):
             from glass_capture import capture_behind, surface_windows
             image=capture_behind(self,surface_windows(self.dock))
             if image is not None:
-                ratio=image.devicePixelRatio(); divisor=material_blur(cfg['blur'],cfg['material'])
-                self.backdrop=image.scaled(max(1,image.width()//divisor),max(1,image.height()//divisor),Qt.IgnoreAspectRatio,Qt.SmoothTransformation).scaled(image.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
-                self.backdrop.setDevicePixelRatio(ratio)
+                from glass_capture import smooth_backdrop
+                self.backdrop=smooth_backdrop(image,material_blur(cfg['blur'],cfg['material']))
         self.update()
 
     def layer(self):
@@ -192,7 +191,7 @@ class DesktopClock(QWidget):
 
     def paintEvent(self,event):
         import math
-        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
+        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.SmoothPixmapTransform);painter.setRenderHint(QPainter.TextAntialiasing)
         face=getattr(self,'flipped',False)
         if getattr(self,'flip_progress',None) is not None:
             face=self._flip_to if self.flip_progress>=.5 else self._flip_from

@@ -66,10 +66,11 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.header = SettingsHeader(self)
         self.create_size_selector()
         body.addWidget(self.header)
-        body.addWidget(label('管理 Dock、桌面收纳与运行偏好，保存后生效。', 'muted'))
         self.tabs = SettingsPages()
         body.addWidget(self.tabs)
+        from settings_design import section_marker
         appearance = self.section('外观设置')
+        section_marker(appearance,'材质与颜色')
         self.dock_preset = ModernComboBox()
         self.dock_preset.addItem('自定义 / 保留当前设置')
         self.dock_preset.addItems([name for name, _ in DOCK_PRESETS])
@@ -77,6 +78,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.combo(appearance, 'dock_material', '材质', MATERIALS)
         self.combo(appearance, 'theme', '颜色模式', COLOR_MODES)
         self.color(appearance, 'theme_color', '主题色')
+        section_marker(appearance,'质感与尺寸')
         self.number(appearance, 'dock_highlight', '高光（%）', 0, 100)
         self.number(appearance, 'transparency', '不透明度（%）', 0, 100)
         self.number(appearance, 'blur_px', '模糊强度', 3, 30)
@@ -85,8 +87,14 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.combo(appearance, 'blur_mode', '壁纸取样刷新', api.BLUR_MODES)
         self.number(appearance, 'icon_size', '图标大小（像素）', 20, 256)
         self.check(appearance, 'magnify', '鼠标悬停时放大图标')
+        section_marker(appearance,'Dock 扩展')
+        extras=QHBoxLayout();extras.setSpacing(8)
+        for key,title in [('dock_reflections','图标倒影'),('dock_clock','时间'),('dock_quick_settings','九宫格'),('dock_add_button','＋ 添加')]:
+            control=ModernCheckBox(title);self.fields[key]=control;extras.addWidget(control)
+        extras.addStretch();appearance.addRow(extras)
         self.combo(appearance, 'bump_level', '拉伸鼓包', [(title, key) for key, title, _ in api.BUMP_LEVELS])
         layout = appearance
+        section_marker(layout,'停靠与交互')
         self.combo(layout, 'position', '窗口位置', api.POSITIONS)
         self.number(layout, 'custom_bottom', '自定义距底部（像素）', 0, 2000)
         self.number(layout, 'bottom_margin', '边缘距离（像素）', 0, 200)
@@ -94,11 +102,13 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.check(layout, 'show_name', '悬停时显示应用名称')
         self.check(layout, 'sep_split', '分隔符切开玻璃背景')
         self.combo(layout, 'lang', '原 Dock 菜单语言', [(name, key) for name, key in api.LANGS])
+        section_marker(layout,'屏幕圆角')
         self.check(layout, 'screen_corners', '屏幕圆角美化（仅游戏模式隐藏，鼠标穿透）')
         self.number(layout, 'corner_radius', '屏幕圆角半径（像素）', 0, 120)
 
         panel = self.section('桌面收纳')
         panel.addRow(label('所有桌面卡片共用这些外观与收起设置，卡片设置入口同步读写。', 'muted'))
+        section_marker(panel,'卡片外观')
         from card_design import DESIGNS
         self.combo(panel,'card_design','卡片风格',DESIGNS)
         panel.addRow(label('四种浅色风格沿用当前主题色；时钟和日历可在各自设置中另选。','muted'))
@@ -110,15 +120,19 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.number(panel, 'panel_highlight', '高光（%）', 0, 100)
         self.number(panel, 'panel_opacity', '不透明度（%）', 0, 100)
         self.number(panel, 'panel_blur', '模糊强度', 2, 30)
+        section_marker(panel,'收起与桌面交互')
         self.check(panel, 'panel_locked', '锁定卡片位置与大小')
         self.check(panel, 'panel_auto_hide', '鼠标离开后自动收起')
         self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('方条', 'bar')])
         self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
         self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')])
+        self.check(panel, 'desktop_middle_toggle', '桌面按下鼠标中键时显示 / 隐藏桌面图标')
+        self.fields['desktop_middle_toggle'].setToolTip('仅点击 Windows 桌面时触发；滚动滚轮、点击任务栏、卡片或其他软件均不触发。')
         self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标；隐藏全部只影响桌面图标视图，不修改文件属性。')
         self.fields['panel_material'].setToolTip('材质控制质感，颜色模式控制明暗，主题色控制配色；全部桌面卡片同步。')
         self.fields['panel_capsule_ratio'].setToolTip('相对于展开宽度，最窄180像素；全部桌面卡片同步，方条保持展开宽度。')
         panel.addRow(label('外观与收起选项全部卡片共用；位置、大小和内容分别保存。', 'muted'))
+        section_marker(panel,'分组与尺寸')
         self.action_row(panel,'面板管理',button('新建面板',lambda:self.tray.runtime.panels.new_panel()),button('分组与合并',lambda:self.tray.runtime.panels.manage_groups()))
         panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，建立多个合并组，每组在顶部切换页面，其余卡片独立显示。','muted'))
 
@@ -147,9 +161,11 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。桌面图标可选择同时显示或全部隐藏；关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
 
         running = self.section('启动与运行')
+        section_marker(running,'后台运行')
         self.check(running, 'lite_enabled', '启用自动精简：关闭设置 1 分钟后进入')
         running.addRow(label('精简时保留基础 Dock、拖入、托盘与静态圆角；桌面面板收为方条或胶囊，目录变动仍自动分类。暂停屏幕抓取、运行扫描、位置与全屏轮询。打开设置恢复完整模式。', 'muted'))
         self.check(running, 'hide_tray', '隐藏托盘图标（可从 Dock 右键打开设置）')
+        section_marker(running,'开机启动')
         self.check(running, 'autostart', '开机自动启动（恢复上次显示与运行状态）')
         self.startup_status = label('', 'muted')
         running.addRow(self.startup_status)
@@ -172,6 +188,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.combo(running, 'startup_priority', '进程优先级', [('低（节省后台竞争）', 'low'), ('普通', 'normal'), ('较高（非实时）', 'high')])
         self.number(running, 'startup_delay', '登录后延迟（秒）', 0, 300)
         running.addRow(label('延迟仅作用于开机自启动，手动启动不等待。进程优先级不保证 Windows 登录启动顺序。', 'muted'))
+        section_marker(running,'游戏与全屏')
         self.check(running, 'game_mode', '游戏模式：隐藏 Dock、面板和圆角')
         self.check(running, 'fullscreen_detection', '前台全屏应用自动隐藏 Dock 和面板')
         running.addRow(label('全屏检测每 1.5 秒一次，普通最大化窗口不算全屏；不区分游戏与视频，因此不隐藏圆角。游戏时可从托盘开启游戏模式。精简模式暂停检测。', 'muted'))
@@ -179,11 +196,11 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         updates = self.section('更新设置')
         self.check(updates, 'check_updates_on_start', '启动时检查更新')
         self.check(updates, 'update_use_proxy', '使用系统 / 环境代理')
-        self.text(updates, 'update_source', '本项目版本清单（HTTPS）')
-        updates.addRow(label('当前没有预设更新源，请填写本项目的版本清单地址。检查到新版本后可打开下载页面，由你决定是否更新。', 'muted'))
-        self.update_status = label('尚未配置更新源', 'muted')
+        self.text(updates, 'update_source', '安装包发布 / 更新地址')
+        updates.addRow(label('默认读取本项目 GitHub 正式 Release，优先打开 x64 安装包；也可填写 HTTPS 版本清单。安装更新由你确认。', 'muted'))
+        self.update_status = label('已配置本项目安装包发布源，尚未检查', 'muted')
         updates.addRow(self.update_status)
-        self.update_link=button('打开下载页面',self.open_update_link);self.update_link.setEnabled(False)
+        self.update_link=button('打开安装包 / 发布页',self.open_update_link);self.update_link.setEnabled(bool(getattr(getattr(self.tray,'runtime',None),'updater',None) and self.tray.runtime.updater.release_url))
         self.action_row(updates,'更新操作',button('检查更新',self.check_update),self.update_link)
         from usage_stats import UsagePage
         self.usage_page=UsagePage(self,self.section('使用统计'))
@@ -243,6 +260,9 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             runtime.updater.changed.connect(self.update_changed)
             runtime.panels.shared_settings_changed.connect(self.refresh_shared_panel_fields)
 
+        from settings_design import DockPreview
+        self.dock_preview=DockPreview(self)
+        appearance.insertRow(1,self.dock_preview)
         compact_dialog(self)
         self.initialize_size_behavior()
 
@@ -264,7 +284,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        form.addRow(label(name, 'page-title'))
+        form.addRow(label('Dock 外观' if name=='外观设置' else name, 'page-title'))
         scroll.setWidget(page)
         self.tabs.addTab(scroll, name)
         return form
@@ -474,7 +494,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
                 return
             cfg[key] = cfg[key].lower()
         if cfg['update_source'] and not cfg['update_source'].startswith('https://'):
-            self.status.setText('更新源必须是 HTTPS 版本清单地址。')
+            self.status.setText('更新源必须是 HTTPS 发布地址或版本清单地址。')
             return
         backup=None
         if imported:
@@ -491,6 +511,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             except (OSError,ValueError) as error:
                 self.api.log('配置备份失败: '+str(error))
                 self.status.setText('无法备份当前配置，未导入：'+str(error)[:80]);return
+        if not imported and cfg==previous:
+            self.status.setText('设置未变化，无需重复刷新。');return
         startup_changed = cfg['autostart'] != self.tray.cfg['autostart']
         if startup_changed and not self.api.set_autostart(cfg['autostart']):
             self.status.setText('启动项保存失败，设置尚未应用。请查看日志。')
@@ -519,13 +541,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             self.import_candidate=None;self.import_path=None
             self.transfer_status.setText('导入已保存。导入前备份：'+backup.name+'；可从数据目录重新导入恢复。')
         else:
-            self.api.set_lang(cfg['lang'])
-            self.tray.dock._sys_light = self.api.system_is_light()
-            apply_theme(QApplication.instance(), self.tray.dock.is_light())
-            self.tray.dock.reload()
-            self.tray.dock.apply_layer()
-            if hasattr(self.tray, 'runtime'):
-                self.tray.runtime.apply_settings()
+            from settings_effects import apply_changes
+            apply_changes(self.tray,self.api,previous)
         for key in self._runtime_switch_keys:
             self.fields[key].setChecked(self.tray.cfg[key]);self._runtime_switch_baseline[key]=self.tray.cfg[key]
         self.check_startup()
