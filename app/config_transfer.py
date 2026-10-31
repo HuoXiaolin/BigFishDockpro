@@ -61,6 +61,8 @@ def normalize(data,api):
             if key in item and not isinstance(item[key],str):raise ValueError('应用文字或图标字段格式不正确。')
         if any('\x00' in item.get(key,'') or len(item.get(key,''))>32768 for key in ('icon','name','group')):raise ValueError('应用字段包含无效字符或内容过长。')
         if item.get('icon'):row['icon']=item['icon']
+        from shortcut_mapping import metadata
+        row.update(metadata(item,strict=True))
         items.append(row)
     cfg['items']=items
     for entry in cfg['desktop_entries']:

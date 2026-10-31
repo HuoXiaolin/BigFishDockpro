@@ -1,5 +1,5 @@
 """Shared native Qt styling. Dock painting and glass rendering stay unchanged."""
-from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache
+from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase
 from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication, QPoint
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
     QProxyStyle, QStyle, QStyleFactory, QSpinBox, QComboBox, QToolButton,
@@ -533,8 +533,11 @@ def apply_theme(app, light):
     p.setColor(QPalette.Link, QColor('#225eaa' if light else '#8fc2ff'))
     p.setColor(QPalette.LinkVisited, QColor('#225eaa' if light else '#8fc2ff'))
     app.setPalette(p)
+    families=set(QFontDatabase().families())
+    colors['number_font']=next((name for name in ('Segoe UI Variable Text','Segoe UI Variable','Segoe UI') if name in families),'Microsoft YaHei UI')
     stylesheet = '''
         * {font-family:"Microsoft YaHei UI"; font-size:13px;}
+        QDialog QSpinBox {font-family:"%(number_font)s";font-weight:400;}
         QDialog[compactDialog="true"] QLabel, QDialog[compactDialog="true"] QLineEdit,
         QDialog[compactDialog="true"] QComboBox, QDialog[compactDialog="true"] QSpinBox,
         QDialog[compactDialog="true"] QCheckBox, QDialog[compactDialog="true"] QPushButton,

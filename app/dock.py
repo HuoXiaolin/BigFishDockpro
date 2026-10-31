@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
     "blur_px": 6,         # 毛玻璃模糊程度（缩小的倍数，越大越糊）
     "bump_level": "mid",  # 拉伸鼓包程度：low/mid/high
     "lang": "zh",         # 界面语言：zh=中文 / en=English
-    "reorder": False,     # 允许拖动图标排序（默认关闭，防止误拖）
+    "reorder": True,      # 新配置默认允许拖动排序；已有明确设置保留
     "sep_split": True,    # 分隔符隔断模式：夹在两图标之间的分隔符会切开玻璃背景
     "position": "bottom", # 位置：bottom=底部 / top=顶部 / custom=自定义
     "custom_bottom": 200, # 自定义位置时，距屏幕底部多少像素
@@ -304,12 +304,18 @@ def load_config():
             continue
         if it.get("sep"):
             clean.append({"sep": True})
-        elif it.get("path"):
+        elif isinstance(it.get("path"),str) and it['path']:
+            from shortcut_mapping import metadata
             clean.append({"path": it["path"],
                           "name": it.get("name") or os.path.splitext(os.path.basename(it["path"]))[0],
                           "group": str(it.get('group') or '未分类')[:40],
-                          **({'icon': it['icon']} if isinstance(it.get('icon'), str) and it['icon'].strip() else {})})
+                          **({'icon': it['icon']} if isinstance(it.get('icon'), str) and it['icon'].strip() else {}),**metadata(it)})
     cfg["items"] = clean
+    from shortcut_mapping import map_items
+    mapped=map_items(clean)
+    if mapped!=clean:
+        candidate=dict(cfg,items=mapped)
+        if save_config(candidate):cfg=candidate
     return cfg
 
 
@@ -454,7 +460,7 @@ def extract_shell_hicon(path, size=256):
     return None
 
 
-def extract_hicon(path, size=256):
+def extract_hicon(path, size=256, index=0):
     """用 PrivateExtractIconsW 从 exe/dll/ico 里取出指定尺寸的 HICON。"""
     try:
         fn = user32.PrivateExtractIconsW
@@ -466,7 +472,7 @@ def extract_hicon(path, size=256):
                        ctypes.POINTER(wintypes.HICON), ctypes.POINTER(wintypes.UINT),
                        wintypes.UINT, wintypes.UINT]
         hicon = wintypes.HICON(0)
-        n = fn(path, 0, size, size, ctypes.byref(hicon), None, 1, 0)
+        n = fn(path, index, size, size, ctypes.byref(hicon), None, 1, 0)
         if n and hicon.value:
             return hicon.value
     except Exception:
@@ -697,7 +703,7 @@ class IconProvider(object):
         self.max_cache_bytes = 6*1024*1024
         self.max_cache_entries = 128
 
-    def get(self, path, px, custom=False, shell_state=False, hide_shortcut=False):
+    def get(self, path, px, custom=False, shell_state=False, hide_shortcut=False, icon_index=0):
         state=None
         if shell_state:
             import time
@@ -708,7 +714,7 @@ class IconProvider(object):
         if not shell_state:
             try:state=os.stat(path).st_mtime_ns
             except OSError:state=None
-        key = (path.lower(), int(px), custom, state, bool(hide_shortcut))
+        key = (path.lower(), int(px), custom, state, bool(hide_shortcut),int(icon_index))
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]
@@ -731,7 +737,7 @@ class IconProvider(object):
             if t:
                 real = t
         if (pm is None or pm.isNull()) and real.lower().endswith((".exe", ".dll", ".ico")) and os.path.exists(real):
-            hicon = extract_hicon(real, max(64, int(px)))
+            hicon = extract_hicon(real, max(64, int(px)),icon_index) if icon_index else extract_hicon(real, max(64, int(px)))
             if hicon:
                 img = hicon_to_qimage(hicon)
                 if img is not None and not img.isNull():
@@ -788,7 +794,7 @@ class IconProvider(object):
 from ui_style import AlignedMenu as QMenu
 
 WM_OPEN_SETTINGS = 0x8000 + 804
-EMPTY_DOCK_HINT = "拖入应用或快捷方式即可添加\n右键：应用批量管理 · 设置\n桌面卡片可在设置中开启"
+EMPTY_DOCK_HINT = "拖入应用、文件或文件夹创建快捷入口\n仅保存路径映射，不复制或保存原文件\n右键：应用批量管理 · 设置"
 
 
 class Dock(QWidget):
@@ -1147,13 +1153,17 @@ class Dock(QWidget):
                                    "pixmap": None, "exe": ""})
                 continue
             path = it["path"]
+            from shortcut_mapping import metadata
+            icon=it.get('icon')
+            if icon and not (os.path.isfile(icon) or icon.lower().startswith('shell:')):icon=None
             try:path_stamp=os.stat(path).st_mtime_ns
             except OSError:path_stamp=None
             loaded={
                 "path": path,"_path_stamp":path_stamp,
                 "name": it.get("name") or os.path.splitext(os.path.basename(path))[0],
-                "pixmap": self.icons.get(it.get("icon") or path, max(96, int(self.icon_size * 2.0)), bool(it.get("icon"))),
+                "pixmap": self.icons.get(icon or path, max(96, int(self.icon_size * 2.0)), bool(icon),**({'icon_index':it['icon_index']} if icon and it.get('icon_index') else {})),
                 "exe": previous[path]['exe'] if path in previous and previous[path].get('_path_stamp')==path_stamp else self._exe_name(path),
+                **metadata(it),
             }
             if path in previous:
                 for key in ('_reflected','_reflection_ratio','_reflection_key'):
@@ -1796,20 +1806,32 @@ class Dock(QWidget):
             if idx >= 0 and idx == self.pressed:
                 self.pops[idx] = 1.0
                 self._kick()
-                self.launch(self.items[idx]["path"])
+                self.launch(self.items[idx])
             self.pressed = -1
         super(Dock, self).mouseReleaseEvent(e)
 
     def launch(self, path, source='dock_launch'):
+        if isinstance(path,dict):entry=path;path=entry['path']
+        else:
+            matches=[item for item in self.cfg['items'] if item.get('path')==path] if source=='dock_launch' else []
+            entry=matches[0] if len(matches)==1 else {'path':path}
         log("启动: " + path)
+        if source=='dock_launch':
+            try:
+                from window_activation import activate_existing
+                if activate_existing(entry):
+                    from usage_stats import record
+                    record(self,source);return
+            except (OSError,ValueError,RuntimeError):log('现有窗口检测失败，沿用正常启动。')
+        options={key:entry[key] for key in ('arguments','working_directory','verb','show_command') if entry.get(key)}
         try:
             from external_launch import launch
-            launch(path)
+            launch(path,**options)
         except Exception:
             log("启动失败，尝试 os.startfile: " + traceback.format_exc())
             try:
                 from external_launch import startfile
-                startfile(path)
+                startfile(path,**options)
             except Exception:
                 log("启动彻底失败: " + traceback.format_exc())
                 return
@@ -1862,7 +1884,7 @@ class Dock(QWidget):
         if idx >= 0 and not self.items[idx].get("sep"):
             it = self.items[idx]
             a = QAction("打开 " + it["name"], m)
-            a.triggered.connect(lambda _=False, p=it["path"]: self.launch(p))
+            a.triggered.connect(lambda _=False, entry=dict(it): self.launch(entry))
             m.addAction(a)
             m.addAction('图标设置…').triggered.connect(lambda _=False, index=self.page_offset+idx: self.edit_icon(index))
             m.addAction('移除').triggered.connect(lambda _=False, index=self.page_offset+idx, entry=dict(self.cfg['items'][self.page_offset+idx]): self.remove_icon(index, entry))
@@ -2036,7 +2058,7 @@ class Dock(QWidget):
 
         self.extras.paint(p,c)
         if not self.items:
-            hint = EMPTY_DOCK_HINT if LANG["cur"]!="en" else "Drop apps or shortcuts here\nRight-click: Manage Apps · Settings\nEnable desktop cards in Settings"
+            hint = EMPTY_DOCK_HINT if LANG["cur"]!="en" else "Drop apps, files or folders to create shortcuts\nReferences only; original files are not copied\nRight-click: Manage Apps · Settings"
             f = QFont("Microsoft YaHei UI", self.font_pt)
             p.setFont(f)
             p.setPen(c["fg"])

@@ -48,10 +48,13 @@ def clean_environment():
             kernel.SetDllDirectoryW(previous.value or None)
 
 
-def startfile(path):
+def startfile(path,arguments='',working_directory='',verb='',show_command=1):
     target=Path(path)
     directory=str(target.parent) if target.is_absolute() and target.exists() else str(Path(sys.executable).parent)
-    with clean_environment():os.startfile(str(path),cwd=directory)
+    directory=working_directory or directory
+    with clean_environment():
+        if arguments or verb or show_command!=1:os.startfile(str(path),operation=verb or 'open',arguments=arguments,cwd=directory,show_cmd=show_command)
+        else:os.startfile(str(path),cwd=directory)
 
 
 def launch_direct(path):
@@ -65,13 +68,16 @@ def launch_direct(path):
     startfile(path)
 
 
-def launch(path):
+def launch(path,arguments='',working_directory='',verb='',show_command=1):
     target=Path(path)
     directory=str(target.resolve().parent) if target.is_absolute() and target.exists() else str(Path(sys.executable).parent)
+    directory=working_directory or directory
     try:
         from explorer_launch import launch as explorer_launch
         # Explorer owns the child and its environment; no app-group/DLL inheritance.
+        if arguments or verb or show_command!=1:return explorer_launch(str(path),directory,arguments,verb or 'open',show_command)
         return explorer_launch(str(path),directory)
     except OSError:
         # Shell unavailable (e.g. alternate desktop): retain the cleaned direct route.
+        if arguments or working_directory or verb or show_command!=1:return startfile(path,arguments,working_directory,verb,show_command)
         return launch_direct(path)

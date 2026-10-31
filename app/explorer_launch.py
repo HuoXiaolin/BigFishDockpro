@@ -15,7 +15,7 @@ class Variant(ctypes.Structure):
     _fields_=[('vt',ctypes.c_ushort),('reserved',ctypes.c_ushort*3),('value',Payload)]
 
 
-def launch(path,directory):
+def launch(path,directory,arguments='',verb='open',show_command=1):
     ole=ctypes.WinDLL('ole32');auto=ctypes.WinDLL('oleaut32')
     ole.CoInitializeEx.argtypes=[ctypes.c_void_p,wintypes.DWORD];ole.CoInitializeEx.restype=ctypes.c_long
     ole.CoCreateInstance.argtypes=[ctypes.POINTER(GUID),ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(GUID),ctypes.POINTER(ctypes.c_void_p)]
@@ -47,7 +47,7 @@ def launch(path,directory):
         folder=query(view_dispatch,'e7a1af80-4d96-11cf-960c-0080c7f4ee85')
         application=output(method(folder,7,ctypes.c_long,ctypes.POINTER(ctypes.c_void_p)),folder)
         dispatch=query(application,'a4c6892c-3ba9-11d2-9dea-00c04fb16162')
-        target=string(path);parameters=string('');cwd=string(directory);verb=string('open');show=Variant();show.vt=3;show.number=1
+        target=string(path);parameters=string(arguments);cwd=string(directory);verb=string(verb or 'open');show=Variant();show.vt=3;show.number=show_command
         # IShellDispatch2::ShellExecute; VARIANT arguments are passed by value.
         check(method(dispatch,31,ctypes.c_long,ctypes.c_void_p,Variant,Variant,Variant,Variant)(dispatch,target.pointer,parameters,cwd,verb,show))
     finally:

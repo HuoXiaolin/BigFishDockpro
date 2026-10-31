@@ -12,6 +12,14 @@ SHELL_TOOLS = [
     ('recycle', '回收站', 'shell:::{645ff040-5081-101b-9f08-00aa002f954e}'),
     ('computer', '此电脑', 'shell:::{20d04fe0-3aea-1069-a2d8-08002b30309d}'),
     ('control', '控制面板', 'shell:::{26ee0668-a00a-44d7-9371-beb064c98683}'),
+    ('network','网络','shell:::{f02c1a0d-be21-4350-88b0-7367fc96ef3c}'),
+    ('profile','用户文件夹','shell:::{59031a47-3f72-44a7-89c5-5595fe6b30ee}'),
+    ('desktop','桌面','shell:Desktop'),
+    ('downloads','下载','shell:Downloads'),
+    ('documents','文档','shell:Personal'),
+    ('pictures','图片','shell:My Pictures'),
+    ('music','音乐','shell:My Music'),
+    ('videos','视频','shell:My Video'),
 ]
 TOOL_FILES = [('explorer','文件管理','explorer.exe'), ('hyperv','Hyper-V 管理器',r'System32\virtmgmt.msc'),
               ('taskmgr','任务管理器',r'System32\Taskmgr.exe'), ('calculator','计算器',r'System32\calc.exe'),
@@ -25,7 +33,7 @@ STORE_TOOLS = {'microsoft.windowscalculator':'calculator', 'microsoft.windowsnot
 def windows_tool_id(path):
     lower = path.casefold()
     for identity, _, value in SHELL_TOOLS:
-        if lower == value: return identity
+        if lower == value.casefold(): return identity
     if lower.startswith('shell:appsfolder\\'):
         package = lower.split('\\',1)[1].split('_',1)[0]
         return STORE_TOOLS.get(package)
@@ -41,16 +49,19 @@ def windows_tool_id(path):
 
 
 def launch_identity(path):
+    extra=''
+    if isinstance(path,dict):
+        extra=str(path.get('arguments') or '').strip();path=path['path']
     try:
         info = os.stat(path)
         stamp = (info.st_mtime_ns, info.st_size)
     except OSError: stamp = None
-    return _launch_identity(path, stamp)
+    return _launch_identity(path, stamp,extra)
 
 
 @lru_cache(maxsize=1024)
-def _launch_identity(path, stamp):
-    target, arguments, seen = path, '', set()
+def _launch_identity(path, stamp,extra=''):
+    target, arguments, seen = path, extra, set()
     from shortcut_targets import lnk_details
     for _ in range(8):
         key = path_key(target)
@@ -63,6 +74,8 @@ def _launch_identity(path, stamp):
         arguments = (args+' '+arguments).strip()
     apps_folder = 'shell:::{4234d49b-0245-4df3-b780-3893943456e1}\\'
     if target.casefold().startswith(apps_folder): target = 'shell:AppsFolder\\'+target[len(apps_folder):]
+    from shortcut_mapping import is_reference
+    if is_reference(target) and not target.casefold().startswith('shell:'):return ('url',target,arguments)
     tool = windows_tool_id(target)
     if Path(target).name.casefold() == 'mmc.exe':
         management = arguments.strip('"')
@@ -87,7 +100,7 @@ def unique_apps(rows):
     """Merge duplicate launch targets for display, retaining their saved paths."""
     result, seen = [], {}
     for row in rows:
-        identity = launch_identity(row['path'])
+        identity = launch_identity(row)
         if identity in seen:
             seen[identity]['_paths'].append(row['path'])
         else:
@@ -113,23 +126,29 @@ def path_key(path):
 
 
 def merge_items(existing, candidates):
-    """Keep order and shortcut launch semantics; never resolve away arguments."""
+    """Keep order and resolved launch metadata; never copy a dragged file."""
     result = [dict(item) for item in existing]
-    seen = {launch_identity(i['path']) for i in result if i.get('path') and not i.get('sep')}
+    seen = {launch_identity(i) for i in result if i.get('path') and not i.get('sep')}
     added = duplicates = invalid = 0
     for item in candidates:
+        from shortcut_mapping import map_entry,metadata,is_reference
+        mapped=map_entry(item)
+        if mapped is None:
+            invalid+=1;continue
+        item=mapped
         path = str(item.get('path', '')).strip()
-        store = path.lower().startswith('shell:')
+        store = is_reference(path)
         if not path or (not store and not os.path.exists(path)):
             invalid += 1
             continue
-        if launch_identity(path) in seen:
+        if launch_identity(item) in seen:
             duplicates += 1
             continue
-        seen.add(launch_identity(path))
+        seen.add(launch_identity(item))
         result.append({'path': path if store else os.path.abspath(path),
                        'name': item.get('name') or os.path.splitext(os.path.basename(path))[0],
-                       'group': item.get('group') or ('Windows 工具' if item.get('column') == 'windows' else infer_group(path, item.get('name', '')))})
+                       'group': item.get('group') or ('Windows 工具' if item.get('column') == 'windows' else infer_group(path, item.get('name', ''))),
+                       **metadata(item),**({'icon':item['icon']} if item.get('icon') else {})})
         added += 1
     return result, added, duplicates, invalid
 

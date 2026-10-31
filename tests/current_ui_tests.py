@@ -383,6 +383,8 @@ def run(output):
         from quality_custom_tests import run as run_quality_custom
         run_quality_custom(api,runtime,root.name,output,checks)
         from hidden_resource_tests import run as run_hidden_resources
+        from launch_mapping_tests import run as run_launch_mapping
+        run_launch_mapping(api,runtime,root.name,output,checks)
         run_hidden_resources(api,runtime,root.name,output,checks)
         from lite_visual_tests import run as run_lite_visual
         run_lite_visual(api,runtime,output,checks)

@@ -235,7 +235,7 @@ class BatchDialog(QDialog):
         self.list.clear()
         query = self.query.text().casefold()
         draft = self.draft_items()
-        pinned = {launch_identity(i['path']) for i in draft if i.get('path')}
+        pinned = {launch_identity(i) for i in draft if i.get('path')}
         rows = unique_apps([i for i in draft if i.get('path')]) if self.mode == 1 else unique_apps(self.running_apps) if self.mode==3 else unique_apps(
             [i for i in self.apps if (i.get('column') == 'windows') == (self.mode == 2)])
         for app in rows:
@@ -399,6 +399,8 @@ class BatchImporter:
             self.dialog.reveal()
 
     def apply_items(self, items):
+        from shortcut_mapping import map_items
+        items=map_items(items)
         candidate = dict(self.dock.cfg, items=items)
         if self.save(candidate) is False:
             self.tray.showMessage('保存失败', '无法保存 Dock 配置，改动尚未应用。请检查数据目录权限。', self.tray.icon(), 4000)

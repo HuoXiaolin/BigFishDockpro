@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 
-def lnk_details(path):
+def lnk_metadata(path):
     if os.name != 'nt': return None
     ole = ctypes.WinDLL('ole32')
     pointer = ctypes.c_void_p
@@ -44,7 +44,23 @@ def lnk_details(path):
             finally:
                 if name: ole.CoTaskMemFree(name)
                 if pidl: ole.CoTaskMemFree(pidl)
-        return (target, args.value.strip()) if target else None
+        if not target:return None
+        cwd=ctypes.create_unicode_buffer(32768);icon=ctypes.create_unicode_buffer(32768)
+        index=ctypes.c_int();show=ctypes.c_int(1)
+        method(link,8,ctypes.c_wchar_p,ctypes.c_int)(link,cwd,len(cwd))
+        method(link,16,ctypes.c_wchar_p,ctypes.c_int,ctypes.POINTER(ctypes.c_int))(link,icon,len(icon),ctypes.byref(index))
+        method(link,14,ctypes.POINTER(ctypes.c_int))(link,ctypes.byref(show))
+        flags=ctypes.c_uint();data=pointer()
+        try:
+            if method(link,0,pointer,ctypes.POINTER(pointer))(link,guid('45e2b4ae-b1c3-11d0-b92f-00a0c90312e1'),ctypes.byref(data))>=0 and data:
+                method(data,6,ctypes.POINTER(ctypes.c_uint))(data,ctypes.byref(flags))
+        finally:
+            if data:method(data,2)(data)
+        from shell_appid import shortcut_id
+        app_id=shortcut_id(link)
+        return dict(path=target,arguments=args.value.strip(),working_directory=os.path.expandvars(cwd.value),app_user_model_id=app_id,
+                    icon=os.path.expandvars(icon.value),icon_index=index.value,
+                    show_command=show.value if show.value in (1,3,7) else 1,verb='runas' if flags.value&0x2000 else '')
     except (OSError, ValueError):
         return None
     finally:
@@ -52,6 +68,11 @@ def lnk_details(path):
             if obj: method(obj, 2)(obj)
         if initialized >= 0: ole.CoUninitialize()
     return None
+
+
+def lnk_details(path):
+    info=lnk_metadata(path)
+    return (info['path'],info['arguments']) if info else None
 
 
 def lnk_target(path):

@@ -10,6 +10,20 @@ from ui_style import SettingsHeader, label, button
 from app_catalog import path_key, SHELL_TOOLS
 
 
+class IconPreview(QLabel):
+    def __init__(self):
+        super().__init__();self.source=None;self.setAlignment(Qt.AlignCenter)
+    def set_source(self,pixmap):
+        self.source=pixmap;self.fit_icon()
+    def fit_icon(self):
+        if self.source is None or self.source.isNull():self.clear();return
+        ratio=self.devicePixelRatioF();size=self.contentsRect().size()
+        fitted=self.source.scaled(max(1,round(size.width()*ratio)),max(1,round(size.height()*ratio)),Qt.KeepAspectRatio,Qt.SmoothTransformation)
+        fitted.setDevicePixelRatio(ratio);self.setPixmap(fitted)
+    def resizeEvent(self,event):
+        super().resizeEvent(event);self.fit_icon()
+
+
 class IconSettings(QDialog):
     def __init__(self, dock, index):
         super().__init__(dock, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
@@ -29,8 +43,10 @@ class IconSettings(QDialog):
         self.name = QLineEdit(self.original.get('name', ''))
         self.path = QLineEdit(self.original['path'])
         self.icon = QLineEdit(self.original.get('icon', ''))
+        self.arguments=QLineEdit(self.original.get('arguments',''))
+        self.working_directory=QLineEdit(self.original.get('working_directory',''))
         self.icon.setPlaceholderText('留空使用应用原图标')
-        for field in (self.name, self.path, self.icon): field.setCursorPosition(0)
+        for field in (self.name, self.path, self.icon,self.arguments,self.working_directory): field.setCursorPosition(0)
         for title, field in [('名称', self.name), ('启动链接', self.path), ('图标文件', self.icon)]:
             field.setAccessibleName(title)
             row = QHBoxLayout()
@@ -41,8 +57,10 @@ class IconSettings(QDialog):
             if field is self.icon: row.addWidget(button('默认', self.icon.clear))
             form.addRow(title, row)
         body.addLayout(form)
+        form.addRow('启动参数',self.arguments)
+        form.addRow('工作目录',self.working_directory)
         preview = QHBoxLayout()
-        self.preview = QLabel()
+        self.preview = IconPreview()
         self.preview.setFixedSize(44, 44)
         preview.addWidget(self.preview)
         preview.addWidget(label('支持程序、快捷方式、文件夹、网页或 Windows 应用链接。', 'muted'), 1)
@@ -61,7 +79,7 @@ class IconSettings(QDialog):
 
     def refresh_preview(self):
         custom = self.icon.text().strip()
-        self.preview.setPixmap(self.dock.icons.get(custom or self.path.text().strip(), 88, bool(custom)).scaled(40,40,Qt.KeepAspectRatio,Qt.SmoothTransformation))
+        self.preview.set_source(self.dock.icons.get(custom or self.path.text().strip(), 88, bool(custom),**({'icon_index':self.original['icon_index']} if custom and custom==self.original.get('icon') and self.original.get('icon_index') else {})))
 
     def choose(self, field):
         filters = '图标或图片 (*.ico *.png *.jpg *.jpeg *.bmp *.webp *.exe *.dll *.lnk)' if field is self.icon else '所有文件 (*)'
@@ -80,7 +98,8 @@ class IconSettings(QDialog):
         except ValueError:
             self.status.setText('链接格式无效，请检查后重试。'); return
         remote = url.scheme.lower() in ('http', 'https') and bool(url.netloc)
-        store = (path.lower().startswith('shell:appsfolder\\') and bool(path[17:].strip())) or path.casefold() in {value for _,_,value in SHELL_TOOLS}
+        from shortcut_mapping import is_reference
+        store = is_reference(path)
         if not (remote or store or os.path.exists(path)):
             self.status.setText('启动目标不存在，请选择文件、文件夹或填写有效链接。'); return
         if icon and (not os.path.isfile(icon) or QPixmap(icon).isNull() and not icon.lower().endswith(('.ico','.exe','.dll','.lnk'))):
@@ -88,14 +107,30 @@ class IconSettings(QDialog):
         items = copy.deepcopy(self.dock.cfg['items'])
         if self.index >= len(items) or items[self.index] != self.original:
             self.status.setText('此入口已在其他页面变更，请关闭后重新打开。'); return
-        if any(i != self.index and item.get('path') and path_key(item['path']) == path_key(path) for i,item in enumerate(items)):
-            self.status.setText('该链接已存在于 Dock，请使用其他链接。'); return
         candidate = dict(self.original, name=name, path=path)
+        arguments=self.arguments.text().strip();directory=self.working_directory.text().strip().strip('"')
+        if '\x00' in arguments or len(arguments)>32768:
+            self.status.setText('启动参数无效。');return
+        if directory and not os.path.isdir(directory):
+            self.status.setText('工作目录不存在。');return
+        candidate.pop('arguments',None);candidate.pop('working_directory',None)
+        if arguments:candidate['arguments']=arguments
+        if directory:candidate['working_directory']=directory
+        if arguments!=self.original.get('arguments',''):candidate.pop('app_user_model_id',None)
+        from app_catalog import launch_identity
+        if any(i!=self.index and item.get('path') and launch_identity(item)==launch_identity(candidate) for i,item in enumerate(items)):
+            self.status.setText('该入口已存在于 Dock。');return
+        if path!=self.original['path']:
+            candidate.pop('source_path',None);candidate.pop('app_user_model_id',None)
         if icon: candidate['icon'] = os.path.abspath(icon)
         else: candidate.pop('icon', None)
+        if icon!=self.original.get('icon',''):candidate.pop('icon_index',None)
         items[self.index] = candidate
         if not self.dock.tray.importer.apply_items(items):
             self.status.setText('保存失败，调整已保留，可重试。'); return
-        self.original = copy.deepcopy(candidate)
+        self.original = copy.deepcopy(self.dock.cfg['items'][self.index])
+        self.path.setText(self.original['path'])
+        self.arguments.setText(self.original.get('arguments',''))
+        self.working_directory.setText(self.original.get('working_directory',''))
         self.status.setText('图标设置已保存并生效，可继续调整。')
         self.refresh_preview()
