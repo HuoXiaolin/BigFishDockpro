@@ -6,6 +6,8 @@
 
 [项目主页](https://github.com/HuoXiaolin/BigFishDockpro) · [版本记录](CHANGELOG.md) · [使用说明](使用说明.md)
 
+![大肥鱼Dock 桌面总览：时光进度、分类收纳、便签、日历与分组 Dock](docs/screenshots/readme-desktop.png)
+
 ## 功能特色
 
 ### Dock：常用应用，随手启动
@@ -56,33 +58,43 @@
 
 ## 效果预览
 
-截图使用演示内容或测试图标，玻璃效果会随桌面背景变化。
+以下为程序原生界面的演示组合，使用公开应用图标、虚构便签与示例文件。背景、内容和配色用于展示，不包含个人桌面资料。[演示素材来源](docs/demo-assets/README.md)
 
-### Dock
+### Dock：轻透玻璃与全透明
 
-| 浅色玻璃 | 全透明 |
-| :---: | :---: |
-| ![浅色玻璃 Dock](docs/screenshots/dock-demo-light.png) | ![全透明 Dock](docs/screenshots/dock-demo-clear.png) |
+分组分隔、图标倒影与时间显示，让常用应用和快捷操作各就其位。
 
-### 桌面收纳
+![轻透液态与全透明 Dock 对照](docs/screenshots/readme-dock.png)
 
-![桌面分类收纳与合并栏目](docs/screenshots/panel-gradient-layout.png)
+### 桌面收纳：分类展开，轻巧收起
 
-### 便签
+合并栏目与独立图片面板搭配使用；暂时不用时，收起为胶囊或圆球。
 
-| 液态玻璃 | 经典纸张 | 极简纯色 |
-| :---: | :---: | :---: |
-| ![液态玻璃便签](docs/screenshots/note-header-glass.png) | ![经典纸张便签](docs/screenshots/note-header-paper.png) | ![极简纯色便签](docs/screenshots/note-header-plain.png) |
+![分类收纳、图片预览与胶囊圆球收起](docs/screenshots/readme-panels.png)
 
-### 时钟
+### 便签：三种材质，随手记录
 
-![六种时钟样式](docs/screenshots/clock-redesign-overview.png)
+液态玻璃、经典纸张和极简纯色，配合清单与文字格式，记录不同类型的内容。
 
-### 设置界面
+![液态玻璃、经典纸张与极简纯色便签](docs/screenshots/readme-notes.png)
 
-![轻透分组设置](docs/screenshots/settings-light-groups.png)
+### 时钟与日历：时间与进度，一眼可见
 
-浅色分组布局，相关控件并排；支持界面尺寸适配与精确数值调整。[设置说明](docs/轻透分组设置.md)
+圆环进度、下班倒计时、数字时钟、表盘和独立月历，按自己的习惯组合。
+
+![时光进度、现代数字、现代表盘、纵向时间与独立日历](docs/screenshots/readme-clocks.png)
+
+### 应用管理：常用入口，集中整理
+
+搜索、多选与批量添加，分别管理已固定应用、Windows 工具和正在运行的软件。
+
+![使用公开常用应用图标的批量管理界面](docs/screenshots/readme-apps.png)
+
+### 设置与快捷设置：细调与快切
+
+分组设置保留精确调整，九宫格快捷设置方便日常切换。[设置说明](docs/轻透分组设置.md)
+
+![轻透分组设置和九宫格快捷设置](docs/screenshots/readme-settings.png)
 
 ## 支持与赞助
 
