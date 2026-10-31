@@ -115,6 +115,8 @@ class NoteWindow(QWidget):
         shortcut=QShortcut(QKeySequence('Ctrl+S'),self);shortcut.activated.connect(manager.flush)
         row=self.row();self.title.setText(row['title']);self.editor.setHtml(clean_editor_html(row['html']));self.pages.setCurrentIndex(1 if row.get('flipped') else 0);self.rebuild_todos()
         self.resize(300,260);self.reposition();self.apply_style();self.loading=False
+        from idle_resources import watch
+        watch(self)
 
     def tool(self,text,tip,callback):
         widget=QToolButton(self);widget.setText(text);widget.setToolTip(tip);widget.setAccessibleName(tip);widget.setFixedSize(23,23);widget.clicked.connect(callback);return widget
@@ -228,7 +230,18 @@ class NoteWindow(QWidget):
         for name in ('collapse_timer','expand_timer','refresh_timer'):
             timer=getattr(self,name,None)
             if timer:timer.stop()
+        self.backdrop=None
         super().hideEvent(event)
+
+    def release_idle_resources(self):
+        if self.isVisible() or self.disposed:return False
+        if self.todo_input.text().strip():return False
+        if any(w.isVisible() and getattr(w,'note',None) is self for w in QApplication.topLevelWidgets()):return False
+        self.title.finish_edit();self.save_geometry()
+        if not self.manager.flush():return False
+        if self.manager.windows.get(self.identity) is self:self.manager.windows.pop(self.identity)
+        self.dispose()
+        return True
     def set_option(self,key,value):
         if key=='style':
             color={'glass':self.dock.cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[value]
@@ -251,7 +264,8 @@ class NoteWindow(QWidget):
         for key,title in [('auto_hide','自动收起（鼠标离开后）'),('pinned','置顶显示'),('locked','锁定位置与大小')]:
             action=menu.addAction(title);action.setCheckable(True);action.setChecked(self.row()[key]);action.triggered.connect(lambda checked,k=key:self.set_option(k,checked))
         from fold_options import FoldOptions
-        menu.addAction('收起样式…').triggered.connect(lambda:FoldOptions(self).exec_())
+        from ui_style import exec_dialog
+        menu.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
         menu.addAction('展开便签' if self.row()['collapsed'] else '收起便签').triggered.connect(self.toggle_collapse)
         menu.addAction('隐藏便签（保留内容）').triggered.connect(lambda:self.manager.update_and_save(self.identity,visible=False))
         menu.addAction('便签管理…').triggered.connect(self.manager.manage)
@@ -366,13 +380,16 @@ class NoteWindow(QWidget):
         super().resizeEvent(event)
         if not self.loading:self.geometry_timer.start();self.refresh_timer.start();self.fit_title()
     def capture_backdrop(self):
-        self.backdrop=None
-        if self.row()['style']!='glass' or self.runtime.lite or self.dock.preview or not self.isVisible():self.update();return
-        from glass_capture import capture_behind,surface_windows
+        if self.row()['style']!='glass':self.backdrop=None;self.update();return
+        if self.dock.preview or not self.isVisible():return
+        from glass_capture import capture_behind,surface_windows,backdrop_key
+        key=backdrop_key(self,8)
+        if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         image=capture_behind(self,surface_windows(self.dock))
         if image is not None:
             from glass_capture import smooth_backdrop
             self.backdrop=smooth_backdrop(image,8)
+            self._backdrop_key=key
         self.update()
     def paintEvent(self,event):
         row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.SmoothPixmapTransform);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor);color=QColor(row['color'])
@@ -462,6 +479,12 @@ class NotesDialog(QDialog):
     def selection_changed(self,*args):
         selected=self.list.currentItem() is not None
         self.open_button.setEnabled(selected);self.remove_button.setEnabled(selected and self.tabs.currentIndex()==0);self.permanent_button.setEnabled(selected)
+    def release_idle_resources(self):
+        if self.isVisible():return False
+        if self.manager.dialog is self:self.manager.dialog=None
+        self.deleteLater()
+        return True
+
     def open_selected(self,*args):
         item=self.list.currentItem()
         if item:
@@ -561,9 +584,12 @@ class NotesManager(QObject):
         rows={row['id']:row for row in self.rows()};cfg=self.runtime.dock.cfg
         for identity in set(self.windows)-set(rows):self.windows.pop(identity).dispose()
         for identity,row in rows.items():
-            if identity not in self.windows:self.windows[identity]=NoteWindow(self,identity)
+            visible=cfg['notes_enabled'] and cfg['notes_visible'] and row['visible'] and not self.runtime.game_active
+            if identity not in self.windows:
+                if not visible:continue
+                self.windows[identity]=NoteWindow(self,identity)
             window=self.windows[identity];window.apply_style()
-            window.setVisible(cfg['notes_enabled'] and cfg['notes_visible'] and row['visible'] and not self.runtime.game_active)
+            window.setVisible(visible)
         self.status()
     def reload(self):
         for window in self.windows.values():window.dispose()
@@ -572,9 +598,14 @@ class NotesManager(QObject):
         for window in self.windows.values():window.reposition();window.apply_style()
     def set_lite(self):
         if self.runtime.lite:
-            for window in self.windows.values():window.backdrop=None;window.refresh_timer.stop();window.update()
+            for window in self.windows.values():
+                window.refresh_timer.stop()
+                if not window.isVisible():window.backdrop=None
     def manage(self):
-        if self.dialog is None:self.dialog=NotesDialog(self)
+        if self.dialog is None:
+            self.dialog=NotesDialog(self)
+            from idle_resources import watch
+            watch(self.dialog)
         self.dialog.render();self.dialog.show();self.dialog.raise_();self.dialog.activateWindow()
     def backup(self):
         try:

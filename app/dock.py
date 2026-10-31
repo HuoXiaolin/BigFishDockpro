@@ -2136,8 +2136,6 @@ class Dock(QWidget):
         """Sample wallpaper and prepare a smooth native-resolution backdrop."""
         if self.lite_mode:
             self.blur_timer.stop()
-            self.backdrop = None
-            return
         if self.preview:
             return
         if not self.cfg["glass"] or self.cfg.get('clear_background', False) or self.cfg.get('dock_material') in ('clear','solid'):
@@ -2147,6 +2145,9 @@ class Dock(QWidget):
                 self.backdrop = None
                 self.update()
             return
+        from glass_capture import backdrop_key
+        key=backdrop_key(self,self.blur_divisor())
+        if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         pm, ok = self._capture_behind()
         if not ok:
             if self.backdrop_ok is not False:
@@ -2161,13 +2162,14 @@ class Dock(QWidget):
         try:
             from glass_capture import smooth_backdrop
             self.backdrop=smooth_backdrop(pm,self.blur_divisor())
+            self._backdrop_key=key
         except Exception:
             log("模糊处理失败: " + traceback.format_exc())
             return
         self.update()
 
     def start_backdrop(self):
-        if self.lite_mode or self.cfg.get('clear_background', False) or self.cfg.get('dock_material') in ('clear','solid'):
+        if self.cfg.get('clear_background', False) or self.cfg.get('dock_material') in ('clear','solid'):
             self.blur_timer.stop()
             self.backdrop = None
             return
@@ -2201,7 +2203,7 @@ class Dock(QWidget):
             self.update()
             return
         self.refresh_backdrop()
-        if mode == "off":
+        if mode == "off" or self.lite_mode:
             # "停止抓取"：只抓这一次，之后一次都不再抓。
             # Dock 在桌面层，背后永远只有壁纸，所以这一张画面可以一直用下去。
             self.blur_timer.stop()
@@ -2210,9 +2212,12 @@ class Dock(QWidget):
 
     def showEvent(self, e):
         super(Dock, self).showEvent(e)
-        QTimer.singleShot(50, self.start_backdrop)
+        self.extras.prepare(self.items)
         self.extras.sync_clock()
         self.apply_layer()
+        # Wallpaper sampling does not need a visible desktop frame. Prepare it
+        # before the first paint instead of swapping backgrounds 50 ms later.
+        self.start_backdrop()
         QTimer.singleShot(0,self.apply_layer)
         QTimer.singleShot(250,self.apply_layer)
         QTimer.singleShot(1000,self.apply_layer)
@@ -2220,6 +2225,10 @@ class Dock(QWidget):
     def hideEvent(self, e):
         self.blur_timer.stop()
         self.extras.clock.stop()
+        self.backdrop=None
+        for item in self.items:
+            for key in ('_scaled','_reflected','_reflection_key','_reflection_ratio'):item.pop(key,None)
+        self.icons.clear()
         super(Dock, self).hideEvent(e)
 
     def closeEvent(self, e):

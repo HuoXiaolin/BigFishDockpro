@@ -101,7 +101,6 @@ class RuntimeController:
             self.dock.blur_timer.stop()
             self.dock.proc_timer.stop()
             self.dock.geo_timer.stop()
-            self.dock.backdrop = None
             self.dock.icons.clear()
             for item in self.dock.items: item.pop('_scaled', None)
             importer = getattr(self.tray, 'importer', None)
@@ -112,7 +111,6 @@ class RuntimeController:
             from wallpaper_source import image_file
             image_file.cache_clear()
             QPixmapCache.clear()
-            self.dock.running.clear()
             set_priority('low')
             # An auto-game session must not leave the Dock hidden after detection stops.
             self.auto_game = False
@@ -135,8 +133,12 @@ class RuntimeController:
                 self.dock.cfg['lite_restore'] = {}
                 self.api.save_config(self.dock.cfg)
         self.notes.set_lite()
-        self.clock.sync();self.calendar.sync()
-        self.dock._recalc(uniform=True)
+        # A mode switch must not rebuild/repaint visible components or change
+        # their appearance. Only invisible editing/catalog resources are freed.
+        if enabled:
+            dialog=getattr(self.tray,'settings_dialog',None)
+            if dialog is not None and not dialog.isVisible():
+                dialog.deleteLater();del self.tray.settings_dialog
         self.dock._kick()
         self.tray.setToolTip('大肥鱼Dock · '+('精简模式' if self.lite else '完整模式'))
         if not enabled and not self.settings_open: self.arm_lite()
@@ -259,7 +261,8 @@ class RuntimeController:
 
     def open_card_sizing(self,kind=None,identity=None):
         from card_sizing import CardSizingDialog
-        dialog=CardSizingDialog(self,kind,identity);dialog.exec_()
+        from ui_style import exec_dialog
+        exec_dialog(CardSizingDialog(self,kind,identity))
 
     def checkpoint_session(self,*args):
         if self.closed:return False

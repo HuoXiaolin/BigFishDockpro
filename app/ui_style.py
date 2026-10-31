@@ -639,6 +639,12 @@ def button(text, callback, role=None):
     return widget
 
 
+def exec_dialog(dialog):
+    """Release temporary modal settings and their signals after the modal loop."""
+    try:return dialog.exec_()
+    finally:dialog.deleteLater()
+
+
 def shutdown_ui(app):
     """Delete GUI resources while QApplication and its paint/style services live."""
     from PyQt5 import sip

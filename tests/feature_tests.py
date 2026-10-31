@@ -219,17 +219,19 @@ def run(api, dock, tray, root, output, checks):
     # Exercise the real Qt timeout chain with a short test-only interval.
     for timer in (dock.blur_timer, dock.proc_timer, dock.geo_timer):
         timer.start(8000)
+    before_lite={key:(w.collapsed,w.list.count()) for key,w in runtime.panels.windows.items()}
+    before_running=set(dock.running)
     runtime.lite_timer.start(20)
     loop = QEventLoop()
     QTimer.singleShot(70, loop.quit)
     loop.exec_()
     assert runtime.lite and dock.lite_mode
     assert not any(timer.isActive() for timer in (dock.blur_timer,dock.proc_timer,dock.geo_timer,runtime.fullscreen_timer))
-    assert panel.isVisible() and panel.collapsed and runtime.corners.widgets and dock.backdrop is None
-    assert all(window.list.count()==0 for window in runtime.panels.windows.values())
+    assert panel.isVisible() and runtime.corners.widgets
+    assert {key:(w.collapsed,w.list.count()) for key,w in runtime.panels.windows.items()}==before_lite
     dock._proc_busy = True
     dock._apply_running({'test.exe'})
-    assert not dock._proc_busy and not dock.running
+    assert not dock._proc_busy and dock.running==before_running
     runtime.settings_open = True
     runtime.set_lite(False)
     runtime.arm_lite()

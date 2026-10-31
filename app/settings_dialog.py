@@ -163,7 +163,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         running = self.section('启动与运行')
         section_marker(running,'后台运行')
         self.check(running, 'lite_enabled', '启用自动精简：关闭设置 1 分钟后进入')
-        running.addRow(label('精简时保留基础 Dock、拖入、托盘与静态圆角；桌面面板收为方条或胶囊，目录变动仍自动分类。暂停屏幕抓取、运行扫描、位置与全屏轮询。打开设置恢复完整模式。', 'muted'))
+        running.addRow(label('精简时保留 Dock、卡片、便签、时钟和日历的外观与展开状态；暂停壁纸轮询、运行扫描、位置与全屏轮询，释放闲置设置和应用目录缓存。目录变动仍自动分类，拖动和编辑仍可使用。打开设置恢复完整模式。', 'muted'))
         self.check(running, 'hide_tray', '隐藏托盘图标（可从 Dock 右键打开设置）')
         section_marker(running,'开机启动')
         self.check(running, 'autostart', '开机自动启动（恢复上次显示与运行状态）')
@@ -264,7 +264,15 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.dock_preview=DockPreview(self)
         appearance.insertRow(1,self.dock_preview)
         compact_dialog(self)
+        from idle_resources import watch
+        watch(self)
         self.initialize_size_behavior()
+
+    def release_idle_resources(self):
+        if self.isVisible():return False
+        if getattr(self.tray,'settings_dialog',None) is self:del self.tray.settings_dialog
+        self.deleteLater()
+        return True
 
     def action_row(self,form,title,*widgets):
         row=QHBoxLayout();row.setSpacing(8)

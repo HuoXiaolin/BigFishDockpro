@@ -382,6 +382,12 @@ def run(output):
         run_lunar_notes(api,runtime,output,checks)
         from quality_custom_tests import run as run_quality_custom
         run_quality_custom(api,runtime,root.name,output,checks)
+        from hidden_resource_tests import run as run_hidden_resources
+        run_hidden_resources(api,runtime,root.name,output,checks)
+        from lite_visual_tests import run as run_lite_visual
+        run_lite_visual(api,runtime,output,checks)
+        # The temporary Dock extension fixture requests app.quit on close.
+        # Keep it last so later tests retain a working native event loop.
         from dock_extension_tests import run as run_dock_extensions
         run_dock_extensions(api,runtime,root.name,output,checks)
         runtime.close();runtime=None

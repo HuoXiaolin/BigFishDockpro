@@ -76,11 +76,19 @@ def render(image,position,color,monitor,bounds,region,size):
     painter.end();return result
 
 
-def capture(window,screen):
+def source_info(window,screen):
     key=screen.name();now=time.monotonic();cached=_metadata.get(key)
     if cached is None or now-cached[0]>=2:
         cached=(now,desktop_wallpaper(window));_metadata[key]=cached
-    path,position,color,monitor,bounds=cached[1]
+        # Screen names can change after docking. Metadata must stay bounded.
+        if len(_metadata)>16:
+            for old in sorted(_metadata,key=lambda name:_metadata[name][0])[:-16]:_metadata.pop(old,None)
+    return cached[1]
+
+
+def capture(window,screen):
+    info=source_info(window,screen)
+    path,position,color,monitor,bounds=info
     try:source=image_file(path,os.stat(path).st_mtime_ns) if path else QImage()
     except OSError:source=QImage()
     # A missing file falls back to the configured desktop color, never a screenshot.

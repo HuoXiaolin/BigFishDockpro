@@ -14,7 +14,7 @@ DEFAULTS = {
     'merge_groups': [], 'merge_initialized': False,
     'dock_page': 0, 'merged_panels': False, 'merged_active': '', 'merged_geometry': [],
     'merged_collapsed': False, 'merged_compact': True, 'disabled_categories': [], 'lite_restore': {},
-    'screen_corners': False, 'corner_radius': 28,
+    'screen_corners': False, 'corner_radius': 16,
     'lite_enabled': True,
     'desktop_middle_toggle': True, 'desktop_icons_override': False,
     'desktop_icon_mode': 'hide_all', 'panel_enabled': False, 'panel_opacity': 38, 'panel_blur': 8,

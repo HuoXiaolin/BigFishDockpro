@@ -115,6 +115,15 @@ class BatchDialog(QDialog):
         self.worker.finished.connect(self.release_if_idle)
         self.worker.start()
         compact_dialog(self)
+        from idle_resources import watch
+        watch(self)
+
+    def release_idle_resources(self):
+        if not self.release_memory():return False
+        self.worker.deleteLater()
+        if self.importer.dialog is self:self.importer.dialog=None
+        self.deleteLater()
+        return True
 
     def refresh_running(self):
         self.running_error=''

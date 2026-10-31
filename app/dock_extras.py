@@ -60,8 +60,11 @@ def symbol(p,rect,kind,color):
 class QuickTile(QPushButton):
     def __init__(self,popup,key,title,kind):
         super().__init__(popup);self.popup=popup;self.key=key;self.title=title;self.kind=kind;self.value='';self.active=False
+        self.setObjectName('QuickTile')
         self.setMinimumSize(84,82)
-        self.setStyleSheet('min-width:84px;min-height:82px;max-height:82px;padding:0;border:0;background:transparent;')
+        # Tooltips are parented to the hovered button. Keep tile sizing and
+        # transparency off QTipLabel, which otherwise becomes a tall black box.
+        self.setStyleSheet('QPushButton#QuickTile {min-width:84px;min-height:82px;max-height:82px;padding:0;border:0;background:transparent;}')
         self.setCursor(Qt.PointingHandCursor);self.setAutoDefault(False)
         self.clicked.connect(lambda:popup.activate(key))
         self.drag_start=None;self.dragged=False;self.setAcceptDrops(True)
@@ -157,6 +160,14 @@ class DockQuickSettings(QDialog):
         self.status=QLabel('更改即保存 · 点击「排序」可调整按钮位置');self.status.setStyleSheet('background:transparent;font-size:10px;');body.addWidget(self.status)
         self.rebuild_pages()
         for child in self.findChildren(QWidget):child.installEventFilter(self)
+        from idle_resources import watch
+        watch(self)
+
+    def release_idle_resources(self):
+        if self.isVisible():return False
+        if self.extras.popup is self:self.extras.popup=None
+        self.deleteLater()
+        return True
     def eventFilter(self,watched,event):
         if event.type()==QEvent.Wheel:self.wheelEvent(event);return True
         return super().eventFilter(watched,event)

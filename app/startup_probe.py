@@ -74,7 +74,7 @@ class StartupProbe:
             runtime.set_lite(True)
             runtime.show_settings()
             assert not runtime.lite and runtime.settings_open
-            if self.autostart and not self.fresh: assert not panel.collapsed
+            if self.autostart and not self.fresh: assert panel.collapsed
             assert not runtime.lite_timer.isActive()
             tray.settings_dialog.reject()
             assert not runtime.settings_open and runtime.lite_timer.isActive()

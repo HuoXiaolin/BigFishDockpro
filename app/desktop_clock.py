@@ -105,14 +105,18 @@ class DesktopClock(QWidget):
         if value: self.save(clock_layout=value)
 
     def capture_backdrop(self):
-        self.backdrop = None
         cfg=self.option('appearance')
-        if self.isVisible() and not self.runtime.lite and not self.dock.preview and (cfg['material'] not in ('clear','solid') or cfg['text_effect']=='glass'):
+        from glass_capture import backdrop_key
+        key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect']) if not self.dock.preview else None
+        if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
+        if self.isVisible() and not self.dock.preview and (cfg['material'] not in ('clear','solid') or cfg['text_effect']=='glass'):
             from glass_capture import capture_behind, surface_windows
             image=capture_behind(self,surface_windows(self.dock))
             if image is not None:
                 from glass_capture import smooth_backdrop
                 self.backdrop=smooth_backdrop(image,material_blur(cfg['blur'],cfg['material']))
+                self._backdrop_key=key
+        elif cfg['material'] in ('clear','solid') and cfg['text_effect']!='glass':self.backdrop=None
         self.update()
 
     def layer(self):
@@ -128,7 +132,8 @@ class DesktopClock(QWidget):
     def showEvent(self,event):
         super().showEvent(event); self.layer(); self.refresh_timer.start()
     def hideEvent(self,event):
-        self.tick.stop(); self.refresh_timer.stop(); super().hideEvent(event)
+        self.tick.stop(); self.refresh_timer.stop();self.backdrop=None
+        super().hideEvent(event)
     def moveEvent(self,event):
         super().moveEvent(event)
         if not self.loading: self.geometry_timer.start(); self.refresh_timer.start()

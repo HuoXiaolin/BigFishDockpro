@@ -282,13 +282,17 @@ class DesktopPanel(QDialog):
             self.tabs.setTabToolTip(index,self.tabs.tabText(index))
 
     def page_state(self):
+        if getattr(self,'_idle_state',None) is not None:return self._idle_state
         return (self.query.text(),self.selected_keys(),self.list.verticalScrollBar().value())
 
     def restore_page_state(self,state):
         query,selected,scroll=state
+        self._idle_state=None
         self.query.blockSignals(True);self.query.setText(query);self.query.blockSignals(False)
         self.list.clearSelection();self._released_selection=set(selected)
-        self.render();self.list.doItemsLayout();self.list.verticalScrollBar().setValue(scroll)
+        if self.isVisible():
+            self.render();self.list.doItemsLayout();self.list.verticalScrollBar().setValue(scroll)
+        else:self._idle_state=(query,set(selected),scroll)
 
     def select_tab(self, index):
         if self.tabs.pressing: return
@@ -415,7 +419,20 @@ class DesktopPanel(QDialog):
         return [row for row in self.manager.rows(self.identity)
                 if query in row['name'].casefold() or query in row['path'].casefold()]
 
-    def render(self, *args):
+    def release_hidden_resources(self):
+        if self.isVisible():return False
+        if getattr(self,'_idle_state',None) is None:
+            self._idle_state=(self.query.text(),self.selected_keys()|getattr(self,'_released_selection',set()),self.list.verticalScrollBar().value())
+        self._released_selection=set(self._idle_state[1])
+        self.list.clear();self.backdrop=None
+        self.refresh_timer.stop();self.fit_timer.stop()
+        return True
+
+    def render(self, *args, prepare=False):
+        if not prepare and not self.isVisible():
+            self.release_hidden_resources()
+            self.title.setText(self.model['name']);self.count.setText(str(len(self.manager.rows(self.identity))))
+            return
         rows = self.visible_items()
         if self.collapsed and self.runtime.lite:
             self._released_selection = self.selected_keys() | getattr(self, '_released_selection', set())
@@ -423,7 +440,9 @@ class DesktopPanel(QDialog):
             self.title.setText(self.model['name'])
             self.count.setText(str(len(self.manager.rows(self.identity))))
             return
-        scroll = self.list.verticalScrollBar().value()
+        restoring_idle=getattr(self,'_idle_state',None) is not None
+        scroll = self._idle_state[2] if restoring_idle else self.list.verticalScrollBar().value()
+        self._idle_state=None
         selected = {path_key(item.data(Qt.UserRole)['path']) for item in self.list.selectedItems()}
         selected |= getattr(self, '_released_selection', set())
         self._released_selection = set()
@@ -438,6 +457,7 @@ class DesktopPanel(QDialog):
             item.setData(Qt.UserRole, row)
             self.list.addItem(item)
             item.setSelected(path_key(row['path']) in selected)
+        if restoring_idle:self.list.doItemsLayout()
         self.list.verticalScrollBar().setValue(scroll)
         self.title.setText(self.model['name'])
         self.count.setText(str(len(self.manager.rows(self.identity))))
@@ -620,7 +640,8 @@ class DesktopPanel(QDialog):
     def build_panel_menu(self):
         menu = QMenu(self)
         from fold_options import FoldOptions
-        menu.addAction('收起样式…').triggered.connect(lambda:FoldOptions(self).exec_())
+        from ui_style import exec_dialog
+        menu.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
         menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
         menu.addAction('粘贴到桌面').triggered.connect(lambda:self.paste_files())
         menu.addAction('添加文件…').triggered.connect(self.add_files)
@@ -663,6 +684,7 @@ class DesktopPanel(QDialog):
         if dialog.exec_()==dialog.Accepted:
             self.manager.update_panel(self.identity, name=dialog.name.text().strip(), extensions=dialog.extensions())
             self.manager.schedule_scan()
+        dialog.deleteLater()
 
     def rename(self):
         name, okay = QInputDialog.getText(self, '重命名面板', '面板名称：', text=self.model['name'])
@@ -679,6 +701,7 @@ class DesktopPanel(QDialog):
     def edit_options(self):
         dialog = PanelOptions(self)
         dialog.exec_()
+        dialog.deleteLater()
         if self.option('auto_hide'): self.collapse_timer.start()
 
     def bounds(self):
@@ -726,8 +749,9 @@ class DesktopPanel(QDialog):
         self.collapse_button.setText('+' if collapsed else '−')
         if not collapsed: self.fit_timer.start(0)
         self.restoring = False
-        self.backdrop = None
-        self.refresh_timer.start(100)
+        if self.isVisible():
+            self.refresh_timer.stop()
+            self.capture_backdrop()
         self.update()
 
     def collapse(self):
@@ -831,8 +855,11 @@ class DesktopPanel(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self.attach_desktop()
-        self.fit_timer.start(0)
-        self.refresh_timer.start(100)
+        if getattr(self,'_idle_state',None) is not None:self.render(prepare=True)
+        self.fit_timer.stop()
+        self.fit_content()
+        self.refresh_timer.stop()
+        self.capture_backdrop()
         if self.option('auto_hide'): self.collapse_timer.start()
 
     def attach_desktop(self, owner=None):
@@ -854,19 +881,23 @@ class DesktopPanel(QDialog):
         for timer in (self.refresh_timer, self.resize_timer, self.collapse_timer, self.expand_timer, self.fit_timer): timer.stop()
         self.backdrop = None
         super().hideEvent(event)
+        self.release_hidden_resources()
 
     def capture_backdrop(self):
-        if self.dock.preview or not self.isVisible() or self.runtime.lite or self.runtime.game_active: return
-        self.backdrop = None
+        if self.dock.preview or not self.isVisible() or self.runtime.game_active: return
         if self.option('material') in ('solid', 'clear'):
+            self.backdrop = None
             self.update()
             return
-        from glass_capture import capture_behind,surface_windows
+        from glass_capture import capture_behind,surface_windows,backdrop_key
+        key=backdrop_key(self,self.option('blur'),self.option('material'))
+        if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         image=capture_behind(self,surface_windows(self.dock))
         if image is not None:
             from liquid_glass import material_blur
             from glass_capture import smooth_backdrop
             self.backdrop=smooth_backdrop(image,material_blur(self.option('blur'),self.option('material')))
+            self._backdrop_key=key
         self.update()
 
     def paintEvent(self, event):

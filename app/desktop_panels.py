@@ -237,7 +237,8 @@ class DesktopPanels(QObject):
 
     def manage_groups(self):
         from panel_management import GroupDialog
-        GroupDialog(self).exec_()
+        from ui_style import exec_dialog
+        exec_dialog(GroupDialog(self))
 
     def sync_windows(self):
         if self.closed: return
@@ -283,8 +284,9 @@ class DesktopPanels(QObject):
                 window.merge_presentation=presentation
                 window.apply_options()
                 window.set_collapsed_geometry(self.group_value(identity,'collapsed') if merged else bool(model.get('collapsed')))
-            window.render()
+            if visible:window.render(prepare=True)
             window.setVisible(visible)
+            if not visible:window.release_hidden_resources()
         self.active_windows=active_by_group
         self.active_window = active_by_group.get('default') or next(iter(active_by_group.values()),None)
         layout=getattr(self.runtime,'layout',None)
@@ -473,20 +475,14 @@ class DesktopPanels(QObject):
         self.sync_windows()
 
     def set_lite(self, enabled):
+        self.reconcile_timer.setInterval(60000 if enabled else 15000)
         for window in self.windows.values():
-            window.backdrop = None
             window.refresh_timer.stop()
             if enabled:
-                window.collapse()
-                window._released_selection = window.selected_keys() | getattr(window, '_released_selection', set())
-                window.list.clear()
+                if not window.isVisible():
+                    window.backdrop=None
             else:
-                desired = self.cfg.get('lite_restore',{}).get(window.identity, window.collapsed)
-                window.set_collapsed_geometry(desired)
-                if not self.is_merged(window.identity): self.update_panel(window.identity, collapsed=desired)
-                window.render()
-                window.refresh_timer.start(100)
-            window.update()
+                if window.isVisible():window.capture_backdrop()
 
     def reposition(self):
         for window in self.windows.values():

@@ -34,6 +34,20 @@ def surface_windows(dock):
     return windows
 
 
+def backdrop_key(window,*appearance):
+    """Skip decoding/blur when wallpaper, geometry and appearance are unchanged."""
+    from wallpaper_source import source_info
+    import os
+    screen=QApplication.screenAt(window.frameGeometry().center()) or QApplication.primaryScreen()
+    if screen is None:return None
+    try:
+        path,position,color,monitor,bounds=source_info(window,screen)
+        stamp=os.stat(path).st_mtime_ns if path else 0
+        return (path,stamp,position,color.rgba(),monitor.getRect(),bounds.getRect(),
+                screen.geometry().getRect(),window.frameGeometry().getRect(),window.devicePixelRatioF(),appearance)
+    except (OSError,ValueError,AttributeError,RuntimeError):return None
+
+
 def smooth_backdrop(pixmap,radius):
     """One-shot native-pixel blur, without shrinking wallpaper into a coarse grid.
 

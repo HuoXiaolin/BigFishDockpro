@@ -85,8 +85,10 @@ def run(api,runtime,root,output,checks):
         manager.toggle();assert not any(window.isVisible() for window in manager.windows.values())
         manager.toggle();assert all(window.isVisible() for window in manager.windows.values())
         runtime.game_active=True;manager.sync();assert not any(window.isVisible() for window in manager.windows.values())
-        runtime.game_active=False;manager.sync();runtime.lite=True;manager.set_lite()
-        assert all(window.backdrop is None and not window.refresh_timer.isActive() for window in manager.windows.values())
+        runtime.game_active=False;manager.sync()
+        backgrounds={key:window.backdrop for key,window in manager.windows.items()}
+        runtime.lite=True;manager.set_lite()
+        assert all(window.backdrop is backgrounds[key] and not window.refresh_timer.isActive() for key,window in manager.windows.items())
         runtime.lite=False
         from screen_layout import capture
         real=__import__('sticky_notes').screen_records();area=real[0]['area'];reference=copy.deepcopy(real);reference[0]['area']=[area[0],area[1],round(area[2]*1.5),round(area[3]*1.5)]
