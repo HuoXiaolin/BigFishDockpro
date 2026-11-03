@@ -32,7 +32,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
-Name: "taskbar"; Description: "安装 Windows 11 任务栏效果组件（离线）"; Flags: unchecked; Check: SupportsTaskbarComponent
+Name: "taskbar"; Description: "安装 Windows 11 任务栏效果组件（离线）"; Check: SupportsTaskbarComponent
 
 [Files]
 Source: "..\dist\BigFishDockpro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

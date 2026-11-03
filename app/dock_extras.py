@@ -244,7 +244,12 @@ class DockQuickSettings(QDialog):
         taskbar = getattr(runtime, 'taskbar', None)
         supported = taskbar is not None and taskbar.backend is not None
         if not supported:
-            values['taskbar'] = '组件未就绪'
+            if getattr(taskbar, 'install_process', None) is not None:
+                values['taskbar'] = '正在安装…'
+            elif getattr(taskbar, 'payload', None):
+                values['taskbar'] = '首次点击启用'
+            else:
+                values['taskbar'] = '组件未就绪'
         self.tiles['taskbar'].setToolTip(
             '点击循环切换任务栏效果，颜色与模糊强度沿用主设置。' if supported
             else getattr(taskbar, 'status', '任务栏组件未就绪'))
@@ -290,7 +295,7 @@ class DockQuickSettings(QDialog):
         elif key=='taskbar':
             taskbar = getattr(runtime, 'taskbar', None)
             if taskbar is None or taskbar.backend is None:
-                self.status.setText(getattr(taskbar, 'status', '任务栏组件未就绪。'))
+                self.enable_taskbar_component(tray, taskbar)
                 return
             from taskbar_appearance import MODES
             modes = [value for title, value in MODES]
@@ -306,6 +311,33 @@ class DockQuickSettings(QDialog):
             notes=getattr(runtime,'notes',None)
             if notes and not notes.rows() and notes.new() is None:self.status.setText('便签已启用，但新建失败，请在便签管理中重试。')
         self.refresh();self.reanchor()
+
+
+    def enable_taskbar_component(self, tray, taskbar):
+        if not getattr(taskbar, 'payload', None):
+            self.status.setText(getattr(taskbar, 'status', '任务栏组件未就绪。'))
+            return
+        if taskbar.install_process is not None:
+            return
+
+        def installed(success, message):
+            import sys
+            from PyQt5 import sip
+            from settings_effects import save_changes
+
+            if success and tray.cfg.get('taskbar_mode', 'system') == 'system':
+                api = sys.modules[tray.dock.__class__.__module__]
+                if not save_changes(tray, api, {'taskbar_mode': 'clear'}):
+                    message = '组件已安装，效果保存失败。可再次点击启用。'
+                else:
+                    message = '组件已启动，已切换到全透明。'
+            if not sip.isdeleted(self):
+                self.refresh()
+                self.status.setText(message)
+
+        if taskbar.install_offline(installed):
+            self.refresh()
+            self.status.setText('正在离线安装任务栏组件…')
 
 
 class DockExtras(QObject):

@@ -70,6 +70,28 @@ def run(api,runtime,root,output,checks):
         click('add');assert tray.add_icons.call_count==1
         click('quick');QApplication.processEvents();popup=dock.extras.popup;assert popup.isVisible() and len(popup.tiles)==19 and popup.pages.count()==3
         assert all(tile.height()>=82 for tile in popup.tiles.values()),[tile.size() for tile in popup.tiles.values()]
+        callbacks = []
+        component = SimpleNamespace(backend=None, payload=True, install_process=None)
+        def install_offline(callback):
+            callbacks.append(callback)
+            component.install_process = object()
+            return True
+        component.install_offline = install_offline
+        fake_runtime.taskbar = component
+        popup.tiles['taskbar'].click()
+        popup.tiles['taskbar'].click()
+        assert len(callbacks) == 1 and popup.tiles['taskbar'].value == '正在安装…'
+        assert cfg['taskbar_mode'] == 'system'
+        component.install_process = None
+        component.backend = object()
+        callbacks.pop()(True, '组件已就绪。')
+        assert cfg['taskbar_mode'] == api.load_config()['taskbar_mode'] == 'clear'
+        assert popup.tiles['taskbar'].value == '全透明'
+        popup.tiles['taskbar'].click()
+        assert cfg['taskbar_mode'] == 'color'
+        cfg['taskbar_mode'] = 'system'
+        del fake_runtime.taskbar
+        popup.refresh()
         popup.grab().save(str(output/'dock-quick-settings.png'))
         def wheel_on(widget,delta):
             point=QPointF(widget.rect().center());global_point=QPointF(widget.mapToGlobal(widget.rect().center()))
