@@ -239,6 +239,15 @@ class DockQuickSettings(QDialog):
                 'color_mode':{'auto':'跟随系统','light':'浅色','dark':'深色'}.get(cfg['theme'],'跟随系统'),
                 'blur':'已开启' if cfg['glass'] else '已关闭','panel_auto_hide':'已开启' if cfg['panel_auto_hide'] else '已关闭',
                 'corners':'已开启' if cfg['screen_corners'] else '已关闭'}
+        from taskbar_appearance import MODES
+        values['taskbar'] = dict((key, title) for title, key in MODES).get(cfg.get('taskbar_mode'), '跟随系统')
+        taskbar = getattr(runtime, 'taskbar', None)
+        supported = taskbar is not None and taskbar.backend is not None
+        if not supported:
+            values['taskbar'] = '组件未就绪'
+        self.tiles['taskbar'].setToolTip(
+            '点击循环切换任务栏效果，颜色与模糊强度沿用主设置。' if supported
+            else getattr(taskbar, 'status', '任务栏组件未就绪'))
         if cfg['icon_size'] not in (32,42,54,64):values['size']='自定义 · '+str(cfg['icon_size'])
         if cfg['position']=='custom':values['position']='自定义 · '+str(cfg['custom_bottom'])
         for key in ('appearance','size','position'):self.tiles[key].setToolTip('点击循环切换，循环一轮可回到已保存的自定义值。')
@@ -278,6 +287,16 @@ class DockQuickSettings(QDialog):
             modes=('auto','light','dark');changes={'theme':modes[(modes.index(cfg['theme'])+1)%3]}
         elif key=='blur':changes={'glass':not cfg['glass']}
         elif key=='panel_auto_hide':changes={'panel_auto_hide':not cfg['panel_auto_hide']}
+        elif key=='taskbar':
+            taskbar = getattr(runtime, 'taskbar', None)
+            if taskbar is None or taskbar.backend is None:
+                self.status.setText(getattr(taskbar, 'status', '任务栏组件未就绪。'))
+                return
+            from taskbar_appearance import MODES
+            modes = [value for title, value in MODES]
+            current = cfg.get('taskbar_mode', 'system')
+            index = modes.index(current) if current in modes else 0
+            changes = {'taskbar_mode': modes[(index+1) % len(modes)]}
         elif key=='corners':changes={'screen_corners':not cfg['screen_corners']}
         if changes:
             from settings_effects import save_changes

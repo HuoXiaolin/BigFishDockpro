@@ -1,7 +1,11 @@
 """On-click window reuse, independent of startup/running-dot/lite-mode polling."""
 import ctypes,os
+import ntpath
 from ctypes import wintypes
 from app_catalog import path_key
+
+WECHAT_EXES = {'wechat.exe', 'weixin.exe'}
+WECHAT_MAIN_CLASS = 'WeChatMainWndForPC'
 
 def activation_target(entry):
     from shortcut_mapping import map_entry
@@ -15,6 +19,7 @@ def activation_target(entry):
         browser=os.path.basename(path).casefold() in ('chrome.exe','msedge.exe','brave.exe','chromium.exe')
         selectors=('--profile-directory=','--user-data-dir=','--app-id=','--source-shortcut-location=')
         if not (browser and app_id and tokens and all(token.startswith(selectors) for token in tokens)):return None
+    if not arguments and ntpath.basename(path).casefold() in WECHAT_EXES: return ('wechat', path_key(path))
     if app_id and path.casefold().endswith('.exe'):return ('window_aumid',app_id.casefold(),path_key(path),bool(arguments))
     if path.casefold().startswith('shell:appsfolder\\'):return ('aumid',path.split('\\',1)[1].casefold())
     if path.casefold().endswith('.exe'):return ('exe',path_key(path))
@@ -22,6 +27,22 @@ def activation_target(entry):
 
 def matching_window(target,windows):
     if target is None:return None
+    if target[0]=='wechat':
+        candidates = []
+        for window in windows:
+            path = window.get('path', '')
+            if not path or ntpath.basename(path).casefold() not in WECHAT_EXES:
+                continue
+            if ntpath.dirname(path_key(path)) != ntpath.dirname(target[1]):
+                continue
+            if window.get('class_name') == WECHAT_MAIN_CLASS or (
+                window.get('visible', True) and window.get('title') in ('微信', 'WeChat', 'Weixin')
+            ):
+                candidates.append(window)
+        if candidates:
+            return max(candidates, key=lambda w: (w.get('visible', True), path_key(w['path']) == target[1]))
+        return next((w for w in windows if w.get('visible', True) and w.get('path')
+                     and path_key(w['path']) == target[1]), None)
     if target[0]=='window_aumid':
         candidates=[w for w in windows if w.get('path') and path_key(w['path'])==target[2]]
         for window in candidates:
@@ -42,6 +63,7 @@ def native_windows(exclude_pid=None):
     user.IsWindowVisible.argtypes=[wintypes.HWND];user.GetWindowTextLengthW.argtypes=[wintypes.HWND]
     user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
     user.GetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int];user.GetWindowLongPtrW.restype=ctypes.c_ssize_t
+    user.GetWindowTextW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
     user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
     kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD];kernel.OpenProcess.restype=wintypes.HANDLE
     kernel.CloseHandle.argtypes=[wintypes.HANDLE]
@@ -68,9 +90,10 @@ def native_windows(exclude_pid=None):
     @callback
     def collect(hwnd,unused):
         if len(windows)>=4096:return False
-        if not user.IsWindowVisible(hwnd) or user.GetWindowTextLengthW(hwnd)<=0:return True
-        if user.GetWindowLongPtrW(hwnd,-20)&0x80:return True
+        visible = bool(user.IsWindowVisible(hwnd))
         name=ctypes.create_unicode_buffer(256);user.GetClassNameW(hwnd,name,len(name))
+        if not (visible and user.GetWindowTextLengthW(hwnd)>0 and not user.GetWindowLongPtrW(hwnd,-20)&0x80):
+            if name.value != WECHAT_MAIN_CLASS:return True
         if name.value in ('Progman','WorkerW','Shell_TrayWnd','Shell_SecondaryTrayWnd'):return True
         cloaked=wintypes.DWORD();dwm.DwmGetWindowAttribute(hwnd,14,ctypes.byref(cloaked),ctypes.sizeof(cloaked))
         if cloaked.value:return True
@@ -84,7 +107,10 @@ def native_windows(exclude_pid=None):
             user.EnumChildWindows(hwnd,child,0)
         if pid.value and pid.value!=exclude:
             info=process(pid.value)
-            if info:windows.append(dict(info,hwnd=int(hwnd),pid=pid.value))
+            if info and (visible or ntpath.basename(info.get('path','')).casefold() in WECHAT_EXES):
+                title = ctypes.create_unicode_buffer(256)
+                user.GetWindowTextW(hwnd,title,len(title))
+                windows.append(dict(info,hwnd=int(hwnd),pid=pid.value,visible=visible,class_name=name.value,title=title.value))
         return True
     user.EnumWindows(collect,0)
     return windows
@@ -96,7 +122,7 @@ def activate_window(hwnd):
     user.GetLastActivePopup.argtypes=[wintypes.HWND];user.GetLastActivePopup.restype=wintypes.HWND
     user.ShowWindowAsync.argtypes=[wintypes.HWND,ctypes.c_int]
     if not user.IsWindow(hwnd):return False
-    if user.IsIconic(hwnd):user.ShowWindowAsync(hwnd,9)
+    if user.IsIconic(hwnd) or not user.IsWindowVisible(hwnd):user.ShowWindowAsync(hwnd,9)
     popup=user.GetLastActivePopup(hwnd)
     if popup and user.IsWindowVisible(popup):hwnd=popup
     user.BringWindowToTop(hwnd)

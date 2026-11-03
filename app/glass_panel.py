@@ -713,6 +713,9 @@ class DesktopPanel(QDialog):
         from screen_layout import screen_records
         return metrics(self.dock.cfg,list(raw),screen_records())[0]
 
+    from fold_options import instant_geometry
+
+    @instant_geometry
     def set_collapsed_geometry(self, collapsed):
         self.restoring = True
         self.collapsed = collapsed
@@ -720,17 +723,19 @@ class DesktopPanel(QDialog):
         self.setMinimumSize(1, 1)
         self.setMaximumSize(16777215, 16777215)
         geometry = self.bounds()
-        self.move(geometry[0], geometry[1])
         if collapsed:
             from fold_options import geometry as fold_geometry,settings
             target=fold_geometry(geometry,settings(self),metric(44,self.ui_factor,24))
             self.setFixedSize(target[2],target[3]);self.move(*target[:2]);self._fold_offset=(target[0]-geometry[0],target[1]-geometry[1])
         else:
-            screen = QApplication.screenAt(self.pos()) or QApplication.primaryScreen()
+            from PyQt5.QtCore import QPoint
+            screen = QApplication.screenAt(QPoint(geometry[0], geometry[1])) or QApplication.primaryScreen()
             available = screen.availableGeometry()
-            self.resize(min(geometry[2], available.width()), min(geometry[3], available.height()))
-            self.move(max(available.left(), min(self.x(), available.right()+1-self.width())),
-                      max(available.top(), min(self.y(), available.bottom()+1-self.height())))
+            width = min(geometry[2], available.width())
+            height = min(geometry[3], available.height())
+            x = max(available.left(), min(geometry[0], available.right()+1-width))
+            y = max(available.top(), min(geometry[1], available.bottom()+1-height))
+            self.setGeometry(x, y, width, height)
             self.setMinimumSize(min(minimum(self.ui_factor)[0],geometry[2],available.width()), min(minimum(self.ui_factor)[1],geometry[3],available.height()))
             if self.option('locked'):self.setFixedSize(self.size())
         screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()

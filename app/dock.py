@@ -58,6 +58,10 @@ LEGACY_CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 DEFAULT_CONFIG = {
+    "taskbar_mode": "system",
+    "taskbar_color": "#85c6ed",
+    "taskbar_opacity": 32,
+    "taskbar_blur": 12,
     "items": [],          # [{"path": "...", "name": "..."}]
     "icon_size": 52,      # 图标基准尺寸（像素）
     "magnify": True,      # 鼠标放大效果
@@ -304,6 +308,9 @@ def load_config():
             continue
         if it.get("sep"):
             clean.append({"sep": True})
+        elif 'folder' in it:
+            from dock_folders import normalize_folder
+            clean.extend(normalize_folder(it))
         elif isinstance(it.get("path"),str) and it['path']:
             from shortcut_mapping import metadata
             clean.append({"path": it["path"],
@@ -842,7 +849,8 @@ class Dock(QWidget):
         self.pressed = -1
         self.drag_idx = -1
         self.drag_moved = False
-        self.drag_from_x = 0.0
+        self.drag_origin = None
+        self.folder_hover = -1
         self.items = []
         self.page_index = int(cfg.get("dock_page", 0))
         self.page_count = 1
@@ -1153,6 +1161,10 @@ class Dock(QWidget):
                                    "pixmap": None, "exe": ""})
                 continue
             path = it["path"]
+            if 'folder' in it:
+                from dock_folders import folder_icon
+                self.items.append(dict(it, pixmap=folder_icon(self, it), exe=''))
+                continue
             from shortcut_mapping import metadata
             icon=it.get('icon')
             if icon and not (os.path.isfile(icon) or icon.lower().startswith('shell:')):icon=None
@@ -1684,13 +1696,12 @@ class Dock(QWidget):
         self.spec_x = float(pos.x())
         # 拖动排序模式：按住左键移动 = 排序
         if self.drag_idx >= 0 and (e.buttons() & Qt.LeftButton):
-            if abs(pos.x() - self.drag_from_x) > 4:
+            if (pos - self.drag_origin).manhattanLength() >= QApplication.startDragDistance():
                 self.drag_moved = True
             if self.drag_moved:
-                self._drag_reorder(float(pos.x()))
-                self.hover_index = self.drag_idx      # 名称气泡跟着被拖的图标
-                self._recalc(light=True)
-                self._kick()
+                self.folder_hover = self.folder_target(pos)
+                self.setCursor(Qt.DragCopyCursor if self.folder_hover >= 0 else Qt.ClosedHandCursor)
+                self.update()
                 super(Dock, self).mouseMoveEvent(e)
                 return
         # 只有鼠标进到玻璃条附近才触发拉伸；上方留白（放名称的地方）不触发，
@@ -1745,35 +1756,25 @@ class Dock(QWidget):
             if (self.cfg.get("reorder") and self.pressed >= 0
                     and not self.items[self.pressed].get("sep")):
                 self.drag_idx = self.pressed
-                self.drag_from_x = float(e.pos().x())
+                self.drag_origin = e.pos()
         super(Dock, self).mousePressEvent(e)
 
     def _drag_reorder(self, x):
-        """拖动排序：跟紧邻的图标/分隔符「一步一步」交换位置。
-
-        带迟滞（要多越过邻居中心 30% 图标宽度才换），所以不会在临界点反复横跳；
-        换位后也不重置图标尺寸，避免忽大忽小的闪烁。
-        """
-        n = len(self.items)
-        if self.drag_idx < 0 or n < 2:
-            return
-        margin = self.icon_size * 0.30
-        # 找左右两边最近的"非自己"条目（分隔符也参与，这样才能被拖到分隔符后面）
-        left = None
-        for i in range(self.drag_idx - 1, -1, -1):
-            if i != self.drag_idx:
-                left = i
-                break
-        right = None
-        for i in range(self.drag_idx + 1, n):
-            right = i
-            break
-        target = -1
-        if left is not None and x < self.rects[left][0] - margin:
-            target = left
-        elif right is not None and x > self.rects[right][0] + margin:
-            target = right
-        if target < 0 or target == self.drag_idx:
+        """Move to the last crossed slot after the pointer is released."""
+        source = self.drag_idx
+        margin = self.icon_size * 0.20
+        target = source
+        if x < self.rects[source][0]:
+            for index in range(source - 1, -1, -1):
+                if x >= self.rects[index][0] + margin:
+                    break
+                target = index
+        else:
+            for index in range(source + 1, len(self.items)):
+                if x <= self.rects[index][0] - margin:
+                    break
+                target = index
+        if target == source:
             return
         it = self.items.pop(self.drag_idx)
         self.items.insert(target, it)
@@ -1787,6 +1788,21 @@ class Dock(QWidget):
         self._recalc()          # 不重置尺寸，保持放大状态，避免闪烁
         self._kick()
 
+    def folder_target(self, pos):
+        index = self._hit(pos)
+        if index < 0 or index == self.drag_idx or self.items[self.drag_idx].get('folder'):
+            return -1
+        center, width = self.rects[index][:2]
+        return index if abs(pos.x() - center) <= width * 0.28 else -1
+
+    def commit_folder_items(self, items, save):
+        if not save(dict(self.cfg, items=items)):
+            return
+        self.cfg['items'] = items
+        self.drag_idx = self.pressed = self.hover_index = -1
+        self.reload()
+        return True
+
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton and self.extras.pressed:
             key=self.extras.pressed;self.extras.pressed=None
@@ -1795,7 +1811,26 @@ class Dock(QWidget):
         if e.button() == Qt.LeftButton:
             if self.drag_idx >= 0:
                 if self.drag_moved:
-                    save_config(self.cfg)      # 拖完把新顺序存下来
+                    from dock_folders import animate_transfer, combine
+                    target = self.folder_target(e.pos())
+                    self.folder_hover = -1
+                    self.unsetCursor()
+                    if target >= 0:
+                        items = combine(self.cfg['items'], self.page_offset+self.drag_idx,
+                                        self.page_offset+target)
+                        if items is not None:
+                            source = self.page_offset + self.drag_idx
+                            destination = self.page_offset + target - int(source < self.page_offset + target)
+                            pixmap = self.items[self.drag_idx]['pixmap']
+                            if self.commit_folder_items(items, save_config):
+                                animate_transfer(self, pixmap, e.globalPos(), destination, into_folder=True)
+                            else:
+                                self.drag_idx = self.pressed = -1
+                                self.update()
+                            e.accept()
+                            return
+                    self._drag_reorder(float(e.pos().x()))
+                    save_config(self.cfg)
                     self.drag_idx = -1
                     self.pressed = -1
                     self._kick()
@@ -1811,6 +1846,12 @@ class Dock(QWidget):
         super(Dock, self).mouseReleaseEvent(e)
 
     def launch(self, path, source='dock_launch'):
+        if isinstance(path, dict) and 'folder' in path:
+            from dock_folders import show_folder
+            folder = next((item for item in self.cfg['items'] if item.get('path') == path['path']), None)
+            if folder:
+                show_folder(self, folder, save_config)
+            return
         if isinstance(path,dict):entry=path;path=entry['path']
         else:
             matches=[item for item in self.cfg['items'] if item.get('path')==path] if source=='dock_launch' else []
@@ -1881,7 +1922,16 @@ class Dock(QWidget):
 
     def icon_context_menu(self, idx):
         m = QMenu(self)
-        if idx >= 0 and not self.items[idx].get("sep"):
+        if idx >= 0 and 'folder' in self.items[idx]:
+            index = self.page_offset + idx
+            m.addAction('打开文件夹').triggered.connect(lambda: self.launch(self.items[idx]))
+            def dissolve():
+                items = list(self.cfg['items'])
+                items[index:index+1] = items[index]['folder']
+                self.commit_folder_items(items, save_config)
+            m.addAction('解散文件夹').triggered.connect(dissolve)
+            m.addSeparator()
+        elif idx >= 0 and not self.items[idx].get("sep"):
             it = self.items[idx]
             a = QAction("打开 " + it["name"], m)
             a.triggered.connect(lambda _=False, entry=dict(it): self.launch(entry))
@@ -1989,6 +2039,20 @@ class Dock(QWidget):
         from liquid_glass import paint_liquid_glass
         paint_liquid_glass(self, p, path, path_rect, bar, c, tint_a, stops)
 
+    def paint_dock_surface(self, surface, painter, paths, bar, colors):
+        from liquid_glass import paint_liquid_glass
+
+        transparency = max(0, min(100, int(self.cfg.get('transparency', 40))))
+        base_alpha = 235.0 * (100 - transparency) / 100.0
+        tint = round(min(255.0, base_alpha * colors['tint_scale'] + colors['tint_floor']))
+        opacity = 1.0 - max(0.0, transparency - 40.0) / 60.0 * 0.58
+        stops = self.merged_grad_stops(colors)
+        painter.save()
+        painter.setOpacity(opacity)
+        for path in paths:
+            paint_liquid_glass(surface, painter, path, path.boundingRect(), bar, colors, tint, stops)
+        painter.restore()
+
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
@@ -1997,33 +2061,8 @@ class Dock(QWidget):
 
         bar = self.bar_rect_f()
         paths = self.shape_paths()
-        prects = [pa.boundingRect() for pa in paths]
-        path = paths[0] if paths else QPainterPath()
-        path_rect = prects[0] if prects else bar
-
-        # 玻璃整体：自己抓屏 + 自己模糊，模糊区域完全跟随玻璃形状，
-        # 四个角天生透明，不会有方形轮廓。
-        #
-        # 通透度作用于【整块玻璃】：
-        #   tp<=40 时整块玻璃保持不透明，只是压在背景上的深色变淡（偏实 → 默认）
-        #   tp>40  时整块玻璃（模糊画面 + 深色 + 高光 + 描边）一起变淡，
-        #           于是无论背后是亮壁纸还是深色窗口，都能明显看出"更通透"了
-        tp = max(0, min(100, int(self.cfg.get("transparency", 40))))
         c = self.theme_colors()
-        base_a = 235.0 * (100 - tp) / 100.0
-        # 各模式用各自的"底色浓度曲线"：深色 1.0 倍、浅色 0.70+45、雾透 0.40+24
-        tint_a = int(round(min(255.0, base_a * c["tint_scale"] + c["tint_floor"])))
-        glass_a = 1.0 - max(0.0, tp - 40.0) / 60.0 * 0.58
-        glass_a = max(0.32, min(1.0, glass_a))
-
-        p.save()
-        p.setOpacity(glass_a)
-
-        stops = self.merged_grad_stops(c)
-        for pa, pr in zip(paths, prects):
-            self._paint_glass_piece(p, pa, pr, bar, c, tint_a, stops)
-
-        p.restore()      # 玻璃画完，透明度恢复，下面的名称和图标始终是全不透明的
+        self.paint_dock_surface(self, p, paths, bar, c)
 
         # 悬停时的程序名称：默认画在最上方（图标、拉伸动画的上方），不挡任何东西；
         # 如果 Dock 贴着屏幕顶部，就改画在玻璃条下面，保证看得清。
@@ -2056,6 +2095,21 @@ class Dock(QWidget):
             p.drawText(lab, Qt.AlignCenter, name)
             p.restore()
 
+        slot = getattr(self, '_folder_drop_slot', None)
+        if slot is not None and self.rects:
+            index = slot - self.page_offset
+            if 0 <= index <= len(self.rects):
+                left = self.rects[index-1] if index else None
+                right = self.rects[index] if index < len(self.rects) else None
+                left_edge = left[0] + left[1]/2 if left else bar.left()
+                right_edge = right[0] - right[1]/2 if right else bar.right()
+                x = (left_edge + right_edge) / 2
+                height = min(bar.height() * .66, self.icon_size)
+                marker = QRectF(x-2, bar.center().y()-height/2, 4, height)
+                p.setPen(QPen(QColor('#e9f7ff'), 1))
+                p.setBrush(QColor('#2789e5'))
+                p.drawRoundedRect(marker, 2, 2)
+
         self.extras.paint(p,c)
         if not self.items:
             hint = EMPTY_DOCK_HINT if LANG["cur"]!="en" else "Drop apps, files or folders to create shortcuts\nReferences only; original files are not copied\nRight-click: Manage Apps · Settings"
@@ -2081,12 +2135,18 @@ class Dock(QWidget):
                 p.drawRoundedRect(QRectF(cx - swid / 2.0, cy - sh / 2.0, swid, sh),
                                   swid / 2.0, swid / 2.0)
                 continue
+            if it['path'] == getattr(self, '_folder_landing_path', None):
+                continue
             pop = self.pops[i]
             extra = 1.0 + 0.20 * math.sin(math.pi * pop) if pop > 0.0 else 1.0
             dw = w * extra
             dh = h * extra
             top_y = by if down else (by - dh)
             rect = QRectF(cx - dw / 2.0, top_y, dw, dh)
+            if i == self.folder_hover:
+                p.setPen(QPen(QColor('#2789e5'), 2))
+                p.setBrush(QColor(65, 155, 237, 80))
+                p.drawRoundedRect(rect.adjusted(-4, -4, 4, 4), 9, 9)
             # 运行中的小圆点：始终在图标【下方】，而且是先画它、再画图标，
             # 所以它的层级低于图标 —— 图标放大盖过来时会挡住圆点，而不是压在图标上面。
             if self.cfg["running_dots"] and it["exe"] and it["exe"] in self.running:

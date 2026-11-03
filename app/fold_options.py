@@ -136,3 +136,45 @@ def apply_compact_size(window,target):
     user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
     ratio=window.devicePixelRatioF()
     user.SetWindowPos(int(window.winId()),None,0,0,round(target[2]*ratio),round(target[3]*ratio),0x16)
+
+
+
+def instant_geometry(function):
+    """Commit fold layout before repainting, without DWM position transitions."""
+    from functools import wraps
+
+    @wraps(function)
+    def apply(window, *args, **kwargs):
+        updates = window.updatesEnabled()
+        restore = None
+        try:
+            import ctypes
+            import sys
+            from ctypes import wintypes
+            if sys.platform == 'win32' and window.isVisible():
+                dwm = ctypes.WinDLL('dwmapi')
+                dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+                dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+                handle = int(window.winId())
+                old = wintypes.BOOL()
+                if dwm.DwmGetWindowAttribute(handle, 3, ctypes.byref(old), ctypes.sizeof(old)) == 0:
+                    enabled = wintypes.BOOL(True)
+                    if dwm.DwmSetWindowAttribute(handle, 3, ctypes.byref(enabled), ctypes.sizeof(enabled)) == 0:
+                        restore = (dwm, handle, old)
+        except (OSError, AttributeError):
+            pass
+        window.setUpdatesEnabled(False)
+        try:
+            return function(window, *args, **kwargs)
+        finally:
+            window.setUpdatesEnabled(updates)
+            if updates:
+                window.repaint()
+            if restore:
+                dwm, handle, old = restore
+                dwm.DwmFlush()
+                dwm.DwmSetWindowAttribute(handle, 3, ctypes.byref(old), ctypes.sizeof(old))
+    return apply
+
+
+note_geometry = instant_geometry(note_geometry)

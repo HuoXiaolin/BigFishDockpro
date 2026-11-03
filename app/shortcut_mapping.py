@@ -79,4 +79,4 @@ def map_entry(item,validate=True):
     return result
 
 def map_items(items):
-    return [dict(item) if item.get('sep') else (map_entry(item,validate=False) or dict(item)) for item in items]
+    return [dict(item) if item.get('sep') or 'folder' in item else (map_entry(item,validate=False) or dict(item)) for item in items]

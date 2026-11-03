@@ -20,6 +20,8 @@ class RuntimeController:
         self.settings_open = False
         self.was_dock_visible = self.dock.cfg['dock_visible']
         self.corners = CornerManager()
+        from taskbar_appearance import TaskbarAppearance
+        self.taskbar = TaskbarAppearance(dock, api.log)
         from desktop_shortcut import DesktopMiddleShortcut
         import os
         self.desktop_shortcut=DesktopMiddleShortcut(dock,disabled=dock.preview or bool(os.environ.get('FISHDOCK_TEST_DESKTOP')))
@@ -224,6 +226,8 @@ class RuntimeController:
         self.refresh_corners()
 
     def apply_settings(self,changed=None):
+        if changed is None or any(key.startswith('taskbar_') for key in changed):
+            self.taskbar.sync()
         if changed is not None and not set(changed)&{'game_mode','lite_enabled','runtime_lite'}:
             changed=set(changed)
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
@@ -301,5 +305,6 @@ class RuntimeController:
         self.lite_timer.stop()
         self.fullscreen_timer.stop()
         self.corners.close()
+        self.taskbar.close()
         self.panels.close()
         self.updater.close()

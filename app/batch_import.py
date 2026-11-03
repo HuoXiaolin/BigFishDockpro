@@ -1,3 +1,4 @@
+from dock_folders import application_entries, remove_applications
 from ui_style import compact_dialog, compact_px
 """Staged batch additions/removals: cancel never changes the saved Dock."""
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QEvent, QPoint
@@ -223,8 +224,7 @@ class BatchDialog(QDialog):
         if mode==3:self.refresh_running()
 
     def draft_items(self):
-        existing = [i for i in self.importer.dock.cfg['items']
-                    if not i.get('path') or path_key(i['path']) not in self.pending_remove]
+        existing = remove_applications(self.importer.dock.cfg['items'], self.pending_remove)
         return merge_items(existing, self.pending_add)[0]
 
     def render(self):
@@ -235,8 +235,8 @@ class BatchDialog(QDialog):
         self.list.clear()
         query = self.query.text().casefold()
         draft = self.draft_items()
-        pinned = {launch_identity(i) for i in draft if i.get('path')}
-        rows = unique_apps([i for i in draft if i.get('path')]) if self.mode == 1 else unique_apps(self.running_apps) if self.mode==3 else unique_apps(
+        pinned = {launch_identity(i) for i in application_entries(draft) if i.get('path')}
+        rows = unique_apps([i for i in application_entries(draft) if i.get('path')]) if self.mode == 1 else unique_apps(self.running_apps) if self.mode==3 else unique_apps(
             [i for i in self.apps if (i.get('column') == 'windows') == (self.mode == 2)])
         for app in rows:
             if query not in app['name'].casefold() and query not in app['path'].casefold():
@@ -326,11 +326,11 @@ class BatchDialog(QDialog):
 
     def stage_add(self, candidates):
         draft, added, duplicates, invalid = merge_items(self.draft_items(), candidates)
-        baseline = {path_key(i['path']) for i in self.importer.dock.cfg['items'] if i.get('path')}
+        baseline = {path_key(i['path']) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
         # Re-adding an existing removed entry cancels that pending removal.
-        valid_keys = {path_key(i['path']) for i in draft if i.get('path')}
+        valid_keys = {path_key(i['path']) for i in application_entries(draft) if i.get('path')}
         self.pending_remove -= valid_keys
-        self.pending_add = [i for i in draft if i.get('path') and path_key(i['path']) not in baseline]
+        self.pending_add = [i for i in application_entries(draft) if i.get('path') and path_key(i['path']) not in baseline]
         return '已暂存 %d 个 · 重复 %d 个 · 无效 %d 个' % (added, duplicates, invalid)
 
     def pick_files(self):
@@ -351,7 +351,7 @@ class BatchDialog(QDialog):
         else:
             keys = {path_key(path) for app in candidates for path in app.get('_paths', [app['path']])}
             self.pending_add = [i for i in self.pending_add if path_key(i['path']) not in keys]
-            baseline = {path_key(i['path']) for i in self.importer.dock.cfg['items'] if i.get('path')}
+            baseline = {path_key(i['path']) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
             self.pending_remove.update(keys & baseline)
             report = '已暂存移除 %d 个入口，原文件不会删除。' % len(keys)
         self.selected[self.mode] -= keys
@@ -359,8 +359,7 @@ class BatchDialog(QDialog):
         self.status.setText(report)
 
     def commit(self):
-        existing = [i for i in self.importer.dock.cfg['items']
-                    if not i.get('path') or path_key(i['path']) not in self.pending_remove]
+        existing = remove_applications(self.importer.dock.cfg['items'], self.pending_remove)
         items, _, _, _ = merge_items(existing, self.pending_add)
         if self.importer.apply_items(items):
             self.pending_add.clear()

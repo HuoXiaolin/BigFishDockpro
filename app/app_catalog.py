@@ -128,7 +128,8 @@ def path_key(path):
 def merge_items(existing, candidates):
     """Keep order and resolved launch metadata; never copy a dragged file."""
     result = [dict(item) for item in existing]
-    seen = {launch_identity(i) for i in result if i.get('path') and not i.get('sep')}
+    from dock_folders import application_entries
+    seen = {launch_identity(i) for i in application_entries(result) if i.get('path')}
     added = duplicates = invalid = 0
     for item in candidates:
         from shortcut_mapping import map_entry,metadata,is_reference

@@ -106,6 +106,19 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.check(layout, 'screen_corners', '屏幕圆角美化（仅游戏模式隐藏，鼠标穿透）')
         self.number(layout, 'corner_radius', '屏幕圆角半径（像素）', 0, 120)
 
+        section_marker(appearance, 'Windows 任务栏')
+        from taskbar_appearance import MODES
+        self.combo(appearance, 'taskbar_mode', '任务栏效果', MODES)
+        self.color(appearance, 'taskbar_color', '任务栏颜色')
+        self.number(appearance, 'taskbar_opacity', '任务栏不透明度（%）', 0, 100)
+        self.number(appearance, 'taskbar_blur', '任务栏模糊强度', 0, 50)
+        taskbar = getattr(getattr(tray, 'runtime', None), 'taskbar', None)
+        if taskbar:
+            appearance.addRow(label(taskbar.status, 'muted'))
+            if taskbar.backend is None:
+                for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity'):
+                    self.fields[key].setEnabled(False)
+
         panel = self.section('桌面收纳')
         panel.addRow(label('所有桌面卡片共用这些外观与收起设置，卡片设置入口同步读写。', 'muted'))
         section_marker(panel,'卡片外观')

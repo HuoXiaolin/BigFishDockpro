@@ -54,6 +54,10 @@ def normalize(data,api):
     for item in cfg['items']:
         if not isinstance(item,dict):raise ValueError('应用条目格式不正确。')
         if item.get('sep') is True:items.append({'sep':True});continue
+        if 'folder' in item:
+            from dock_folders import normalize_folder
+            items.extend(normalize_folder(item, strict=True))
+            continue
         path=item.get('path')
         if not isinstance(path,str) or not path.strip() or '\x00' in path or len(path)>32768:raise ValueError('应用路径格式不正确。')
         row={'path':path,'name':item.get('name') or Path(path).stem,'group':item.get('group') or '未分类'}

@@ -68,7 +68,7 @@ def run(api,runtime,root,output,checks):
             QApplication.sendEvent(dock,QMouseEvent(QEvent.MouseButtonPress,pt,Qt.LeftButton,Qt.LeftButton,Qt.NoModifier))
             QApplication.sendEvent(dock,QMouseEvent(QEvent.MouseButtonRelease,pt,Qt.LeftButton,Qt.NoButton,Qt.NoModifier))
         click('add');assert tray.add_icons.call_count==1
-        click('quick');QApplication.processEvents();popup=dock.extras.popup;assert popup.isVisible() and len(popup.tiles)==18 and popup.pages.count()==2
+        click('quick');QApplication.processEvents();popup=dock.extras.popup;assert popup.isVisible() and len(popup.tiles)==19 and popup.pages.count()==3
         assert all(tile.height()>=82 for tile in popup.tiles.values()),[tile.size() for tile in popup.tiles.values()]
         popup.grab().save(str(output/'dock-quick-settings.png'))
         def wheel_on(widget,delta):
@@ -174,7 +174,7 @@ def run(api,runtime,root,output,checks):
             dialog.grab().save(str(output/'dock-extension-settings.png'))
         finally:dialog.reject();dialog.deleteLater()
         (output/'dock-extension-metrics.json').write_text(json.dumps({'reflections':{'icons':len(dock.items),'bytes':memory,'budget_bytes':REFLECTION_BUDGET,'paint_draws_per_icon':1,'paint_generation':False},'unrelated_save_seconds':elapsed,'limits':'isolated UI fixture timing, not a system-wide latency measurement'},indent=2),encoding='utf-8')
-        checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; 18 supported quick actions, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save and in lite; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
+        checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; 19 supported quick actions, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save and in lite; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
     finally:
         if dock:dock.extras.close();dock.close();dock.deleteLater()
         runtime.dock.cfg.clear();runtime.dock.cfg.update(original);api.save_config(original);runtime.apply_settings()
