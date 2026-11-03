@@ -114,9 +114,34 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.number(appearance, 'taskbar_blur', '任务栏模糊强度', 0, 50)
         taskbar = getattr(getattr(tray, 'runtime', None), 'taskbar', None)
         if taskbar:
-            appearance.addRow(label(taskbar.status, 'muted'))
+            taskbar_status = label(taskbar.status, 'muted')
+            appearance.addRow(taskbar_status)
+            if taskbar.payload:
+                def installed(success, message):
+                    from PyQt5 import sip
+                    if sip.isdeleted(taskbar_status):
+                        return
+                    taskbar_status.setText(message)
+                    setup.setEnabled(True)
+                    if success:
+                        for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
+                            self.fields[key].setEnabled(True)
+
+                def install_taskbar():
+                    if taskbar.install_offline(installed):
+                        setup.setEnabled(False)
+                        taskbar_status.setText('正在安装任务栏组件和缺失的依赖…')
+
+                setup = button('安装或修复离线组件', install_taskbar)
+                appearance.addRow(setup)
             if taskbar.backend is None:
-                for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity'):
+                import sys
+                if sys.platform == 'win32' and sys.getwindowsversion().build >= 22000:
+                    from update_sources import DEFAULT_SOURCE
+                    download = label(f'<a href="{DEFAULT_SOURCE}">下载完整安装包并安装任务栏效果组件</a>', 'muted')
+                    download.setOpenExternalLinks(True)
+                    appearance.addRow(download)
+                for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
                     self.fields[key].setEnabled(False)
 
         panel = self.section('桌面收纳')
@@ -136,7 +161,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         section_marker(panel,'收起与桌面交互')
         self.check(panel, 'panel_locked', '锁定卡片位置与大小')
         self.check(panel, 'panel_auto_hide', '鼠标离开后自动收起')
-        self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('方条', 'bar')])
+        self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('圆球', 'ball'), ('方条', 'bar')])
         self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
         self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')])
         self.check(panel, 'desktop_middle_toggle', '桌面按下鼠标中键时显示 / 隐藏桌面图标')

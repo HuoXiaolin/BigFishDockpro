@@ -148,12 +148,17 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
 
     else:
         standalone=style=='calendar_card';year=o.get('_calendar_year',now.year);month=o.get('_calendar_month',now.month)
-        title_h=max(30,h*.14);header_top=max(42,h*.20);footer=max(20,h*.08)
-        label(QRectF(m,8,w-(140 if standalone else 2*m),title_h),'%d 年 %d 月'%(year,month),min(22,h*.075),ink,QFont.DemiBold)
+        title_h=max(26,min(40,h*.14))
+        m = min(m, w*.12)
+        title_width = w - m - 122 if standalone else w*.60 - m
+        title = '%d年%d月' % (year, month)
+        label(QRectF(m,8,max(1,title_width),title_h),title,min(22,h*.075,w*.064),ink,QFont.DemiBold)
         if not standalone:label(QRectF(w*.62,8,w*.38-m,title_h),(period+' ' if period else '')+time_text,min(24,h*.095)*scale,accent,QFont.Bold,Qt.AlignRight|Qt.AlignVCenter)
         from calendar_details import info as calendar_info
         weeks=len(calendar.monthcalendar(year,month));weekday_h=min(24,max(18,h*.07));footer=max(16,min(24,h*.075));header_top=max(42,h*.18)
         cw=(w-2*m)/7;ch=(h-footer-m*.25-header_top-weekday_h)/weeks
+        # Keep the day numbers legible when there is no room for two text rows.
+        detail_row = (o['show_lunar'] or o['show_holidays']) and ch >= 32 and cw >= 29
         for i in range(7):label(QRectF(m+i*cw,header_top,cw,weekday_h),weekdays[i],min(13,weekday_h*.65),accent if i>=5 else muted,align=Qt.AlignCenter)
         first=datetime.date(year,month,1);first-=datetime.timedelta(days=first.weekday())
         for i in range(weeks*7):
@@ -167,14 +172,18 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             details=calendar_info(day,o['work']);marked=same and o['show_holidays'] and details['marker']
             subtitle=(details['name'] if o['show_holidays'] else '') or (details['lunar'] if o['show_lunar'] else '')
             if len(subtitle)>3:subtitle=subtitle[:2]+'…'
-            detail_row=bool(o['show_lunar'] or o['show_holidays'])
             p.save();p.setClipRect(box)
-            label(QRectF(box.x(),box.y(),cw,ch*(.47 if detail_row else .78)),str(day.day),min(28,ch*(.44 if detail_row else .64)*scale),color,QFont.Bold if current else o['font_weight'],Qt.AlignCenter)
-            if subtitle:label(QRectF(box.x()+2,box.y()+ch*.47,cw-4,ch*.34),subtitle,min(11,ch*.31),accent if marked else muted,QFont.Medium,Qt.AlignCenter)
+            day_height = ch * .50 if detail_row else max(1, ch - (6 if marked else 1))
+            day_size = min(28, cw*.48, day_height*.78*scale)
+            label(QRectF(box.x(),box.y(),cw,day_height),str(day.day),day_size,color,
+                  QFont.Bold if current else o['font_weight'],Qt.AlignCenter)
+            if detail_row and subtitle:
+                label(QRectF(box.x()+2,box.y()+day_height,cw-4,max(1,ch-day_height-5)),
+                      subtitle,min(11,ch*.30),accent if marked else muted,QFont.Medium,Qt.AlignCenter)
             if marked:
                 mark=QColor(accent);mark.setAlpha(230);p.setPen(Qt.NoPen);p.setBrush(mark);p.drawEllipse(QPointF(box.center().x(),box.bottom()-2),1.35,1.35)
             p.restore()
         known=calendar_info(datetime.date(year,month,1),o['work'])['known']
         footer_text='今天 · '+date+'  '+weekday
-        if o['show_holidays'] and not known:footer_text+=' · 本年假期未收录'
+        if w >= 300 and o['show_holidays'] and not known:footer_text+=' · 本年假期未收录'
         label(QRectF(m,h-footer,w-2*m,footer*.85),footer_text,min(12,h*.04),muted,align=Qt.AlignCenter)

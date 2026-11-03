@@ -62,6 +62,8 @@ try {
     } elseif (-not $taskSkip) {
         Invoke-TaskCheck 'dist/BigFishDockpro/BigFishDockpro.exe' 'artifacts/quick-bundle-startup' 'directory-fresh-startup' @('--startup','--fresh-profile')
     }
+    & $taskPython tools/prepare_taskbar_payload.py
+    if ($LASTEXITCODE -ne 0) { throw 'Taskbar payload preparation failed' }
     & $Iscc "/DAppVersion=$taskVersion" tools/installer.iss
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
     if ($SingleFile) {

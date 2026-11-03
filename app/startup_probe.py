@@ -53,8 +53,13 @@ class StartupProbe:
             from dpi_support import awareness
             assert awareness()==2 and awareness(int(dock.winId()))==2 and dock.ui_mult==1.0
             if self.fresh:
-                assert dock.isVisible() and not dock.cfg['panel_enabled']
-                assert not runtime.panels.windows and not runtime.lite and tray.isVisible()
+                assert dock.isVisible() and dock.cfg['panel_enabled'] and dock.cfg['merged_panels']
+                assert dock.cfg['screen_corners'] and dock.cfg['corner_radius'] == 16
+                assert dock.cfg['panel_collapse_style'] == 'ball' and dock.cfg['merged_collapsed']
+                visible_cards = [card for card in runtime.panels.windows.values() if card.isVisible()]
+                assert len(visible_cards) == 1 and visible_cards[0].collapsed
+                assert visible_cards[0].width() == visible_cards[0].height()
+                assert not runtime.lite and tray.isVisible()
                 assert '托盘' not in __import__('sys').modules[dock.__module__].EMPTY_DOCK_HINT
                 dock.grab().save(str(self.output/'fresh-dock.png'))
             else:
@@ -80,7 +85,7 @@ class StartupProbe:
             assert not runtime.settings_open and runtime.lite_timer.isActive()
             assert runtime.lite_timer.interval() == 60000
             result = {'passed':True, 'checks':['actual application initialization on '+self.desktop,
-                      'fresh profile: visible Dock, cards disabled, tray visible, modern drag/context guidance' if self.fresh else 'login start restores visible Dock, hidden tray, lite mode and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
+                      'fresh profile: visible Dock and tray, merged cards start collapsed as one ball, 16-pixel screen corners enabled' if self.fresh else 'login start restores visible Dock, hidden tray, lite mode and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
                       'actual settings-open wake and finished-signal starts 60-second timer'],
                       'elapsed_seconds':round(elapsed,2)}
             fixture=os.environ.get('FISHDOCK_EXIT_LAUNCH_FIXTURE')

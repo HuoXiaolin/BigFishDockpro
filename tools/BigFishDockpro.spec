@@ -1,12 +1,23 @@
 # Build a directory bundle, then let the installer compress it once with LZMA2.
 from pathlib import Path
 import os
+import ssl
 root = Path(SPECPATH).parent
 single_file = os.environ.get('FISHDOCK_ONEFILE') == '1'
+# Some Python distributions load additional trust restrictions from ssl.py's
+# directory. Keep that file beside the frozen module as well.
+tls_policy = Path(ssl.__file__).with_name('codex-rejected-cas.pem')
+tls_data = [(str(tls_policy), '.')] if tls_policy.is_file() else []
+taskbar_data = []
+if single_file:
+    payload = root / 'artifacts/taskbar-payload'
+    taskbar_data = [(str(payload / name), 'taskbar-payload') for name in ('VCLibs-x64.appx', 'WinUI-x64.appx')]
+    taskbar_data += [(str(payload / 'backend'), 'taskbar-payload/backend'),
+                     (str(root / 'tools/install_taskbar_frameworks.ps1'), 'taskbar-payload')]
 a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('app','tests','tools')],
     binaries=[], datas=[(str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
                         (str(root / 'licenses'), 'licenses'),
-                        (str(root / 'artifacts/generated/version.json'), '.')],
+                        (str(root / 'artifacts/generated/version.json'), '.')] + tls_data + taskbar_data,
     hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
     excludes=['PyQt5.QtNetwork', 'PyQt5.QtQml', 'PyQt5.QtQuick', 'PyQt5.QtWebEngine',
               'PyQt5.QtWebEngineCore', 'PyQt5.QtWebEngineWidgets', 'PyQt5.QtSql',

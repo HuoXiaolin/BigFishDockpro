@@ -30,7 +30,14 @@ def run(api,runtime,output,checks):
         for size in [(630,300),(320,280),(260,230)]:
             image=QPixmap(*size);image.fill(Qt.transparent);p=QPainter(image);proxy=MarkerPainter(p);labels=[];options=normalize({});options.update(_calendar_year=2026,_calendar_month=10)
             draw('calendar_card',proxy,*size,dt.datetime(2026,10,29),options,QColor('#17394e'),QColor('#526b7b'),QColor('#2f95b8'),lambda box,value,*args:labels.append((box,value)),'09:30','')
-            p.end();assert len(proxy.dots)==8 and any(value=='国庆节' for box,value in labels) and any(value=='重阳节' for box,value in labels)
+            p.end()
+            assert len(proxy.dots) == 8
+            displayed = {value for box, value in labels}
+            assert {str(day) for day in range(1, 32)} <= displayed
+            if size == (260, 230):
+                assert '国庆节' not in displayed and '重阳节' not in displayed
+            else:
+                assert {'国庆节', '重阳节'} <= displayed
         calendar=runtime.calendar;calendar.set_enabled(True);calendar.view_year,calendar.view_month=2026,10;calendar.follow_today=False;calendar.resize(560,380);app.processEvents();calendar.grab().save(str(Path(output)/'calendar-lunar-holidays.png'))
         dialog=ClockOptions(calendar);dialog.show();dialog.tabs.setCurrentIndex(3);app.processEvents()
         assert dialog.tabs.tabText(3)=='农历与节假日' and 'start' not in dialog.fields and 'rest_dates' not in dialog.fields

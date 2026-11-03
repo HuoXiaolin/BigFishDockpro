@@ -2,6 +2,7 @@
 import ctypes
 import os
 import sys
+from pathlib import Path
 from ctypes import wintypes
 
 MODES = [('跟随系统', 'system'), ('全透明', 'clear'), ('自定义颜色', 'color'),
@@ -49,18 +50,19 @@ class TaskbarAppearance:
         self.timer.timeout.connect(self.refresh)
         self.backend = None
         self.xaml = None
+        self.payload = None
+        self.install_process = None
         if dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'):
             self.status = '隔离预览中不修改系统任务栏。'
         elif sys.platform == 'win32' and sys.getwindowsversion().build >= 22000:
-            from pathlib import Path
-            directory = Path(os.environ['LOCALAPPDATA']) / 'BigFishDock/TaskbarBackend/2026.2'
-            if (directory / 'TranslucentTB.exe').is_file():
-                from taskbar_xaml import XamlTaskbar
-                self.xaml = XamlTaskbar(dock, directory, log)
-                self.backend = self.xaml
-                self.status = 'Windows 11 XAML 后端已就绪。'
-            else:
-                self.status = '尚未安装 Windows 11 任务栏组件。'
+            self.directory = Path(os.environ['LOCALAPPDATA']) / 'BigFishDock/TaskbarBackend/2026.2'
+            payload = Path(getattr(sys, '_MEIPASS', '')) / 'taskbar-payload'
+            native_arch = os.environ.get('PROCESSOR_ARCHITEW6432') or os.environ.get('PROCESSOR_ARCHITECTURE')
+            if native_arch == 'AMD64' and getattr(sys, 'frozen', False) and (payload / 'backend/TranslucentTB.exe').is_file():
+                self.payload = payload
+            if not self.load_xaml():
+                self.status = ('尚未安装任务栏组件，可从本程序离线安装。' if self.payload else
+                               '尚未安装任务栏组件。请使用完整安装包，勾选任务栏效果组件。')
         elif sys.platform != 'win32':
             self.status = '当前 Windows 任务栏需要 XAML 后端，保留系统外观。'
         else:
@@ -69,6 +71,43 @@ class TaskbarAppearance:
                 self.backend = self.bind()
             except (OSError, AttributeError):
                 self.status = '当前系统缺少任务栏合成接口。'
+
+    def load_xaml(self):
+        if self.xaml is not None:
+            return True
+        if not (self.directory / 'TranslucentTB.exe').is_file():
+            return False
+        from taskbar_xaml import XamlTaskbar
+        self.xaml = XamlTaskbar(self.dock, self.directory, self.log)
+        self.backend = self.xaml
+        self.status = 'Windows 11 XAML 后端已就绪。'
+        return True
+
+    def install_offline(self, complete):
+        if self.payload is None or self.install_process is not None:
+            return False
+        from PyQt5.QtCore import QProcess
+        process = QProcess(self.dock)
+        self.install_process = process
+
+        def finish(ok):
+            if self.install_process is not process:
+                return
+            self.install_process = None
+            process.deleteLater()
+            if ok and self.load_xaml():
+                self.sync()
+                complete(True, self.status)
+            else:
+                complete(False, '组件安装失败，可重试或使用完整安装包。日志位于 %TEMP%/BigFishDockpro-taskbar-install.log。')
+
+        process.finished.connect(lambda code, status: finish(code == 0 and status == QProcess.NormalExit))
+        process.errorOccurred.connect(lambda error: finish(False) if error == QProcess.FailedToStart else None)
+        powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        process.start(str(powershell), ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
+                      '-ExecutionPolicy', 'Bypass', '-File', str(self.payload / 'install_taskbar_frameworks.ps1'),
+                      '-BackendDirectory', str(self.directory)])
+        return True
 
     @staticmethod
     def bind():

@@ -34,7 +34,11 @@ def run(api, dock, tray, root, output, checks):
         entries.append({'path':str(path), 'name':['浏览器', '代码编辑器', '设计文档'][n % 3]+' %02d' % n,
                         'group':['网络', '开发', '办公'][n % 3]})
     cfg['items'] = entries
-    assert normalize({})['dock_visible'] and not normalize({})['panel_enabled']
+    defaults = normalize({})
+    assert all(defaults[key] for key in ('dock_visible', 'panel_enabled', 'merged_panels', 'screen_corners'))
+    assert defaults['corner_radius'] == 16
+    disabled = {key: False for key in ('panel_enabled', 'merged_panels', 'screen_corners')}
+    assert all(normalize(disabled)[key] is False for key in disabled)
     cfg['panel_enabled'] = True
     cfg['panel_auto_hide'] = False
     cfg['panel_page_size'] = 12

@@ -27,18 +27,41 @@ def parse_manifest(payload, current=VERSION):
 
 
 def fetch_manifest(url, use_proxy):
+    import ssl
     import urllib.request
     if urlparse(url).scheme != 'https':
         raise ValueError('更新源必须是本项目的 HTTPS 版本清单地址。')
     url,is_github=resolve_source(url)
-    handlers = [] if use_proxy else [urllib.request.ProxyHandler({})]
+    # Do not inherit SSLKEYLOGFILE. A stale debug path can prevent TLS setup.
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_default_certs()
+    handlers = [urllib.request.HTTPSHandler(context=context)]
+    if not use_proxy:
+        handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
     request = urllib.request.Request(url, headers={'User-Agent': 'BigFishDockpro/'+VERSION, 'Accept':'application/json'})
     import urllib.error
     try:response=opener.open(request,timeout=12)
     except urllib.error.HTTPError as error:
         if not is_github:raise
-        if error.code in (403,429):raise ValueError('GitHub API 访问受限，请稍后重试，或直接打开安装包发布页。') from error
+        if error.code in (403, 429):
+            error.close()
+            try:
+                page_request = urllib.request.Request(DEFAULT_SOURCE, headers={'User-Agent': 'BigFishDockpro/'+VERSION})
+                with opener.open(page_request, timeout=12) as page:
+                    release_url = page.geturl()
+                from update_sources import REPOSITORY
+                from urllib.parse import unquote
+                prefix = REPOSITORY + '/releases/tag/'
+                if not release_url.startswith(prefix):
+                    raise ValueError('发布页未返回正式版本。')
+                tag = unquote(urlparse(release_url).path[len(urlparse(prefix).path):])
+                version = tag[1:] if tag.startswith(('v', 'V')) else tag
+                return {'newer': version_tuple(version) > version_tuple(VERSION),
+                        'version': version, 'release_url': release_url,
+                        'notes': '', 'release_page_fallback': True}
+            except (OSError, ValueError):
+                raise ValueError('GitHub API 访问受限，请稍后重试，或直接打开安装包发布页。') from error
         if error.code==404:raise ValueError('本仓库暂未提供可读取的正式 Release，请确认已公开发布。') from error
         raise
     with response:
@@ -112,6 +135,7 @@ class UpdateService(QObject):
     def completed(self, result):
         self.release_url = result['release_url']
         self.set_message('发现新版本 '+result['version'] if result['newer'] else '当前已是最新版本（'+VERSION+'）')
+        if result.get('release_page_fallback'):self.set_message(self.message+'（通过 GitHub 发布页确认）')
         if result.get('installer_available') is False:self.set_message(self.message+'；该版本安装包尚未上传，可打开发布页查看。')
         if result['newer']:
             self.runtime.tray.showMessage('大肥鱼Dock 更新', self.message+'，可在设置中查看下载页面。', self.runtime.tray.icon(), 5000)
