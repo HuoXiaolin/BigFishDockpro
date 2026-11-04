@@ -36,6 +36,9 @@ def normalize_notes(rows,strict=False,limit=64):
             style,color='glass','#cfe8fa'
         row={'id':identity,'title':str(raw.get('title') or '新便签')[:60],'html':html,'text':text,
              'style':style,'color':color.lower(),'updated':str(raw.get('updated',''))[:40]}
+        if isinstance(raw.get('appearance'),dict):
+            from appearance_presets import normalize_note_appearance
+            row['appearance']=normalize_note_appearance(raw['appearance'])
         size=raw.get('font_size',12);scale=raw.get('font_scale',1.0)
         if type(size) is not int or not 8<=size<=48 or type(scale) not in (int,float) or not .125<=scale<=8:
             if strict:raise ValueError('便签文字大小无效。')

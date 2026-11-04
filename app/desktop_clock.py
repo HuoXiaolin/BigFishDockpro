@@ -107,14 +107,17 @@ class DesktopClock(QWidget):
     def capture_backdrop(self):
         cfg=self.option('appearance')
         from glass_capture import backdrop_key
-        key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect']) if not self.dock.preview else None
+        key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect'],cfg['auto_contrast']) if not self.dock.preview else None
         if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
-        if self.isVisible() and not self.dock.preview and (cfg['material'] not in ('clear','solid') or cfg['text_effect']=='glass'):
+        if self.isVisible() and not self.dock.preview and (cfg['material'] not in ('clear','solid') or cfg['text_effect']=='glass' or (cfg['material']=='clear' and cfg['auto_contrast'])):
             from glass_capture import capture_behind, surface_windows
             image=capture_behind(self,surface_windows(self.dock))
             if image is not None:
                 from glass_capture import smooth_backdrop
-                self.backdrop=smooth_backdrop(image,material_blur(cfg['blur'],cfg['material']))
+                if cfg['material']=='clear':
+                    # Clear text needs a luminance sample, not a full wallpaper copy.
+                    self.backdrop=image if cfg['text_effect']=='glass' else image.scaled(96,64,Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
+                else:self.backdrop=smooth_backdrop(image,material_blur(cfg['blur'],cfg['material']))
                 self._backdrop_key=key
         elif cfg['material'] in ('clear','solid') and cfg['text_effect']!='glass':self.backdrop=None
         self.update()
@@ -133,6 +136,8 @@ class DesktopClock(QWidget):
         super().showEvent(event); self.layer(); self.refresh_timer.start()
     def hideEvent(self,event):
         self.tick.stop(); self.refresh_timer.stop();self.backdrop=None
+        from clock_legibility import clear_cache
+        clear_cache()
         super().hideEvent(event)
     def moveEvent(self,event):
         super().moveEvent(event)
@@ -255,24 +260,29 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     stops=[(position,min(255,round(alpha*strength))) for position,alpha in dock.merged_grad_stops(colors)]
     shape=QPainterPath();shape.addRoundedRect(rect,min(options['corner_radius'],h*.24),min(options['corner_radius'],h*.24))
     surface=SimpleNamespace(cfg={'glass':material not in ('clear','solid'),'clear_background':material=='clear' and options['opacity']==0 and options['highlight']==0,'dock_material':material},backdrop=backdrop,spec_x=w*.54,spec_alpha=.24)
-    paint_liquid_glass(surface,painter,shape,rect,rect,colors,round(options['opacity']*2.55),stops)
     from card_design import paint_design
-    paint_design(painter,rect,dock.cfg,options.get('design'),clear=surface.cfg['clear_background'],corner_radius=min(options['corner_radius'],h*.24),body_top=rect.bottom(),header_separator=False)
+    style_cfg=dict(dock.cfg,theme_color=options['color'] or '#b8d9ef')
+    def paint_surface(target):
+        paint_liquid_glass(surface,target,shape,rect,rect,colors,round(options['opacity']*2.55),stops)
+        paint_design(target,rect,style_cfg,options.get('design'),clear=surface.cfg['clear_background'],corner_radius=min(options['corner_radius'],h*.24),body_top=rect.bottom(),header_separator=False)
+    paint_surface(painter)
     painter.setClipPath(shape)
     light=colors.get('light',True);ink=QColor(options['text_color'] or ('#ffffff' if material=='clear' or not light else '#19364d'))
-    design=options.get('design','follow');design=dock.cfg.get('card_design','aurora') if design=='follow' else design
-    background=clock_background_color(backdrop,colors,material)
-    if design in ('gradient','paper','minimal') and not surface.cfg['clear_background']:background=QColor('#f4f7fa')
-    # On a transparent clock, never turn explicitly white text grey from an
-    # estimated or unrelated background; capture may be unavailable on Windows.
-    transparent_white=material=='clear' and min(ink.red(),ink.green(),ink.blue())>=245
-    if options['auto_contrast'] and background is not None and not transparent_white:ink=contrast_ink(ink,background)
-    muted=QColor(ink);muted.setAlpha(225)
+    from clock_legibility import surface_map,background_at,readable,contrast
+    analysis=None
+    if options['auto_contrast']:
+        surface_keys=('material','theme','color','opacity','highlight','corner_radius','design')
+        key=(w,h,backdrop.cacheKey() if backdrop is not None else 0,colors['light'],style_cfg.get('card_design'),tuple(options[k] for k in surface_keys))
+        # When wallpaper is unavailable, retain the selected transparent-clock ink.
+        fallback=QColor('#1c4268') if material=='clear' else QColor(colors['tint'])
+        analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
+        ink=readable(ink,background_at(analysis,rect,w,h))
+    muted=QColor(ink)
     if options['accent_color']:accent=QColor(options['accent_color'])
-    elif transparent_white:accent=QColor('#88e4f2')
     else:
-        hue=QColor(options['color'] or '#62acd4').hslHueF();accent=QColor.fromHslF(hue if hue>=0 else .55,.62,.39 if light else .74)
-    if options['auto_contrast'] and background is not None and not transparent_white:accent=contrast_ink(accent,background,minimum=3.0)
+        hue=QColor(options['color'] or '#62acd4').hslHueF()
+        accent=QColor.fromHslF(hue if hue>=0 else .55,.72,.77 if ink.lightness()>150 else .36)
+    if analysis is not None:accent=readable(accent,background_at(analysis,rect,w,h),minimum=3.0)
     now=options.get('_now') or datetime.datetime.now();time_text,period=format_clock_time(now,options['hour_format'])
     hour=int(time_text[:2])
     date_text='%d月%d日  周%s'%(now.month,now.day,'一二三四五六日'[now.weekday()]);scale=options['font_scale']/100
@@ -280,34 +290,47 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     def font(size,weight=QFont.Normal):
         f=QFont(options['font']);f.setPixelSize(max(8,round(size)));f.setWeight(options['font_weight'] if size>=21 else weight)
         if size>=21:f.setLetterSpacing(QFont.PercentageSpacing,options['letter_spacing']);f.setStretch(100)
-        f.setStyleStrategy(QFont.PreferAntialias);return f
+        f.setStyleStrategy(QFont.PreferAntialias);f.setHintingPreference(QFont.PreferVerticalHinting);return f
     def text(box,value,size,color,weight=QFont.Normal,align=Qt.AlignLeft|Qt.AlignVCenter,fit=True):
         f=font(size,weight)
         if any('\u3400'<=character<='\u9fff' for character in value) or (size<21 and not (style in ('month','calendar_card') and value.isdigit())):
             f.setFamily(options['date_font']);f.setPixelSize(max(8,round(f.pixelSize()*options['date_scale']/100)));f.setStretch(100);f.setLetterSpacing(QFont.PercentageSpacing,100);f.setWeight(weight)
         if fit:
-            while f.pixelSize()>8 and (QFontMetricsF(f).horizontalAdvance(value)>box.width() or QFontMetricsF(f).height()>box.height()):f.setPixelSize(f.pixelSize()-1)
+            while f.pixelSize()>8 and (QFontMetricsF(f).horizontalAdvance(value)>box.width() or QFontMetricsF(f).tightBoundingRect(value).height()>box.height()):f.setPixelSize(f.pixelSize()-1)
         painter.setFont(f)
         # Soft offset shadows improve contrast without outlining each glyph.
         from PyQt5.QtGui import QLinearGradient
         metrics=QFontMetricsF(f);width=metrics.horizontalAdvance(value)
         x=box.x()+(box.width()-width)/2 if align & Qt.AlignHCenter else box.right()-width if align & Qt.AlignRight else box.x()
-        baseline=box.y()+(box.height()-metrics.height())/2+metrics.ascent()
-        glyph=QPainterPath();glyph.addText(QPointF(x,baseline),f,value)
+        tight=metrics.tightBoundingRect(value)
+        baseline=box.y()+(box.height()-tight.height())/2-tight.top()
         shadows=((1.0,25),) if options['shadow']=='soft' and f.pixelSize()>=20 else ()
         color=QColor(color);color.setAlpha(round(color.alpha()*options['text_opacity']/100))
+        text_rect=QRectF(x,baseline+tight.top(),max(1,width),max(1,tight.height()))
+        if analysis is not None and color.alpha()>=120:
+            alpha=max(235,color.alpha())
+            samples=background_at(analysis,text_rect,w,h)
+            color=readable(color,samples,opacity=alpha/255,polarity=ink.lightness()>150)
+            color.setAlpha(alpha)
+            # A soft downward shadow separates text on busy wallpaper without
+            # outlining glyphs or mixing dark and light text across the face.
+            if min(contrast(color,bg) for bg in samples)<4.0 and color.lightness()>150:
+                shadows=((1.0,65),(2.0,24))
         for offset,opacity in shadows:
             shadow=QColor('#10253a');shadow.setAlpha(opacity)
-            painter.save();painter.translate(0,offset);painter.fillPath(glyph,shadow);painter.restore()
+            painter.setPen(shadow);painter.drawText(QPointF(x,baseline+offset),value)
+        if '_text_audit' in options:options['_text_audit'].append((value,f.pixelSize(),color.name(),color.alpha(),text_rect.getRect()))
         if options['text_effect']=='clear' or f.pixelSize()<18:
-            painter.fillPath(glyph,color);return
+            painter.setPen(color);painter.drawText(QPointF(x,baseline),value)
+            return
         # Background sampling and the glass tint remain clipped to the glyph.
+        glyph=QPainterPath();glyph.addText(QPointF(x,baseline),f,value)
         painter.save();painter.setClipPath(glyph,Qt.IntersectClip)
         if backdrop is not None and not backdrop.isNull():
             painter.drawPixmap(QRectF(0,0,w,h),backdrop,QRectF(0,0,backdrop.width(),backdrop.height()))
         bounds=glyph.boundingRect();wash=QLinearGradient(0,bounds.top(),0,bounds.bottom())
-        upper=QColor(color);upper.setAlpha(color.alpha())
-        lower=QColor(color);lower.setAlpha(round(color.alpha()*.96))
+        upper=color.lighter(110) if color.lightness()<150 else QColor(color)
+        upper.setAlpha(color.alpha());lower=QColor(color);lower.setAlpha(round(color.alpha()*.97))
         wash.setColorAt(0,upper);wash.setColorAt(1,lower);painter.fillRect(bounds,wash);painter.restore()
     from clock_design import draw
     draw(style,painter,w,h,now,options,ink,muted,accent,text,time_text,period)

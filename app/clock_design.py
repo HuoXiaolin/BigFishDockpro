@@ -17,9 +17,12 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         # Keep the header action inline, with a reserved slot outside text bounds.
         box=QRectF(box)
         if o.get('_header_controls') and box.top()<36 and box.right()>w-42:box.setRight(w-42)
+        # Secondary information grows with the component instead of staying at
+        # 10-12 px while the main time fills the entire card.
+        size=max(size,12*min(1.35,max(.8,min(w/420,h/260))))
         text(box,value,size,color,weight,align)
     def bar(box,ratio):
-        wash(box,24,box.height()/2,ink)
+        wash(box,36,box.height()/2,ink)
         if ratio and ratio>0:
             gradient=QLinearGradient(box.topLeft(),box.topRight());gradient.setColorAt(0,accent.lighter(120));gradient.setColorAt(1,accent)
             p.setPen(Qt.NoPen);p.setBrush(gradient);p.drawRoundedRect(QRectF(box.x(),box.y(),box.width()*min(1,ratio),box.height()),box.height()/2,box.height()/2)
@@ -66,7 +69,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         for i in range(60):
             a=i*math.pi/30;major=i%5==0
             if i%15==0:continue
-            c=QColor(ink if major else muted);c.setAlpha(160 if major else 65)
+            c=QColor(ink if major else muted);c.setAlpha(220 if major else 115)
             p.setPen(QPen(c,max(1.5,r*.018) if major else max(1,r*.009),Qt.SolidLine,Qt.RoundCap))
             p.drawLine(QPointF(cx+math.sin(a)*r*(.81 if major else .87),cy-math.cos(a)*r*(.81 if major else .87)),QPointF(cx+math.sin(a)*r*.92,cy-math.cos(a)*r*.92))
         for number,dx,dy in [('12',0,-.76),('3',.76,0),('6',0,.76),('9',-.76,0)]:label(QRectF(cx+dx*r-r*.18,cy+dy*r-r*.14,r*.36,r*.28),number,r*.21,ink,QFont.DemiBold,Qt.AlignCenter)
@@ -82,7 +85,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         top=h*.27 if o['show_date'] else m;space=h-top-m
         for index,(value,name) in enumerate([(time_text.split(':')[0],'小时'+(' · '+period if period else '')),('%02d'%now.minute,'分钟')]):
             box=QRectF(m+index*(w-2*m+gap)/2,top,(w-2*m-gap)/2,space) if horizontal else QRectF(m,top+index*(space+gap)/2,w-2*m,(space-gap)/2)
-            wash(box,21,16);label(QRectF(box.x()+10,box.y()+box.height()*.08,box.width()-20,box.height()*.16),name,min(13,box.height()*.12),muted)
+            wash(box,16,16);label(QRectF(box.x()+14,box.y()+box.height()*.10,box.width()-28,box.height()*.16),name,min(16,box.height()*.14),muted)
             label(QRectF(box.x()+8,box.y()+box.height()*.28,box.width()-16,box.height()*.59),value,box.height()*.56*scale,ink,QFont.Bold,Qt.AlignCenter)
     elif style=='calendar':
         left=w*.32 if wide else w*.25;daybox=QRectF(m,m,left,h*.50 if not wide else h-2*m);wash(daybox,23,16)
@@ -115,7 +118,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             label(QRectF(m,y+d+7,w-2*m,h*.06),date+'  '+weekday,h*.04,muted,align=Qt.AlignCenter)
             workbox=QRectF(m,y+d+h*.09,w-2*m,tiles_top-(y+d+h*.09)-12)
         ring=QRectF(x,y,d,d);stroke=min(o['ring_width'],d*.065)
-        track=QColor(ink);track.setAlpha(28);p.setBrush(Qt.NoBrush);p.setPen(QPen(track,stroke,Qt.SolidLine,Qt.RoundCap));p.drawEllipse(ring)
+        track=QColor(ink);track.setAlpha(42);p.setBrush(Qt.NoBrush);p.setPen(QPen(track,stroke,Qt.SolidLine,Qt.RoundCap));p.drawEllipse(ring)
         ratio=work['ratio'] if o['ring_mode']=='work' else values['day']
         if ratio:
             g=QLinearGradient(ring.topLeft(),ring.bottomRight());g.setColorAt(0,accent.lighter(125));g.setColorAt(1,accent)
@@ -125,24 +128,24 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         title=(period+' · ' if period else '')+('下班' if o['ring_mode']=='work' else '今日')+' '+('休息日' if ratio is None else '%d%%'%round(ratio*100))
         label(QRectF(x+d*.10,y+d*.67,d*.80,d*.14),title,d*.08,muted,QFont.Medium,Qt.AlignCenter)
         if o['show_work']:
-            wash(workbox,28,14);pad=min(12,workbox.height()*.13);a=workbox.adjusted(pad,pad,-pad,-pad)
+            wash(workbox,20,14);pad=min(12,workbox.height()*.13);a=workbox.adjusted(pad,pad,-pad,-pad)
             if workbox.height()>=70:
-                label(QRectF(a.x(),a.y(),a.width()*.65,a.height()*.22),work['title'],min(13,a.height()*.18),muted,QFont.Medium)
+                label(QRectF(a.x(),a.y(),a.width()*.65,a.height()*.22),work['title'],min(16,a.height()*.20),muted,QFont.DemiBold)
                 pct='休息日' if work['ratio'] is None else '%d%%'%round(work['ratio']*100)
                 label(QRectF(a.x()+a.width()*.65,a.y(),a.width()*.35,a.height()*.22),pct,min(19,a.height()*.23),accent,QFont.DemiBold,Qt.AlignRight|Qt.AlignVCenter)
                 detail=work['detail'].replace('还剩 ','').replace('距上班 ','').replace('分钟','分').replace('小时','小时 ')
                 label(QRectF(a.x(),a.y()+a.height()*.29,a.width(),a.height()*.37),detail,min(28,a.height()*.36),ink,QFont.DemiBold)
                 info=o['work']['start']+' — '+o['work']['end'] if work['working'] else ('下次 '+work['next_start'].strftime('%m/%d %H:%M') if work.get('next_start') else '按工作日历')
                 if not work['known']:info+=' · 按工作周'
-                label(QRectF(a.x(),a.y()+a.height()*.71,a.width()*.70,a.height()*.16),info,min(11,a.height()*.15),muted)
+                label(QRectF(a.x(),a.y()+a.height()*.69,a.width(),a.height()*.19),info,min(14,a.height()*.18),muted)
                 bar(QRectF(a.x(),a.bottom()-min(o['bar_width'],a.height()*.10),a.width(),min(o['bar_width'],a.height()*.10)),work['ratio'])
             else:work_tile(workbox)
         else:
             label(workbox,'把每一天过得从容一点',min(18,workbox.height()*.2),muted)
         gap=max(7,m*.5);tw=(w-2*m-gap*max(0,len(rows)-1))/max(1,len(rows))
         for i,(name,value,key) in enumerate(rows):
-            box=QRectF(m+i*(tw+gap),tiles_top,tw,tiles_h);wash(box,18,11)
-            pad=min(10,tw*.08);label(QRectF(box.x()+pad,box.y()+5,tw-pad*2,tiles_h*.24),name,min(12,tiles_h*.18),muted)
+            box=QRectF(m+i*(tw+gap),tiles_top,tw,tiles_h);wash(box,14,11)
+            pad=min(10,tw*.08);label(QRectF(box.x()+pad,box.y()+5,tw-pad*2,tiles_h*.24),name,min(15,tiles_h*.23),muted)
             label(QRectF(box.x()+pad,box.y()+tiles_h*.30,tw-pad*2,tiles_h*.40),'%d%%'%round(value*100),min(24,tiles_h*.38),ink,QFont.DemiBold)
             bar(QRectF(box.x()+pad,box.bottom()-max(8,tiles_h*.14),tw-pad*2,min(o['bar_width'],max(4,tiles_h*.10))),value)
 

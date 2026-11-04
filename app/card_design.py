@@ -1,7 +1,7 @@
 """Light card compositions inspired by Uiverse, colored by this app's accent."""
 from PyQt5.QtCore import Qt,QPointF,QRectF
 from PyQt5.QtGui import QColor,QLinearGradient,QPen,QPainterPath
-DESIGNS=[('极光玻璃','aurora'),('浅色渐变','gradient'),('柔和纸卡','paper'),('极简大字','minimal')]
+DESIGNS=[('液态玻璃','aurora'),('浅色渐变','gradient'),('经典纸张','paper'),('极简纯色','minimal')]
 
 
 def accent_color(cfg):return QColor(cfg.get('theme_color') or cfg.get('panel_color') or '#b8d9ef')

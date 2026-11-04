@@ -84,6 +84,8 @@ def run(output):
                 clock.grab().save(str(output/('clock-format-'+style+'-'+hour_format+'.png')))
         cfg['clock_style']=original_style;cfg['clock_appearance']=original_appearance
         checks.append('clock format: midnight and noon labels verified, 24-hour has no period; all three styles rendered in both formats')
+        from taskbar_text_tests import run as check_taskbar_text
+        check_taskbar_text(output,checks)
         # With a transparent card, backdrop differences must appear inside glass glyphs only.
         from desktop_clock import draw_clock
         from PyQt5.QtCore import QRectF
@@ -92,7 +94,7 @@ def run(output):
         red=QPixmap(260,170);red.fill(QColor('#cc3355'));blue=QPixmap(260,170);blue.fill(QColor('#3377cc'))
         def render_clock(backdrop,effect):
             image=QImage(260,170,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
-            painter=QPainter(image);draw_clock(painter,QRectF(0,0,260,170),dock,dict(optical,text_effect=effect),'digital',backdrop);painter.end();return image
+            painter=QPainter(image);draw_clock(painter,QRectF(0,0,260,170),dock,dict(optical,text_effect=effect,auto_contrast=False),'digital',backdrop);painter.end();return image
         red_image=render_clock(red,'glass');blue_image=render_clock(blue,'glass')
         differences=[(x,y) for y in range(170) for x in range(260) if red_image.pixel(x,y)!=blue_image.pixel(x,y)]
         assert len(differences)>100 and all(red_image.pixelColor(x,y).alpha()>0 for x,y in differences)
@@ -100,7 +102,7 @@ def run(output):
         clear_red=render_clock(red,'clear');clear_blue=render_clock(blue,'clear')
         assert clear_red==clear_blue
         red_image.save(str(output/'clock-glass-text-synthetic.png'))
-        checks.append('glass lettering: synthetic background is sampled inside glyphs only, transparent card stays transparent, clear lettering ignores the backdrop')
+        checks.append('glass lettering: synthetic background is sampled inside glyphs only, transparent card stays transparent; manual clear lettering ignores backdrop when auto contrast is disabled')
         from desktop_clock import contrast_ink
         assert contrast_ink(QColor('#00aa36'),QColor('#2477d7'))!=QColor('#00aa36')
         assert contrast_ink(QColor('#ffffff'),QColor('#14273e'))==QColor('#ffffff')

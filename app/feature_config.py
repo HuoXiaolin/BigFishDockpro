@@ -3,7 +3,9 @@ import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
 DEFAULTS = {
+    'taskbar_text_mode':'system',
     'card_design':'aurora',
+    'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'auto', 'settings_manual_size':[], 'settings_custom_density':100,
@@ -56,6 +58,7 @@ def normalize(cfg):
             result[key] = DEFAULTS[key]
     from appearance_presets import MATERIALS
     for key, allowed in [('panel_material', tuple(value for _,value in MATERIALS)),
+                         ('taskbar_text_mode', ('system','light','dark')),
                          ('dock_material', tuple(value for _,value in MATERIALS)),
                          ('panel_collapse_style', ('bar', 'capsule', 'ball')),
                          ('panel_theme', ('auto', 'light', 'dark')),
@@ -113,4 +116,9 @@ def normalize(cfg):
     result['desktop_panels']=without_overrides(result['desktop_panels'])
     from panel_merge import normalize as normalize_merge_groups
     normalize_merge_groups(result)
+    from appearance_presets import normalize_note_appearance
+    result['note_appearance']=normalize_note_appearance(result.get('note_appearance'))
+    from appearance_profiles import MODES,clean_snapshot
+    if result.get('appearance_mode') not in {value for _,value in MODES}:result['appearance_mode']='custom'
+    for key in ('appearance_custom','appearance_applied'):result[key]=clean_snapshot(result.get(key))
     return result

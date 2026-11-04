@@ -982,14 +982,14 @@ class PanelOptions(QDialog):
         self.panel,self.fields=panel,{};self.applying_preset=True
         self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
-        self.preset=ModernComboBox();self.preset.addItem('自定义 / 保留当前设置');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('外观预设',self.preset)
+        self.preset=ModernComboBox();self.preset.addItem('自定义');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('主题预设',self.preset)
         def choice(key,title,options):
             field=ModernComboBox()
             for name,value in options:field.addItem(name,value)
             self.fields[key]=field;form.addRow(title,field)
         def number(key,title,low,high):
             field=ModernSpinBox();field.setRange(low,high);self.fields[key]=field;form.addRow(title,field)
-        choice('material','材质',MATERIALS);choice('theme','颜色模式',COLOR_MODES)
+        choice('material','材质',MATERIALS);choice('theme','明暗模式',COLOR_MODES)
         self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');colors=QVBoxLayout();row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
         from ui_style import ThemeSwatches
         colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',colors)

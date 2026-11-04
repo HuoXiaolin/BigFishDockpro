@@ -20,7 +20,7 @@ class ResponsiveFields(QWidget):
         self.grid = QGridLayout(self)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setHorizontalSpacing(16)
-        self.grid.setVerticalSpacing(12)
+        self.grid.setVerticalSpacing(10)
         self.grid.setSizeConstraint(QLayout.SetNoConstraint)
         self.cells = []
         self.columns = 0
@@ -111,13 +111,20 @@ class NumericControl(QWidget):
         self.slider.setValue(spin.value())
         self.slider.setAccessibleName(spin.accessibleName() + '滑块')
         self.slider.setFocusPolicy(Qt.StrongFocus)
-        spin.setMinimumWidth(94)
-        spin.setMaximumWidth(120)
+        spin.setFixedWidth(106)
         layout.addWidget(self.slider, 1)
         layout.addWidget(spin)
         self.slider.valueChanged.connect(spin.setValue)
         spin.valueChanged.connect(self.slider.setValue)
+        self.spin = spin
+        self.slider.setEnabled(spin.isEnabled())
+        spin.installEventFilter(self)
         self.setFocusProxy(spin)
+
+    def eventFilter(self, obj, event):
+        if obj is self.spin and event.type() == QEvent.EnabledChange:
+            self.slider.setEnabled(self.spin.isEnabled())
+        return super().eventFilter(obj, event)
 
 
 class DockPreview(QWidget):
@@ -127,7 +134,7 @@ class DockPreview(QWidget):
         self.dialog = dialog
         self.setObjectName('SettingsPreview')
         self.setAccessibleName('Dock 外观预览')
-        self.setFixedHeight(88)
+        self.setFixedHeight(58)
         for key in ('theme_color','transparency','dock_highlight'):
             field=dialog.fields[key]
             if isinstance(field, QComboBox):
@@ -141,7 +148,7 @@ class DockPreview(QWidget):
 
     def sizeHint(self):
         from ui_style import widget_px
-        return QSize(widget_px(self, 420), widget_px(self, 96))
+        return QSize(widget_px(self, 420), widget_px(self, 58))
 
     def paintEvent(self, event):
         from PyQt5.QtCore import QRectF
@@ -157,8 +164,8 @@ class DockPreview(QWidget):
         if not color.isValid(): color = QColor('#8fbfe0')
         p.setPen(self.palette().color(QPalette.Text))
         font = self.font(); font.setPixelSize(widget_px(self, 12)); p.setFont(font)
-        p.drawText(widget_px(self, 14), widget_px(self, 22), '外观预览')
-        strip = QRectF(widget_px(self, 14), widget_px(self, 35), self.width()-widget_px(self, 28), self.height()-widget_px(self, 46))
+        p.drawText(QRectF(widget_px(self, 14), 0, widget_px(self, 70), self.height()), Qt.AlignVCenter, '配色预览')
+        strip = QRectF(widget_px(self, 92), widget_px(self, 10), self.width()-widget_px(self, 106), self.height()-widget_px(self, 20))
         fill = QColor(color); fill.setAlpha(max(18, round(fields['transparency'].value()*1.8)))
         p.setPen(QPen(QColor(255,255,255,round(fields['dock_highlight'].value()*2)), 1))
         p.setBrush(fill); p.drawRoundedRect(strip, 10, 10)
@@ -182,6 +189,7 @@ def _item_widget(item):
     if item.layout() is not None:
         layout = item.layout()
         layout.setParent(None)
+        layout.setContentsMargins(0, 0, 0, 0)
         widget = QWidget()
         widget.setLayout(layout)
         return widget
@@ -197,6 +205,9 @@ def group_form(form, dialog):
     while form.rowCount():
         row = form.takeRow(0)
         rows.append((_item_widget(row.labelItem), _item_widget(row.fieldItem)))
+    if dialog.objectName() == 'SettingsDialog':
+        group_main_form(form, rows)
+        return
     form.setContentsMargins(10, 8, 10, 10) if dialog.objectName()=='SettingsDialog' else form.setContentsMargins(0, 4, 4, 8)
     form.setVerticalSpacing(14)
     form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
@@ -246,6 +257,84 @@ def group_form(form, dialog):
         wide = (not isinstance(field, (QComboBox,QSpinBox,QCheckBox)) or
                 any(word in title for word in ('预设','配色方案')) or
                 any(word in title for word in ('路径','地址','链接','字体','格式','目录','时段')))
+        fields.add(cell, wide)
+
+
+def group_main_form(form, rows):
+    """Keep each functional group together; labels and fields share two columns."""
+    form.setContentsMargins(10, 8, 10, 10)
+    form.setVerticalSpacing(12)
+    form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+    group = fields = None
+
+    def add(widget):
+        if group is None:
+            form.addRow(widget)
+        else:
+            group.addWidget(widget)
+
+    for caption, field in rows:
+        if field is None:
+            field, caption = caption, None
+        if field is None:
+            continue
+        if caption is None and isinstance(field, QLabel) and field.property('role') == 'section':
+            box = QWidget()
+            box.setObjectName('SettingsGroup')
+            box.setAttribute(Qt.WA_StyledBackground)
+            group = QVBoxLayout(box)
+            group.setContentsMargins(14, 12, 14, 12)
+            group.setSpacing(10)
+            field.setProperty('role', 'group-title')
+            group.addWidget(field)
+            form.addRow(box)
+            fields = None
+            continue
+        title = caption.text() if isinstance(caption, QLabel) else ''
+        if not title and not isinstance(field, QCheckBox):
+            if caption is not None:
+                caption.deleteLater()
+            add(field)
+            fields = None
+            continue
+        if fields is None:
+            fields = ResponsiveFields()
+            add(fields)
+        cell = QWidget()
+        cell.setObjectName('SettingsField')
+        statistic = title == '开始统计' or title.endswith(('次数', '时长'))
+        reading = isinstance(field, QLabel) and not statistic
+        layout = QHBoxLayout(cell) if reading else QVBoxLayout(cell)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12 if reading else 4)
+        if title:
+            caption.setMinimumWidth(0)
+            caption.setMaximumWidth(16777215)
+            caption.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            caption.setProperty('role', 'field-label')
+            if reading:
+                caption.setFixedWidth(96)
+                layout.addWidget(caption, 0, Qt.AlignTop)
+            else:
+                layout.addWidget(caption)
+            if isinstance(field, (QLineEdit, QSpinBox, QComboBox)):
+                caption.setBuddy(field)
+        elif caption is not None:
+            caption.deleteLater()
+        if isinstance(field, QComboBox):
+            field.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            field.setMinimumContentsLength(6)
+            field.setMinimumWidth(0)
+        if isinstance(field, QLabel) and statistic:
+            field.setProperty('role', 'setting-value')
+        slider = isinstance(field, QSpinBox) and any(word in title for word in ('高光', '不透明度', '模糊强度', '字号', '图标大小', '宽度比例'))
+        if reading:
+            layout.addWidget(field, 1)
+        else:
+            layout.addWidget(NumericControl(field) if slider else field)
+        wide = (reading or not isinstance(field, (QComboBox, QSpinBox, QCheckBox, QLabel)) or
+                any(word in title for word in ('预设', '风格', '配色方案', '路径', '地址', '链接', '字体', '格式', '目录', '时段')))
         fields.add(cell, wide)
 
 
@@ -343,20 +432,32 @@ def finish_dialog(dialog):
 def stylesheet(colors):
     c = dict(colors)
     c['frame'] = '#f0f5f8' if QColor(c['ground']).lightness()>128 else '#1c2227'
+    c['group'] = '#f6f9fb' if QColor(c['ground']).lightness()>128 else '#272b30'
     return '''
     QDialog[designPopup="true"] {background:%(frame)s; border:1px solid %(line)s;}
     QWidget#SettingsSheet, QStackedWidget#SettingsSheet {background:%(surface)s; border:1px solid %(line)s; border-radius:16px;}
     QWidget#SettingsSheet QScrollArea, QWidget#SettingsSheet QScrollArea > QWidget > QWidget,
     QStackedWidget#SettingsSheet QScrollArea, QStackedWidget#SettingsSheet QScrollArea > QWidget > QWidget {background:%(surface)s; border:0;}
     QWidget#SettingsField {background:transparent; border:0;}
-    QLabel[role="field-label"] {font-weight:500;}
+    QLabel[role="field-label"] {font-weight:400;}
+    QDialog[designPopup="true"] QWidget#SettingsGroup {background:%(group)s; border:0; border-radius:10px;}
+    QDialog[designPopup="true"] QLabel[role="group-title"] {font-size:14px; font-weight:600; padding:0;}
+    QDialog[designPopup="true"] QLabel[role="field-label"] {font-size:13px; font-weight:400;}
+    QDialog[designPopup="true"] QLabel[role="muted"] {font-size:12px;}
+    QDialog[designPopup="true"] QLabel[role="setting-value"] {font-size:14px; font-weight:600;}
+    QDialog[designPopup="true"] QLineEdit, QDialog[designPopup="true"] QComboBox,
+    QDialog[designPopup="true"] QSpinBox, QDialog[designPopup="true"] QPushButton {min-height:22px; padding-top:4px; padding-bottom:4px;}
+    QDialog[designPopup="true"] QCheckBox {padding:2px 0;}
+    QDialog[designPopup="true"] QSpinBox QLineEdit {padding:0; min-height:0;}
+    QDialog[designPopup="true"] QScrollBar:vertical {width:7px;}
+    QDialog[designPopup="true"] QScrollBar::handle:vertical {border-radius:3px;}
     QLabel[role="section"] {font-size:15px; font-weight:600; padding-top:8px;}
     QDialog[designPopup="true"] QLabel[role="title"] {font-size:18px; font-weight:600;}
-    QDialog[designPopup="true"] QLabel[role="page-title"] {font-size:20px; font-weight:600; padding-bottom:6px;}
+    QDialog[designPopup="true"] QLabel[role="page-title"] {font-size:18px; font-weight:600; padding-bottom:2px;}
     QDialog[designPopup="true"] QPushButton, QDialog[designPopup="true"] QLineEdit,
     QDialog[designPopup="true"] QComboBox, QDialog[designPopup="true"] QSpinBox {border-radius:6px;}
     QDialog[designPopup="true"] QTabBar::tab {padding:9px 12px;}
-    QDialog[designPopup="true"] QListWidget#SettingsNav::item {padding:8px 10px; height:26px; min-height:26px; border-radius:8px;}
+    QDialog[designPopup="true"] QListWidget#SettingsNav::item {padding:6px 8px; height:26px; min-height:26px; border-radius:8px;}
     QDialog[designPopup="true"] QSlider {background:transparent; border:0; padding:0; min-height:22px;}
     QDialog[designPopup="true"] QSlider::groove:horizontal {height:5px; background:%(hover)s; border-radius:2px;}
     QDialog[designPopup="true"] QSlider::sub-page:horizontal {background:#438aa7; border-radius:2px;}

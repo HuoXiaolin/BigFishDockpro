@@ -52,6 +52,10 @@ class TaskbarAppearance:
         self.xaml = None
         self.payload = None
         self.install_process = None
+        from taskbar_text import TaskbarText
+        import dock as api
+        self.text = TaskbarText(Path(api.CONFIG_DIR)/'taskbar-text-restore.json',log,
+            enabled=sys.platform=='win32' and not dock.preview and not os.environ.get('FISHDOCK_TEST_DESKTOP'))
         if dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'):
             self.status = '隔离预览中不修改系统任务栏。'
         elif sys.platform == 'win32' and sys.getwindowsversion().build >= 22000:
@@ -147,13 +151,18 @@ class TaskbarAppearance:
         return windows, apply, restore
 
     def sync(self):
+        self.text.sync(self.dock.cfg.get('taskbar_text_mode','system'))
+        effect=tuple(self.dock.cfg.get(key) for key in ('taskbar_mode','taskbar_color','taskbar_opacity','taskbar_blur'))
+        if getattr(self,'_effect',None)==effect:return
         if self.xaml is not None:
             self.xaml.sync()
+            self._effect=effect
             return
         if self.backend is None:
             return
+        self._effect=effect
         if self.dock.cfg['taskbar_mode'] == 'system':
-            self.close()
+            self.restore_native()
             return
         self.refresh(force=True)
         self.timer.start()
@@ -173,13 +182,15 @@ class TaskbarAppearance:
         if rejected and force:
             self.log('系统拒绝应用部分任务栏效果。')
 
-    def close(self):
-        if self.xaml is not None:
-            self.xaml.close()
-            return
+    def restore_native(self):
         self.timer.stop()
         if self.backend:
             windows, _, restore = self.backend
             for hwnd, _ in self.active & windows():
                 restore(hwnd)
         self.active.clear()
+
+    def close(self):
+        self.text.close()
+        if self.xaml is not None:self.xaml.close()
+        else:self.restore_native()

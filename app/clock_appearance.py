@@ -1,6 +1,6 @@
 """Independent, validated desktop clock appearance."""
 import re
-from appearance_presets import MATERIALS
+from appearance_presets import MATERIALS, PANEL_PRESETS
 
 DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':'#b8d9ef','opacity':38,'blur':8,'highlight':45,
           'typography_version':2,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
@@ -9,14 +9,7 @@ DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_s
                 show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={})
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
-PRESETS=[('轻透天空',dict(material='liquid',theme='light',color='#d8ebf7',accent_color='#337fad',opacity=56,blur=10,highlight=30,text_color='#19384e',text_effect='clear')),
-         ('玉石青绿',dict(material='liquid',theme='light',color='#d4eee5',accent_color='#298471',opacity=60,blur=10,highlight=25,text_color='#1e433c',text_effect='clear')),
-         ('柔雾薰衣',dict(material='acrylic',theme='light',color='#e6e0f3',accent_color='#8261ad',opacity=66,blur=14,highlight=20,text_color='#3b3154',text_effect='clear')),
-         ('奶油杏桃',dict(material='liquid',theme='light',color='#f5e6d7',accent_color='#b47a45',opacity=64,blur=10,highlight=20,text_color='#513d2b',text_effect='clear')),
-         ('珍珠留白',dict(material='solid',theme='light',color='#f4f7fa',accent_color='#557e9f',opacity=100,blur=8,highlight=12,text_color='#23374a',text_effect='clear')),
-         ('夜间石墨',dict(material='mica',theme='dark',color='#344453',accent_color='#8dc7df',opacity=90,blur=12,highlight=20,text_color='#f1f7fb',text_effect='clear')),
-         ('纯透明',dict(material='clear',theme='auto',color='',accent_color='#b5e0f0',opacity=0,blur=2,highlight=0,text_color='#ffffff',text_effect='clear'))]
-
+PRESETS=[(name,dict(values,design='aurora',accent_color='',text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else '#19384e',text_effect='clear')) for name,values in PANEL_PRESETS]
 
 
 def normalize(value, cfg=None):

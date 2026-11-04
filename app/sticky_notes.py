@@ -14,7 +14,8 @@ from PyQt5.QtGui import QKeySequence,QCursor
 from ui_style import AlignedMenu,button,label,SettingsHeader,compact_dialog,ModernComboBox,ModernSpinBox,ModernCheckBox
 from sticky_notes_store import STYLES,COLORS,normalize_notes,clean_editor_html
 from screen_layout import capture,project,screen_records,initial_card_factor
-from liquid_glass import paint_liquid_glass,tint_palette
+from liquid_glass import paint_liquid_glass,tint_palette,material_palette,material_blur
+from appearance_presets import PANEL_PRESETS,normalize_note_appearance
 
 
 NOTE_ICON_COLORS={'#fff1a8':'#a56b09','#ffdce5':'#be4e7b','#d4eedc':'#278564',
@@ -125,6 +126,7 @@ class NoteWindow(QWidget):
         if native_minimum(self,message):return True,0
         return super().nativeEvent(event_type,message)
     def row(self):return self.manager.row(self.identity)
+    def appearance(self):return normalize_note_appearance(self.row().get('appearance',self.dock.cfg.get('note_appearance')))
     def changed(self):
         if self.loading or self.disposed or self.manager.closed:return
         if self.row().get('flipped') and not getattr(self,'_toggling_todo',False):self.rebuild_todos()
@@ -336,6 +338,7 @@ class NoteWindow(QWidget):
         if row['locked']:self.setFixedSize(self.size())
         self.grip.setVisible(not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
         color=QColor(row['color']);ink='#20252b' if color.lightness()>110 or self.dock.cfg.get('card_design') in ('gradient','paper','minimal') else '#f5f7fa'
+        if row['style']=='glass' and (self.appearance()['theme']=='dark' or self.appearance()['material']=='clear') and self.dock.cfg.get('card_design')=='aurora':ink='#f5f7fa'
         from glass_panel import category_icon
         icon_size=max(12,round(17*factor));self.handle.setFixedSize(icon_size,icon_size)
         self.handle.setPixmap(category_icon('note',note_icon_color(row['color']),icon_size,self.devicePixelRatioF()))
@@ -380,23 +383,30 @@ class NoteWindow(QWidget):
         super().resizeEvent(event)
         if not self.loading:self.geometry_timer.start();self.refresh_timer.start();self.fit_title()
     def capture_backdrop(self):
-        if self.row()['style']!='glass':self.backdrop=None;self.update();return
+        appearance=self.appearance()
+        if self.row()['style']!='glass' or appearance['material'] in ('clear','solid'):self.backdrop=None;self.update();return
         if self.dock.preview or not self.isVisible():return
         from glass_capture import capture_behind,surface_windows,backdrop_key
-        key=backdrop_key(self,8)
+        blur=material_blur(appearance['blur'],appearance['material'])
+        key=backdrop_key(self,blur)
         if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         image=capture_behind(self,surface_windows(self.dock))
         if image is not None:
             from glass_capture import smooth_backdrop
-            self.backdrop=smooth_backdrop(image,8)
+            self.backdrop=smooth_backdrop(image,blur)
             self._backdrop_key=key
         self.update()
     def paintEvent(self,event):
         row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.SmoothPixmapTransform);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor);color=QColor(row['color'])
+        appearance=self.appearance();clear=False
         if row['style']=='glass':
-            colors=tint_palette(self.dock.base_theme_colors('light'),row['color'])
-            surface=SimpleNamespace(cfg={'glass':True,'clear_background':False,'dock_material':'liquid'},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
-            paint_liquid_glass(surface,p,shape,rect,rect,colors,105,self.dock.merged_grad_stops(colors))
+            material=appearance['material'];colors=material_palette(tint_palette(self.dock.base_theme_colors(appearance['theme']),row['color']),material)
+            strength=appearance['highlight']/45
+            colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)));colors['spec']=min(255,round(colors['spec']*strength))
+            stops=[(position,min(255,round(alpha*strength))) for position,alpha in self.dock.merged_grad_stops(colors)]
+            clear=material=='clear' and appearance['opacity']==0 and appearance['highlight']==0
+            surface=SimpleNamespace(cfg={'glass':material not in ('clear','solid'),'clear_background':clear,'dock_material':material},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
+            paint_liquid_glass(surface,p,shape,rect,rect,colors,round(appearance['opacity']*2.55),stops)
         else:
             p.setClipPath(shape)
             if row['style']=='paper':
@@ -405,7 +415,7 @@ class NoteWindow(QWidget):
             else:p.fillRect(rect,color)
             p.setClipping(False);p.setBrush(Qt.NoBrush);p.setPen(QPen(color.darker(120),1));p.drawPath(shape)
         from card_design import paint_design
-        paint_design(p,rect,self.dock.cfg,corner_radius=self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,body_top=rect.bottom() if row['collapsed'] else None,header_separator=not row['collapsed'])
+        paint_design(p,rect,self.dock.cfg,clear=clear,corner_radius=self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,body_top=rect.bottom() if row['collapsed'] else None,header_separator=not row['collapsed'])
     def closeEvent(self,event):
         if self.disposed or QApplication.instance().isSavingSession():event.accept()
         else:event.ignore();self.manager.update_and_save(self.identity,visible=False)
@@ -426,7 +436,16 @@ class NoteOptions(QDialog):
         for title,key in COLORS:self.color.addItem(title,key)
         if self.color.findData(row['color'])<0:self.color.addItem('当前颜色',row['color'])
         self.color.setCurrentIndex(self.color.findData(row['color']))
-        form.addRow('外观样式',self.style);form.addRow('主题色',self.color)
+        self.appearance=note.appearance()
+        self.preset=ModernComboBox();self.preset.addItem('自定义')
+        self.preset.addItems([name for name,_ in PANEL_PRESETS])
+        form.addRow('主题预设',self.preset)
+        form.addRow('装饰样式',self.style);form.addRow('主题色',self.color)
+        self.preset.currentIndexChanged.connect(self.apply_theme_preset)
+        self.style.currentIndexChanged.connect(self.customize_theme)
+        self.color.currentIndexChanged.connect(self.customize_theme)
+        matched=next((i for i,(_,v) in enumerate(PANEL_PRESETS,1) if row['style']=='glass' and self.appearance==normalize_note_appearance(v) and row['color']==(v['color'] or '#b8d9ef')),0)
+        self.preset.setCurrentIndex(matched)
         self.body_font=ModernSpinBox();self.body_font.setRange(8,72);self.body_font.setValue(note.text_pixels());self.body_font.setAccessibleName('便签正文字号')
         font_row=QHBoxLayout();font_row.addWidget(self.body_font,1);self.follow_button=button('跟随卡片',self.follow_font);font_row.addWidget(self.follow_button);form.addRow('正文字号（像素）',font_row)
         self.auto_hide=ModernCheckBox('鼠标离开后自动收起');self.auto_hide.setChecked(row['auto_hide']);form.addRow(self.auto_hide)
@@ -438,6 +457,17 @@ class NoteOptions(QDialog):
         self.body_font.valueChanged.connect(self.font_changed);self.follow_button.setEnabled(self.custom);self.loading=False;compact_dialog(self)
         from settings_layout import fit_auxiliary_dialog
         fit_auxiliary_dialog(self,note.dock.cfg)
+    def customize_theme(self,*args):
+        if not self.loading:
+            blocked=self.preset.blockSignals(True);self.preset.setCurrentIndex(0);self.preset.blockSignals(blocked)
+    def apply_theme_preset(self,index):
+        if self.loading or index<=0:return
+        self.loading=True;values=PANEL_PRESETS[index-1][1]
+        self.appearance=normalize_note_appearance(values)
+        self.style.setCurrentIndex(self.style.findData('glass'))
+        color=values['color'] or '#b8d9ef'
+        if self.color.findData(color)<0:self.color.addItem(PANEL_PRESETS[index-1][0],color)
+        self.color.setCurrentIndex(self.color.findData(color));self.loading=False
     def font_changed(self):
         if not self.loading:self.custom=True;self.follow_button.setEnabled(True)
     def follow_font(self):
@@ -449,7 +479,7 @@ class NoteOptions(QDialog):
         if not self.manager.flush():self.status.setText('正文尚未保存，请重试。');return False
         rows=self.manager.rows();row=next((row for row in rows if row['id']==self.note.identity),None)
         if row is None:return False
-        row.update(style=self.style.currentData(),color=self.color.currentData(),auto_hide=self.auto_hide.isChecked(),pinned=self.pinned.isChecked(),locked=self.locked.isChecked())
+        row.update(style=self.style.currentData(),color=self.color.currentData(),appearance=copy.deepcopy(self.appearance),auto_hide=self.auto_hide.isChecked(),pinned=self.pinned.isChecked(),locked=self.locked.isChecked())
         if self.custom:row.update(body_font_size=self.body_font.value(),body_font_scale=self.note.ui_factor)
         else:row.pop('body_font_size',None);row.pop('body_font_scale',None)
         if not self.manager.persist(sticky_notes=rows):self.status.setText('保存失败，原设置保持不变。');return False
@@ -538,6 +568,7 @@ class NotesManager(QObject):
         if len(self.rows())>=64:self.message='最多保留64张便签。';self.status();return None
         cfg=self.runtime.dock.cfg;style=cfg['note_style'];identity=uuid.uuid4().hex
         row={'id':identity,'title':'新便签','html':'','text':'','style':style,'color':{'glass':cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[style],'pinned':False,'locked':False,'collapsed':False,'auto_hide':False,'visible':True,'updated':'','font_size':12,'font_scale':1.0}
+        row['appearance']=normalize_note_appearance(cfg.get('note_appearance'))
         self.pending[identity]=row
         if not self.persist(sticky_notes=self.rows(),notes_enabled=True,notes_visible=True):return None
         self.pending.clear();self.sync();window=self.windows[identity];window.raise_();window.editor.setFocus();self.changed.emit()

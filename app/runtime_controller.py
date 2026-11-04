@@ -233,10 +233,10 @@ class RuntimeController:
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
             if 'hide_tray' in changed:self.tray.setVisible(not self.dock.cfg['hide_tray'])
             panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
-            if panel_keys or changed&{'card_scale','card_sizing','display_layout'}:self.panels.apply_settings()
-            if changed&{'note_style','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing'}:self.notes.sync()
-            if any(key.startswith('clock_') for key in changed) or 'card_scale' in changed:self.clock.sync()
-            if any(key.startswith('calendar_') for key in changed) or 'card_scale' in changed:self.calendar.sync()
+            if panel_keys or changed&{'card_scale','card_sizing','display_layout','card_design'}:self.panels.apply_settings()
+            if changed&{'note_style','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'}:self.notes.sync()
+            if any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'}:self.clock.sync()
+            if any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'}:self.calendar.sync()
             if 'card_scale' in changed:
                 self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=self.dock.cfg['card_scale']
             if changed&{'screen_corners','corner_radius'}:self.refresh_corners()

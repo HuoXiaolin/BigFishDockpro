@@ -2,7 +2,7 @@
 import copy,json,re,datetime
 from pathlib import Path
 from PyQt5.QtCore import Qt,QRectF,QSize
-from PyQt5.QtGui import QPainter,QColor,QFontDatabase,QLinearGradient
+from PyQt5.QtGui import QPainter,QColor,QFontDatabase,QLinearGradient,QPixmap
 from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QScrollArea,QLineEdit,QColorDialog,QComboBox,QTabWidget,QGridLayout,QPlainTextEdit,QFileDialog
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ThemeSwatches,button,label,compact_dialog
 from clock_appearance import STYLES,FONTS,PRESETS,DEFAULTS,normalize
@@ -24,8 +24,14 @@ class ClockPreview(QWidget):
         clock=self.dialog.clock;o=self.dialog.values()
         if clock.kind=='calendar':o=dict(o,_calendar_year=clock.view_year,_calendar_month=clock.view_month)
         logical_width=self.dialog.fields['width'].value();logical_height=self.dialog.fields['height'].value()
+        key=(round(w*self.devicePixelRatioF()),round(h*self.devicePixelRatioF()),logical_width,logical_height)
+        if key!=getattr(self,'_sample_key',None):
+            self._sample=QPixmap(max(1,key[0]),max(1,key[1]));self._sample.setDevicePixelRatio(max(1,key[0])/logical_width)
+            sample=QPainter(self._sample);gradient=QLinearGradient(0,0,logical_width,logical_height)
+            gradient.setColorAt(0,QColor('#87b6d3'));gradient.setColorAt(1,QColor('#99a9cc'))
+            sample.fillRect(QRectF(0,0,logical_width,logical_height),gradient);sample.end();self._sample_key=key
         painter.save();painter.translate((self.width()-w)/2,(self.height()-h)/2);painter.scale(w/logical_width,h/logical_height)
-        draw_clock(painter,QRectF(0,0,logical_width,logical_height),clock.dock,dict(o,_header_controls=clock.kind=='clock'),'calendar_card' if clock.kind=='calendar' else self.dialog.fields['style'].currentData());painter.restore()
+        draw_clock(painter,QRectF(0,0,logical_width,logical_height),clock.dock,dict(o,_header_controls=clock.kind=='clock'),'calendar_card' if clock.kind=='calendar' else self.dialog.fields['style'].currentData(),self._sample);painter.restore()
 
 
 class ClockOptions(QDialog):
@@ -41,7 +47,7 @@ class ClockOptions(QDialog):
         self.tabs=QTabWidget();body.addWidget(self.tabs,1)
         def page(title):
             scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setFrameShape(QScrollArea.NoFrame);widget=QWidget();form=QFormLayout(widget);form.setVerticalSpacing(10);form.setHorizontalSpacing(16);form.setContentsMargins(12,12,12,12);scroll.setWidget(widget);self.tabs.addTab(scroll,title);return form
-        layout=page('样式布局');typeform=page('文字配色');material=page('背景材质');workform=page('农历与节假日' if self.calendar else '工作时间')
+        layout=page('样式布局');typeform=page('文字配色');material=page('材质');workform=page('农历与节假日' if self.calendar else '工作时间')
         def choice(form,key,title,items,visible=True):
             field=ModernComboBox();field.setAccessibleName(title)
             for name,value in items:field.addItem(name,value)
@@ -52,9 +58,9 @@ class ClockOptions(QDialog):
             field=ModernSpinBox();field.setRange(low,high);field.setAccessibleName(title);self.fields[key]=field;form.addRow(title,field);return field
         def check(form,key,title):
             field=ModernCheckBox(title);self.fields[key]=field;form.addRow('',field);return field
-        self.preset=ModernComboBox();self.preset.addItem('自定义 / 保留当前设置')
+        self.preset=ModernComboBox();self.preset.addItem('自定义')
         for name,_ in PRESETS:self.preset.addItem(name)
-        layout.addRow('配色方案',self.preset)
+        layout.addRow('主题预设',self.preset)
         self.style_buttons=[]
         if not self.calendar:
             style=choice(layout,'style','样式',STYLES,False);grid=QGridLayout()
@@ -80,10 +86,11 @@ class ClockOptions(QDialog):
             field=QLineEdit();field.setPlaceholderText('自动 / #RRGGBB');field.setAccessibleName(title);self.fields[key]=field
             box=QVBoxLayout();row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,box)
         color(typeform,'text_color','主要文字');color(typeform,'accent_color','强调与进度');number(typeform,'text_opacity','文字不透明度（%）',50,100)
-        check(typeform,'auto_contrast','自动提高文字与强调色的对比度')
+        check(typeform,'auto_contrast','自动适配文字对比度（推荐）')
+        self.fields['auto_contrast'].setToolTip('根据壁纸与实际材质调整字色，并提高过低的文字不透明度。关闭后完全使用自定义配色。')
         from card_design import DESIGNS
-        choice(material,'design','卡片风格',[('跟随卡片风格','follow')]+DESIGNS);choice(material,'material','背景材质',MATERIALS);choice(material,'theme','明暗模式',COLOR_MODES)
-        color(material,'color','背景主题色');number(material,'opacity','背景不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
+        choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS);choice(material,'material','材质',MATERIALS);choice(material,'theme','明暗模式',COLOR_MODES)
+        color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
         if not self.calendar:
             number(layout,'bar_width','进度条厚度',4,18);number(layout,'ring_width','圆环厚度',4,18)
             choice(layout,'ring_mode','进度圆环',[('今日进度','day'),('下班进度','work')])
@@ -150,7 +157,9 @@ class ClockOptions(QDialog):
         return normalize(values)
     def changed(self,*args):
         if self.loading:return
-        if self.preset.currentIndex():self.preset.blockSignals(True);self.preset.setCurrentIndex(0);self.preset.blockSignals(False)
+        current=self.values()
+        matched=next((i for i,(_,v) in enumerate(PRESETS,1) if all(current[key]==value for key,value in v.items())),0)
+        self.preset.blockSignals(True);self.preset.setCurrentIndex(matched);self.preset.blockSignals(False)
         for item,value in self.style_buttons:item.setChecked(self.fields['style'].currentData()==value)
         if not self.calendar:
             style=self.fields['style'].currentData()

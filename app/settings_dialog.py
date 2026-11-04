@@ -2,8 +2,8 @@ from ui_style import compact_dialog, compact_px
 """Settings for existing upstream features; edits apply only on Save."""
 import os
 import copy
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPalette, QColor
+from PyQt5.QtCore import Qt, QSize, QRectF, QEvent
+from PyQt5.QtGui import QPalette, QColor, QIcon, QPixmap, QPainter
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QSpinBox, QCheckBox, QComboBox, QScrollArea, QApplication, QLineEdit, QColorDialog,
     QListWidget, QStackedWidget, QSizePolicy, QFileDialog)
@@ -14,6 +14,7 @@ from appearance_presets import DOCK_PRESETS, MATERIALS, COLOR_MODES
 
 
 class SettingsPages(QWidget):
+    NAV_SYMBOLS = ('palette', 'panels', 'apps', 'lite', 'update', 'size', 'info')
     def __init__(self):
         super().__init__()
         layout = QHBoxLayout(self)
@@ -31,7 +32,40 @@ class SettingsPages(QWidget):
     def addTab(self, page, name):
         self.pages.addWidget(page)
         self.nav.addItem(name)
+        self.refresh_icons()
         if self.nav.currentRow() < 0: self.nav.setCurrentRow(0)
+
+    def refresh_icons(self):
+        from dock_extras import symbol
+        from PyQt5.QtGui import QPen
+        light = self.palette().color(QPalette.Window).lightness() > 128
+        color = QColor('#526b7a' if light else '#bcc9d1')
+        for index in range(self.nav.count()):
+            pixmap = QPixmap(40, 40)
+            pixmap.setDevicePixelRatio(2)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            kind = self.NAV_SYMBOLS[index]
+            if kind in ('update', 'info'):
+                painter.setPen(QPen(color, 1.3, Qt.SolidLine, Qt.RoundCap))
+                if kind == 'info':
+                    painter.drawEllipse(QRectF(3, 3, 14, 14))
+                    painter.drawLine(10, 9, 10, 14)
+                    painter.drawPoint(10, 6)
+                else:
+                    painter.drawArc(3, 3, 14, 14, 35*16, 285*16)
+                    painter.drawLine(16, 3, 16, 7)
+                    painter.drawLine(12, 7, 16, 7)
+            else:
+                symbol(painter, QRectF(0, 0, 20, 20), kind, color)
+            painter.end()
+            self.nav.item(index).setIcon(QIcon(pixmap))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange and hasattr(self, 'nav'):
+            self.refresh_icons()
 
     def count(self): return self.pages.count()
     def currentIndex(self): return self.nav.currentRow()
@@ -39,14 +73,16 @@ class SettingsPages(QWidget):
 
     def resizeEvent(self, event):
         factor=float(self.window().property('interfaceScale') or .7)
-        self.nav.setFixedWidth(round((118 if self.width()<620*factor else 132)*factor))
+        self.nav.setFixedWidth(round(132*factor))
+        self.nav.setIconSize(QSize(round(16*factor), round(16*factor)))
         super().resizeEvent(event)
 
 
 from settings_layout import SettingsSizingMixin
+from settings_profiles import AppearanceProfileMixin
 
 
-class SettingsDialog(SettingsSizingMixin,QDialog):
+class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     def __init__(self, tray, api):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.setObjectName('SettingsDialog')
@@ -67,35 +103,38 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.create_size_selector()
         body.addWidget(self.header)
         self.tabs = SettingsPages()
-        body.addWidget(self.tabs)
+        body.addWidget(self.tabs, 1)
         from settings_design import section_marker
         appearance = self.section('外观设置')
-        section_marker(appearance,'材质与颜色')
+        self.create_profile_controls(appearance)
+        section_marker(appearance,'Dock 材质与配色')
         self.dock_preset = ModernComboBox()
-        self.dock_preset.addItem('自定义 / 保留当前设置')
+        self.dock_preset.addItem('自定义')
         self.dock_preset.addItems([name for name, _ in DOCK_PRESETS])
-        appearance.addRow(self.field_label('外观预设'), self.dock_preset)
+        appearance.addRow(self.field_label('主题预设'), self.dock_preset)
         self.combo(appearance, 'dock_material', '材质', MATERIALS)
-        self.combo(appearance, 'theme', '颜色模式', COLOR_MODES)
+        self.combo(appearance, 'theme', '明暗模式', COLOR_MODES)
         self.color(appearance, 'theme_color', '主题色')
         section_marker(appearance,'质感与尺寸')
         self.number(appearance, 'dock_highlight', '高光（%）', 0, 100)
         self.number(appearance, 'transparency', '不透明度（%）', 0, 100)
         self.number(appearance, 'blur_px', '模糊强度', 3, 30)
-        self.check(appearance, 'glass', '启用背景模糊')
-        self.check(appearance, 'clear_background', '背景全透明（仅保留图标与文字）')
-        self.combo(appearance, 'blur_mode', '壁纸取样刷新', api.BLUR_MODES)
         self.number(appearance, 'icon_size', '图标大小（像素）', 20, 256)
-        self.check(appearance, 'magnify', '鼠标悬停时放大图标')
+        self.check(appearance, 'glass', '背景模糊')
+        self.check(appearance, 'clear_background', '背景全透明')
+        self.fields['clear_background'].setToolTip('仅保留图标与文字，不绘制玻璃背景。')
+        self.combo(appearance, 'blur_mode', '壁纸取样刷新', api.BLUR_MODES)
+        self.check(appearance, 'magnify', '悬停放大图标')
         section_marker(appearance,'Dock 扩展')
-        extras=QHBoxLayout();extras.setSpacing(8)
+        from settings_design import ResponsiveFields
+        extras=ResponsiveFields()
         for key,title in [('dock_reflections','图标倒影'),('dock_clock','时间'),('dock_quick_settings','九宫格'),('dock_add_button','＋ 添加')]:
-            control=ModernCheckBox(title);self.fields[key]=control;extras.addWidget(control)
-        extras.addStretch();appearance.addRow(extras)
+            control=ModernCheckBox(title);self.fields[key]=control;extras.add(control)
+        appearance.addRow(extras)
         self.combo(appearance, 'bump_level', '拉伸鼓包', [(title, key) for key, title, _ in api.BUMP_LEVELS])
         layout = appearance
         section_marker(layout,'停靠与交互')
-        self.combo(layout, 'position', '窗口位置', api.POSITIONS)
+        self.combo(layout, 'position', '停靠位置', api.POSITIONS)
         self.number(layout, 'custom_bottom', '自定义距底部（像素）', 0, 2000)
         self.number(layout, 'bottom_margin', '边缘距离（像素）', 0, 200)
         self.combo(layout, 'layer', '窗口层级', api.LAYERS)
@@ -103,12 +142,17 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.check(layout, 'sep_split', '分隔符切开玻璃背景')
         self.combo(layout, 'lang', '原 Dock 菜单语言', [(name, key) for name, key in api.LANGS])
         section_marker(layout,'屏幕圆角')
-        self.check(layout, 'screen_corners', '屏幕圆角美化（仅游戏模式隐藏，鼠标穿透）')
+        self.check(layout, 'screen_corners', '启用屏幕圆角')
+        self.fields['screen_corners'].setToolTip('仅在游戏模式隐藏，圆角区域允许鼠标穿透。')
         self.number(layout, 'corner_radius', '屏幕圆角半径（像素）', 0, 120)
 
         section_marker(appearance, 'Windows 任务栏')
         from taskbar_appearance import MODES
         self.combo(appearance, 'taskbar_mode', '任务栏效果', MODES)
+        from taskbar_text import MODES as TEXT_MODES
+        self.combo(appearance,'taskbar_text_mode','任务栏文字与系统图标',TEXT_MODES)
+        self.taskbar_text_status=label('文字明暗联动 Windows 模式，开始菜单等系统区域也会改变；普通应用配色保留。退出后恢复原设置。','muted')
+        appearance.addRow(self.taskbar_text_status)
         self.color(appearance, 'taskbar_color', '任务栏颜色')
         self.number(appearance, 'taskbar_opacity', '任务栏不透明度（%）', 0, 100)
         self.number(appearance, 'taskbar_blur', '任务栏模糊强度', 0, 50)
@@ -145,15 +189,20 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
                     self.fields[key].setEnabled(False)
 
         panel = self.section('桌面收纳')
-        panel.addRow(label('所有桌面卡片共用这些外观与收起设置，卡片设置入口同步读写。', 'muted'))
-        section_marker(panel,'卡片外观')
+        panel.addRow(label('外观与收起选项应用到全部卡片，位置和内容分别保存。', 'muted'))
+        section_marker(panel,'显示与分类')
+        self.check(panel, 'panel_enabled', '显示桌面卡片')
+        self.check(panel, 'desktop_auto_sort', '按文件类型自动分类')
+        section_marker(panel,'卡片材质与配色')
+        from appearance_presets import PANEL_PRESETS
+        self.panel_preset=ModernComboBox();self.panel_preset.addItem('自定义')
+        self.panel_preset.addItems([name for name,_ in PANEL_PRESETS])
+        panel.addRow(self.field_label('主题预设'),self.panel_preset)
+        self.panel_preset.currentIndexChanged.connect(self.apply_panel_preset)
         from card_design import DESIGNS
-        self.combo(panel,'card_design','卡片风格',DESIGNS)
-        panel.addRow(label('四种浅色风格沿用当前主题色；时钟和日历可在各自设置中另选。','muted'))
-        self.check(panel, 'panel_enabled', '启用桌面悬浮收纳面板')
-        self.check(panel, 'desktop_auto_sort', '自动将桌面内容按类型归入多个面板')
+        self.combo(panel,'card_design','装饰样式',DESIGNS)
         self.combo(panel, 'panel_material', '材质', MATERIALS)
-        self.combo(panel, 'panel_theme', '颜色模式', COLOR_MODES)
+        self.combo(panel, 'panel_theme', '明暗模式', COLOR_MODES)
         self.color(panel, 'panel_color', '主题色')
         self.number(panel, 'panel_highlight', '高光（%）', 0, 100)
         self.number(panel, 'panel_opacity', '不透明度（%）', 0, 100)
@@ -164,47 +213,42 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('圆球', 'ball'), ('方条', 'bar')])
         self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
         self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')])
-        self.check(panel, 'desktop_middle_toggle', '桌面按下鼠标中键时显示 / 隐藏桌面图标')
+        self.check(panel, 'desktop_middle_toggle', '鼠标中键切换桌面图标')
         self.fields['desktop_middle_toggle'].setToolTip('仅点击 Windows 桌面时触发；滚动滚轮、点击任务栏、卡片或其他软件均不触发。')
         self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标；隐藏全部只影响桌面图标视图，不修改文件属性。')
         self.fields['panel_material'].setToolTip('材质控制质感，颜色模式控制明暗，主题色控制配色；全部桌面卡片同步。')
         self.fields['panel_capsule_ratio'].setToolTip('相对于展开宽度，最窄180像素；全部桌面卡片同步，方条保持展开宽度。')
-        panel.addRow(label('外观与收起选项全部卡片共用；位置、大小和内容分别保存。', 'muted'))
         section_marker(panel,'分组与尺寸')
         self.action_row(panel,'面板管理',button('新建面板',lambda:self.tray.runtime.panels.new_panel()),button('分组与合并',lambda:self.tray.runtime.panels.manage_groups()))
-        panel.addRow(label('可开启或关闭默认分组、管理自定义格式规则，建立多个合并组，每组在顶部切换页面，其余卡片独立显示。','muted'))
+        panel.addRow(label('支持默认分类、自定义格式与多个合并组，文件只保存引用。','muted'))
 
         scale=ModernSpinBox();scale.setRange(50,150);scale.setAccessibleName('卡片整体缩放（%）');self.fields['card_scale']=scale
         self.action_row(panel,'卡片缩放（%）',scale,button('尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
-        panel.addRow(label('卡片与便签标题共用字号，便签正文可独立调整。宽高可拖动调整，独立卡片分别保存，每个合并组内的页面共用宽高。','muted'))
-        panel.addRow(label('桌面时钟','section'))
-        self.check(panel,'clock_enabled','显示桌面时钟')
-        self.action_row(panel,'时钟外观',button('时钟设置…',lambda:self.tray.runtime.clock.open_settings()))
-        panel.addRow(label('时钟样式、字体和背景独立设置；可拖动或调整大小。','muted'))
-        panel.addRow(label('桌面日历','section'))
-        self.check(panel,'calendar_enabled','显示独立日历卡片')
-        self.action_row(panel,'日历外观',button('日历设置…',lambda:self.tray.runtime.calendar.open_settings()))
-        panel.addRow(label('便签卡片','section'))
-        self.check(panel,'notes_enabled','启用便签卡片（独立于文件收纳面板）')
+        panel.addRow(label('标题字号同步；便签正文单独设置。宽高可自由拖动，同一合并组共用尺寸。','muted'))
+        section_marker(panel,'桌面组件')
+        self.component_row(panel, 'clock_enabled', '桌面时钟', button('时钟设置', lambda:self.tray.runtime.clock.open_settings()))
+        self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
+        self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
         from sticky_notes_store import STYLES
-        self.combo(panel,'note_style','新便签默认样式',STYLES)
-        self.action_row(panel,'便签操作',button('新建便签',self.new_note),button('管理与搜索',lambda:self.tray.runtime.notes.manage()))
+        self.combo(panel,'note_style','新便签装饰样式',STYLES)
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
 
         apps = self.section('应用管理')
-        apps.addRow(label('Dock 的应用批量管理独立保留；桌面收纳面板不再与 Dock 共用列表。', 'muted'))
+        section_marker(apps,'Dock 应用')
+        apps.addRow(label('添加应用、Windows 工具或正在运行的软件，管理 Dock 中的快捷入口。', 'muted'))
         self.action_row(apps,'应用列表',button('批量管理…',self.open_batch))
         self.check(apps, 'reorder', '允许拖动 Dock 图标排序')
         self.check(apps, 'running_dots', '显示 Dock 应用的运行标记')
-        apps.addRow(label('桌面内容按应用、文件夹、文档、图片、影音、压缩包等分类，也能手动拖入指定面板。桌面图标可选择同时显示或全部隐藏；关闭面板或退出时恢复原显示状态。收纳仅保存引用，原文件不移动、不删除。', 'muted'))
+        apps.addRow(label('也可直接拖入应用或快捷方式。Dock 仅保存快捷引用，移除入口不会删除原文件。', 'muted'))
 
         running = self.section('启动与运行')
         section_marker(running,'后台运行')
-        self.check(running, 'lite_enabled', '启用自动精简：关闭设置 1 分钟后进入')
-        running.addRow(label('精简时保留 Dock、卡片、便签、时钟和日历的外观与展开状态；暂停壁纸轮询、运行扫描、位置与全屏轮询，释放闲置设置和应用目录缓存。目录变动仍自动分类，拖动和编辑仍可使用。打开设置恢复完整模式。', 'muted'))
-        self.check(running, 'hide_tray', '隐藏托盘图标（可从 Dock 右键打开设置）')
+        self.check(running, 'lite_enabled', '关闭设置 1 分钟后自动精简')
+        running.addRow(label('保留全部组件外观，减少后台轮询并释放闲置资源；打开设置恢复完整模式。', 'muted'))
+        self.check(running, 'hide_tray', '隐藏托盘图标')
         section_marker(running,'开机启动')
-        self.check(running, 'autostart', '开机自动启动（恢复上次显示与运行状态）')
+        self.check(running, 'autostart', '开机自动启动')
+        running.addRow(label('启动后恢复上次的显示与运行状态。', 'muted'))
         self.startup_status = label('', 'muted')
         running.addRow(self.startup_status)
         self.startup_path = QLineEdit()
@@ -227,13 +271,15 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.number(running, 'startup_delay', '登录后延迟（秒）', 0, 300)
         running.addRow(label('延迟仅作用于开机自启动，手动启动不等待。进程优先级不保证 Windows 登录启动顺序。', 'muted'))
         section_marker(running,'游戏与全屏')
-        self.check(running, 'game_mode', '游戏模式：隐藏 Dock、面板和圆角')
-        self.check(running, 'fullscreen_detection', '前台全屏应用自动隐藏 Dock 和面板')
-        running.addRow(label('全屏检测每 1.5 秒一次，普通最大化窗口不算全屏；不区分游戏与视频，因此不隐藏圆角。游戏时可从托盘开启游戏模式。精简模式暂停检测。', 'muted'))
+        self.check(running, 'game_mode', '游戏模式')
+        self.check(running, 'fullscreen_detection', '全屏时自动隐藏 Dock 和卡片')
+        running.addRow(label('游戏模式隐藏 Dock、卡片和圆角。全屏检测不含普通最大化窗口，精简模式下暂停。', 'muted'))
 
         updates = self.section('更新设置')
+        section_marker(updates,'检查方式')
         self.check(updates, 'check_updates_on_start', '启动时检查更新')
         self.check(updates, 'update_use_proxy', '使用系统 / 环境代理')
+        section_marker(updates,'更新来源')
         self.text(updates, 'update_source', '安装包发布 / 更新地址')
         updates.addRow(label('默认读取本项目 GitHub 正式 Release，优先打开 x64 安装包；也可填写 HTTPS 版本清单。安装更新由你确认。', 'muted'))
         self.update_status = label('已配置本项目安装包发布源，尚未检查', 'muted')
@@ -258,6 +304,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         upstream.setOpenExternalLinks(False)
         upstream.linkActivated.connect(lambda url: self.tray.dock.launch(url))
         info.addRow('基础项目', upstream)
+        section_marker(info, '本机数据与迁移')
         path = label(api.CONFIG_DIR)
         path.setTextInteractionFlags(Qt.TextSelectableByMouse)
         path.setWordWrap(True)
@@ -271,7 +318,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.transfer_help='导出已保存的应用、卡片、便签正文和偏好；导入先预览，保存后替换当前配置并保留一份导入前备份。应用和桌面文件仅保存路径引用。便签正文包含在导出文件中，请妥善保管。'
         self.transfer_status=label(self.transfer_help,'muted')
         info.addRow(self.transfer_status)
-        self.status = label('未保存的修改会在关闭时放弃。', 'muted')
+        self.status = label('修改后保存，关闭不保存。', 'muted')
         actions = QHBoxLayout()
         actions.setSpacing(10)
         actions.addWidget(self.status, 1)
@@ -300,7 +347,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
 
         from settings_design import DockPreview
         self.dock_preview=DockPreview(self)
-        appearance.insertRow(1,self.dock_preview)
+        appearance.insertRow(4,self.dock_preview)
+        self.initialize_profile_controls()
         compact_dialog(self)
         from idle_resources import watch
         watch(self)
@@ -312,12 +360,24 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.deleteLater()
         return True
 
+    def component_row(self, form, key, title, *actions):
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        check = ModernCheckBox(title)
+        self.fields[key] = check
+        row.addWidget(check, 1)
+        for action in actions:
+            row.addWidget(action)
+        form.addRow(row)
+
     def action_row(self,form,title,*widgets):
-        row=QHBoxLayout();row.setSpacing(8)
+        container=QWidget();row=QHBoxLayout(container);row.setContentsMargins(0,0,0,0);row.setSpacing(8)
+        caption=label(title, 'field-label');row.addWidget(caption)
         for widget in widgets:
-            row.addWidget(widget,1 if isinstance(widget,QSpinBox) else 0)
-        if not any(isinstance(widget,QSpinBox) for widget in widgets):row.addStretch()
-        form.addRow(self.field_label(title),row)
+            if isinstance(widget,QSpinBox):widget.setFixedWidth(106)
+            row.addWidget(widget)
+        row.addStretch()
+        form.addRow(container)
 
     def section(self, name):
         scroll = QScrollArea()
@@ -330,7 +390,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        form.addRow(label('Dock 外观' if name=='外观设置' else name, 'page-title'))
+        form.addRow(label(name, 'page-title'))
         scroll.setWidget(page)
         self.tabs.addTab(scroll, name)
         return form
@@ -420,6 +480,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             else:field.setChecked(value)
 
     def fill_fields(self,cfg):
+        self._profile_loading=True
         self._runtime_switch_baseline={key:cfg[key] for key in self._runtime_switch_keys}
         self.applying_dock_preset = True
         for key, field in self.fields.items():
@@ -438,6 +499,8 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
         self.dock_preset.setCurrentIndex(matching)
         self.dock_preset.blockSignals(False)
         self.position_changed()
+        self.refresh_preset_names(cfg)
+        self.load_profile(cfg)
 
     def reveal(self):
         link_color = QApplication.palette().color(QPalette.Link).name()
@@ -532,6 +595,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
                         field.value() if isinstance(field, QSpinBox) else
                         field.text().strip() if isinstance(field, QLineEdit) else field.isChecked())
             if key == 'transparency': cfg[key] = 100-cfg[key]
+        cfg=self.stage_profile(cfg)
         cfg['settings_manual_size']=list(self._manual_dimensions)
         cfg['settings_custom_density']=self._custom_density
         for key in ('theme_color', 'panel_color'):
@@ -569,6 +633,7 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             self.status.setText('配置保存失败，设置尚未应用。请检查数据目录权限。')
             return
         self.tray.cfg.update(cfg)
+        self._profile_loading=True
         if imported:
             try:self.apply_imported_state()
             except Exception as error:
@@ -591,8 +656,13 @@ class SettingsDialog(SettingsSizingMixin,QDialog):
             apply_changes(self.tray,self.api,previous)
         for key in self._runtime_switch_keys:
             self.fields[key].setChecked(self.tray.cfg[key]);self._runtime_switch_baseline[key]=self.tray.cfg[key]
+        self.load_profile(self.tray.cfg)
+        self.refresh_preset_names(self.tray.cfg)
         self.check_startup()
         self.status.setText('设置已保存并生效，可继续调整。')
+        taskbar=getattr(getattr(self.tray,'runtime',None),'taskbar',None)
+        if getattr(getattr(taskbar,'text',None),'error',''):
+            self.status.setText(taskbar.text.error)
 
     def check_startup(self):
         from startup_service import inspect_startup

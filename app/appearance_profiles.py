@@ -1,0 +1,106 @@
+"""Bounded appearance snapshots, deliberately excluding user content and geometry."""
+import copy
+import re
+from appearance_presets import DOCK_PRESETS, PANEL_PRESETS, PRESET_IDS, normalize_note_appearance
+from clock_appearance import DEFAULTS as CLOCK_DEFAULTS, normalize as normalize_clock
+
+TOP_DEFAULTS = dict(DOCK_PRESETS[0][1], card_design='aurora', note_style='glass', clock_style='digital', clock_flipped=False)
+TOP_KEYS = tuple(TOP_DEFAULTS) + tuple('panel_'+key for key in PANEL_PRESETS[0][1])
+CLOCK_KEYS = tuple(key for key in CLOCK_DEFAULTS if key != 'work')
+NOTE_KEYS = ('style','color','font_size','font_scale','body_font_size','body_font_scale','appearance')
+MODES = [('自定义','custom'),('默认样式','default')] + [(name,key) for key,(name,_) in zip(PRESET_IDS,PANEL_PRESETS)]
+
+def snapshot(cfg):
+    from card_metrics import normalize_profile
+    sizing=normalize_profile(cfg.get('card_sizing'))
+    return dict(values={key:copy.deepcopy(cfg[key]) for key in TOP_KEYS if key in cfg},
+        clock={key:copy.deepcopy(cfg['clock_appearance'][key]) for key in CLOCK_KEYS},
+        calendar={key:copy.deepcopy(cfg['calendar_appearance'][key]) for key in CLOCK_KEYS},
+        typography={key:sizing[key] for key in ('font_size','ui_scale')},
+        note_default=normalize_note_appearance(cfg.get('note_appearance')),
+        notes={row['id']:{key:copy.deepcopy(row.get(key)) for key in NOTE_KEYS} for row in cfg.get('sticky_notes',[])})
+
+def clean_snapshot(value):
+    """Imported snapshots may contain only valid style values, at most 64 notes."""
+    if not isinstance(value,dict) or not isinstance(value.get('values'),dict):return {}
+    from quick_cycles import normalize_custom
+    dock=normalize_custom({'appearance':value['values']}).get('appearance')
+    if not dock:return {}
+    values=dict(dock)
+    from card_design import DESIGNS
+    from clock_appearance import STYLES
+    choices={'card_design':{v for _,v in DESIGNS},'note_style':{'glass','paper','plain'},'clock_style':{v for _,v in STYLES}}
+    raw=value['values']
+    for key,options in choices.items():
+        if not isinstance(raw.get(key),str) or raw[key] not in options:return {}
+        values[key]=raw[key]
+    values['clock_flipped']=raw.get('clock_flipped') is True
+    panel=normalize_note_appearance({key[6:]:v for key,v in raw.items() if isinstance(key,str) and key.startswith('panel_')})
+    values.update({'panel_'+key:v for key,v in panel.items()})
+    color=raw.get('panel_color','')
+    values['panel_color']=color.lower() if isinstance(color,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',color) else ''
+    result={'values':values}
+    for name in ('clock','calendar'):
+        normalized=normalize_clock(value.get(name))
+        result[name]={key:normalized[key] for key in CLOCK_KEYS}
+    typography=value.get('typography',{})
+    if not isinstance(typography,dict):typography={}
+    size=typography.get('font_size');scale=typography.get('ui_scale')
+    result['typography']={'font_size':size if type(size) is int and 8<=size<=48 else 13,
+                          'ui_scale':scale if type(scale) in (int,float) and .125<=scale<=8 else 1.0}
+    result['note_default']=normalize_note_appearance(value.get('note_default'))
+    result['notes']={}
+    from sticky_notes_store import normalize_notes
+    rows=value.get('notes',{})
+    if isinstance(rows,dict):
+        for identity,style in list(rows.items())[:64]:
+            if not isinstance(identity,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}',identity) or not isinstance(style,dict):continue
+            if not isinstance(style.get('style'),str) or style['style'] not in {'glass','paper','plain'}:continue
+            record=normalize_notes([dict({key:v for key,v in style.items() if key in NOTE_KEYS and v is not None},id=identity)])[0]
+            result['notes'][identity]={key:copy.deepcopy(record.get(key)) for key in NOTE_KEYS}
+    return result
+
+def apply_snapshot(cfg, saved):
+    result=copy.deepcopy(cfg)
+    if not saved:return result
+    result.update(copy.deepcopy(saved['values']))
+    for component in ('clock','calendar'):
+        result[component+'_appearance'].update(copy.deepcopy(saved[component]))
+    result['card_sizing'].update(copy.deepcopy(saved['typography']))
+    result['note_appearance']=copy.deepcopy(saved['note_default'])
+    for row in result.get('sticky_notes',[]):
+        for key,value in saved['notes'].get(row['id'],{}).items():
+            if value is None:row.pop(key,None)
+            else:row[key]=copy.deepcopy(value)
+    return result
+
+def apply_profile(cfg, mode, defaults):
+    if mode=='custom':return apply_snapshot(cfg,clean_snapshot(cfg.get('appearance_custom')))
+    result=copy.deepcopy(cfg)
+    if mode=='default':
+        for key in TOP_KEYS:result[key]=copy.deepcopy(defaults[key])
+        for component in ('clock','calendar'):
+            work=result[component+'_appearance']['work']
+            result[component+'_appearance']=copy.deepcopy(defaults[component+'_appearance'])
+            result[component+'_appearance']['work']=work
+        from card_metrics import DEFAULT_PROFILE
+        result['card_sizing'].update({key:DEFAULT_PROFILE[key] for key in ('font_size','ui_scale')})
+        result['note_appearance']=normalize_note_appearance(None)
+        for row in result.get('sticky_notes',[]):
+            row.update(style='glass',color='#cfe8fa',font_size=12,font_scale=1.0)
+            for key in ('body_font_size','body_font_scale','appearance'):row.pop(key,None)
+        return result
+    if mode not in PRESET_IDS:return result
+    index=PRESET_IDS.index(mode);values=PANEL_PRESETS[index][1]
+    result.update(DOCK_PRESETS[index][1])
+    result.update({'panel_'+key:v for key,v in values.items()})
+    result.update(card_design='aurora',note_style='glass',note_appearance=normalize_note_appearance(values))
+    from clock_appearance import PRESETS
+    for component in ('clock','calendar'):result[component+'_appearance'].update(PRESETS[index][1])
+    for row in result.get('sticky_notes',[]):
+        row.update(style='glass',color=values['color'] or '#b8d9ef',appearance=normalize_note_appearance(values))
+    return result
+
+def selected_mode(cfg):
+    mode=cfg.get('appearance_mode','custom')
+    return mode if mode in {v for _,v in MODES} and snapshot(cfg)==cfg.get('appearance_applied') else 'custom'

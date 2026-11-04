@@ -51,6 +51,34 @@ def run(output):
             for index in range(main.tabs.count()):
                 main.tabs.setCurrentIndex(index);settle(app)
                 main.grab().save(str(output/f'main-page-{index}.png'))
+                scroll=main.tabs.pages.currentWidget()
+                assert scroll.widget().width() <= scroll.viewport().width()+2
+                if index in (0,1,3):
+                    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum());settle(app)
+                    main.grab().save(str(output/f'main-page-{index}-bottom.png'))
+                    scroll.verticalScrollBar().setValue(0)
+            main.tabs.setCurrentIndex(0);settle(app)
+            from PyQt5.QtTest import QTest
+            from PyQt5.QtCore import Qt
+            choice=main.fields['dock_material'];saved=choice.currentIndex()
+            QTest.mouseClick(choice,Qt.LeftButton);settle(app)
+            assert choice._popup.isVisible()
+            main.grab().save(str(output/'settings-dropdown-owner.png'))
+            choice._popup.grab().save(str(output/'settings-dropdown.png'))
+            QTest.keyClick(choice.view(),Qt.Key_Down);QTest.keyClick(choice.view(),Qt.Key_Return);settle(app)
+            assert choice.currentIndex()!=saved and not choice._popup.isVisible()
+            choice.setCurrentIndex(saved)
+            main.size_mode.setCurrentIndex(main.size_mode.findData('small'));settle(app)
+            main.resize(main.minimumSize());settle(app)
+            for index in range(main.tabs.count()):
+                main.tabs.setCurrentIndex(index);settle(app)
+                scroll=main.tabs.pages.currentWidget()
+                assert scroll.widget().width() <= scroll.viewport().width()+2, ('minimum',index,scroll.widget().width(),scroll.viewport().width())
+            main.tabs.setCurrentIndex(0);settle(app);main.grab().save(str(output/'settings-minimum.png'))
+            main.size_mode.setCurrentIndex(main.size_mode.findData('medium'));settle(app)
+            checks.append('all pages scroll at minimum width without horizontal clipping; real combo popup mouse open and keyboard selection work')
+            from appearance_profile_tests import run as check_profiles
+            check_profiles(api,runtime,main,app,output,checks)
             dialogs=[('clock',ClockOptions(runtime.clock)),('calendar',ClockOptions(runtime.calendar)),('sizing',CardSizingDialog(runtime)),('new-panel',PanelDefinition()),('groups',GroupDialog(runtime.panels))]
             with patch('batch_import.discover_apps',return_value=[]):
                 batch=BatchDialog(tray.importer);batch.worker.wait(5000);settle(app);dialogs.append(('applications',batch))
