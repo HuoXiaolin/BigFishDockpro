@@ -68,7 +68,7 @@ def run(api,runtime,root,output,checks):
             QApplication.sendEvent(dock,QMouseEvent(QEvent.MouseButtonPress,pt,Qt.LeftButton,Qt.LeftButton,Qt.NoModifier))
             QApplication.sendEvent(dock,QMouseEvent(QEvent.MouseButtonRelease,pt,Qt.LeftButton,Qt.NoButton,Qt.NoModifier))
         click('add');assert tray.add_icons.call_count==1
-        click('quick');QApplication.processEvents();popup=dock.extras.popup;assert popup.isVisible() and len(popup.tiles)==19 and popup.pages.count()==3
+        click('quick');QApplication.processEvents();popup=dock.extras.popup;assert popup.isVisible() and len(popup.tiles)==20 and popup.pages.count()==3
         assert all(tile.height()>=82 for tile in popup.tiles.values()),[tile.size() for tile in popup.tiles.values()]
         callbacks = []
         component = SimpleNamespace(backend=None, payload=True, install_process=None)
@@ -78,6 +78,29 @@ def run(api,runtime,root,output,checks):
             return True
         component.install_offline = install_offline
         fake_runtime.taskbar = component
+        # Text color works without the optional background component, shares the
+        # main setting, persists immediately, and preserves unrelated pending edits.
+        from PyQt5.QtWidgets import QComboBox,QLineEdit
+        from taskbar_text import MODES as TEXT_MODES
+        text_field=QComboBox();pending=QLineEdit('尚未保存的主题色')
+        for title,value in TEXT_MODES:text_field.addItem(title,value)
+        tray.settings_dialog=SimpleNamespace(isVisible=lambda:True,fields={'taskbar_text_mode':text_field,'theme_color':pending},_runtime_switch_baseline={})
+        for mode,label in [('light','浅色文字 · 白字'),('dark','深色文字 · 黑字'),('system','跟随系统')]:
+            popup.tiles['taskbar_text'].click()
+            assert cfg['taskbar_text_mode']==api.load_config()['taskbar_text_mode']==text_field.currentData()==mode
+            assert popup.tiles['taskbar_text'].value==label
+            assert fake_runtime.apply_settings.call_args.args==({'taskbar_text_mode'},)
+            assert not callbacks and pending.text()=='尚未保存的主题色'
+        with patch.object(api,'save_config',return_value=False):popup.tiles['taskbar_text'].click()
+        assert cfg['taskbar_text_mode']==text_field.currentData()=='system' and '失败' in popup.status.text()
+        component.text=SimpleNamespace(error='模拟配色应用失败')
+        popup.tiles['taskbar_text'].click()
+        assert '失败' in popup.status.text() and popup.status.toolTip()==component.text.error
+        component.text.error=''
+        popup.tiles['taskbar_text'].click();popup.tiles['taskbar_text'].click()
+        assert cfg['taskbar_text_mode']=='system' and not popup.status.toolTip()
+        del tray.settings_dialog
+        text_field.deleteLater();pending.deleteLater()
         popup.tiles['taskbar'].click()
         popup.tiles['taskbar'].click()
         assert len(callbacks) == 1 and popup.tiles['taskbar'].value == '正在安装…'
@@ -108,6 +131,16 @@ def run(api,runtime,root,output,checks):
         wheel_on(popup.tiles['notes'],120);assert popup.pages.currentIndex()==0
         from quick_actions import normalize_order,DEFAULT_ORDER,MIME
         assert normalize_order(['clock','clock','not-an-action'])==['clock']+[key for key in DEFAULT_ORDER if key!='clock']
+        assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
+        legacy=[key for key in DEFAULT_ORDER if key!='taskbar_text']
+        assert normalize_order(legacy)==DEFAULT_ORDER
+        legacy[1],legacy[-1]=legacy[-1],legacy[1]
+        assert normalize_order(legacy)==normalize_order(legacy[:-1])==DEFAULT_ORDER
+        custom=list(reversed(legacy));upgraded=normalize_order(custom)
+        assert upgraded[upgraded.index('taskbar')+1]=='taskbar_text'
+        assert [key for key in upgraded if key!='taskbar_text']==custom
+        rearranged=['taskbar_text']+custom
+        assert normalize_order(rearranged)==rearranged
         popup.toggle_edit();assert popup.editing
         popup.grab().save(str(output/'dock-quick-sort.png'))
         unchanged=cfg['clock_enabled'];popup.tiles['clock'].click();assert cfg['clock_enabled']==unchanged
@@ -196,7 +229,7 @@ def run(api,runtime,root,output,checks):
             dialog.grab().save(str(output/'dock-extension-settings.png'))
         finally:dialog.reject();dialog.deleteLater()
         (output/'dock-extension-metrics.json').write_text(json.dumps({'reflections':{'icons':len(dock.items),'bytes':memory,'budget_bytes':REFLECTION_BUDGET,'paint_draws_per_icon':1,'paint_generation':False},'unrelated_save_seconds':elapsed,'limits':'isolated UI fixture timing, not a system-wide latency measurement'},indent=2),encoding='utf-8')
-        checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; 19 supported quick actions, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save and in lite; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
+        checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; 20 supported quick actions; taskbar text adjacent migration, three-mode cycle, persistence, main-setting sync without losing edits, backend-independent text control and failure reporting, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save and in lite; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
     finally:
         if dock:dock.extras.close();dock.close();dock.deleteLater()
         runtime.dock.cfg.clear();runtime.dock.cfg.update(original);api.save_config(original);runtime.apply_settings()

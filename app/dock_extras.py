@@ -38,6 +38,9 @@ def symbol(p,rect,kind,color):
         for x,y in ((8,7),(15,7),(7,13),(16,13)):p.setBrush(color);p.drawEllipse(QPointF(x,y),1.4,1.4)
     elif kind=='size':p.drawRoundedRect(QRectF(3,9,7,10),1,1);p.drawRoundedRect(QRectF(13,4,8,15),1,1)
     elif kind=='position':p.drawRoundedRect(QRectF(2,4,20,15),2,2);p.drawLine(6,16,18,16);p.drawLine(9,22,15,22)
+    elif kind=='text_color':
+        p.drawLine(5,17,11,4);p.drawLine(11,4,17,17);p.drawLine(8,12,14,12)
+        p.drawLine(4,21,20,21);p.setBrush(color);p.drawEllipse(QRectF(18,5,4,4))
     elif kind=='panels':p.drawRoundedRect(QRectF(3,3,8,18),2,2);p.drawRoundedRect(QRectF(14,3,8,8),2,2);p.drawRoundedRect(QRectF(14,14,8,7),2,2)
     elif kind=='magnify':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21);p.drawLine(6,9,12,9);p.drawLine(9,6,9,12)
     elif kind=='notes':
@@ -241,6 +244,8 @@ class DockQuickSettings(QDialog):
                 'corners':'已开启' if cfg['screen_corners'] else '已关闭'}
         from taskbar_appearance import MODES
         values['taskbar'] = dict((key, title) for title, key in MODES).get(cfg.get('taskbar_mode'), '跟随系统')
+        values['taskbar_text'] = {'system':'跟随系统','light':'浅色文字 · 白字','dark':'深色文字 · 黑字'}.get(cfg.get('taskbar_text_mode'), '跟随系统')
+        self.tiles['taskbar_text'].setToolTip('点击循环切换：跟随系统 → 白字 → 黑字。\n联动 Windows 明暗模式及开始菜单，普通应用配色保留。')
         taskbar = getattr(runtime, 'taskbar', None)
         supported = taskbar is not None and taskbar.backend is not None
         if not supported:
@@ -292,6 +297,12 @@ class DockQuickSettings(QDialog):
             modes=('auto','light','dark');changes={'theme':modes[(modes.index(cfg['theme'])+1)%3]}
         elif key=='blur':changes={'glass':not cfg['glass']}
         elif key=='panel_auto_hide':changes={'panel_auto_hide':not cfg['panel_auto_hide']}
+        elif key=='taskbar_text':
+            from taskbar_text import MODES
+            modes = [value for title, value in MODES]
+            current = cfg.get('taskbar_text_mode', 'system')
+            index = modes.index(current) if current in modes else 0
+            changes = {'taskbar_text_mode': modes[(index+1) % len(modes)]}
         elif key=='taskbar':
             taskbar = getattr(runtime, 'taskbar', None)
             if taskbar is None or taskbar.backend is None:
@@ -311,6 +322,10 @@ class DockQuickSettings(QDialog):
             notes=getattr(runtime,'notes',None)
             if notes and not notes.rows() and notes.new() is None:self.status.setText('便签已启用，但新建失败，请在便签管理中重试。')
         self.refresh();self.reanchor()
+        if key=='taskbar_text':
+            error = getattr(getattr(getattr(runtime,'taskbar',None),'text',None),'error','')
+            self.status.setText('任务栏文字应用失败，请查看提示。' if error else '文字颜色已保存 · 联动 Windows 明暗模式')
+            self.status.setToolTip(str(error) if error else '')
 
 
     def enable_taskbar_component(self, tray, taskbar):
