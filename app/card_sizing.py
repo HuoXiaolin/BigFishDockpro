@@ -38,7 +38,7 @@ class CardSizingDialog(QDialog):
         if not self.runtime.notes.flush():self.status.setText('请先保存便签正文后重试。');return False
         screen=self.reference();area=screen.availableGeometry();cfg=self.runtime.dock.cfg
         _,ui_factor,_=metrics(cfg,list(area.getRect()),screen_records(),{'screen':screen.name(),'area':list(area.getRect())})
-        profile={'width':min(self.width_field.value(),area.width()),'height':min(self.height_field.value(),area.height()),'font_size':self.text_field.value(),'area':[area.width(),area.height()],'density':cfg.get('card_scale',70)/100,'ui_scale':ui_factor}
+        profile={'width':min(self.width_field.value(),area.width()),'height':min(self.height_field.value(),area.height()),'font_size':self.text_field.value(),'area':[area.width(),area.height()],'density':cfg.get('card_scale',70)/100,'ui_scale':ui_factor,'font_density':cfg.get('card_scale',70)/100,'version':2}
         candidate=dict(cfg,card_sizing=profile)
         try:
             if self.runtime.api.save_config(candidate) is False:raise OSError('configuration write failed')

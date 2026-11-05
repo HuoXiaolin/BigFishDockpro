@@ -7,9 +7,9 @@ from PyQt5.QtGui import QIcon, QPalette, QTextLayout, QTextOption, QFontMetrics
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle, QApplication, QListView
 
 
-def card_display_name(row,hide_extension=False):
+def card_display_name(row,hide_extension=False,state=None):
     name=row['name']
-    if not hide_extension or os.path.isdir(row['path']):return name
+    if not hide_extension or (state[3] if state is not None else os.path.isdir(row['path'])):return name
     suffix=os.path.splitext(row['path'])[1]
     return name[:-len(suffix)] if suffix and name.lower().endswith(suffix.lower()) else name
 
@@ -111,17 +111,24 @@ class FileNameDelegate(QStyledItemDelegate):
         return super().sizeHint(option,index)
 
 
-def picture_thumbnail(path,pixels):
-    from functools import lru_cache
-    try:return _picture_thumbnail(path,os.stat(path).st_mtime_ns,os.stat(path).st_size,pixels)
+def picture_thumbnail(path,pixels,state=None):
+    # Most collection entries are not images: never stat them for a thumbnail.
+    if os.path.splitext(path)[1].lower() not in PICTURE_SUFFIXES:return None
+    try:
+        if state is None:
+            info=os.stat(path);stamp,length=info.st_mtime_ns,info.st_size
+        else:stamp,length=state[:2]
+        return _picture_thumbnail(path,stamp,length,pixels)
     except OSError:return None
 
+
+PICTURE_SUFFIXES={'.jpg','.jpeg','.png','.webp','.bmp','.gif','.tif','.tiff','.ico'}
 
 from functools import lru_cache
 @lru_cache(maxsize=96)
 def _picture_thumbnail(path,stamp,length,pixels):
     from PyQt5.QtGui import QImageReader,QPixmap,QPainter
-    if os.path.splitext(path)[1].lower() not in ('.jpg','.jpeg','.png','.webp','.bmp','.gif','.tif','.tiff','.ico'):return None
+    if os.path.splitext(path)[1].lower() not in PICTURE_SUFFIXES:return None
     reader=QImageReader(path);reader.setAutoTransform(True);size=reader.size()
     if not size.isValid():return None
     reader.setScaledSize(size.scaled(QSize(pixels,pixels),Qt.KeepAspectRatio));image=reader.read()

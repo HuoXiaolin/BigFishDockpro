@@ -1,7 +1,7 @@
 """Shared font and new-card defaults; saved dimensions remain independent."""
 from screen_layout import capture
 
-DEFAULT_PROFILE={'width':320,'height':260,'font_size':13,'area':[1536,816],'density':1.0,'ui_scale':1.0}
+DEFAULT_PROFILE={'width':320,'height':260,'font_size':10,'area':[1536,816],'density':1.0,'ui_scale':1.0,'font_density':.7,'version':2}
 
 
 def normalize_profile(value,strict=False):
@@ -14,7 +14,19 @@ def normalize_profile(value,strict=False):
     if not valid:
         if strict:raise ValueError('卡片尺寸与文字配置无效。')
         return copy.deepcopy(DEFAULT_PROFILE)
-    return {key:copy.deepcopy(value[key]) for key in DEFAULT_PROFILE}
+    result={key:copy.deepcopy(value[key]) for key in ('width','height','font_size','area','density','ui_scale')}
+    if value.get('version')!=2:
+        # Old appearance snapshots could replace the visual reference with 1.0
+        # while retaining a compact density. Rebuild it from the saved screen
+        # and density; dates/fonts and manually resized card bounds stay intact.
+        result['ui_scale']=max(.125,min(8,min(result['area'][0]/1536,result['area'][1]/816)*result['density']))
+    font_density=value.get('font_density',result['density'])
+    if type(font_density) not in (int,float) or not .25<=font_density<=2:
+        if strict:raise ValueError('卡片文字缩放配置无效。')
+        font_density=result['density']
+    result.update(font_density=font_density,version=2)
+    return result
+
 
 
 def metrics(cfg,geometry,screens,target=None):
@@ -25,7 +37,8 @@ def metrics(cfg,geometry,screens,target=None):
     if not target:return list(geometry),profile['ui_scale'],profile['font_size']
     x,y,w,h=target['area']
     ratio=min(w/profile['area'][0],h/profile['area'][1])*cfg.get('card_scale',70)/100/profile['density']
-    return list(geometry),profile['ui_scale']*ratio,max(8,min(72,round(profile['font_size']*ratio)))
+    font_ratio=ratio*profile['density']/profile['font_density']
+    return list(geometry),profile['ui_scale']*ratio,max(8,min(72,round(profile['font_size']*font_ratio)))
 
 
 def new_geometry(cfg,geometry,screens,target=None):
@@ -41,4 +54,4 @@ def new_geometry(cfg,geometry,screens,target=None):
 
 def font_pixels(cfg,ui_factor):
     profile=normalize_profile(cfg.get('card_sizing'))
-    return max(8,min(72,round(profile['font_size']*ui_factor/profile['ui_scale'])))
+    return max(8,min(72,round(profile['font_size']*ui_factor/profile['ui_scale']*profile['density']/profile['font_density'])))

@@ -268,7 +268,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     paint_surface(painter)
     painter.setClipPath(shape)
     light=colors.get('light',True);ink=QColor(options['text_color'] or ('#ffffff' if material=='clear' or not light else '#19364d'))
-    from clock_legibility import surface_map,background_at,readable,contrast
+    from clock_legibility import surface_map,background_at,readable,contrast,monochrome,colorful_ink
     analysis=None
     if options['auto_contrast']:
         surface_keys=('material','theme','color','opacity','highlight','corner_radius','design')
@@ -276,13 +276,20 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         # When wallpaper is unavailable, retain the selected transparent-clock ink.
         fallback=QColor('#1c4268') if material=='clear' else QColor(colors['tint'])
         analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
-        ink=readable(ink,background_at(analysis,rect,w,h))
+        from appearance_presets import THEME_INKS
+        selected=options['text_color']
+        if selected.lower() in ('','#000000','#ffffff','#18354b','#19384e','#19364d'):
+            selected=THEME_INKS.get(material,'#ce4125')
+        ink=colorful_ink(QColor(selected),background_at(analysis,rect,w,h))
     muted=QColor(ink)
     if options['accent_color']:accent=QColor(options['accent_color'])
     else:
         hue=QColor(options['color'] or '#62acd4').hslHueF()
         accent=QColor.fromHslF(hue if hue>=0 else .55,.72,.77 if ink.lightness()>150 else .36)
-    if analysis is not None:accent=readable(accent,background_at(analysis,rect,w,h),minimum=3.0)
+    if analysis is not None:
+        if ink.name()=='#ffffff':
+            hue=accent.hslHueF();accent=QColor.fromHslF(hue if hue>=0 else .55,.85,.85)
+        # Progress is graphical emphasis, so keep its lively hue and brightness.
     now=options.get('_now') or datetime.datetime.now();time_text,period=format_clock_time(now,options['hour_format'])
     hour=int(time_text[:2])
     date_text='%d月%d日  周%s'%(now.month,now.day,'一二三四五六日'[now.weekday()]);scale=options['font_scale']/100
@@ -308,9 +315,9 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         color=QColor(color);color.setAlpha(round(color.alpha()*options['text_opacity']/100))
         text_rect=QRectF(x,baseline+tight.top(),max(1,width),max(1,tight.height()))
         if analysis is not None and color.alpha()>=120:
-            alpha=max(235,color.alpha())
+            alpha=255
             samples=background_at(analysis,text_rect,w,h)
-            color=readable(color,samples,opacity=alpha/255,polarity=ink.lightness()>150)
+            color=QColor(ink)
             color.setAlpha(alpha)
             # A soft downward shadow separates text on busy wallpaper without
             # outlining glyphs or mixing dark and light text across the face.

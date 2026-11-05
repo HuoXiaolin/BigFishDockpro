@@ -144,7 +144,7 @@ class BatchDialog(QDialog):
     def running_discovered(self,generation,apps):
         if generation!=self.running_generation:return
         self.running_apps=apps
-        keys={path_key(app['path']) for app in apps}
+        keys={launch_identity(app) for app in apps}
         self.selected[3].intersection_update(keys)
         if self.mode==3:self.render()
 
@@ -229,7 +229,7 @@ class BatchDialog(QDialog):
 
     def render(self):
         current = self.list.currentItem()
-        current_key = path_key(current.data(Qt.UserRole)['path']) if current else None
+        current_key = launch_identity(current.data(Qt.UserRole)) if current else None
         scroll = self.list.verticalScrollBar().value()
         self.list.blockSignals(True)
         self.list.clear()
@@ -241,9 +241,9 @@ class BatchDialog(QDialog):
         for app in rows:
             if query not in app['name'].casefold() and query not in app['path'].casefold():
                 continue
-            key = path_key(app['path'])
+            key = launch_identity(app)
             title = app['name']
-            already_pinned = launch_identity(app['path']) in pinned
+            already_pinned = launch_identity(app) in pinned
             if self.mode != 1 and already_pinned:
                 title += '  · 已固定'
             item = QListWidgetItem(title)
@@ -294,7 +294,7 @@ class BatchDialog(QDialog):
     def visible_selected(self):
         return [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())
                 if self.list.item(i).flags() & Qt.ItemIsEnabled and
-                path_key(self.list.item(i).data(Qt.UserRole)['path']) in self.selected[self.mode]]
+                launch_identity(self.list.item(i).data(Qt.UserRole)) in self.selected[self.mode]]
 
     def update_status(self):
         visible = len(self.visible_selected())
@@ -308,7 +308,7 @@ class BatchDialog(QDialog):
         self.save_button.setEnabled(bool(self.pending_add or self.pending_remove))
 
     def checked(self, item):
-        key = path_key(item.data(Qt.UserRole)['path'])
+        key = launch_identity(item.data(Qt.UserRole))
         if item.checkState() == Qt.Checked:
             self.selected[self.mode].add(key)
         else:
@@ -316,7 +316,7 @@ class BatchDialog(QDialog):
         self.update_status()
 
     def select_visible(self):
-        self.selected[self.mode].update(path_key(self.list.item(i).data(Qt.UserRole)['path'])
+        self.selected[self.mode].update(launch_identity(self.list.item(i).data(Qt.UserRole))
             for i in range(self.list.count()) if self.list.item(i).flags() & Qt.ItemIsEnabled)
         self.render()
 
@@ -326,11 +326,11 @@ class BatchDialog(QDialog):
 
     def stage_add(self, candidates):
         draft, added, duplicates, invalid = merge_items(self.draft_items(), candidates)
-        baseline = {path_key(i['path']) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
+        baseline = {launch_identity(i) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
         # Re-adding an existing removed entry cancels that pending removal.
-        valid_keys = {path_key(i['path']) for i in application_entries(draft) if i.get('path')}
+        valid_keys = {launch_identity(i) for i in application_entries(draft) if i.get('path')}
         self.pending_remove -= valid_keys
-        self.pending_add = [i for i in application_entries(draft) if i.get('path') and path_key(i['path']) not in baseline]
+        self.pending_add = [i for i in application_entries(draft) if i.get('path') and launch_identity(i) not in baseline]
         return '已暂存 %d 个 · 重复 %d 个 · 无效 %d 个' % (added, duplicates, invalid)
 
     def pick_files(self):
@@ -345,13 +345,13 @@ class BatchDialog(QDialog):
 
     def perform(self):
         candidates = self.visible_selected()
-        keys = {path_key(a['path']) for a in candidates}
+        keys = {launch_identity(a) for a in candidates}
         if self.mode != 1:
             report = self.stage_add(candidates)
         else:
-            keys = {path_key(path) for app in candidates for path in app.get('_paths', [app['path']])}
-            self.pending_add = [i for i in self.pending_add if path_key(i['path']) not in keys]
-            baseline = {path_key(i['path']) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
+            keys = {launch_identity(app) for app in candidates}
+            self.pending_add = [i for i in self.pending_add if launch_identity(i) not in keys]
+            baseline = {launch_identity(i) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
             self.pending_remove.update(keys & baseline)
             report = '已暂存移除 %d 个入口，原文件不会删除。' % len(keys)
         self.selected[self.mode] -= keys
@@ -404,6 +404,8 @@ class BatchImporter:
         if self.save(candidate) is False:
             self.tray.showMessage('保存失败', '无法保存 Dock 配置，改动尚未应用。请检查数据目录权限。', self.tray.icon(), 4000)
             return False
+        from arrangement_history import record
+        record(self.dock.cfg, {'items': self.dock.cfg['items']}, {'items': items}, '整理 Dock')
         self.dock.cfg['items'] = items
         self.dock.reload()
         if self.dialog and self.dialog.isVisible():

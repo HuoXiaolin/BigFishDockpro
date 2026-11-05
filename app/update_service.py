@@ -3,7 +3,7 @@ import json
 import re
 import threading
 from urllib.parse import urlparse
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer
 from app_version import VERSION, PROJECT_ID
 from update_sources import DEFAULT_SOURCE,resolve_source,parse_github_release
 
@@ -77,6 +77,7 @@ def fetch_manifest(url, use_proxy):
 class UpdateWorker(QObject):
     ready = pyqtSignal(object)
     failed = pyqtSignal(str)
+    finished = pyqtSignal()
 
     def __init__(self, source, proxy, fetcher=fetch_manifest):
         super().__init__()
@@ -103,6 +104,8 @@ class UpdateWorker(QObject):
         except Exception as error:
             if not self.cancelled.is_set():
                 self.failed.emit(str(error))
+        finally:
+            self.finished.emit()
 
 
 class UpdateService(QObject):
@@ -112,27 +115,70 @@ class UpdateService(QObject):
         super().__init__()
         self.runtime = runtime
         self.worker = None
+        self.generation = 0
+        self.closed = False
+        self.restart_requested = False
         self.message = '已配置本项目安装包发布源，尚未检查'
         self.release_url = DEFAULT_SOURCE if resolve_source(runtime.dock.cfg.get('update_source',''))[1] else ''
 
-    def check(self):
-        if self.worker and self.worker.isRunning():
-            return
+    def source_key(self):
         cfg = self.runtime.dock.cfg
-        if not cfg['update_source']:
+        return cfg.get('update_source', ''), bool(cfg.get('update_use_proxy', True))
+
+    def settings_changed(self):
+        self.generation += 1
+        self.restart_requested = False
+        if self.worker:
+            self.worker.cancelled.set()
+        self.release_url = DEFAULT_SOURCE if resolve_source(self.source_key()[0])[1] else ''
+        self.set_message('更新设置已保存，尚未检查')
+
+    def check(self):
+        if self.closed:
+            return
+        if self.worker and self.worker.isRunning():
+            if self.worker.request_key != self.source_key() or self.worker.cancelled.is_set():
+                self.worker.cancelled.set()
+                self.restart_requested = True
+                self.set_message('正在结束上次检查，随后检查当前更新源…')
+            return
+        source, proxy = self.source_key()
+        if not source:
             self.set_message('尚未配置更新源；没有发起网络请求。')
             return
+        self.generation += 1
         self.set_message('正在检查更新…')
-        self.worker = UpdateWorker(cfg['update_source'], cfg['update_use_proxy'])
+        self.worker = UpdateWorker(source, proxy)
+        self.worker.request_key = (source, proxy)
+        self.worker.generation = self.generation
         self.worker.ready.connect(self.completed)
         self.worker.failed.connect(self.failed)
+        self.worker.finished.connect(self.worker_finished)
         self.worker.start()
+
+    def current_result(self):
+        worker = self.sender()
+        return (not self.closed and worker is self.worker and
+                worker is not None and worker.generation == self.generation and
+                worker.request_key == self.source_key() and not worker.cancelled.is_set())
+
+    @pyqtSlot()
+    def worker_finished(self):
+        if self.sender() is not self.worker:
+            return
+        self.worker = None
+        if self.restart_requested and not self.closed:
+            self.restart_requested = False
+            QTimer.singleShot(0, self.check)
 
     def set_message(self, message):
         self.message = message
         self.changed.emit(message)
 
+    @pyqtSlot(object)
     def completed(self, result):
+        if not self.current_result():
+            return
         self.release_url = result['release_url']
         self.set_message('发现新版本 '+result['version'] if result['newer'] else '当前已是最新版本（'+VERSION+'）')
         if result.get('release_page_fallback'):self.set_message(self.message+'（通过 GitHub 发布页确认）')
@@ -140,12 +186,18 @@ class UpdateService(QObject):
         if result['newer']:
             self.runtime.tray.showMessage('大肥鱼Dock 更新', self.message+'，可在设置中查看下载页面。', self.runtime.tray.icon(), 5000)
 
+    @pyqtSlot(str)
     def failed(self, error):
+        if not self.current_result():
+            return
         self.release_url = DEFAULT_SOURCE if resolve_source(self.runtime.dock.cfg.get('update_source',''))[1] else ''
         self.runtime.api.log('检查更新失败: ' + error)
         self.set_message('检查失败：'+error[:160])
 
     def close(self):
+        self.closed = True
+        self.generation += 1
+        self.restart_requested = False
         if self.worker:
             self.worker.cancelled.set()
             self.worker.wait(500)

@@ -161,11 +161,12 @@ def run(api,runtime,root,output,checks):
         backdrop=QPixmap(624,280);backdrop.fill(api.QColor('#2477d7'))
         sample=QPixmap(624,280);sample.fill(api.QColor('#2477d7'));painter=QPainter(sample)
         options=clock_options(dict(material='clear',opacity=0,highlight=0,text_color='#ffffff',font='Segoe UI',font_scale=110,typography_version=2,color='#b8d9ef'))
+        options['_now']=datetime.datetime(2026,11,5,12,0)
         draw_clock(painter,QRectF(0,0,624,280),runtime.dock,options,'orbit',backdrop);painter.end()
         sample.save(str(Path(output)/'clock-orbit-blue-desktop.png'))
         pixels=sample.toImage()
         # Bottom metric card keeps a visible six-pixel progress fill in the new layout.
-        visible=sum(abs(pixels.pixelColor(60,y).green()-pixels.pixelColor(180,y).green())>8 for y in range(247,260))
+        visible=sum(sum(abs(a-b) for a,b in zip(pixels.pixelColor(60,y).getRgb()[:3],pixels.pixelColor(180,y).getRgb()[:3]))>24 for y in range(247,260))
         assert visible>=5,visible
         checks.append('reported progress clock: 624x280 transparent blue desktop render, visible fill at least six pixels thick, larger wide numerals, explicit Chinese sans-serif labels, aligned percentages and theme-family pastel gradients')
         dialog=ClockOptions(clock);dialog.show();app.processEvents()

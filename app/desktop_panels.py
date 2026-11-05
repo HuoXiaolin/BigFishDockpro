@@ -18,6 +18,7 @@ class DesktopPanels(QObject):
         self.shown, self.blocked, self.closed = bool(self.cfg.get('panels_visible', True)), False, False
         self.active_window = None
         self.scanned_rows = []
+        self.file_metadata = {}
         testing = self.dock.preview or bool(os.environ.get('FISHDOCK_TEST_DESKTOP'))
         self.roots = list(roots) if roots is not None else ([] if testing else desktop_roots())
         self.worker = None
@@ -42,11 +43,15 @@ class DesktopPanels(QObject):
     @property
     def cfg(self): return self.dock.cfg
 
-    def commit(self, **changes):
+    def commit(self, *, history_title=None, **changes):
         candidate = dict(self.cfg, **copy.deepcopy(changes))
         if self.runtime.api.save_config(candidate) is False:
             self.status('收纳设置保存失败，改动未应用，请检查数据目录。')
             return False
+        if history_title:
+            from arrangement_history import record
+            record(self.cfg,{key:self.cfg.get(key) for key in changes},
+                   {key:candidate[key] for key in changes},history_title)
         self.cfg.update({key: candidate[key] for key in changes})
         return True
 
@@ -92,11 +97,15 @@ class DesktopPanels(QObject):
         if self.worker:
             self.scan_again = True
             return
-        self.worker = DesktopScan(self.roots, included_hidden=list(self.collected_icons.records))
+        self.worker = DesktopScan(self.roots, included_hidden=list(self.collected_icons.records),
+                                  reference_paths=[row['path'] for row in self.cfg['desktop_entries']])
         self.worker.ready.connect(self.scanned)
         self.worker.start()
 
     def scanned(self, rows, errors):
+        metadata=getattr(self.worker,'metadata',self.file_metadata)
+        metadata_changed=metadata!=self.file_metadata
+        self.file_metadata=metadata
         self.worker = None
         if self.closed: return
         if self.cfg['panel_enabled'] and self.cfg['desktop_auto_sort']:
@@ -112,9 +121,10 @@ class DesktopPanels(QObject):
             for identity, name in CATEGORIES:
                 if identity not in known and identity not in self.cfg['disabled_categories'] and any(row['panel'] == identity for row in entries):
                     panels.append({'id': identity, 'name': name})
-            if entries != self.cfg['desktop_entries'] or panels != self.cfg['desktop_panels']:
-                if self.commit(desktop_entries=entries, desktop_panels=panels): self.sync_windows()
-            self.sync_windows()
+            entries_changed=entries != self.cfg['desktop_entries'] or panels != self.cfg['desktop_panels']
+            if entries_changed:
+                if self.commit(desktop_entries=entries, desktop_panels=panels):self.sync_windows()
+            elif metadata_changed:self.sync_windows()
             self.status('部分桌面目录不可读取，已保留原收纳记录；可稍后重新整理。' if errors else '')
         if self.scan_again:
             self.scan_again = False
@@ -158,7 +168,7 @@ class DesktopPanels(QObject):
         if group is not None:row['merge_group']=group
         changes={'desktop_panels':panels}
         if group is not None:changes.update(merged_panels=True,merge_initialized=True)
-        if not self.commit(**changes):return False
+        if not self.commit(history_title="移动卡片分组",**changes):return False
         self.sync_windows();return True
 
     def new_merge_group(self,name=None,identity=None):
@@ -173,7 +183,7 @@ class DesktopPanels(QObject):
         if identity and identity in self.windows:row['geometry']=list(self.windows[identity].bounds())
         groups.append(row);panels=copy.deepcopy(self.cfg['desktop_panels'])
         if identity:next(model for model in panels if model['id']==identity).update(merged=True,merge_group=key)
-        if not self.commit(merge_groups=groups,desktop_panels=panels,merged_panels=True,merge_initialized=True):return False
+        if not self.commit(history_title="新建合并组",merge_groups=groups,desktop_panels=panels,merged_panels=True,merge_initialized=True):return False
         self.sync_windows();return key
 
     def save_visible_geometry(self):
@@ -189,7 +199,7 @@ class DesktopPanels(QObject):
         next(model for model in panels if model['id']==identity)['merged'] = merged
         changes = dict(desktop_panels=panels)
         if merged: changes.update(merged_panels=True,merge_initialized=True)
-        if not self.commit(**changes): return False
+        if not self.commit(history_title="合并或拆分卡片",**changes): return False
         self.sync_windows()
         return True
 
@@ -202,7 +212,7 @@ class DesktopPanels(QObject):
         selected = set(identities)
         ordered = iter(identities)
         panels = [known[next(ordered)] if model['id'] in selected else model for model in models]
-        if panels!=models and not self.commit(desktop_panels=panels): return False
+        if panels!=models and not self.commit(history_title="调整卡片顺序",desktop_panels=panels): return False
         for window in self.windows.values(): window.update_tabs(self.merged_models(window.identity))
         self.status('分组顺序已保存。')
         return True
@@ -233,6 +243,7 @@ class DesktopPanels(QObject):
             target.restore_page_state(old_state);current.restore_page_state(new_state)
             self.sync_windows();current.list.doItemsLayout();current.list.verticalScrollBar().setValue(new_state[2])
             current.page_transition.begin(front,direction)
+            current._interaction_motion.trigger('tab')
         else:self.sync_windows()
 
     def manage_groups(self):
@@ -323,8 +334,13 @@ class DesktopPanels(QObject):
         if self.cfg['desktop_auto_sort'] and model.get('extensions'):
             from desktop_catalog import effective_suffix
             candidates = {path_key(row['path']):row for row in self.cfg['desktop_entries']+self.scanned_rows if row.get('source')=='desktop'}
-            rows += [dict(row, panel=identity, pinned=False) for row in candidates.values()
-                     if effective_suffix(row['path']) in model['extensions'] and os.path.exists(row['path'])]
+            def matches(row):
+                key=path_key(row['path'])
+                if key in self.file_metadata:
+                    state=self.file_metadata[key]
+                    return state is not None and state[4] in model['extensions']
+                return effective_suffix(row['path']) in model['extensions'] and os.path.exists(row['path'])
+            rows += [dict(row, panel=identity, pinned=False) for row in candidates.values() if matches(row)]
         unique = {}
         for row in rows:
             key = path_key(row['path'])
@@ -336,8 +352,12 @@ class DesktopPanels(QObject):
         def key(row):
             name = (row['name'].casefold(), row['path'].casefold())
             if order.startswith('modified'):
-                try: modified = os.path.getmtime(row['path'])
-                except OSError: modified = 0
+                state=self.file_metadata.get(path_key(row['path']))
+                if state is not None:modified=state[0]/1_000_000_000
+                elif path_key(row['path']) in self.file_metadata:modified=0
+                else:
+                    try: modified = os.path.getmtime(row['path'])
+                    except OSError: modified = 0
                 return (modified, name)
             return name
         rows.sort(key=key, reverse=order in ('name_desc', 'modified_desc'))
@@ -353,7 +373,7 @@ class DesktopPanels(QObject):
             return
         entries = [dict(row, pinned=pinned) if path_key(row['path']) in keys else dict(row)
                    for row in self.cfg['desktop_entries']]
-        if self.commit(desktop_entries=entries): self.sync_windows()
+        if self.commit(history_title="置顶收纳项目",desktop_entries=entries): self.sync_windows()
 
     def model(self, identity):
         return next(model for model in self.cfg['desktop_panels'] if model['id'] == identity)
@@ -367,6 +387,9 @@ class DesktopPanels(QObject):
         panels=without_overrides(panels)
         next(model for model in panels if model['id']==identity).update(local)
         changes={'desktop_panels':panels,**{'panel_'+key:value for key,value in shared.items()}}
+        if 'material' in shared and shared['material']!=self.cfg['panel_material']:
+            from appearance_presets import material_design
+            changes['card_design']=material_design(shared['material'],self.cfg.get('card_design','aurora'))
         if 'fold' in values and self.is_merged(identity):
             groups=copy.deepcopy(self.cfg['merge_groups']);group=next(row for row in groups if row['id']==self.group_id(identity));group['fold']=values['fold']
             changes['merge_groups']=groups
@@ -375,7 +398,8 @@ class DesktopPanels(QObject):
             _layout=layout.panel_update(identity,values['geometry'])
         if isinstance(_layout,dict):changes['display_layout']=_layout
         if self.is_merged(identity) and 'collapsed' in values:changes.update(self.group_changes(identity,collapsed=values['collapsed']))
-        if self.commit(**changes):
+        history_title='编辑卡片' if set(values)&{'name','extensions','enabled','merged','merge_group','excluded','pinned_paths'} else None
+        if self.commit(history_title=history_title,**changes):
             if shared:
                 for window in self.windows.values():
                     window.apply_options();window.collapse_timer.stop()
@@ -403,7 +427,7 @@ class DesktopPanels(QObject):
         panels = copy.deepcopy(self.cfg['desktop_panels'])
         for panel in panels:
             if panel['id']==identity: panel['excluded'] = [key for key in panel.get('excluded',[]) if key not in keys]
-        if self.commit(desktop_entries=entries, desktop_excluded=excluded, desktop_panels=panels):
+        if self.commit(history_title="添加收纳引用",desktop_entries=entries, desktop_excluded=excluded, desktop_panels=panels):
             self.sync_windows()
             self.status('已收纳 %d 项，原文件保持原位。' % len(paths))
             return True
@@ -412,7 +436,7 @@ class DesktopPanels(QObject):
     def move_entries(self, keys, identity):
         entries = [dict(row, panel=identity, source='manual') if path_key(row['path']) in keys else dict(row)
                    for row in self.cfg['desktop_entries']]
-        if self.commit(desktop_entries=entries): self.sync_windows()
+        if self.commit(history_title="移动收纳引用",desktop_entries=entries): self.sync_windows()
 
     def remove_entries(self, keys, identity=None):
         if identity is not None:
@@ -420,11 +444,11 @@ class DesktopPanels(QObject):
             model = next(model for model in panels if model['id']==identity)
             model['excluded'] = list(dict.fromkeys(model.get('excluded',[])+list(keys)))
             entries = [dict(row) for row in self.cfg['desktop_entries'] if row['panel']!=identity or path_key(row['path']) not in keys]
-            if self.commit(desktop_panels=panels, desktop_entries=entries): self.sync_windows()
+            if self.commit(history_title="移除收纳引用",desktop_panels=panels, desktop_entries=entries): self.sync_windows()
             return
         entries = [dict(row) for row in self.cfg['desktop_entries'] if path_key(row['path']) not in keys]
         excluded = list(dict.fromkeys(self.cfg['desktop_excluded']+list(keys)))
-        if self.commit(desktop_entries=entries, desktop_excluded=excluded):
+        if self.commit(history_title="移除收纳引用",desktop_entries=entries, desktop_excluded=excluded):
             self.sync_windows()
             self.status('已移除收纳引用，原文件保留；可重新拖入。')
 
@@ -437,7 +461,7 @@ class DesktopPanels(QObject):
         name = name.strip()[:40]
         if not name: return
         identity = uuid.uuid4().hex
-        if self.commit(desktop_panels=self.cfg['desktop_panels']+[{'id': identity, 'name': name, 'extensions': list(extensions or [])}], panels_visible=True):
+        if self.commit(history_title='新建卡片',desktop_panels=self.cfg['desktop_panels']+[{'id': identity, 'name': name, 'extensions': list(extensions or [])}], panels_visible=True):
             self.shown = True
             self.sync_windows()
             self.schedule_scan()
@@ -451,7 +475,7 @@ class DesktopPanels(QObject):
             return
         disabled = list(self.cfg['disabled_categories'])
         if identity in dict(CATEGORIES) and identity not in disabled: disabled.append(identity)
-        if self.commit(desktop_panels=[model for model in self.cfg['desktop_panels'] if model['id'] != identity],
+        if self.commit(history_title='移除卡片',desktop_panels=[model for model in self.cfg['desktop_panels'] if model['id'] != identity],
                        desktop_entries=[row for row in self.cfg['desktop_entries'] if row['panel'] != identity],
                        disabled_categories=disabled):
             self.sync_windows()
@@ -483,6 +507,21 @@ class DesktopPanels(QObject):
                     window.backdrop=None
             else:
                 if window.isVisible():window.capture_backdrop()
+
+    def restore_layout_state(self):
+        """Apply a saved layout's fold state without reopening native windows."""
+        if self.closed:return
+        for identity,window in self.windows.items():
+            merged=self.is_merged(identity)
+            window.expand_timer.stop();window.collapse_timer.stop()
+            window.merged_view=merged
+            window.merge_presentation=self.group_id(identity) if merged else None
+            collapsed=self.group_value(identity,'collapsed') if merged else bool(self.model(identity).get('collapsed'))
+            window.set_collapsed_geometry(bool(collapsed))
+            window.manual_resize=False;window.resize_timer.stop()
+            if window.isVisible():
+                window.render(prepare=True)
+                if window.option('auto_hide'):window.collapse_timer.start()
 
     def reposition(self):
         for window in self.windows.values():

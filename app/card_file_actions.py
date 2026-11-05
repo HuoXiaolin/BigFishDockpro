@@ -8,6 +8,15 @@ from PyQt5.QtWidgets import QInputDialog, QMessageBox
 from app_catalog import path_key
 
 
+def renamed_reference(path, old, new, directory=False):
+    """Rebase lexical descendants only; sibling names and external aliases stay put."""
+    absolute=os.path.abspath(path);before=os.path.abspath(old)
+    key=os.path.normcase(absolute);prefix=os.path.normcase(before).rstrip(os.sep)
+    if key==prefix:return new
+    if directory and key.startswith(prefix+os.sep):return os.path.join(new,absolute[len(before.rstrip(os.sep))+1:])
+    return path
+
+
 def rename_file(panel,paths=None):
     paths=list(paths if paths is not None else panel.selected_paths())
     if len(paths)!=1:panel.notice.setText('请选择一个文件或文件夹重命名。');return False
@@ -22,13 +31,17 @@ def rename_file(panel,paths=None):
             raise ValueError('名称无效，请勿使用路径、保留名称或特殊字符。')
         new=os.path.join(os.path.dirname(old),name)
         if path_key(old)!=path_key(new) and os.path.lexists(new):raise FileExistsError('同名文件或文件夹已存在，请更换名称。')
-        before=os.stat(old,follow_symlinks=False)
+        before=os.stat(old,follow_symlinks=False);directory=os.path.isdir(old)
         manager=panel.manager;changes={}
         for field in ('desktop_entries','desktop_excluded','desktop_panels'):changes[field]=copy.deepcopy(manager.cfg[field])
         def update_rows(rows):
             for row in rows:
-                if path_key(row['path'])==path_key(old):row.update(path=new,name=name)
-        def update_keys(keys):return list(dict.fromkeys(path_key(new) if path_key(key)==path_key(old) else key for key in keys))
+                previous=row['path'];replacement=renamed_reference(previous,old,new,directory)
+                if replacement!=previous:
+                    row['path']=replacement
+                    if path_key(previous)==path_key(old):row['name']=name
+        old_key,new_key=path_key(old),path_key(new)
+        def update_keys(keys):return list(dict.fromkeys(path_key(renamed_reference(key,old_key,new_key,directory)) for key in keys))
         update_rows(changes['desktop_entries']);changes['desktop_excluded']=update_keys(changes['desktop_excluded'])
         for model in changes['desktop_panels']:
             for field in ('pinned_paths','excluded'):
@@ -63,6 +76,15 @@ def prune_deleted_references(manager,paths):
     if entries!=manager.cfg['desktop_entries'] and manager.commit(desktop_entries=entries):manager.sync_windows()
 
 
+def reconcile_shell_delete(manager,paths):
+    # Native menus and keyboard deletion share the same post-operation path.
+    # Shell returns before some transfers finish; retain references on cancellation.
+    targets=tuple(paths)
+    prune_deleted_references(manager,targets)
+    for delay in (800,2500,7500,20000):
+        QTimer.singleShot(delay,lambda m=manager,p=targets:prune_deleted_references(m,p))
+
+
 def shell_action(panel,verb):
     paths=panel.selected_paths()
     if not paths:return False
@@ -75,9 +97,7 @@ def shell_action(panel,verb):
         if result=='shell':
             panel.manager.schedule_scan()
             if verb=='delete':
-                manager=panel.manager
-                prune_deleted_references(manager,paths)
-                for delay in (800,2500):QTimer.singleShot(delay,lambda m=manager,p=tuple(paths):prune_deleted_references(m,p))
+                reconcile_shell_delete(panel.manager,paths)
         return result=='shell'
     except (OSError,ValueError) as error:
         panel.notice.setText(str(error));return False

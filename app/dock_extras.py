@@ -43,6 +43,14 @@ def symbol(p,rect,kind,color):
         p.drawLine(4,21,20,21);p.setBrush(color);p.drawEllipse(QRectF(18,5,4,4))
     elif kind=='panels':p.drawRoundedRect(QRectF(3,3,8,18),2,2);p.drawRoundedRect(QRectF(14,3,8,8),2,2);p.drawRoundedRect(QRectF(14,14,8,7),2,2)
     elif kind=='magnify':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21);p.drawLine(6,9,12,9);p.drawLine(9,6,9,12)
+    elif kind=='search':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21)
+    elif kind=='undo':
+        p.drawArc(5,6,15,14,-45*16,245*16);p.drawLine(4,5,4,12);p.drawLine(4,12,11,12)
+    elif kind=='layouts':
+        p.drawRoundedRect(QRectF(2,3,20,18),2,2);p.drawLine(2,9,22,9);p.drawLine(10,9,10,21)
+    elif kind=='repair':
+        p.drawRoundedRect(QRectF(3,3,12,18),2,2);p.drawLine(6,8,11,8);p.drawLine(6,12,10,12)
+        p.drawEllipse(QRectF(12,12,7,7));p.drawLine(18,18,22,22)
     elif kind=='notes':
         p.drawRoundedRect(QRectF(4,3,16,18),2,2);p.drawLine(8,8,16,8);p.drawLine(8,12,16,12);p.drawLine(8,16,13,16)
     elif kind=='clock':p.drawEllipse(QRectF(3,3,18,18));p.drawLine(12,6,12,12);p.drawLine(12,12,17,14)
@@ -141,7 +149,7 @@ class DockQuickSettings(QDialog):
         super().__init__(extras.dock,Qt.Popup|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
         self.extras=extras;self.dock=extras.dock;self.setObjectName('DockQuickSettings');self.setWindowTitle('Dock 快捷设置')
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_NoMouseReplay);self.setFixedSize(320,402)
-        self.editing=False;self._wheel_delta=0
+        self.editing=False;self._wheel_delta=0;self._bound_taskbar=None
         body=QVBoxLayout(self);body.setContentsMargins(16,12,16,12);body.setSpacing(9)
         header=QHBoxLayout();self.title=QLabel('快捷设置');self.title.setStyleSheet('font-size:15px;font-weight:600;background:transparent;');header.addWidget(self.title);header.addStretch()
         self.reset_button=QPushButton('重置');self.reset_button.setStyleSheet('min-width:30px;max-width:38px;padding:2px;min-height:22px;');self.reset_button.clicked.connect(self.reset_order);header.addWidget(self.reset_button);self.reset_button.hide()
@@ -241,12 +249,32 @@ class DockQuickSettings(QDialog):
                 'reflections':'已开启' if cfg['dock_reflections'] else '已关闭','dock_time':'已开启' if cfg['dock_clock'] else '已关闭',
                 'color_mode':{'auto':'跟随系统','light':'浅色','dark':'深色'}.get(cfg['theme'],'跟随系统'),
                 'blur':'已开启' if cfg['glass'] else '已关闭','panel_auto_hide':'已开启' if cfg['panel_auto_hide'] else '已关闭',
-                'corners':'已开启' if cfg['screen_corners'] else '已关闭'}
+                'corners':'已开启' if cfg['screen_corners'] else '已关闭',
+                'search':'应用 / 文件 / 便签','undo':'暂无可撤销',
+                'layouts':'保存 / 切换布局','references':'检查 / 重新定位'}
+        productivity=getattr(runtime,'productivity',None)
+        if productivity:
+            history=getattr(productivity,'history',None);steps=len(getattr(history,'entries',[]))
+            values['undo']='可撤销 · %d 步'%steps if steps else '暂无可撤销'
+            self.tiles['undo'].setToolTip(getattr(history,'message','撤销最近的引用和布局整理，原文件保持不变。'))
+        else:
+            for key in ('search','undo','layouts','references'):values[key]='暂不可用'
+        self.tiles['search'].setToolTip('搜索已添加的应用、卡片文件、便签和设置，不扫描磁盘。')
+        self.tiles['layouts'].setToolTip('保存当前桌面布局，或切换到已保存的方案。')
+        self.tiles['references'].setToolTip('手动检查失效入口、重新定位或移除引用；原文件保持不变。')
         from taskbar_appearance import MODES
         values['taskbar'] = dict((key, title) for title, key in MODES).get(cfg.get('taskbar_mode'), '跟随系统')
         values['taskbar_text'] = {'system':'跟随系统','light':'浅色文字 · 白字','dark':'深色文字 · 黑字'}.get(cfg.get('taskbar_text_mode'), '跟随系统')
         self.tiles['taskbar_text'].setToolTip('点击循环切换：跟随系统 → 白字 → 黑字。\n联动 Windows 明暗模式及开始菜单，普通应用配色保留。')
         taskbar = getattr(runtime, 'taskbar', None)
+        if taskbar is not self._bound_taskbar:
+            old=getattr(self._bound_taskbar,'changed',None)
+            if old is not None:
+                try:old.disconnect(self.taskbar_status_changed)
+                except (TypeError,RuntimeError):pass
+            self._bound_taskbar=taskbar
+            changed=getattr(taskbar,'changed',None)
+            if changed is not None:changed.connect(self.taskbar_status_changed)
         supported = taskbar is not None and taskbar.backend is not None
         if not supported:
             if getattr(taskbar, 'install_process', None) is not None:
@@ -258,12 +286,23 @@ class DockQuickSettings(QDialog):
         self.tiles['taskbar'].setToolTip(
             '点击循环切换任务栏效果，颜色与模糊强度沿用主设置。' if supported
             else getattr(taskbar, 'status', '任务栏组件未就绪'))
+        taskbar_error=getattr(taskbar,'error','')
+        if taskbar_error:
+            values['taskbar']='应用失败';self.tiles['taskbar'].setToolTip(str(taskbar_error))
+        elif supported and getattr(taskbar,'_pending_effect',None) is not None:
+            values['taskbar']='正在应用…'
         if cfg['icon_size'] not in (32,42,54,64):values['size']='自定义 · '+str(cfg['icon_size'])
         if cfg['position']=='custom':values['position']='自定义 · '+str(cfg['custom_bottom'])
         for key in ('appearance','size','position'):self.tiles[key].setToolTip('点击循环切换，循环一轮可回到已保存的自定义值。')
         for key,tile in self.tiles.items():tile.value=values[key];tile.active=values[key]=='已开启';tile.update()
         colors=self.colors();self.title.setStyleSheet('background:transparent;font-size:15px;font-weight:600;color:'+colors['ink'].name())
         self.status.setStyleSheet('background:transparent;font-size:10px;color:'+colors['muted'].name());self.update()
+    def taskbar_status_changed(self,message):
+        self.refresh()
+        error=getattr(self._bound_taskbar,'error','')
+        self.status.setText('任务栏效果应用失败，请查看提示。' if error else str(message))
+        self.status.setToolTip(str(error) if error else '')
+
     def reanchor(self):
         from PyQt5.QtCore import QPoint
         rect=self.extras.rects().get('quick',self.dock.bar_rect_f());anchor=self.dock.mapToGlobal(rect.center().toPoint())
@@ -275,6 +314,16 @@ class DockQuickSettings(QDialog):
         if self.editing:return
         tray=self.dock.tray;runtime=getattr(tray,'runtime',None)
         if not tray:return
+        self.status.setToolTip('')
+        if key in ('search','undo','layouts','references'):
+            service=getattr(runtime,'productivity',None)
+            if service is None or getattr(service,'closed',False):
+                self.status.setText('整理工具暂不可用，请重新打开设置。');return
+            if key=='undo':
+                service.undo();self.refresh();self.reanchor()
+                self.status.setText(service.message);self.status.setToolTip(service.message);return
+            method={'search':'open_search','layouts':'open_layouts','references':'open_references'}[key]
+            self.close();getattr(service,method)();return
         if key in ('settings','add','manage'):
             self.close()
             if key=='settings':(runtime.show_settings if runtime else tray.show_settings)()
@@ -322,6 +371,9 @@ class DockQuickSettings(QDialog):
             notes=getattr(runtime,'notes',None)
             if notes and not notes.rows() and notes.new() is None:self.status.setText('便签已启用，但新建失败，请在便签管理中重试。')
         self.refresh();self.reanchor()
+        if key=='taskbar':
+            taskbar=getattr(runtime,'taskbar',None)
+            self.taskbar_status_changed(getattr(taskbar,'status','任务栏效果配置已保存。'))
         if key=='taskbar_text':
             error = getattr(getattr(getattr(runtime,'taskbar',None),'text',None),'error','')
             self.status.setText('任务栏文字应用失败，请查看提示。' if error else '文字颜色已保存 · 联动 Windows 明暗模式')
@@ -345,7 +397,8 @@ class DockQuickSettings(QDialog):
                 if not save_changes(tray, api, {'taskbar_mode': 'clear'}):
                     message = '组件已安装，效果保存失败。可再次点击启用。'
                 else:
-                    message = '组件已启动，已切换到全透明。'
+                    error=getattr(taskbar,'error','')
+                    message = '组件已安装，但效果应用失败：'+str(error) if error else getattr(taskbar,'status','组件已启动，已切换到全透明。')
             if not sip.isdeleted(self):
                 self.refresh()
                 self.status.setText(message)

@@ -124,7 +124,7 @@ def run(output):
         dialog=ClockOptions(clock);dialog.show();app.processEvents()
         dialog.fields['style'].setCurrentIndex(dialog.fields['style'].findData('stacked'))
         dialog.fields['font'].setCurrentIndex(dialog.fields['font'].findData('Bahnschrift'))
-        assert dialog.fields['text_effect'].currentData()=='clear' and dialog.fields['text_color'].text()==''
+        assert dialog.fields['text_effect'].currentData()=='clear' and dialog.fields['text_color'].text()==cfg['clock_appearance']['text_color']
         dialog.fields['text_effect'].setCurrentIndex(dialog.fields['text_effect'].findData('clear'))
         dialog.fields['font_scale'].setValue(120);dialog.fields['text_color'].setText('#1a3355')
         dialog.fields['color'].setText('#ddbbcc');dialog.fields['opacity'].setValue(53)
@@ -390,6 +390,17 @@ def run(output):
         run_hidden_resources(api,runtime,root.name,output,checks)
         from lite_visual_tests import run as run_lite_visual
         run_lite_visual(api,runtime,output,checks)
+        import reliability_state_tests
+        import resource_refresh_tests
+        import interaction_reliability_tests
+        import layout_profile_tests
+        import reference_repair_tests
+        import productivity_tests
+        import visual_theme_tests
+        for module in (reliability_state_tests,resource_refresh_tests,interaction_reliability_tests,layout_profile_tests,reference_repair_tests,productivity_tests,visual_theme_tests):
+            module.run(api,runtime,None,app,output,checks)
+        from card_density_tests import run as check_card_density
+        check_card_density(api,runtime,root.name,app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.
         # Keep it last so later tests retain a working native event loop.
         from dock_extension_tests import run as run_dock_extensions

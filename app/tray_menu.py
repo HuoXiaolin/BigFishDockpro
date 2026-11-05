@@ -21,6 +21,14 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         action=menu.addAction('显示 / 隐藏 Dock');action.setCheckable(True);action.setChecked(tray.dock.isVisible())
         action.triggered.connect(lambda:runtime.toggle_dock() if runtime else None)
     menu.addAction('应用批量管理…').triggered.connect(lambda:runtime.show_batch() if runtime else tray.importer.show())
+    if runtime and hasattr(runtime,'productivity'):
+        tools=menu.addMenu('查找与整理')
+        tools.addAction('统一搜索…').triggered.connect(runtime.productivity.open_search)
+        undo=tools.addAction('撤销上次整理');undo.setEnabled(bool(runtime.productivity.history.entries));undo.triggered.connect(runtime.productivity.undo)
+        tools.aboutToShow.connect(lambda:undo.setEnabled(bool(runtime.productivity.history.entries)))
+        tools.addAction('桌面布局方案…').triggered.connect(runtime.productivity.open_layouts)
+        tools.addAction('失效入口检查…').triggered.connect(runtime.productivity.open_references)
+
     layout=menu.addMenu('Dock 布局');separator_actions(layout,tray,insert_at)
     if getattr(tray.dock,'page_count',1)>1:
         layout.addSeparator();layout.addAction('上一页').triggered.connect(lambda:tray.dock.change_page(-1));layout.addAction('下一页').triggered.connect(lambda:tray.dock.change_page(1))

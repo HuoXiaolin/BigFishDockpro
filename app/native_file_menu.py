@@ -45,7 +45,7 @@ class NativeFileMenu:
         if not self.paths or any(not os.path.exists(path) for path in self.paths):raise ValueError('文件不存在或无法访问，请刷新后重试。')
         self.shell=ctypes.WinDLL('shell32',use_last_error=True);self.ole=ctypes.WinDLL('ole32',use_last_error=True);self.user=ctypes.WinDLL('user32',use_last_error=True)
         self.context=ctypes.c_void_p();self.context3=ctypes.c_void_p();self.context2=ctypes.c_void_p();self.folder=ctypes.c_void_p()
-        self.pidls=[];self.root_pidl=ctypes.c_void_p();self.menu=None;self.callbacks={};self.verb_handlers={};self.next_id=APP_FIRST;self.initialized=False;self.command_count=0
+        self.pidls=[];self.root_pidl=ctypes.c_void_p();self.menu=None;self.callbacks={};self.verb_handlers={};self.next_id=APP_FIRST;self.initialized=False;self.command_count=0;self.selected_verb=''
         self._setup_api()
         try:self._create()
         except Exception:self.close();raise
@@ -150,7 +150,8 @@ class NativeFileMenu:
     def invoke(self,identity):
         if identity in self.callbacks:self.callbacks[identity]();return 'card'
         if not (SHELL_FIRST<=identity<SHELL_FIRST+self.command_count):return 'cancelled'
-        handler=self.verb_handlers.get(self.command_verb(identity-SHELL_FIRST))
+        self.selected_verb=self.command_verb(identity-SHELL_FIRST)
+        handler=self.verb_handlers.get(self.selected_verb)
         if handler:handler();return 'card'
         info=CMINVOKECOMMANDINFOEX();info.cbSize=ctypes.sizeof(info);info.fMask=0x00004000;info.hwnd=self.owner
         info.lpVerb=identity-SHELL_FIRST;info.lpVerbW=identity-SHELL_FIRST;info.nShow=1

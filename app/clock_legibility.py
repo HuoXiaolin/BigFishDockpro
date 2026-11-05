@@ -38,6 +38,27 @@ def background_at(image,box,width,height):
             points.append(image.pixelColor(px,py))
     return points
 
+def monochrome(backgrounds):
+    """Pick solid white or black from the composed wallpaper/material surface."""
+    if not backgrounds:return QColor('#000000')
+    def score(ink):
+        values=sorted(contrast(ink,bg) for bg in backgrounds)
+        return values[len(values)//5]
+    return max((QColor('#000000'),QColor('#ffffff')),key=score)
+
+
+def colorful_ink(color,backgrounds,minimum=4.5):
+    """Darken a saturated hue without blending it into grey; dark surfaces use white."""
+    if monochrome(backgrounds).name()=='#ffffff':return QColor('#ffffff')
+    color=QColor(color)
+    if color.hsvSaturationF()<.4:color=QColor('#ce4125')
+    for percent in (100,110,125,145,170,200,240,300):
+        candidate=color.darker(percent)
+        scores=sorted(contrast(candidate,bg) for bg in backgrounds)
+        if not scores or scores[len(scores)//5]>=minimum:return candidate
+    return color.darker(300)
+
+
 def readable(color,backgrounds,minimum=4.5,opacity=1.0,polarity=None):
     """Preserve the chosen hue when readable; otherwise choose a clear ink tone."""
     color=QColor(color)

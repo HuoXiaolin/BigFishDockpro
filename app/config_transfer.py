@@ -22,6 +22,8 @@ def normalize(data,api):
     if not isinstance(data,dict):raise ValueError('配置内容必须是 JSON 对象。')
     if not {'items','icon_size','position'}<=set(data):raise ValueError('不是完整的 BigFishDockpro 配置。')
     cfg=copy.deepcopy(api.DEFAULT_CONFIG)
+    from feature_config import LEGACY_STYLE_DEFAULTS
+    cfg.update(copy.deepcopy(LEGACY_STYLE_DEFAULTS))
     for key,default in api.DEFAULT_CONFIG.items():
         if key not in data:continue
         value=data[key]

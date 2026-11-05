@@ -6,7 +6,7 @@ from PyQt5.QtGui import QPainter,QColor,QFontDatabase,QLinearGradient,QPixmap
 from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QScrollArea,QLineEdit,QColorDialog,QComboBox,QTabWidget,QGridLayout,QPlainTextEdit,QFileDialog
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ThemeSwatches,button,label,compact_dialog
 from clock_appearance import STYLES,FONTS,PRESETS,DEFAULTS,normalize
-from appearance_presets import MATERIALS,COLOR_MODES
+from appearance_presets import material_choices,COLOR_MODES
 import work_schedule
 
 
@@ -49,10 +49,11 @@ class ClockOptions(QDialog):
             scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setFrameShape(QScrollArea.NoFrame);widget=QWidget();form=QFormLayout(widget);form.setVerticalSpacing(10);form.setHorizontalSpacing(16);form.setContentsMargins(12,12,12,12);scroll.setWidget(widget);self.tabs.addTab(scroll,title);return form
         layout=page('样式布局');typeform=page('文字配色');material=page('材质');workform=page('农历与节假日' if self.calendar else '工作时间')
         def choice(form,key,title,items,visible=True):
-            field=ModernComboBox();field.setAccessibleName(title)
+            field=ModernComboBox(self);field.setAccessibleName(title)
             for name,value in items:field.addItem(name,value)
             self.fields[key]=field
             if visible:form.addRow(title,field)
+            else:field.hide()
             return field
         def number(form,key,title,low,high):
             field=ModernSpinBox();field.setRange(low,high);field.setAccessibleName(title);self.fields[key]=field;form.addRow(title,field);return field
@@ -86,10 +87,11 @@ class ClockOptions(QDialog):
             field=QLineEdit();field.setPlaceholderText('自动 / #RRGGBB');field.setAccessibleName(title);self.fields[key]=field
             box=QVBoxLayout();row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,box)
         color(typeform,'text_color','主要文字');color(typeform,'accent_color','强调与进度');number(typeform,'text_opacity','文字不透明度（%）',50,100)
-        check(typeform,'auto_contrast','自动适配文字对比度（推荐）')
-        self.fields['auto_contrast'].setToolTip('根据壁纸与实际材质调整字色，并提高过低的文字不透明度。关闭后完全使用自定义配色。')
+        check(typeform,'auto_contrast','文字随背景自动配色（推荐）')
+        self.fields['auto_contrast'].setToolTip('按壁纸与材质叠加后的背景自动选色：深色底白字、浅色底使用清晰的主题色。关闭后使用自定义字色与透明度。')
         from card_design import DESIGNS
-        choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS);choice(material,'material','材质',MATERIALS);choice(material,'theme','明暗模式',COLOR_MODES)
+        choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS,False)
+        choice(material,'material','材质',material_choices(clock.option('appearance')['material']));choice(material,'theme','明暗模式',COLOR_MODES)
         color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
         if not self.calendar:
             number(layout,'bar_width','进度条厚度',4,18);number(layout,'ring_width','圆环厚度',4,18)
@@ -137,7 +139,8 @@ class ClockOptions(QDialog):
         for field in self.fields.values():
             signal=field.currentIndexChanged if isinstance(field,QComboBox) else field.textChanged if isinstance(field,(QLineEdit,QPlainTextEdit)) else field.toggled if isinstance(field,ModernCheckBox) else field.valueChanged
             signal.connect(self.changed)
-        self.preset.currentIndexChanged.connect(self.apply_preset);self.show_date.toggled.connect(self.changed);self.changed()
+        self.preset.currentIndexChanged.connect(self.apply_preset);self.show_date.toggled.connect(self.changed)
+        self.fields['material'].currentIndexChanged.connect(self.material_changed);self.changed()
         compact_dialog(self)
         from settings_layout import fit_auxiliary_dialog
         fit_auxiliary_dialog(self,clock.dock.cfg)
@@ -158,6 +161,7 @@ class ClockOptions(QDialog):
     def changed(self,*args):
         if self.loading:return
         current=self.values()
+        for key in ('opacity','blur','highlight'):self.fields[key].setEnabled(current['material']!='clear')
         matched=next((i for i,(_,v) in enumerate(PRESETS,1) if all(current[key]==value for key,value in v.items())),0)
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matched);self.preset.blockSignals(False)
         for item,value in self.style_buttons:item.setChecked(self.fields['style'].currentData()==value)
@@ -187,7 +191,21 @@ class ClockOptions(QDialog):
             if isinstance(field,QComboBox):field.setCurrentIndex(field.findData(value))
             elif isinstance(field,QLineEdit):field.setText(value)
             else:field.setValue(value)
-        self.loading=False;self.preview.update()
+        self.loading=False;self.changed()
+    def material_changed(self):
+        if self.loading:return
+        material=self.fields['material'].currentData()
+        self.loading=True
+        from appearance_presets import material_design
+        design=material_design(material,self.fields['design'].currentData())
+        self.fields['design'].setCurrentIndex(self.fields['design'].findData(design))
+        if material=='clear':
+            for key in ('opacity','highlight'):self.fields[key].setValue(0)
+        elif self.fields['opacity'].value()==0 and self.fields['highlight'].value()==0:
+            from appearance_presets import PANEL_PRESETS
+            values=next((v for _,v in PANEL_PRESETS if v['material']==material),dict(opacity=38,highlight=45))
+            for key in ('opacity','highlight'):self.fields[key].setValue(values[key])
+        self.loading=False;self.changed()
     def choose_color(self,field):
         value=QColorDialog.getColor(QColor(field.text() or '#b8d9ef'),self,'选择颜色')
         if value.isValid():field.setText(value.name())

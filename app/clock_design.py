@@ -11,6 +11,10 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
     wide=o['layout']=='wide' or (o['layout']=='auto' and w>=h*1.4)
     compact=w<230 or h<145
     weekdays='一二三四五六日';date='%d月%d日'% (now.month,now.day);weekday='星期'+weekdays[now.weekday()]
+    from appearance_presets import THEME_RINGS,THEME_ACCENTS,PROGRESS_COLORS
+    family=o.get('material') if o.get('material') in THEME_RINGS else o.get('design')
+    dopamine=family in THEME_RINGS and o.get('accent_color','') in ('',THEME_ACCENTS.get(family))
+    ring_colors=tuple(QColor(value) for value in THEME_RINGS[family]) if dopamine else (accent.lighter(120),accent)
     def wash(box,alpha=20,r=12,color=accent):
         c=QColor(color);c.setAlpha(alpha);p.setPen(Qt.NoPen);p.setBrush(c);p.drawRoundedRect(box,r,r)
     def label(box,value,size=12,color=muted,weight=QFont.Medium,align=Qt.AlignLeft|Qt.AlignVCenter):
@@ -21,10 +25,11 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         # 10-12 px while the main time fills the entire card.
         size=max(size,12*min(1.35,max(.8,min(w/420,h/260))))
         text(box,value,size,color,weight,align)
-    def bar(box,ratio):
-        wash(box,36,box.height()/2,ink)
+    def bar(box,ratio,period_index=None):
+        pair=tuple(QColor(v) for v in PROGRESS_COLORS[period_index%3]) if dopamine and period_index is not None else ring_colors
+        wash(box,48,box.height()/2,pair[1])
         if ratio and ratio>0:
-            gradient=QLinearGradient(box.topLeft(),box.topRight());gradient.setColorAt(0,accent.lighter(120));gradient.setColorAt(1,accent)
+            gradient=QLinearGradient(box.topLeft(),box.topRight());gradient.setColorAt(0,pair[0]);gradient.setColorAt(1,pair[1])
             p.setPen(Qt.NoPen);p.setBrush(gradient);p.drawRoundedRect(QRectF(box.x(),box.y(),box.width()*min(1,ratio),box.height()),box.height()/2,box.height()/2)
     def work_tile(box):
         work=work_progress(now,o['work']);wash(box,20,12)
@@ -41,7 +46,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         label(QRectF(a.x(),a.bottom()-a.height()*.27,a.width(),a.height()*.27),detail,min(13,a.height()*.23),muted)
     if compact and style=='orbit':
         d=min(h*.78,w*.45);x=m;y=(h-d)/2;ring=QRectF(x,y,d,d);values=period_progress(now);work=work_progress(now,o['work'])
-        ratio=work['ratio'] if o['ring_mode']=='work' else values['day'];track=QColor(ink);track.setAlpha(30)
+        ratio=work['ratio'] if o['ring_mode']=='work' else values['day'];track=QColor(ring_colors[0]);track.setAlpha(48)
         p.setBrush(Qt.NoBrush);p.setPen(QPen(track,4,Qt.SolidLine,Qt.RoundCap));p.drawEllipse(ring)
         if ratio:p.setPen(QPen(accent,4,Qt.SolidLine,Qt.RoundCap));p.drawArc(ring,90*16,-round(ratio*360*16))
         label(QRectF(x+d*.06,y+d*.3,d*.88,d*.4),time_text,d*.3*scale,ink,QFont.Bold,Qt.AlignCenter)
@@ -118,10 +123,10 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             label(QRectF(m,y+d+7,w-2*m,h*.06),date+'  '+weekday,h*.04,muted,align=Qt.AlignCenter)
             workbox=QRectF(m,y+d+h*.09,w-2*m,tiles_top-(y+d+h*.09)-12)
         ring=QRectF(x,y,d,d);stroke=min(o['ring_width'],d*.065)
-        track=QColor(ink);track.setAlpha(42);p.setBrush(Qt.NoBrush);p.setPen(QPen(track,stroke,Qt.SolidLine,Qt.RoundCap));p.drawEllipse(ring)
+        track=QColor(ring_colors[0]);track.setAlpha(55);p.setBrush(Qt.NoBrush);p.setPen(QPen(track,stroke,Qt.SolidLine,Qt.RoundCap));p.drawEllipse(ring)
         ratio=work['ratio'] if o['ring_mode']=='work' else values['day']
         if ratio:
-            g=QLinearGradient(ring.topLeft(),ring.bottomRight());g.setColorAt(0,accent.lighter(125));g.setColorAt(1,accent)
+            g=QLinearGradient(ring.topLeft(),ring.bottomRight());g.setColorAt(0,ring_colors[0]);g.setColorAt(1,ring_colors[1])
             from PyQt5.QtGui import QBrush
             p.setPen(QPen(QBrush(g),stroke,Qt.SolidLine,Qt.RoundCap));p.drawArc(ring,90*16,-round(ratio*360*16))
         label(QRectF(x+d*.055,y+d*.26,d*.89,d*.40),time_text,d*.34*scale,ink,QFont.Bold,Qt.AlignCenter)
@@ -145,23 +150,35 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         gap=max(7,m*.5);tw=(w-2*m-gap*max(0,len(rows)-1))/max(1,len(rows))
         for i,(name,value,key) in enumerate(rows):
             box=QRectF(m+i*(tw+gap),tiles_top,tw,tiles_h);wash(box,14,11)
-            pad=min(10,tw*.08);label(QRectF(box.x()+pad,box.y()+5,tw-pad*2,tiles_h*.24),name,min(15,tiles_h*.23),muted)
-            label(QRectF(box.x()+pad,box.y()+tiles_h*.30,tw-pad*2,tiles_h*.40),'%d%%'%round(value*100),min(24,tiles_h*.38),ink,QFont.DemiBold)
-            bar(QRectF(box.x()+pad,box.bottom()-max(8,tiles_h*.14),tw-pad*2,min(o['bar_width'],max(4,tiles_h*.10))),value)
+            pad=min(10,tw*.08)
+            if tiles_h<60:
+                # Short tiles use one shared text row; stacking forced the label
+                # and percentage into overlapping 8-12 px slots on small cards.
+                line=QRectF(box.x()+pad,box.y()+3,tw-pad*2,max(14,tiles_h-14))
+                label(QRectF(line.x(),line.y(),line.width()*.48,line.height()),name,11,muted)
+                label(QRectF(line.x()+line.width()*.48,line.y(),line.width()*.52,line.height()),'%d%%'%round(value*100),14,ink,QFont.DemiBold,Qt.AlignRight|Qt.AlignVCenter)
+                bar(QRectF(box.x()+pad,box.bottom()-7,tw-pad*2,4),value,i)
+            else:
+                label(QRectF(box.x()+pad,box.y()+5,tw-pad*2,tiles_h*.24),name,min(15,tiles_h*.23),muted)
+                label(QRectF(box.x()+pad,box.y()+tiles_h*.30,tw-pad*2,tiles_h*.40),'%d%%'%round(value*100),min(24,tiles_h*.38),ink,QFont.DemiBold)
+                bar(QRectF(box.x()+pad,box.bottom()-max(8,tiles_h*.14),tw-pad*2,min(o['bar_width'],max(4,tiles_h*.10))),value,i)
 
     else:
         standalone=style=='calendar_card';year=o.get('_calendar_year',now.year);month=o.get('_calendar_month',now.month)
-        title_h=max(26,min(40,h*.14))
+        title_top=6;title_h=max(22,min(34,h*.10))
         m = min(m, w*.12)
         title_width = w - m - 122 if standalone else w*.60 - m
         title = '%d年%d月' % (year, month)
-        label(QRectF(m,8,max(1,title_width),title_h),title,min(22,h*.075,w*.064),ink,QFont.DemiBold)
-        if not standalone:label(QRectF(w*.62,8,w*.38-m,title_h),(period+' ' if period else '')+time_text,min(24,h*.095)*scale,accent,QFont.Bold,Qt.AlignRight|Qt.AlignVCenter)
+        label(QRectF(m,title_top,max(1,title_width),title_h),title,min(22,h*.075,w*.064),ink,QFont.DemiBold)
+        if not standalone:label(QRectF(w*.62,title_top,w*.38-m,title_h),(period+' ' if period else '')+time_text,min(24,h*.095)*scale,accent,QFont.Bold,Qt.AlignRight|Qt.AlignVCenter)
         from calendar_details import info as calendar_info
-        weeks=len(calendar.monthcalendar(year,month));weekday_h=min(24,max(18,h*.07));footer=max(16,min(24,h*.075));header_top=max(42,h*.18)
+        weeks=len(calendar.monthcalendar(year,month));weekday_h=min(22,max(15,h*.06));footer=max(14,min(22,h*.06));header_top=title_top+title_h+4
         cw=(w-2*m)/7;ch=(h-footer-m*.25-header_top-weekday_h)/weeks
-        # Keep the day numbers legible when there is no room for two text rows.
-        detail_row = (o['show_lunar'] or o['show_holidays']) and ch >= 32 and cw >= 29
+        # Reserve a second line in ordinary compact cards, even in six-week
+        # months. Only genuinely tiny clock faces fall back to day numbers.
+        detail_row = (o['show_lunar'] or o['show_holidays']) and ch >= 25 and cw >= 26
+        detail_height=max(10,min(14,ch*.36))
+        marker_space=4 if o['show_holidays'] else 1
         for i in range(7):label(QRectF(m+i*cw,header_top,cw,weekday_h),weekdays[i],min(13,weekday_h*.65),accent if i>=5 else muted,align=Qt.AlignCenter)
         first=datetime.date(year,month,1);first-=datetime.timedelta(days=first.weekday())
         for i in range(weeks*7):
@@ -176,13 +193,13 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             subtitle=(details['name'] if o['show_holidays'] else '') or (details['lunar'] if o['show_lunar'] else '')
             if len(subtitle)>3:subtitle=subtitle[:2]+'…'
             p.save();p.setClipRect(box)
-            day_height = ch * .50 if detail_row else max(1, ch - (6 if marked else 1))
-            day_size = min(28, cw*.48, day_height*.78*scale)
+            day_height = ch-detail_height-marker_space if detail_row else max(1, ch - (6 if marked else 1))
+            day_size = min(28, cw*.48, day_height*.9*scale)
             label(QRectF(box.x(),box.y(),cw,day_height),str(day.day),day_size,color,
                   QFont.Bold if current else o['font_weight'],Qt.AlignCenter)
             if detail_row and subtitle:
-                label(QRectF(box.x()+2,box.y()+day_height,cw-4,max(1,ch-day_height-5)),
-                      subtitle,min(11,ch*.30),accent if marked else muted,QFont.Medium,Qt.AlignCenter)
+                label(QRectF(box.x()+2,box.y()+day_height,cw-4,detail_height),
+                      subtitle,min(12,detail_height*.95),accent if marked else muted,QFont.Medium,Qt.AlignCenter)
             if marked:
                 mark=QColor(accent);mark.setAlpha(230);p.setPen(Qt.NoPen);p.setBrush(mark);p.drawEllipse(QPointF(box.center().x(),box.bottom()-2),1.35,1.35)
             p.restore()

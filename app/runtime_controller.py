@@ -51,9 +51,18 @@ class RuntimeController:
         from desktop_calendar import DesktopCalendar
         self.calendar=DesktopCalendar(self)
         self.layout = DisplayLayout(self)
+        from productivity import Productivity
+        self.productivity=Productivity(self)
+        self._update_source_key=self.updater.source_key()
+        from interaction_motion import attach
+        for window in (self.dock,self.clock,self.calendar):attach(window,lambda:self.dock.cfg)
         self.apply_settings()
         if self.dock.cfg.get('runtime_lite'): self.set_lite(True, persist=False)
         self.arm_lite()
+        if not dock.preview and not os.environ.get('FISHDOCK_TEST_DESKTOP'):
+            status=api.config_status()
+            if status.get('message'):
+                QTimer.singleShot(0,lambda:self.tray.showMessage('配置恢复',status['message'],self.tray.icon(),6000) if not self.closed else None)
 
     def screens_changed(self, *args):
         self.layout.changed(*args)
@@ -83,17 +92,13 @@ class RuntimeController:
         enabled = bool(enabled)
         was_lite = self.lite
         if enabled and was_lite: return
-        restore = dict(self.dock.cfg.get('lite_restore',{}))
-        if enabled and not (not persist and restore):
-            restore = {key:window.collapsed for key,window in self.panels.windows.items()}
-            restore['__merged__'] = self.dock.cfg['merged_collapsed']
-            for group in self.dock.cfg.get('merge_groups',[]):
-                if group['id']!='default':restore['__merge_group__'+group['id']]=group.get('collapsed',False)
-        candidate = dict(self.dock.cfg,runtime_lite=enabled,lite_restore=restore)
+        # Resource mode never owns card presentation. Discard legacy snapshots;
+        # restoring one would overwrite folds made while lite mode was active.
+        candidate = dict(self.dock.cfg,runtime_lite=enabled,lite_restore={})
         if persist and self.api.save_config(candidate) is False:
             self.api.log('运行模式保存失败，未切换模式。')
             return False
-        self.dock.cfg.update(runtime_lite=enabled,lite_restore=restore)
+        self.dock.cfg.update(runtime_lite=enabled,lite_restore={})
         self.lite = enabled
         self.dock.lite_mode = self.lite
         if enabled:
@@ -119,21 +124,12 @@ class RuntimeController:
             self.apply_visibility()
         else:
             set_priority(self.dock.cfg['startup_priority'])
-            if not self.dock.preview:
-                self.dock.geo_timer.start(2500)
-                if self.dock.cfg['running_dots']:
-                    self.dock.proc_timer.start(8000)
-                self.dock.start_backdrop()
+            self.dock.sync_background_polling(refresh=was_lite)
+            if not self.dock.preview and self.dock.isVisible():self.dock.start_backdrop()
             self.configure_fullscreen_timer()
             self.apply_visibility()
             self.refresh_corners()
-            if was_lite:
-                self.dock.cfg['merged_collapsed'] = self.dock.cfg.get('lite_restore',{}).get('__merged__',self.dock.cfg['merged_collapsed'])
-                for group in self.dock.cfg.get('merge_groups',[]):
-                    if group['id']!='default':group['collapsed']=self.dock.cfg.get('lite_restore',{}).get('__merge_group__'+group['id'],group.get('collapsed',False))
-                self.panels.set_lite(False)
-                self.dock.cfg['lite_restore'] = {}
-                self.api.save_config(self.dock.cfg)
+            if was_lite:self.panels.set_lite(False)
         self.notes.set_lite()
         # A mode switch must not rebuild/repaint visible components or change
         # their appearance. Only invisible editing/catalog resources are freed.
@@ -220,12 +216,17 @@ class RuntimeController:
         if wanted and not self.dock.isVisible():self.tray._show_dock()
         elif not wanted and self.dock.isVisible():self.dock.hide()
         if changed:
-            if active:self.dock.proc_timer.stop()
-            elif not self.lite and not self.dock.preview and self.dock.cfg['running_dots']:self.dock.proc_timer.start(8000)
+            self.dock.sync_background_polling(refresh=not active)
             self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync()
         self.refresh_corners()
 
     def apply_settings(self,changed=None):
+        if self.updater.source_key()!=getattr(self,'_update_source_key',None):
+            self.updater.settings_changed();self._update_source_key=self.updater.source_key()
+        if changed is not None and 'motion_enabled' in changed and not self.dock.cfg.get('motion_enabled',True):
+            for window in [self.dock,self.clock,self.calendar,*self.panels.windows.values(),*self.notes.windows.values()]:
+                controller=getattr(window,'_interaction_motion',None)
+                if controller:controller.stop()
         if changed is None or any(key.startswith('taskbar_') for key in changed):
             self.taskbar.sync()
         if changed is not None and not set(changed)&{'game_mode','lite_enabled','runtime_lite'}:
@@ -242,10 +243,6 @@ class RuntimeController:
             if changed&{'screen_corners','corner_radius'}:self.refresh_corners()
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
             if 'startup_priority' in changed:set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
-            if changed&{'update_source','update_use_proxy'}:
-                from update_sources import DEFAULT_SOURCE,resolve_source
-                self.updater.release_url=DEFAULT_SOURCE if resolve_source(self.dock.cfg['update_source'])[1] else ''
-                self.updater.set_message('更新设置已保存，尚未检查')
             return
         if self.lite and not self.dock.cfg['lite_enabled']:
             self.set_lite(False)
@@ -288,6 +285,7 @@ class RuntimeController:
     def close(self):
         if self.closed: return
         self.closed = True
+        if hasattr(self,'productivity'):self.productivity.close()
         from wallpaper_source import image_file
         image_file.cache_clear()
         self.dock.extras.close()

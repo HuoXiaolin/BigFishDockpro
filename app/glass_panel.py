@@ -4,7 +4,7 @@ import ctypes
 import os
 from ctypes import wintypes
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, QMimeData, QUrl
+from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, QMimeData, QUrl, QItemSelectionModel
 from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QAbstractItemView, QSizeGrip, QApplication,
@@ -81,7 +81,7 @@ class CollectionList(QListWidget):
                 for item in list(self.selectedItems()):panel.launch_item(item)
                 event.accept();return
             if key==Qt.Key_F5:
-                panel.dock.icons.clear();panel.manager.schedule_scan();panel.render();event.accept();return
+                panel.dock.icons.clear();panel.manager.schedule_scan();panel.render(force=True);event.accept();return
         super().keyPressEvent(event)
 
     def startDrag(self, actions):
@@ -138,6 +138,8 @@ class DesktopPanel(QDialog):
     def __init__(self, manager, identity, geometry):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
         self.manager, self.runtime, self.dock = manager, manager.runtime, manager.dock
+        from interaction_motion import attach
+        attach(self,lambda:self.dock.cfg)
         self.identity, self.default_geometry = identity, list(geometry)
         self.default_ui_factor=geometry[2]/320 if not self.model.get('geometry') else 1.0
         self.ui_factor = 1.0
@@ -361,6 +363,11 @@ class DesktopPanel(QDialog):
             if self.option('locked'):self.setFixedSize(self.size())
         colors = self.colors()
         ink = colors['fg'].name()
+        content_ink='#000000' if colors['light'] else '#ffffff'
+        self.list.setStyleSheet('QListWidget#PanelFiles {color:'+content_ink+';}')
+        content_palette=self.list.palette()
+        content_palette.setColor(QPalette.Text,QColor(content_ink));content_palette.setColor(QPalette.HighlightedText,QColor(content_ink))
+        self.list.setPalette(content_palette)
         search_background = 'transparent' if self.is_clear() else 'rgba(128,128,128,20)'
         self.setStyleSheet(panel_css('''QDialog#DesktopPanel, QWidget#PanelContent {background:transparent;}
             QLabel#PanelLabel, QListWidget#PanelFiles, QLineEdit#PanelSearch, QPushButton#PanelButton, QTabBar#PanelTabs {color:%s;}
@@ -424,15 +431,20 @@ class DesktopPanel(QDialog):
         if getattr(self,'_idle_state',None) is None:
             self._idle_state=(self.query.text(),self.selected_keys()|getattr(self,'_released_selection',set()),self.list.verticalScrollBar().value())
         self._released_selection=set(self._idle_state[1])
-        self.list.clear();self.backdrop=None
+        self.list.clear();self.backdrop=None;self._render_signature=None
         self.refresh_timer.stop();self.fit_timer.stop()
         return True
 
-    def render(self, *args, prepare=False):
+    def render(self, *args, prepare=False, force=False):
         if not prepare and not self.isVisible():
             self.release_hidden_resources()
             self.title.setText(self.model['name']);self.count.setText(str(len(self.manager.rows(self.identity))))
             return
+        if force:
+            # F5 is an explicit reload, including manual cards when automatic
+            # collection is disabled. Do not reuse the previous scan's metadata.
+            for row in self.manager.rows(self.identity):self.manager.file_metadata.pop(path_key(row['path']),None)
+            self._render_signature=None
         rows = self.visible_items()
         if self.collapsed and self.runtime.lite:
             self._released_selection = self.selected_keys() | getattr(self, '_released_selection', set())
@@ -443,25 +455,49 @@ class DesktopPanel(QDialog):
         restoring_idle=getattr(self,'_idle_state',None) is not None
         scroll = self._idle_state[2] if restoring_idle else self.list.verticalScrollBar().value()
         self._idle_state=None
-        selected = {path_key(item.data(Qt.UserRole)['path']) for item in self.list.selectedItems()}
-        selected |= getattr(self, '_released_selection', set())
+        selected = self.selected_keys() | getattr(self, '_released_selection', set())
         self._released_selection = set()
-        self.list.clear()
-        from card_file_ui import card_display_name
+        from card_file_ui import card_display_name,picture_thumbnail
         icon_view=self.list.viewMode()==QListWidget.IconMode
-        for row in rows:
-            from card_file_ui import picture_thumbnail
-            pixels=max(24,self.list.iconSize().width());thumbnail=picture_thumbnail(row['path'],pixels)
-            item = QListWidgetItem(QIcon(thumbnail if thumbnail is not None else self.dock.icons.get(row['path'],pixels,shell_state=True,hide_shortcut=icon_view)),card_display_name(row,icon_view))
-            item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
-            item.setData(Qt.UserRole, row)
-            self.list.addItem(item)
-            item.setSelected(path_key(row['path']) in selected)
-        if restoring_idle:self.list.doItemsLayout()
-        self.list.verticalScrollBar().setValue(scroll)
+        pixels=max(24,self.list.iconSize().width())
+        metadata=self.manager.file_metadata
+        signature=(self.identity,icon_view,pixels,self.devicePixelRatioF(),rows,
+                   tuple(metadata.get(path_key(row['path'])) for row in rows))
         self.title.setText(self.model['name'])
         self.count.setText(str(len(self.manager.rows(self.identity))))
         self.notice.setText(self.manager.message or ('拖入文件、文件夹或快捷方式' if rows else '拖入内容，或等待桌面自动分类'))
+        if not restoring_idle and signature==getattr(self,'_render_signature',None):return
+        current=self.list.currentItem();current_key=path_key(current.data(Qt.UserRole)['path']) if current else None
+        current_row=self.list.currentRow()
+        existing={path_key(self.list.item(i).data(Qt.UserRole)['path']):self.list.item(i) for i in range(self.list.count())}
+        desired={path_key(row['path']) for row in rows}
+        # Keep existing QListWidgetItems: unchanged files retain their pixmaps,
+        # current keyboard item and selection instead of being recreated on scan.
+        self.list.setUpdatesEnabled(False)
+        try:
+            for index in range(self.list.count()-1,-1,-1):
+                if path_key(self.list.item(index).data(Qt.UserRole)['path']) not in desired:self.list.takeItem(index)
+            for index,row in enumerate(rows):
+                key=path_key(row['path']);state=metadata.get(key);item=existing.get(key)
+                if item is None:
+                    item=QListWidgetItem();self.list.insertItem(index,item)
+                elif self.list.row(item)!=index:
+                    self.list.takeItem(self.list.row(item));self.list.insertItem(index,item)
+                icon_signature=(row['path'],pixels,icon_view,state)
+                if force or item.data(Qt.UserRole+1)!=icon_signature:
+                    thumbnail=picture_thumbnail(row['path'],pixels,state)
+                    item.setIcon(QIcon(thumbnail if thumbnail is not None else self.dock.icons.get(row['path'],pixels,shell_state=True,hide_shortcut=icon_view)))
+                    item.setData(Qt.UserRole+1,icon_signature)
+                item.setText(card_display_name(row,icon_view,state))
+                item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
+                item.setData(Qt.UserRole,row);item.setSelected(key in selected)
+                if key==current_key:self.list.setCurrentItem(item,QItemSelectionModel.NoUpdate)
+            if current_key not in desired and current_row>=0 and self.list.count():
+                self.list.setCurrentRow(min(current_row,self.list.count()-1),QItemSelectionModel.NoUpdate)
+            self._render_signature=signature
+            if restoring_idle:self.list.doItemsLayout()
+            self.list.verticalScrollBar().setValue(scroll)
+        finally:self.list.setUpdatesEnabled(True)
         self.fit_timer.start(0)
 
     def fit_content(self):
@@ -501,7 +537,11 @@ class DesktopPanel(QDialog):
             paths=tuple(self.selected_paths());menu.verb_handlers['rename']=lambda:self.rename_file(paths)
             self._active_file_menu=menu;shown=True
             result=menu.track()
-            if result=='shell':self.manager.schedule_scan()
+            if result=='shell':
+                self.manager.schedule_scan()
+                if menu.selected_verb=='delete':
+                    from card_file_actions import reconcile_shell_delete
+                    reconcile_shell_delete(self.manager,paths)
         except Exception as error:
             self.runtime.api.log('系统文件菜单或操作失败：'+str(error))
             if shown:self.notice.setText('系统文件操作未完成，请检查后重试。')
@@ -978,7 +1018,7 @@ class PanelOptions(QDialog):
     def __init__(self,panel):
         super().__init__(panel,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         from ui_style import SettingsHeader
-        from appearance_presets import MATERIALS,COLOR_MODES
+        from appearance_presets import material_choices,COLOR_MODES
         self.panel,self.fields=panel,{};self.applying_preset=True
         self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
@@ -989,7 +1029,7 @@ class PanelOptions(QDialog):
             self.fields[key]=field;form.addRow(title,field)
         def number(key,title,low,high):
             field=ModernSpinBox();field.setRange(low,high);self.fields[key]=field;form.addRow(title,field)
-        choice('material','材质',MATERIALS);choice('theme','明暗模式',COLOR_MODES)
+        choice('material','材质',material_choices(panel.option('material')));choice('theme','明暗模式',COLOR_MODES)
         self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');colors=QVBoxLayout();row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
         from ui_style import ThemeSwatches
         colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',colors)
@@ -1015,13 +1055,18 @@ class PanelOptions(QDialog):
         self.applying_preset=True
         for key,field in self.fields.items():
             value=self.panel.option(key)
-            if isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
+            if key=='material':
+                from appearance_presets import select_material
+                select_material(field,value)
+            elif isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
             else:field.setValue(value)
         self.color.setText(self.panel.option('color'));self.auto.setChecked(self.panel.option('auto_hide'));self.locked.setChecked(self.panel.option('locked'))
         matching=next((i for i,(_,values) in enumerate(PANEL_PRESETS,1) if all(self.panel.option(key)==value for key,value in values.items())),0)
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
         self.applying_preset=False
     def material_changed(self):
+        if not self.applying_preset and self.fields['material'].currentData()=='clear':
+            self.fields['opacity'].setValue(0);self.fields['highlight'].setValue(0)
         if not self.applying_preset and self.fields['material'].currentData()!='clear' and self.fields['opacity'].value()==0 and self.fields['highlight'].value()==0:
             self.fields['opacity'].setValue(38);self.fields['highlight'].setValue(45)
     def customized(self,*args):

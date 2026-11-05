@@ -24,8 +24,8 @@ def apply_changes(tray,api,previous):
     else:dock.update()
     if 'layer' in changed:dock.apply_layer()
     if 'running_dots' in changed:
-        if cfg['running_dots'] and not dock.preview and not dock.lite_mode:dock.proc_timer.start(8000);dock.refresh_running()
-        else:dock.proc_timer.stop();dock.running.clear();dock.update()
+        if not cfg['running_dots']:dock.running.clear();dock.update()
+        dock.sync_background_polling(refresh=True)
     runtime=getattr(tray,'runtime',None)
     if runtime:runtime.apply_settings(changed)
     if hasattr(dock,'extras'):dock.extras.sync_clock()
@@ -37,17 +37,27 @@ def save_changes(tray,api,changes):
     if candidate==previous:return True
     if api.save_config(candidate) is False:return False
     tray.cfg.update(candidate);apply_changes(tray,api,previous)
+    sync_main_fields(tray,changes)
+    return True
+
+
+def sync_main_fields(tray,changes):
     dialog=getattr(tray,'settings_dialog',None)
     if dialog and dialog.isVisible():
-        # A quick action must not discard other edits pending in the main page.
         from PyQt5.QtWidgets import QComboBox,QSpinBox,QLineEdit
-        for key in changes:
+        for key,value in changes.items():
             field=dialog.fields.get(key)
-            if not field:continue
-            value=candidate[key]
-            if isinstance(field,QComboBox):field.setCurrentIndex(field.findData(value))
-            elif isinstance(field,QSpinBox):field.setValue(100-value if key=='transparency' else value)
-            elif isinstance(field,QLineEdit):field.setText(value)
-            else:field.setChecked(value)
+            if field is None:continue
+            blocked=field.blockSignals(True)
+            try:
+                if key in ('dock_material','panel_material'):
+                    from appearance_presets import select_material
+                    select_material(field,value)
+                elif isinstance(field,QComboBox):field.setCurrentIndex(field.findData(value))
+                elif isinstance(field,QSpinBox):field.setValue(100-value if key=='transparency' else value)
+                elif isinstance(field,QLineEdit):field.setText(str(value))
+                else:field.setChecked(bool(value))
+            finally:field.blockSignals(blocked)
             if key in dialog._runtime_switch_baseline:dialog._runtime_switch_baseline[key]=value
-    return True
+        from settings_design import NumericControl
+        for control in dialog.findChildren(NumericControl):control.slider.setValue(control.spin.value())

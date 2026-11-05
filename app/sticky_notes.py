@@ -76,6 +76,8 @@ class NoteWindow(QWidget):
     def __init__(self,manager,identity):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint)
         self.manager,self.runtime,self.dock=manager,manager.runtime,manager.runtime.dock
+        from interaction_motion import attach
+        attach(self,lambda:self.dock.cfg)
         self.identity=identity;self.loading=True;self.disposed=False;self.drag=None;self.backdrop=None;self.ui_factor=1.0;self.expanded_height=260
         self.setObjectName('StickyNote');self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(230,150)
@@ -338,6 +340,12 @@ class NoteWindow(QWidget):
         if row['locked']:self.setFixedSize(self.size())
         self.grip.setVisible(not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
         color=QColor(row['color']);ink='#20252b' if color.lightness()>110 or self.dock.cfg.get('card_design') in ('gradient','paper','minimal') else '#f5f7fa'
+        if row['style']=='glass':
+            from appearance_presets import THEME_INKS
+            appearance=self.appearance()
+            if appearance['material'] in THEME_INKS:
+                light=self.dock.base_theme_colors(appearance['theme']).get('light',True)
+                ink=THEME_INKS[appearance['material']] if light else '#ffffff'
         if row['style']=='glass' and (self.appearance()['theme']=='dark' or self.appearance()['material']=='clear') and self.dock.cfg.get('card_design')=='aurora':ink='#f5f7fa'
         from glass_panel import category_icon
         icon_size=max(12,round(17*factor));self.handle.setFixedSize(icon_size,icon_size)
@@ -345,14 +353,18 @@ class NoteWindow(QWidget):
         self.setStyleSheet('QWidget#StickyNote {background:transparent;} QLineEdit,QTextEdit,QLabel,QToolButton {background:transparent;color:'+ink+';border:0;font-family:"Microsoft YaHei UI";font-size:12px;} QLineEdit {font-weight:600;padding:0;min-height:20px;} QTextEdit {padding:3px;selection-background-color:rgba(90,140,180,80);} QToolButton {border-radius:5px;} QToolButton:hover {background:rgba(120,130,150,28);} QLabel {font-size:10px;}')
         from dpi_support import panel_css
         self.setStyleSheet(panel_css(self.styleSheet(),self.ui_factor))
-        size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;'%size)
+        appearance=self.appearance()
+        content_light=self.dock.base_theme_colors(appearance['theme']).get('light',True) if row['style']=='glass' else QColor(row['color']).lightness()>110
+        content_ink='#000000' if content_light else '#ffffff'
+        size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;color:%s;'%(size,content_ink))
+        self.todo_input.setStyleSheet('color:'+content_ink+';')
         self.editor.viewport().setAutoFillBackground(False);self.todos.viewport().setAutoFillBackground(False)
-        self.todos.setStyleSheet('QListWidget {background:transparent;border:0;color:%s;font-size:%dpx;} QListWidget::item {padding:5px 2px;} QListWidget::indicator:unchecked {background:rgba(255,255,255,180);border:1px solid #98a7b4;border-radius:4px;width:14px;height:14px;}'%(ink,size))
+        self.todos.setStyleSheet('QListWidget {background:transparent;border:0;color:%s;font-size:%dpx;} QListWidget::item {padding:5px 2px;} QListWidget::indicator:unchecked {background:rgba(255,255,255,180);border:1px solid #98a7b4;border-radius:4px;width:14px;height:14px;}'%(content_ink,size))
         from card_metrics import font_pixels
         self.title.setStyleSheet('font-size:%dpx;padding:0 2px;'%font_pixels(self.dock.cfg,self.ui_factor));self.fit_title()
         self.settings_button.setIcon(QIcon(category_icon('settings',ink,max(12,round(16*factor)),self.devicePixelRatioF())));self.settings_button.setIconSize(self.handle.size())
         font=QFont('Microsoft YaHei UI');font.setPixelSize(size);self.editor.document().setDefaultFont(font)
-        palette=self.editor.palette();palette.setColor(QPalette.Text,QColor(ink));palette.setColor(QPalette.Base,QColor(0,0,0,0));self.editor.setPalette(palette)
+        palette=self.editor.palette();palette.setColor(QPalette.Text,QColor(content_ink));palette.setColor(QPalette.Base,QColor(0,0,0,0));self.editor.setPalette(palette)
         from fold_options import note_geometry
         note_geometry(self,collapsed)
         self.setWindowTitle(row['title']+' · 大肥鱼Dock便签');self.layer();self.loading=False;self.update();self.refresh_timer.start()
@@ -544,7 +556,12 @@ class NotesManager(QObject):
             except (OSError,ValueError,KeyError):self.message='便签恢复记录无法读取，已保留原文件。'
     def rows(self):
         rows={row['id']:copy.deepcopy(row) for row in self.runtime.dock.cfg.get('sticky_notes',[])};rows.update(copy.deepcopy(self.pending));return list(rows.values())
-    def row(self,identity):return next(row for row in self.rows() if row['id']==identity)
+    def row(self,identity):
+        # Query one note without cloning every other editor's rich text/state.
+        row=self.pending.get(identity)
+        if row is None:row=next(row for row in self.runtime.dock.cfg.get('sticky_notes',[]) if row['id']==identity)
+        return copy.deepcopy(row)
+
     def update(self,identity,**changes):
         row=self.row(identity);row.update(changes);row['updated']=datetime.datetime.now(datetime.timezone.utc).isoformat();self.pending[identity]=row;self.message='尚未保存';self.timer.start();self.status()
     def status(self):

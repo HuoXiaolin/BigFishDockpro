@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWid
 from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
-from appearance_presets import DOCK_PRESETS, MATERIALS, COLOR_MODES
+from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
 
 
 class SettingsPages(QWidget):
@@ -102,6 +102,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.header = SettingsHeader(self)
         self.create_size_selector()
         body.addWidget(self.header)
+        search_row=QHBoxLayout()
+        self.setting_query=QLineEdit();self.setting_query.setPlaceholderText('搜索设置，例如：圆角、自启、透明度')
+        self.setting_query.setClearButtonEnabled(True);self.setting_query.returnPressed.connect(self.search_settings)
+        search_row.addWidget(self.setting_query,1);search_row.addWidget(button('搜索',self.search_settings));body.addLayout(search_row)
         self.tabs = SettingsPages()
         body.addWidget(self.tabs, 1)
         from settings_design import section_marker
@@ -112,7 +116,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.dock_preset.addItem('自定义')
         self.dock_preset.addItems([name for name, _ in DOCK_PRESETS])
         appearance.addRow(self.field_label('主题预设'), self.dock_preset)
-        self.combo(appearance, 'dock_material', '材质', MATERIALS)
+        self.combo(appearance, 'dock_material', '材质', material_choices(tray.cfg['dock_material']))
         self.combo(appearance, 'theme', '明暗模式', COLOR_MODES)
         self.color(appearance, 'theme_color', '主题色')
         section_marker(appearance,'质感与尺寸')
@@ -125,6 +129,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fields['clear_background'].setToolTip('仅保留图标与文字，不绘制玻璃背景。')
         self.combo(appearance, 'blur_mode', '壁纸取样刷新', api.BLUR_MODES)
         self.check(appearance, 'magnify', '悬停放大图标')
+        self.check(appearance, 'motion_enabled', '交互柔光动效')
+        self.fields['motion_enabled'].setToolTip('悬停、展开和切换时短暂流动，静止后停止；壁纸取样位置保持不变。')
         section_marker(appearance,'Dock 扩展')
         from settings_design import ResponsiveFields
         extras=ResponsiveFields()
@@ -160,6 +166,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         if taskbar:
             taskbar_status = label(taskbar.status, 'muted')
             appearance.addRow(taskbar_status)
+            taskbar.changed.connect(taskbar_status.setText)
+            self.action_row(appearance,'应用状态',button('重试任务栏效果',taskbar.retry))
             if taskbar.payload:
                 def installed(success, message):
                     from PyQt5 import sip
@@ -200,8 +208,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         panel.addRow(self.field_label('主题预设'),self.panel_preset)
         self.panel_preset.currentIndexChanged.connect(self.apply_panel_preset)
         from card_design import DESIGNS
-        self.combo(panel,'card_design','装饰样式',DESIGNS)
-        self.combo(panel, 'panel_material', '材质', MATERIALS)
+        self.combo(panel,'card_design','装饰样式',DESIGNS,visible=False)
+        self.combo(panel, 'panel_material', '材质', material_choices(tray.cfg['panel_material']))
         self.combo(panel, 'panel_theme', '明暗模式', COLOR_MODES)
         self.color(panel, 'panel_color', '主题色')
         self.number(panel, 'panel_highlight', '高光（%）', 0, 100)
@@ -304,6 +312,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         upstream.setOpenExternalLinks(False)
         upstream.linkActivated.connect(lambda url: self.tray.dock.launch(url))
         info.addRow('基础项目', upstream)
+        section_marker(info, '整理工具')
+        runtime=getattr(tray,'runtime',None)
+        if runtime:
+            self.action_row(info,'桌面整理',button('撤销上次整理',runtime.productivity.undo),button('布局方案…',runtime.productivity.open_layouts))
+            self.action_row(info,'查找与修复',button('统一搜索…',runtime.productivity.open_search),button('失效入口检查…',runtime.productivity.open_references))
         section_marker(info, '本机数据与迁移')
         path = label(api.CONFIG_DIR)
         path.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -318,6 +331,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.transfer_help='导出已保存的应用、卡片、便签正文和偏好；导入先预览，保存后替换当前配置并保留一份导入前备份。应用和桌面文件仅保存路径引用。便签正文包含在导出文件中，请妥善保管。'
         self.transfer_status=label(self.transfer_help,'muted')
         info.addRow(self.transfer_status)
+        self.config_status=label('','muted');info.addRow(self.config_status)
+        self.config_recovery=button('恢复默认配置…',self.recover_configuration)
+        info.addRow(self.config_recovery)
+        self.refresh_config_status()
         self.status = label('修改后保存，关闭不保存。', 'muted')
         actions = QHBoxLayout()
         actions.setSpacing(10)
@@ -334,6 +351,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fields['position'].currentIndexChanged.connect(self.position_changed)
         self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
         self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
+        self.fields['panel_material'].currentIndexChanged.connect(self.panel_material_changed)
         for key in DOCK_PRESETS[0][1]:
             field = self.fields[key]
             signal = (field.currentIndexChanged if isinstance(field, QComboBox) else
@@ -401,13 +419,14 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return widget
 
-    def combo(self, form, key, title, options):
-        field = ModernComboBox()
+    def combo(self, form, key, title, options, visible=True):
+        field = ModernComboBox(self)
         for name, value in options:
             field.addItem(name, value)
         field.setAccessibleName(title)
         self.fields[key] = field
-        form.addRow(self.field_label(title), field)
+        if visible:form.addRow(self.field_label(title), field)
+        else:field.hide()
 
     def number(self, form, key, title, lower, upper):
         field = ModernSpinBox()
@@ -441,7 +460,22 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         container.addWidget(ThemeSwatches(field))
         form.addRow(self.field_label(title), container)
 
+    def panel_material_changed(self):
+        if getattr(self,'_profile_loading',False) or self.applying_dock_preset:return
+        from appearance_presets import material_design
+        field=self.fields['card_design'];value=material_design(self.fields['panel_material'].currentData(),field.currentData())
+        field.setCurrentIndex(field.findData(value))
+        if self.fields['panel_material'].currentData()=='clear':
+            self.fields['panel_opacity'].setValue(0);self.fields['panel_highlight'].setValue(0)
+        elif self.fields['panel_opacity'].value()==0 and self.fields['panel_highlight'].value()==0:
+            from appearance_presets import PANEL_PRESETS
+            values=next((v for _,v in PANEL_PRESETS if v['material']==self.fields['panel_material'].currentData()),dict(opacity=38,highlight=45))
+            self.fields['panel_opacity'].setValue(values['opacity']);self.fields['panel_highlight'].setValue(values['highlight'])
+
     def material_changed(self):
+        if not self.applying_dock_preset and self.fields['dock_material'].currentData()=='clear':
+            self.fields['clear_background'].setChecked(True)
+            self.fields['transparency'].setValue(0);self.fields['dock_highlight'].setValue(0)
         if not self.applying_dock_preset and self.fields['dock_material'].currentData()!='clear' and self.fields['clear_background'].isChecked():
             self.fields['clear_background'].setChecked(False)
             if self.fields['transparency'].value()==0: self.fields['transparency'].setValue(38)
@@ -472,19 +506,24 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     def refresh_shared_panel_fields(self):
         if self.import_candidate is not None:return
         from panel_preferences import CONFIG_KEYS
-        for key in CONFIG_KEYS:
-            field=self.fields[key];value=self.tray.cfg[key]
-            if isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
-            elif isinstance(field,QSpinBox):field.setValue(value)
-            elif isinstance(field,QLineEdit):field.setText(value)
-            else:field.setChecked(value)
+        for key in CONFIG_KEYS+('card_design',):
+            field=self.fields[key];value=self.tray.cfg[key];blocked=field.blockSignals(True)
+            try:
+                if key=='panel_material':select_material(field,value)
+                elif isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
+                elif isinstance(field,QSpinBox):field.setValue(value)
+                elif isinstance(field,QLineEdit):field.setText(value)
+                else:field.setChecked(value)
+            finally:field.blockSignals(blocked)
+        self.refresh_preset_names(self.profile_candidate())
 
     def fill_fields(self,cfg):
         self._profile_loading=True
         self._runtime_switch_baseline={key:cfg[key] for key in self._runtime_switch_keys}
         self.applying_dock_preset = True
         for key, field in self.fields.items():
-            if isinstance(field, QComboBox):
+            if key in ('dock_material','panel_material'):select_material(field,cfg[key])
+            elif isinstance(field, QComboBox):
                 field.setCurrentIndex(max(0, field.findData(cfg[key])))
             elif isinstance(field, QSpinBox):
                 field.setValue(100-cfg[key] if key == 'transparency' else cfg[key])
@@ -515,6 +554,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.update_changed(runtime.updater.message)
         self.check_startup()
         self.status.setText('未保存的修改会在关闭时放弃。')
+        self.refresh_config_status()
         self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
         self.showNormal() if self.isMinimized() else self.show()
         self.raise_()
@@ -627,7 +667,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         if startup_changed and not self.api.set_autostart(cfg['autostart']):
             self.status.setText('启动项保存失败，设置尚未应用。请查看日志。')
             return
-        if self.api.save_config(cfg) is False:
+        recover=imported and self.api.config_status().get('blocked',False)
+        saved=self.api.recover_config_defaults(cfg) if recover else self.api.save_config(cfg)
+        self.refresh_config_status()
+        if saved is False:
             if startup_changed and not self.api.set_autostart(self.tray.cfg['autostart']):
                 self.status.setText('配置保存失败，且自启动恢复失败，请检测修复启动项。');return
             self.status.setText('配置保存失败，设置尚未应用。请检查数据目录权限。')
@@ -649,6 +692,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                 if not startup_restored:message='原配置已恢复，但自启动恢复失败，请检测修复启动项。'
                 self.status.setText(message if restored else '恢复配置失败，请从导入前备份恢复。')
                 return
+            service=getattr(getattr(self.tray,'runtime',None),'productivity',None)
+            if service:service.history.entries.clear();service.history.message='配置已导入，整理记录已清空'
             self.import_candidate=None;self.import_path=None
             self.transfer_status.setText('导入已保存。导入前备份：'+backup.name+'；可从数据目录重新导入恢复。')
         else:
@@ -661,8 +706,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.check_startup()
         self.status.setText('设置已保存并生效，可继续调整。')
         taskbar=getattr(getattr(self.tray,'runtime',None),'taskbar',None)
-        if getattr(getattr(taskbar,'text',None),'error',''):
-            self.status.setText(taskbar.text.error)
+        error=getattr(taskbar,'error','') or getattr(getattr(taskbar,'text',None),'error','')
+        if error:self.status.setText(error)
 
     def check_startup(self):
         from startup_service import inspect_startup
@@ -711,3 +756,46 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     def open_update_link(self):
         if hasattr(self.tray, 'runtime') and self.tray.runtime.updater.release_url:
             self.tray.dock.launch(self.tray.runtime.updater.release_url)
+
+    def search_targets(self):
+        result=[]
+        for key,field in self.fields.items():
+            if key=='card_design':continue  # Decoration now follows the selected theme/material.
+            title=field.accessibleName() or (field.text() if isinstance(field,QCheckBox) else key)
+            page=next((self.tabs.nav.item(i).text() for i in range(self.tabs.count()) if self.tabs.pages.widget(i).isAncestorOf(field)),'设置')
+            options=' '.join(field.itemText(i) for i in range(field.count())) if isinstance(field,QComboBox) else ''
+            result.append({'key':key,'title':title,'page':page,'options':options})
+        for key,title in [('@clock','时钟字体与布局'),('@calendar','日历设计与节假日'),('@notes','便签管理与搜索'),('@groups','卡片分组与合并'),('@layouts','桌面布局方案'),('@references','失效入口检查')]:
+            result.append({'key':key,'title':title,'page':'组件与整理','options':''})
+        return result
+
+    def search_settings(self):
+        dialog=self.tray.runtime.productivity.open_search()
+        dialog.scope.setCurrentIndex(dialog.scope.findData('settings'));dialog.query.setText(self.setting_query.text());dialog.refresh();dialog.query.setFocus()
+
+    def focus_setting(self,key):
+        runtime=self.tray.runtime
+        actions={'@clock':runtime.clock.open_settings,'@calendar':runtime.calendar.open_settings,'@notes':runtime.notes.manage,'@groups':runtime.panels.manage_groups,'@layouts':runtime.productivity.open_layouts,'@references':runtime.productivity.open_references}
+        if key in actions:actions[key]();return
+        field=self.fields.get(key)
+        if field is None:return
+        for i in range(self.tabs.count()):
+            scroll=self.tabs.pages.widget(i)
+            if scroll.isAncestorOf(field):
+                self.tabs.setCurrentIndex(i);QApplication.processEvents();scroll.ensureWidgetVisible(field,12,36);field.setFocus(Qt.ShortcutFocusReason);break
+
+    def refresh_config_status(self):
+        status=self.api.config_status()
+        self.config_status.setText(status.get('message',''))
+        self.config_status.setVisible(bool(status.get('message')))
+        self.config_recovery.setVisible(bool(status.get('blocked')))
+
+    def recover_configuration(self):
+        from PyQt5.QtWidgets import QMessageBox
+        if QMessageBox.question(self,'恢复默认配置','当前配置无法读取。恢复默认将保留异常原件，重新建立应用入口与布局配置。\n如果有导出备份，建议先从备份恢复。是否恢复默认？',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:return
+        if self.api.recover_config_defaults():
+            previous=copy.deepcopy(self.tray.cfg);candidate=self.api.load_config();self.tray.cfg.clear();self.tray.cfg.update(candidate)
+            self.apply_imported_state();self.fill_fields(self.tray.cfg);self.refresh_config_status();self.status.setText('默认配置已恢复，异常原件已保留。')
+            service=getattr(getattr(self.tray,'runtime',None),'productivity',None)
+            if service:service.history.entries.clear();service.history.message='配置已恢复，整理记录已清空'
+        else:self.refresh_config_status();self.status.setText('无法保留异常配置，未恢复默认。请检查数据目录。')

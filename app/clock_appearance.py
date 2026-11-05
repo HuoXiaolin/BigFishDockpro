@@ -1,6 +1,6 @@
 """Independent, validated desktop clock appearance."""
 import re
-from appearance_presets import MATERIALS, PANEL_PRESETS
+from appearance_presets import MATERIALS, PANEL_PRESETS, PRESET_IDS, NEW_PRESET_IDS, DEFAULT_PRESET_ID, THEME_INKS, THEME_ACCENTS
 
 DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':'#b8d9ef','opacity':38,'blur':8,'highlight':45,
           'typography_version':2,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
@@ -9,7 +9,8 @@ DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_s
                 show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={})
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
-PRESETS=[(name,dict(values,design='aurora',accent_color='',text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else '#19384e',text_effect='clear')) for name,values in PANEL_PRESETS]
+PRESETS=[(name,dict(values,design=key if key in NEW_PRESET_IDS else 'aurora',accent_color=THEME_ACCENTS.get(key,''),text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else THEME_INKS.get(key,'#19384e'),text_effect='clear')) for key,(name,values) in zip(PRESET_IDS,PANEL_PRESETS)]
+DEFAULT_STYLE = dict(DEFAULTS, **PRESETS[PRESET_IDS.index(DEFAULT_PRESET_ID)][1])
 
 
 def normalize(value, cfg=None):

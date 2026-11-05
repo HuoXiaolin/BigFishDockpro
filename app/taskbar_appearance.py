@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 from ctypes import wintypes
+from PyQt5.QtCore import QObject, pyqtSignal
+from taskbar_xaml import effect_key
 
 MODES = [('跟随系统', 'system'), ('全透明', 'clear'), ('自定义颜色', 'color'),
          ('亚克力模糊', 'acrylic'), ('玻璃模糊', 'glass')]
@@ -38,12 +40,21 @@ def accent_policy(mode, color, opacity):
     return AccentPolicy(0, 0, 0, 0)
 
 
+class _TaskbarEvents(QObject):
+    changed = pyqtSignal(str)
+
+
 class TaskbarAppearance:
     def __init__(self, dock, log):
         from PyQt5.QtCore import QTimer
 
         self.dock = dock
         self.log = log
+        self.events = _TaskbarEvents(dock)
+        self.changed = self.events.changed
+        self.error = ''
+        self._effect = None
+        self._pending_effect = None
         self.active = set()
         self.timer = QTimer(dock)
         self.timer.setInterval(2500)
@@ -82,7 +93,7 @@ class TaskbarAppearance:
         if not (self.directory / 'TranslucentTB.exe').is_file():
             return False
         from taskbar_xaml import XamlTaskbar
-        self.xaml = XamlTaskbar(self.dock, self.directory, self.log)
+        self.xaml = XamlTaskbar(self.dock, self.directory, self.log, self.xaml_completed)
         self.backend = self.xaml
         self.status = 'Windows 11 XAML 后端已就绪。'
         return True
@@ -150,22 +161,46 @@ class TaskbarAppearance:
 
         return windows, apply, restore
 
-    def sync(self):
+    def set_status(self, message, error=''):
+        self.status, self.error = message, error
+        signal = getattr(self, 'changed', None)
+        if signal is not None:
+            signal.emit(message)
+
+    def xaml_completed(self, effect, success, message):
+        if effect != effect_key(self.dock.cfg):
+            return
+        self._pending_effect = None
+        self._effect = effect if success else None
+        self.set_status(message, '' if success else message)
+
+    def retry(self):
+        self._effect = None
+        self._pending_effect = None
+        return self.sync(force=True)
+
+    def sync(self, force=False):
         self.text.sync(self.dock.cfg.get('taskbar_text_mode','system'))
-        effect=tuple(self.dock.cfg.get(key) for key in ('taskbar_mode','taskbar_color','taskbar_opacity','taskbar_blur'))
-        if getattr(self,'_effect',None)==effect:return
+        effect = effect_key(self.dock.cfg)
+        if not force and (getattr(self, '_effect', None) == effect or
+                          getattr(self, '_pending_effect', None) == effect):
+            return not bool(getattr(self, 'error', ''))
         if self.xaml is not None:
+            self._pending_effect = effect
+            self.set_status('正在应用任务栏效果…')
             self.xaml.sync()
-            self._effect=effect
-            return
+            return not bool(getattr(self, 'error', ''))
         if self.backend is None:
-            return
-        self._effect=effect
+            return False
         if self.dock.cfg['taskbar_mode'] == 'system':
             self.restore_native()
-            return
-        self.refresh(force=True)
+            self._effect = effect
+            self.set_status('任务栏外观已恢复跟随系统。')
+            return True
+        accepted = self.refresh(force=True)
+        self._effect = effect if accepted else None
         self.timer.start()
+        return accepted
 
     def refresh(self, force=False):
         windows, apply, _ = self.backend
@@ -179,8 +214,15 @@ class TaskbarAppearance:
                 self.active.add(handle)
             else:
                 rejected = True
-        if rejected and force:
-            self.log('系统拒绝应用部分任务栏效果。')
+        if rejected:
+            self._effect = None
+            self.set_status('系统未接受部分任务栏效果，可点击重新应用。', '系统未接受部分任务栏效果。')
+            if force:
+                self.log(self.error)
+        elif force or self.error:
+            self._effect = effect_key(cfg)
+            self.set_status('任务栏效果已应用。')
+        return not rejected
 
     def restore_native(self):
         self.timer.stop()

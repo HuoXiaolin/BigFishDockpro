@@ -24,15 +24,26 @@ def configuration(cfg):
     return result
 
 
+EFFECT_KEYS = ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur')
+
+
+def effect_key(cfg):
+    return tuple(cfg.get(key) for key in EFFECT_KEYS)
+
+
 class XamlTaskbar:
-    def __init__(self, dock, directory, log):
+    def __init__(self, dock, directory, log, complete=None):
         self.dock, self.directory, self.log = dock, Path(directory), log
         self.process = QProcess(dock)
         self.process.setProgram(str(self.directory / 'TranslucentTB.exe'))
         self.process.setWorkingDirectory(str(self.directory))
         self.process.finished.connect(self.finished)
-        self.process.errorOccurred.connect(lambda error: self.log('任务栏后端错误：' + self.process.errorString()))
+        self.process.errorOccurred.connect(self.failed)
+        self.process.started.connect(self.started)
+        self.complete = complete
         self.pending = None
+        self.starting = None
+        self.active = None
         self.closed = False
         self.stop_timer = QTimer(dock)
         self.stop_timer.setSingleShot(True)
@@ -53,17 +64,45 @@ class XamlTaskbar:
         else:
             self.finished()
 
+    def report(self, cfg, success, message):
+        if not success:
+            self.log(message)
+        if self.complete is not None:
+            self.complete(effect_key(cfg), success, message)
+
+    def started(self):
+        if self.closed or self.starting is None:
+            return
+        self.active, self.starting = self.starting, None
+        self.report(self.active, True, '任务栏组件已启动。')
+
+    def failed(self, error):
+        if self.closed or (self.pending is not None and error == QProcess.Crashed):
+            return
+        cfg = self.starting or self.active or self.pending or self.dock.cfg
+        self.starting = self.active = None
+        self.report(cfg, False, '任务栏效果未应用：'+self.process.errorString()+'；可点击重新应用。')
+
     def finished(self, *args):
         self.stop_timer.stop()
-        if self.closed or self.pending is None:
+        if self.closed:
+            return
+        previous = self.active or self.starting
+        self.active = self.starting = None
+        if self.pending is None:
+            if previous is not None:
+                self.report(previous, False, '任务栏组件已退出，可点击重新应用。')
             return
         cfg, self.pending = self.pending, None
         try:
             self.write(cfg)
         except OSError as error:
-            self.log('无法保存任务栏外观：' + str(error))
+            self.report(cfg, False, '任务栏效果未应用：无法保存组件配置，'+str(error)+'；可点击重新应用。')
             return
-        if cfg.get('taskbar_mode', 'system') != 'system':
+        if cfg.get('taskbar_mode', 'system') == 'system':
+            self.report(cfg, True, '任务栏外观已恢复跟随系统。')
+        else:
+            self.starting = cfg
             self.process.start()
 
     def close(self):

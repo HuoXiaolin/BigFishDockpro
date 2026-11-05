@@ -1,5 +1,6 @@
 """Desktop reference classification. No moving, deleting or hiding source files."""
 import os
+import stat
 import threading
 import uuid
 import re
@@ -50,7 +51,7 @@ def desktop_roots():
     return list(dict.fromkeys(roots))
 
 
-def scan_desktop(roots, cancelled=lambda: False, included_hidden=()):
+def scan_desktop(roots, cancelled=lambda: False, included_hidden=(), metadata=None):
     included_hidden=set(included_hidden)
     rows, errors, seen = [], [], set()
     for root in roots:
@@ -67,6 +68,7 @@ def scan_desktop(roots, cancelled=lambda: False, included_hidden=()):
                         attrs=getattr(info,'st_file_attributes',0)
                         if attrs&4 or (attrs&2 and path_key(entry.path) not in included_hidden):continue
                         key = path_key(entry.path)
+                        if metadata is not None:metadata[key]=file_state(entry.path,info)
                         if key not in seen:
                             seen.add(key)
                             rows.append({'path': os.path.abspath(entry.path), 'name': entry.name,
@@ -76,6 +78,14 @@ def scan_desktop(roots, cancelled=lambda: False, included_hidden=()):
         except OSError as error:
             errors.append(str(error))
     return sorted(rows, key=lambda row: row['name'].casefold()), errors
+
+
+def file_state(path,info=None):
+    '''Transient scan metadata: never serialized into user configuration.'''
+    info=info if info is not None else os.stat(path)
+    directory=stat.S_ISDIR(info.st_mode)
+    return (info.st_mtime_ns,info.st_size,getattr(info,'st_file_attributes',0),directory,
+            '' if directory else effective_suffix(path))
 
 
 def effective_suffix(path):
@@ -176,17 +186,26 @@ def normalize_desktop(cfg):
 class DesktopScan(QObject):
     ready = pyqtSignal(object, object)
 
-    def __init__(self, roots, included_hidden=()):
+    def __init__(self, roots, included_hidden=(), reference_paths=()):
         super().__init__()
         self.roots = list(roots)
         self.included_hidden=tuple(included_hidden)
+        self.reference_paths=tuple(reference_paths);self.metadata={}
         self.cancelled = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def start(self): self.thread.start()
 
     def run(self):
-        rows, errors = scan_desktop(self.roots, self.cancelled.is_set, self.included_hidden)
+        rows, errors = scan_desktop(self.roots, self.cancelled.is_set, self.included_hidden,self.metadata)
+        # Manual references may point outside Desktop. Inspect their metadata in
+        # this worker too, rather than blocking sorting on network file stats.
+        for path in self.reference_paths:
+            if self.cancelled.is_set():return
+            key=path_key(path)
+            if key in self.metadata:continue
+            try:self.metadata[key]=file_state(path)
+            except OSError:self.metadata[key]=None
         if not self.cancelled.is_set(): self.ready.emit(rows, errors)
 
     def close(self):

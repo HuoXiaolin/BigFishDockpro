@@ -1,10 +1,10 @@
 """Bounded appearance snapshots, deliberately excluding user content and geometry."""
 import copy
 import re
-from appearance_presets import DOCK_PRESETS, PANEL_PRESETS, PRESET_IDS, normalize_note_appearance
+from appearance_presets import DOCK_PRESETS, PANEL_PRESETS, PRESET_IDS, NEW_PRESET_IDS, DEFAULT_PRESET_ID, DEFAULT_DOCK_STYLE, normalize_note_appearance
 from clock_appearance import DEFAULTS as CLOCK_DEFAULTS, normalize as normalize_clock
 
-TOP_DEFAULTS = dict(DOCK_PRESETS[0][1], card_design='aurora', note_style='glass', clock_style='digital', clock_flipped=False)
+TOP_DEFAULTS = dict(DEFAULT_DOCK_STYLE, card_design=DEFAULT_PRESET_ID, note_style='glass', clock_style='digital', clock_flipped=False)
 TOP_KEYS = tuple(TOP_DEFAULTS) + tuple('panel_'+key for key in PANEL_PRESETS[0][1])
 CLOCK_KEYS = tuple(key for key in CLOCK_DEFAULTS if key != 'work')
 NOTE_KEYS = ('style','color','font_size','font_scale','body_font_size','body_font_scale','appearance')
@@ -16,7 +16,7 @@ def snapshot(cfg):
     return dict(values={key:copy.deepcopy(cfg[key]) for key in TOP_KEYS if key in cfg},
         clock={key:copy.deepcopy(cfg['clock_appearance'][key]) for key in CLOCK_KEYS},
         calendar={key:copy.deepcopy(cfg['calendar_appearance'][key]) for key in CLOCK_KEYS},
-        typography={key:sizing[key] for key in ('font_size','ui_scale')},
+        typography={key:sizing[key] for key in ('font_size','font_density')},
         note_default=normalize_note_appearance(cfg.get('note_appearance')),
         notes={row['id']:{key:copy.deepcopy(row.get(key)) for key in NOTE_KEYS} for row in cfg.get('sticky_notes',[])})
 
@@ -45,9 +45,11 @@ def clean_snapshot(value):
         result[name]={key:normalized[key] for key in CLOCK_KEYS}
     typography=value.get('typography',{})
     if not isinstance(typography,dict):typography={}
-    size=typography.get('font_size');scale=typography.get('ui_scale')
-    result['typography']={'font_size':size if type(size) is int and 8<=size<=48 else 13,
-                          'ui_scale':scale if type(scale) in (int,float) and .125<=scale<=8 else 1.0}
+    from card_metrics import DEFAULT_PROFILE
+    size=typography.get('font_size')
+    result['typography']={'font_size':size if type(size) is int and 8<=size<=48 else DEFAULT_PROFILE['font_size']}
+    density=typography.get('font_density')
+    if type(density) in (int,float) and .25<=density<=2:result['typography']['font_density']=density
     result['note_default']=normalize_note_appearance(value.get('note_default'))
     result['notes']={}
     from sticky_notes_store import normalize_notes
@@ -66,7 +68,7 @@ def apply_snapshot(cfg, saved):
     result.update(copy.deepcopy(saved['values']))
     for component in ('clock','calendar'):
         result[component+'_appearance'].update(copy.deepcopy(saved[component]))
-    result['card_sizing'].update(copy.deepcopy(saved['typography']))
+    result['card_sizing'].update({key:copy.deepcopy(value) for key,value in saved['typography'].items() if key in ('font_size','font_density')})
     result['note_appearance']=copy.deepcopy(saved['note_default'])
     for row in result.get('sticky_notes',[]):
         for key,value in saved['notes'].get(row['id'],{}).items():
@@ -83,18 +85,25 @@ def apply_profile(cfg, mode, defaults):
             work=result[component+'_appearance']['work']
             result[component+'_appearance']=copy.deepcopy(defaults[component+'_appearance'])
             result[component+'_appearance']['work']=work
+        result=apply_profile(result,DEFAULT_PRESET_ID,defaults)
+        from clock_appearance import DEFAULT_STYLE
+        for component in ('clock','calendar'):
+            work=result[component+'_appearance']['work']
+            result[component+'_appearance']=normalize_clock(dict(DEFAULT_STYLE,work=work))
+        result.update(clock_style='digital',clock_flipped=False)
         from card_metrics import DEFAULT_PROFILE
-        result['card_sizing'].update({key:DEFAULT_PROFILE[key] for key in ('font_size','ui_scale')})
-        result['note_appearance']=normalize_note_appearance(None)
+        result['card_sizing'].update(font_size=DEFAULT_PROFILE['font_size'],font_density=result['card_sizing']['density'])
+        from appearance_presets import DEFAULT_NOTE_APPEARANCE
+        result['note_appearance']=dict(DEFAULT_NOTE_APPEARANCE)
         for row in result.get('sticky_notes',[]):
-            row.update(style='glass',color='#cfe8fa',font_size=12,font_scale=1.0)
+            row.update(style='glass',color=defaults['panel_color'],font_size=12,font_scale=1.0)
             for key in ('body_font_size','body_font_scale','appearance'):row.pop(key,None)
         return result
     if mode not in PRESET_IDS:return result
     index=PRESET_IDS.index(mode);values=PANEL_PRESETS[index][1]
     result.update(DOCK_PRESETS[index][1])
     result.update({'panel_'+key:v for key,v in values.items()})
-    result.update(card_design='aurora',note_style='glass',note_appearance=normalize_note_appearance(values))
+    result.update(card_design=mode if mode in NEW_PRESET_IDS else 'aurora',note_style='glass',note_appearance=normalize_note_appearance(values))
     from clock_appearance import PRESETS
     for component in ('clock','calendar'):result[component+'_appearance'].update(PRESETS[index][1])
     for row in result.get('sticky_notes',[]):

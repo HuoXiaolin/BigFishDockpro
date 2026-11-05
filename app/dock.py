@@ -286,17 +286,30 @@ def migrate_legacy():
         pass
 
 
+_config_store = None
+
+
+def _configuration_store():
+    global _config_store
+    from config_store import ConfigStore
+    if _config_store is None or _config_store.path != Path(CONFIG_PATH):
+        _config_store = ConfigStore(CONFIG_PATH, log)
+    return _config_store
+
+
+def config_status():
+    return _configuration_store().status()
+
+
+def recover_config_defaults(cfg=None):
+    import copy
+    candidate = normalize_features(copy.deepcopy(DEFAULT_CONFIG)) if cfg is None else cfg
+    return _configuration_store().save(candidate, explicit_recovery=True)
+
+
 def load_config():
-    cfg = dict(DEFAULT_CONFIG)
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            for k in DEFAULT_CONFIG:
-                if k in data:
-                    cfg[k] = data[k]
-    except Exception:
-        pass
+    from feature_config import LEGACY_STYLE_DEFAULTS
+    cfg = _configuration_store().load(DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS)
     if not isinstance(cfg.get("items"), list):
         cfg["items"] = []
     if str(cfg.get("theme")) == "fog":
@@ -327,18 +340,7 @@ def load_config():
 
 
 def save_config(cfg):
-    temporary=None
-    try:
-        os.makedirs(CONFIG_DIR,exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=CONFIG_DIR,prefix='config.',suffix='.tmp',delete=False) as stream:
-            temporary=stream.name;json.dump(cfg,stream,ensure_ascii=False,indent=2);stream.flush();os.fsync(stream.fileno())
-        os.replace(temporary,CONFIG_PATH);temporary=None;return True
-    except Exception:
-        log('保存配置失败: '+traceback.format_exc());return False
-    finally:
-        if temporary:
-            try:os.unlink(temporary)
-            except OSError:pass
+    return _configuration_store().save(cfg)
 
 
 # ----------------------------------------------------------------------------
@@ -851,6 +853,11 @@ class Dock(QWidget):
         self.drag_moved = False
         self.drag_origin = None
         self.folder_hover = -1
+        self.folder_candidate = -1
+        self.folder_timer = QTimer(self)
+        self.folder_timer.setSingleShot(True)
+        self.folder_timer.setInterval(360)
+        self.folder_timer.timeout.connect(self._arm_folder_hover)
         self.items = []
         self.page_index = int(cfg.get("dock_page", 0))
         self.page_count = 1
@@ -893,10 +900,7 @@ class Dock(QWidget):
         self.extras=DockExtras(self)
         self._build_items()
         self.reposition()
-        if not preview:
-            self.proc_timer.start()
-            self.geo_timer.start()
-            self.refresh_running()
+        # Polling starts with the visible Dock, never while initially hidden.
 
     def nativeEvent(self, event_type, message):
         msg = wintypes.MSG.from_address(int(message))
@@ -1571,7 +1575,7 @@ class Dock(QWidget):
         这个扫描要 6~8 毫秒，放在主线程里每几秒就会让动画卡一下，
         所以丢到后台线程做，扫完用信号把结果传回来。
         """
-        if self.lite_mode:
+        if self.preview or self.lite_mode or not self.isVisible():
             return
         if not self.cfg["running_dots"]:
             if self.running:
@@ -1595,7 +1599,7 @@ class Dock(QWidget):
 
     def _apply_running(self, names):
         self._proc_busy = False
-        if self.lite_mode:
+        if self.lite_mode or not self.isVisible():
             return
         if names != self.running:
             self.running = names
@@ -1657,7 +1661,7 @@ class Dock(QWidget):
         self.update(self.repaint_rect())
 
     def _kick(self):
-        if not self.timer.isActive():
+        if self.isVisible() and not self.timer.isActive():
             self.timer.start()
 
     # ---------------- 鼠标 ----------------
@@ -1699,7 +1703,7 @@ class Dock(QWidget):
             if (pos - self.drag_origin).manhattanLength() >= QApplication.startDragDistance():
                 self.drag_moved = True
             if self.drag_moved:
-                self.folder_hover = self.folder_target(pos)
+                self._update_folder_hover(pos)
                 self.setCursor(Qt.DragCopyCursor if self.folder_hover >= 0 else Qt.ClosedHandCursor)
                 self.update()
                 super(Dock, self).mouseMoveEvent(e)
@@ -1753,6 +1757,7 @@ class Dock(QWidget):
             self.pressed = self._hit(e.pos())
             self.drag_idx = -1
             self.drag_moved = False
+            self._cancel_folder_hover()
             if (self.cfg.get("reorder") and self.pressed >= 0
                     and not self.items[self.pressed].get("sep")):
                 self.drag_idx = self.pressed
@@ -1776,32 +1781,54 @@ class Dock(QWidget):
                 target = index
         if target == source:
             return
-        it = self.items.pop(self.drag_idx)
-        self.items.insert(target, it)
-        ci = self.cfg["items"].pop(self.page_offset + self.drag_idx)
-        self.cfg["items"].insert(self.page_offset + target, ci)
-        self.drag_idx = target
-        self.pressed = target
-        # 顺序变了，"哪些分隔符要隔断背景"必须跟着重算，
-        # 否则把图标拖到分隔符两边时不会出现隔断效果
-        self._compute_split_flags()
-        self._recalc()          # 不重置尺寸，保持放大状态，避免闪烁
-        self._kick()
+        items = list(self.cfg['items'])
+        item = items.pop(self.page_offset + source)
+        items.insert(self.page_offset + target, item)
+        return self.commit_folder_items(items, save_config)
 
     def folder_target(self, pos):
         index = self._hit(pos)
-        if index < 0 or index == self.drag_idx or self.items[self.drag_idx].get('folder'):
+        if self.drag_idx < 0 or index < 0 or index == self.drag_idx or self.items[self.drag_idx].get('folder'):
+            return -1
+        from dock_folders import CAPACITY
+        if len(self.items[index].get('folder', [])) >= CAPACITY:
             return -1
         center, width = self.rects[index][:2]
         return index if abs(pos.x() - center) <= width * 0.28 else -1
 
-    def commit_folder_items(self, items, save):
-        if not save(dict(self.cfg, items=items)):
+    def _cancel_folder_hover(self):
+        self.folder_timer.stop()
+        self.folder_candidate = self.folder_hover = -1
+
+    def _update_folder_hover(self, pos):
+        candidate = self.folder_target(pos)
+        if candidate == self.folder_candidate:
             return
-        self.cfg['items'] = items
-        self.drag_idx = self.pressed = self.hover_index = -1
-        self.reload()
-        return True
+        self._cancel_folder_hover()
+        self.folder_candidate = candidate
+        if candidate >= 0:
+            self.folder_timer.start()
+
+    def _arm_folder_hover(self):
+        if self.drag_idx >= 0 and self.drag_moved and self.folder_candidate >= 0:
+            self.folder_hover = self.folder_candidate
+            self.setCursor(Qt.DragCopyCursor)
+            self.update()
+
+    def commit_folder_items(self, items, save):
+        importer = getattr(self.tray, 'importer', None) if self.tray else None
+        if importer:
+            accepted = importer.apply_items(items)
+        else:
+            accepted = save(dict(self.cfg, items=items)) is not False
+            if accepted:
+                self.cfg['items'] = items
+                self.reload()
+        if accepted:
+            self.drag_idx = self.pressed = self.hover_index = -1
+            self._cancel_folder_hover()
+            return True
+        return False
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton and self.extras.pressed:
@@ -1812,8 +1839,8 @@ class Dock(QWidget):
             if self.drag_idx >= 0:
                 if self.drag_moved:
                     from dock_folders import animate_transfer, combine
-                    target = self.folder_target(e.pos())
-                    self.folder_hover = -1
+                    target = self.folder_hover if self.folder_hover == self.folder_target(e.pos()) else -1
+                    self._cancel_folder_hover()
                     self.unsetCursor()
                     if target >= 0:
                         items = combine(self.cfg['items'], self.page_offset+self.drag_idx,
@@ -1830,7 +1857,6 @@ class Dock(QWidget):
                             e.accept()
                             return
                     self._drag_reorder(float(e.pos().x()))
-                    save_config(self.cfg)
                     self.drag_idx = -1
                     self.pressed = -1
                     self._kick()
@@ -1897,6 +1923,7 @@ class Dock(QWidget):
         save_config(self.cfg)
         self.mouse_x = self.mouse_smooth = -99999.0
         self.hover_index = self.pressed = self.drag_idx = -1
+        self._cancel_folder_hover()
         self._build_items()
         self.reposition()
         self._kick()
@@ -1929,6 +1956,8 @@ class Dock(QWidget):
                 items = list(self.cfg['items'])
                 items[index:index+1] = items[index]['folder']
                 self.commit_folder_items(items, save_config)
+            from dock_folders import rename_folder
+            m.addAction('重命名文件夹…').triggered.connect(lambda: rename_folder(self, self.cfg['items'][index], save_config))
             m.addAction('解散文件夹').triggered.connect(dissolve)
             m.addSeparator()
         elif idx >= 0 and not self.items[idx].get("sep"):
@@ -2143,6 +2172,10 @@ class Dock(QWidget):
             dh = h * extra
             top_y = by if down else (by - dh)
             rect = QRectF(cx - dw / 2.0, top_y, dw, dh)
+            if i == self.folder_candidate and i != self.folder_hover:
+                p.setPen(QPen(QColor(90, 160, 215, 160), 1, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(rect.adjusted(-3, -3, 3, 3), 9, 9)
             if i == self.folder_hover:
                 p.setPen(QPen(QColor('#2789e5'), 2))
                 p.setBrush(QColor(65, 155, 237, 80))
@@ -2292,8 +2325,26 @@ class Dock(QWidget):
         elif self.backdrop_ok and not self.blur_timer.isActive():
             self.blur_timer.start()
 
+    def sync_background_polling(self, refresh=False):
+        runtime = getattr(self.tray, 'runtime', None) if self.tray else None
+        enabled = (self.isVisible() and not self.preview and not self.lite_mode
+                   and not getattr(runtime, 'game_active', False))
+        if enabled:
+            if not self.geo_timer.isActive(): self.geo_timer.start(2500)
+            if self.cfg['running_dots']:
+                starting = not self.proc_timer.isActive()
+                if starting: self.proc_timer.start(8000)
+                if refresh or starting: self.refresh_running()
+            else:
+                self.proc_timer.stop()
+                self.running = set()
+        else:
+            self.proc_timer.stop()
+            self.geo_timer.stop()
+
     def showEvent(self, e):
         super(Dock, self).showEvent(e)
+        self.sync_background_polling(refresh=True)
         self.extras.prepare(self.items)
         self.extras.sync_clock()
         self.apply_layer()
@@ -2305,6 +2356,10 @@ class Dock(QWidget):
         QTimer.singleShot(1000,self.apply_layer)
 
     def hideEvent(self, e):
+        self.proc_timer.stop()
+        self.geo_timer.stop()
+        self.timer.stop()
+        self._cancel_folder_hover()
         self.blur_timer.stop()
         self.extras.clock.stop()
         self.backdrop=None
@@ -2335,6 +2390,7 @@ class Dock(QWidget):
         self.reposition()
         self.start_backdrop()
         self.extras.sync_clock()
+        self.sync_background_polling()
         self._kick()
 
     def refresh_geometry(self):
@@ -2466,17 +2522,9 @@ class DockTray(QSystemTrayIcon):
             self.importer.pin([{'path': f} for f in files])
             self.runtime.set_dock_visible(True) if hasattr(self,'runtime') else self._show_dock()
             return
-        added = 0
-        for f in files:
-            f = os.path.abspath(f)
-            if any((not it.get("sep")) and str(it.get("path", "")).lower() == f.lower()
-                   for it in self.cfg["items"]):
-                continue
-            name = os.path.splitext(os.path.basename(f))[0]
-            self.cfg["items"].append({"path": f, "name": name})
-            added += 1
-        save_config(self.cfg)
-        self.dock.reload()
+        from app_catalog import merge_items
+        items, added, _, _ = merge_items(self.cfg['items'], [{'path': f} for f in files])
+        if not self.dock.commit_folder_items(items, save_config): return
         self.runtime.set_dock_visible(True) if hasattr(self,'runtime') else self._show_dock()
         if added:
             self.showMessage(APP_TITLE, T("已添加 %d 个图标到 Dock") % added, make_tray_icon(), 2000)
@@ -2499,12 +2547,9 @@ class DockTray(QSystemTrayIcon):
         return self.importer.apply_items(items)
 
     def remove_index(self, idx):
-        try:
-            self.cfg["items"].pop(idx)
-        except Exception:
-            return
-        save_config(self.cfg)
-        self.dock.reload()
+        if type(idx) is not int or not 0 <= idx < len(self.cfg['items']): return False
+        items = list(self.cfg['items']); del items[idx]
+        return self.dock.commit_folder_items(items, save_config)
 
     def set_icon_size(self, px):
         self.cfg["icon_size"] = int(px)

@@ -3,7 +3,7 @@ import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
 DEFAULTS = {
-    'taskbar_text_mode':'system',
+    'taskbar_text_mode':'system', 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
@@ -33,6 +33,18 @@ DEFAULTS = {
     'check_updates_on_start': False, 'update_use_proxy': True, 'update_source': DEFAULT_SOURCE,
 }
 
+# Missing style fields in existing configurations retain pre-1.1.3 defaults.
+LEGACY_STYLE_DEFAULTS={key:DEFAULTS[key] for key in ('card_design','appearance_mode','appearance_custom','appearance_applied','note_appearance','clock_appearance','calendar_appearance','panel_opacity','panel_blur','panel_highlight','panel_material','panel_theme','panel_color','theme_color','dock_highlight','dock_material','clear_background')}
+LEGACY_STYLE_DEFAULTS.update(transparency=40,theme='auto',glass=True,blur_px=6)
+
+# Fresh installations use the agreed crystal composition; saved values still win.
+from appearance_presets import DEFAULT_DOCK_STYLE,DEFAULT_PANEL_STYLE,DEFAULT_NOTE_APPEARANCE
+from clock_appearance import DEFAULT_STYLE
+DEFAULTS.update(DEFAULT_DOCK_STYLE)
+DEFAULTS.update({'panel_'+key:value for key,value in DEFAULT_PANEL_STYLE.items()})
+DEFAULTS.update(card_design='crystal',note_appearance=dict(DEFAULT_NOTE_APPEARANCE),
+                clock_appearance=dict(DEFAULT_STYLE),calendar_appearance=dict(DEFAULT_STYLE),appearance_mode='crystal')
+
 
 def normalize(cfg):
     result = dict(cfg)
@@ -42,6 +54,8 @@ def normalize(cfg):
         if result.get(theme) == 'follow': result[theme] = 'auto'
     for key, value in DEFAULTS.items():
         result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
+    from layout_profiles import normalize_profiles
+    result['layout_profiles']=normalize_profiles(result.get('layout_profiles'))
     result['dock_quick_order']=normalize_order(result.get('dock_quick_order'))
     from quick_cycles import normalize_custom
     result['dock_quick_custom']=normalize_custom(result.get('dock_quick_custom'))
@@ -121,4 +135,7 @@ def normalize(cfg):
     from appearance_profiles import MODES,clean_snapshot
     if result.get('appearance_mode') not in {value for _,value in MODES}:result['appearance_mode']='custom'
     for key in ('appearance_custom','appearance_applied'):result[key]=clean_snapshot(result.get(key))
+    if result['appearance_mode']=='crystal' and not result['appearance_applied']:
+        from appearance_profiles import snapshot
+        result['appearance_applied']=snapshot(result)
     return result

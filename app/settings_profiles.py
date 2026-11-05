@@ -63,7 +63,10 @@ class AppearanceProfileMixin:
             field=self.fields.get(key)
             if field is None:continue
             value=candidate[key];blocked=field.blockSignals(True)
-            if isinstance(field,QComboBox):field.setCurrentIndex(field.findData(value))
+            if key in ('dock_material','panel_material'):
+                from appearance_presets import select_material
+                select_material(field,value)
+            elif isinstance(field,QComboBox):field.setCurrentIndex(field.findData(value))
             elif isinstance(field,QSpinBox):field.setValue(100-value if key=='transparency' else value)
             elif isinstance(field,QLineEdit):field.setText(value)
             else:field.setChecked(value)
