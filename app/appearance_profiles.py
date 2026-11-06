@@ -77,7 +77,15 @@ def apply_snapshot(cfg, saved):
     return result
 
 def apply_profile(cfg, mode, defaults):
-    if mode=='custom':return apply_snapshot(cfg,clean_snapshot(cfg.get('appearance_custom')))
+    if mode == 'custom':
+        saved = clean_snapshot(cfg.get('appearance_custom'))
+        result = apply_snapshot(cfg, saved)
+        if saved:
+            from sticky_notes_store import default_note_style
+            for row in result.get('sticky_notes', []):
+                if row['id'] not in saved['notes']:
+                    row.update(default_note_style(result))
+        return result
     result=copy.deepcopy(cfg)
     if mode=='default':
         for key in TOP_KEYS:result[key]=copy.deepcopy(defaults[key])
@@ -111,5 +119,38 @@ def apply_profile(cfg, mode, defaults):
     return result
 
 def selected_mode(cfg):
-    mode=cfg.get('appearance_mode','custom')
-    return mode if mode in {v for _,v in MODES} and snapshot(cfg)==cfg.get('appearance_applied') else 'custom'
+    mode = cfg.get('appearance_mode', 'custom')
+    applied = cfg.get('appearance_applied')
+    if mode == 'custom' or not applied or mode not in {value for _, value in MODES}:
+        return 'custom'
+    current = snapshot(cfg)
+    if any(value != applied.get(key) for key, value in current.items() if key != 'notes'):
+        return 'custom'
+    # Adding or deleting a note while a preset is active must not replace the custom slot.
+    from sticky_notes_store import default_note_style
+    previous_notes = applied.get('notes', {})
+    default_note = dict(default_note_style(cfg), font_size=12, font_scale=1.0,
+                        body_font_size=None, body_font_scale=None)
+    for identity, style in current['notes'].items():
+        if style != previous_notes.get(identity, default_note):
+            return 'custom'
+    return mode
+
+
+def switch_profile(cfg, target, current_mode, defaults=None):
+    """Select an overall style using the same custom slot from either settings entry."""
+    saved = cfg.get('appearance_custom')
+    if not saved or (current_mode == 'custom' and target != 'custom'):
+        custom = snapshot(cfg)
+        # Older quick settings saved only the Dock fields. Pair them with the
+        # current components when upgrading from an active Dock preset.
+        legacy = cfg.get('dock_quick_custom', {}).get('appearance')
+        if not saved and legacy and any(all(cfg.get(k) == v for k, v in preset.items())
+                                        for _, preset in DOCK_PRESETS):
+            custom['values'].update(legacy)
+        saved = custom
+    result = apply_profile(dict(cfg, appearance_custom=saved), target, defaults)
+    applied = snapshot(result)
+    result.update(appearance_mode=target, appearance_applied=applied,
+                  appearance_custom=copy.deepcopy(applied if target == 'custom' else saved))
+    return result

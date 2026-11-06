@@ -44,6 +44,11 @@ def save_changes(tray,api,changes):
 def sync_main_fields(tray,changes):
     dialog=getattr(tray,'settings_dialog',None)
     if dialog and dialog.isVisible():
+        if 'appearance_mode' in changes:
+            if dialog.import_candidate is None:
+                dialog.load_profile(tray.cfg)
+                dialog.show_profile_fields(tray.cfg)
+            return
         from PyQt5.QtWidgets import QComboBox,QSpinBox,QLineEdit
         for key,value in changes.items():
             field=dialog.fields.get(key)

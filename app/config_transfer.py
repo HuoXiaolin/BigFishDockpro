@@ -32,6 +32,8 @@ def normalize(data,api):
         else:valid=isinstance(value,type(default))
         if not valid:raise ValueError('配置字段类型不正确：'+key)
         cfg[key]=copy.deepcopy(value)
+    if cfg['settings_size'] == 'large':  # Legacy exported profiles.
+        cfg['settings_size'] = 'medium'
     from work_schedule import normalize as normalize_work
     for appearance in ('clock_appearance','calendar_appearance'):
         if isinstance(cfg.get(appearance),dict) and 'work' in cfg[appearance]:normalize_work(cfg[appearance]['work'],strict=True)
@@ -39,7 +41,7 @@ def normalize(data,api):
         if not low<=cfg[key]<=high:raise ValueError('配置数值超出范围：'+key)
     for key,allowed in [('position',{'top','bottom','custom'}),('layer',{'top','bottom'}),
                         ('theme',{'auto','light','dark','fog','gloss'}),('blur_mode',{'smart','fast','normal','slow','off'}),
-                        ('clock_style',{value for _,value in STYLES}),('settings_size',{'auto','small','medium','large','custom'}),('note_style',{'glass','paper','plain'}),('desktop_icon_mode',{'both','collected','hide_all'}),('lang',{'zh','en'}),('bump_level',{'low','mid','high'})]:
+                        ('clock_style',{value for _,value in STYLES}),('settings_size',{'auto','small','medium','custom'}),('note_style',{'glass','paper','plain'}),('desktop_icon_mode',{'both','collected','hide_all'}),('lang',{'zh','en'}),('bump_level',{'low','mid','high'})]:
         if cfg[key] not in allowed:raise ValueError('配置选项不受支持：'+key)
     if not 50<=cfg['card_scale']<=150 or not 50<=cfg['settings_custom_density']<=150:raise ValueError('界面缩放比例无效。')
     from card_metrics import normalize_profile

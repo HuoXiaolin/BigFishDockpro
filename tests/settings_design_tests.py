@@ -35,7 +35,7 @@ def run(output):
             runtime=tray.runtime=RuntimeController(dock,tray,api)
             main=SettingsDialog(tray,api);main.reveal();settle(app)
             assert main.property('designPopup') and main.fields['icon_size'].window() is main
-            for name,width in [('small',560),('medium',800),('large',1100)]:
+            for name in ('small','medium'):
                 main.size_mode.setCurrentIndex(main.size_mode.findData(name));settle(app)
                 main.tabs.setCurrentIndex(0);settle(app)
                 main.grab().save(str(output/f'settings-{name}.png'))

@@ -3,11 +3,19 @@ from PyQt5.QtCore import Qt,QTimer
 from PyQt5.QtWidgets import QApplication,QWidget
 from ui_style import ModernComboBox,label,density_stylesheet
 
-MODES=[('自动适配','auto'),('小','small'),('中','medium'),('大','large'),('手动调整','custom')]
+MODES=[('自动适配','auto'),('小','small'),('中','medium'),('手动调整','custom')]
 
 
 def automatic_mode(area):
-    return 'large' if area.width()>=3000 or area.height()>=1700 else 'medium' if area.width()>=1550 and area.height()>=850 else 'small'
+    return 'medium' if area.width() >= 1550 and area.height() >= 850 else 'small'
+
+
+def size_factor(mode, area, custom_density):
+    if mode == 'custom':
+        return custom_density / 100
+    if mode == 'auto':
+        mode = automatic_mode(area)
+    return .7 if mode == 'small' else 1.0
 
 
 class SettingsSizingMixin:
@@ -39,7 +47,7 @@ class SettingsSizingMixin:
                 if minimum==maximum and maximum<16777215:self._density_reference.append(('fixed',(widget,axis,minimum/.7)))
             if widget.layout():visit_layout(widget.layout())
         self._interface_ready=True;self._custom_density=self.tray.cfg.get('settings_custom_density',100);self._manual_dimensions=list(self.tray.cfg.get('settings_manual_size',[]))
-        self.size_mode.setCurrentIndex(max(0,self.size_mode.findData(self.tray.cfg.get('settings_size','auto'))))
+        self.size_mode.setCurrentIndex(max(0,self.size_mode.findData(self.tray.cfg.get('settings_size','medium'))))
         self.size_mode.currentIndexChanged.connect(self.adapt_interface);self.adapt_interface()
     def available_interface_area(self):
         screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
@@ -67,9 +75,8 @@ class SettingsSizingMixin:
         finally:self._interface_resizing=False
     def adapt_interface(self,*args):
         if not getattr(self,'_interface_ready',False):return
-        mode=self.size_mode.currentData() or 'auto';area=self.available_interface_area()
-        selected=automatic_mode(area) if mode=='auto' else mode
-        factor={'small':.7,'medium':1.0,'large':1.5}.get(selected,self._custom_density/100)
+        mode=self.size_mode.currentData() or 'medium';area=self.available_interface_area()
+        factor=size_factor(mode, area, self._custom_density)
         self._interface_resizing=True
         self.setProperty('interfaceScale',factor);self.refresh_interface_style();self._interface_resizing=True
         try:
@@ -96,8 +103,7 @@ def fit_auxiliary_dialog(dialog,cfg):
     if dialog.property('auxiliaryDensityApplied'):return
     dialog.setProperty('auxiliaryDensityApplied',True)
     screen=QApplication.screenAt(dialog.frameGeometry().center()) or QApplication.primaryScreen();area=screen.availableGeometry()
-    mode=cfg.get('settings_size','auto');selected=automatic_mode(area) if mode=='auto' else mode
-    factor={'small':.7,'medium':1.0,'large':1.5}.get(selected,cfg.get('settings_custom_density',100)/100)
+    factor=size_factor(cfg.get('settings_size','medium'), area, cfg.get('settings_custom_density',100))
     ratio=factor/.7;size=dialog.size();minimum=dialog.minimumSize();dialog.setProperty('interfaceScale',factor)
     def layout_scale(layout):
         margins=layout.contentsMargins();layout.setContentsMargins(*(round(value*ratio) for value in (margins.left(),margins.top(),margins.right(),margins.bottom())))

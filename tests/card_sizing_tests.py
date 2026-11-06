@@ -20,7 +20,11 @@ def run(api,runtime,root,output,checks):
         from screen_layout import initial_card_factor
         assert initial_card_factor([0,0,3840,2160])==2.5
         assert initial_card_factor([0,0,1536,816])==1.0
-        assert automatic_mode(QRect(0,0,3840,2160))=='large'
+        assert automatic_mode(QRect(0,0,3840,2160))=='medium'
+        assert api.DEFAULT_CONFIG['settings_size']=='medium'
+        assert api.normalize_features(dict(cfg,settings_size='large'))['settings_size']=='medium'
+        from config_transfer import normalize
+        assert normalize(dict(cfg,settings_size='large'),api)['settings_size']=='medium'
         assert automatic_mode(QRect(0,0,1920,1080))=='medium'
         assert automatic_mode(QRect(0,0,1366,768))=='small'
         cfg.update(card_scale=70,settings_size='small',notes_enabled=False,sticky_notes=[],notes_trash=[],display_layout={},panel_enabled=True,desktop_auto_sort=False,merged_panels=False,disabled_categories=[],desktop_excluded=[],desktop_entries=[],desktop_panels=[{'id':'sizing','name':'尺寸演示','geometry':[40,50,320,240],'compact':False,'view':'list'}])
@@ -68,15 +72,16 @@ def run(api,runtime,root,output,checks):
         dense=SettingsDialog(runtime.tray,api);dense.reveal();app.processEvents();saved_cfg=copy.deepcopy(cfg)
         with patch.object(dense,'available_interface_area',return_value=QRect(0,0,3840,2160)):
             sizes=[];fonts=[]
-            for mode in ('small','medium','large'):
+            assert dense.size_mode.findData('large') == -1
+            for mode in ('small','medium'):
                 dense.size_mode.setCurrentIndex(dense.size_mode.findData(mode));app.processEvents();sizes.append(dense.size());fonts.append(dense.fields['icon_size'].font().pixelSize())
                 assert dense.size_mode.currentData()==mode
                 dense.grab().save(str(Path(output)/('settings-preset-'+mode+'.png')))
-            assert sizes==[QSize(560,448),QSize(800,640),QSize(1200,960)],sizes
-            assert fonts[0]<fonts[1]<fonts[2],fonts
-            dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==1.5
+            assert sizes==[QSize(560,448),QSize(800,640)],sizes
+            assert fonts[0]<fonts[1],fonts
+            dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==1.0
             for _ in range(2):
-                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(1200,960) and dense.size_mode.currentData()=='auto'
+                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(800,640) and dense.size_mode.currentData()=='auto'
             dense.reject();assert cfg==saved_cfg,{key:(saved_cfg.get(key),cfg.get(key)) for key in set(saved_cfg)|set(cfg) if saved_cfg.get(key)!=cfg.get(key)}
             dense.reveal();dense.size_mode.setCurrentIndex(dense.size_mode.findData('medium'));dense.resize(910,710);app.processEvents()
             assert dense.size_mode.currentData()=='custom'
@@ -84,7 +89,7 @@ def run(api,runtime,root,output,checks):
         dense.reject();dense.reveal();area=dense.available_interface_area()
         assert dense.size()==QSize(min(910,area.width()-24),min(710,area.height()-24)),dense.size()
         assert cfg['settings_manual_size']==[910,710]
-        checks.append('card sizing and adaptive settings: 70 percent card/frame/text density without anchor drift, per-card exact width/height/text including notes, rich content retained, eleven large-font list rows, atomic save failure, global density reversible, resize-transition timer guard; settings auto/small/medium/large scale all controls/fonts, high-resolution 1200x960, theme idempotence, cancel and manual 910x710 save/reopen')
+        checks.append('card sizing and adaptive settings: 70 percent card/frame/text density without anchor drift, per-card exact width/height/text including notes, rich content retained, eleven large-font list rows, atomic save failure, global density reversible, resize-transition timer guard; small/medium scale controls/fonts, legacy large migrates to medium including imports, high-resolution auto uses 800x640, theme idempotence, cancel and manual 910x710 save/reopen')
     finally:
         if dialog:dialog.reject();dialog.deleteLater()
         if dense:

@@ -237,9 +237,10 @@ class DockQuickSettings(QDialog):
         p.setPen(QPen(QColor('#dbe3e8' if colors['light'] else '#44474e'),1));p.drawRoundedRect(rect,16,16)
     def refresh(self):
         if tuple(self.order())!=getattr(self,'_shown_order',None):self.rebuild_pages()
-        from appearance_presets import DOCK_PRESETS
+        from appearance_profiles import MODES as PROFILE_MODES, selected_mode
         cfg=self.dock.cfg;runtime=getattr(self.dock.tray,'runtime',None)
-        preset=next((name for name,values in DOCK_PRESETS if all(cfg.get(k)==v for k,v in values.items())),'自定义')
+        current=selected_mode(cfg)
+        preset=next(name for name,mode in PROFILE_MODES if mode==current)
         values={'settings':'完整选项','add':'应用 / 快捷方式','manage':'批量添加 / 移除','appearance':preset,
                 'size':str(cfg['icon_size'])+' 像素','position':{'bottom':'底部','top':'顶部','custom':'自定义'}.get(cfg['position'],'底部'),
                 'panels':'已开启' if cfg['panel_enabled'] else '已关闭','magnify':'已开启' if cfg['magnify'] else '已关闭',
@@ -293,7 +294,8 @@ class DockQuickSettings(QDialog):
             values['taskbar']='正在应用…'
         if cfg['icon_size'] not in (32,42,54,64):values['size']='自定义 · '+str(cfg['icon_size'])
         if cfg['position']=='custom':values['position']='自定义 · '+str(cfg['custom_bottom'])
-        for key in ('appearance','size','position'):self.tiles[key].setToolTip('点击循环切换，循环一轮可回到已保存的自定义值。')
+        self.tiles['appearance'].setToolTip('一起切换 Dock、桌面卡片、便签、时钟和日历的主题，循环后恢复各自的自定义外观。')
+        for key in ('size','position'):self.tiles[key].setToolTip('点击循环切换，循环一轮可回到已保存的自定义值。')
         for key,tile in self.tiles.items():tile.value=values[key];tile.active=values[key]=='已开启';tile.update()
         colors=self.colors();self.title.setStyleSheet('background:transparent;font-size:15px;font-weight:600;color:'+colors['ink'].name())
         self.status.setStyleSheet('background:transparent;font-size:10px;color:'+colors['muted'].name());self.update()
@@ -333,6 +335,9 @@ class DockQuickSettings(QDialog):
         if key=='lite' and runtime:runtime.set_lite(not runtime.lite);self.refresh();return
         cfg=self.dock.cfg;changes={}
         if key in ('appearance','size','position'):
+            notes = getattr(runtime, 'notes', None)
+            if key == 'appearance' and notes and not notes.flush():
+                self.status.setText('便签保存失败，外观切换已取消。');return
             from quick_cycles import next_cycle
             changes=next_cycle(cfg,key)
         elif key=='panels':changes={'panel_enabled':not cfg['panel_enabled'],'panels_visible':True}

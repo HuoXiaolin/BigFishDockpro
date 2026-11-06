@@ -590,9 +590,10 @@ class NotesManager(QObject):
         self.pending.clear();return True
     def new(self):
         if len(self.rows())>=64:self.message='最多保留64张便签。';self.status();return None
-        cfg=self.runtime.dock.cfg;style=cfg['note_style'];identity=uuid.uuid4().hex
-        row={'id':identity,'title':'新便签','html':'','text':'','style':style,'color':{'glass':cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[style],'pinned':False,'locked':False,'collapsed':False,'auto_hide':False,'visible':True,'updated':'','font_size':12,'font_scale':1.0}
-        row['appearance']=normalize_note_appearance(cfg.get('note_appearance'))
+        from sticky_notes_store import default_note_style
+        cfg=self.runtime.dock.cfg;identity=uuid.uuid4().hex
+        row={'id':identity,'title':'新便签','html':'','text':'','pinned':False,'locked':False,'collapsed':False,'auto_hide':False,'visible':True,'updated':'','font_size':12,'font_scale':1.0}
+        row.update(default_note_style(cfg))
         self.pending[identity]=row
         if not self.persist(sticky_notes=self.rows(),notes_enabled=True,notes_visible=True):return None
         self.pending.clear();self.sync();window=self.windows[identity];window.raise_();window.editor.setFocus();self.changed.emit()

@@ -8,6 +8,13 @@ STYLES=[('液态玻璃','glass'),('经典纸张','paper'),('极简纯色','plain
 COLORS=[('暖黄','#fff1a8'),('樱粉','#ffdce5'),('薄荷','#d4eedc'),('冰蓝','#cfe8fa'),('浅紫','#e3ddf6'),('暖杏','#f6dfbf'),('雾白','#eef1f5')]
 
 
+def default_note_style(cfg):
+    style = cfg['note_style']
+    color = {'glass':cfg.get('theme_color') or '#cfe8fa', 'paper':'#fff1a8', 'plain':'#eef1f5'}[style]
+    from appearance_presets import normalize_note_appearance
+    return {'style':style, 'color':color, 'appearance':normalize_note_appearance(cfg.get('note_appearance'))}
+
+
 def normalize_notes(rows,strict=False,limit=64):
     if not isinstance(rows,list):
         if strict:raise ValueError('便签列表格式不正确。')

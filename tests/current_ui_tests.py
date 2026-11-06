@@ -403,6 +403,8 @@ def run(output):
         check_card_density(api,runtime,root.name,app,output,checks)
         from display_transition_tests import run as check_display_transition
         check_display_transition(api,runtime,root.name,app,output,checks)
+        from settings_interaction_tests import run as check_settings_interaction
+        check_settings_interaction(api,runtime,root.name,app,output,checks)
         from shutdown_tests import run as check_shutdown
         check_shutdown(api,runtime,root.name,app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.

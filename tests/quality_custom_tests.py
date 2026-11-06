@@ -19,7 +19,7 @@ def run(api,runtime,root,output,checks):
             cfg=api.normalize_features(copy.deepcopy(cfg))  # JSON/profile reload boundary.
         assert {field:cfg[field] for field in fields}==original,(key,cfg)
         assert cfg['dock_quick_order']==before_other
-        if key=='appearance':assert cfg['dock_quick_custom']['appearance']==custom
+        if key=='appearance':assert all(cfg['appearance_custom']['values'][field]==value for field,value in custom.items())
     cfg=copy.deepcopy(base);cfg.update(next_cycle(cfg,'appearance'));cfg['magnify']=False
     for _ in range(len(DOCK_PRESETS)):cfg.update(next_cycle(cfg,'appearance'))
     assert not cfg['magnify'] and all(cfg[field]==value for field,value in custom.items())

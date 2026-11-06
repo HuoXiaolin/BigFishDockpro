@@ -1,10 +1,10 @@
 """Shared native Qt styling. Dock painting and glass rendering stay unchanged."""
-from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase
-from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication, QPoint
+from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase,QWheelEvent
+from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication, QPoint, QPointF
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
     QProxyStyle, QStyle, QStyleFactory, QSpinBox, QComboBox, QToolButton,
-    QAbstractSpinBox, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip,
-    QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView)
+    QAbstractSpinBox, QSlider, QLineEdit, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip,
+    QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView, QAbstractScrollArea)
 
 class SubtleSizeGrip(QSizeGrip):
     """Use the standard resize target with a restrained two-stroke mark."""
@@ -293,6 +293,7 @@ class ModernComboBox(QComboBox):
     def __init__(self, *args):
         super().__init__(*args)
         self.setProperty('modern', True)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.setMaxVisibleItems(9)
         self._popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
         self._popup.setObjectName('ComboPopupFrame')
@@ -359,6 +360,7 @@ class ModernComboBox(QComboBox):
 class ModernSpinBox(QSpinBox):
     def __init__(self, *args):
         super().__init__(*args)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.setProperty('modern', True)
         self.minus = QToolButton(self)
@@ -464,6 +466,26 @@ class DialogChrome(QObject):
         # Construction/destruction events can arrive during Python cyclic GC.
         # Never inspect or repolish those partially constructed Qt objects.
         kind=event.type()
+        if kind == QEvent.Wheel:
+            is_editor = isinstance(widget, (QLineEdit, QToolButton)) and isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox))
+            if not is_editor and not isinstance(widget, (QAbstractSpinBox, QSlider, QComboBox)):
+                return False
+            # Qt5 may stop propagation at a focused value control on Windows.
+            # Route the original wheel gesture into the nearest scrollable page.
+            parent = widget
+            while not parent.isWindow():
+                parent = parent.parentWidget()
+                if isinstance(parent, QAbstractScrollArea):
+                    viewport = parent.viewport()
+                    local = event.globalPosF() - QPointF(viewport.mapToGlobal(QPoint()))
+                    forwarded = QWheelEvent(local, event.globalPosF(), event.pixelDelta(), event.angleDelta(),
+                                            event.buttons(), event.modifiers(), event.phase(), event.inverted(),
+                                            event.source())
+                    forwarded.setTimestamp(event.timestamp())
+                    QApplication.sendEvent(viewport, forwarded)
+                    break
+            event.accept()
+            return True
         if kind not in (QEvent.FocusIn,QEvent.FocusOut,QEvent.MouseButtonPress,QEvent.KeyPress,QEvent.Show):return False
         from PyQt5 import sip
         if sip.isdeleted(widget) or getattr(self,'_polishing',False):return False

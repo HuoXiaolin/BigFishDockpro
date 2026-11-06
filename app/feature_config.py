@@ -8,7 +8,7 @@ DEFAULTS = {
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
-    'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'auto', 'settings_manual_size':[], 'settings_custom_density':100,
+    'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'medium', 'settings_manual_size':[], 'settings_custom_density':100,
     'calendar_enabled':False,'calendar_locked':False,'calendar_layout':{},'calendar_appearance':{},
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
     'notes_enabled': False, 'notes_visible': True, 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
@@ -78,7 +78,7 @@ def normalize(cfg):
                          ('panel_theme', ('auto', 'light', 'dark')),
                          ('desktop_icon_mode', ('both', 'hide_all')),
                          ('note_style', ('glass', 'paper', 'plain')),
-                         ('settings_size',('auto','small','medium','large','custom')),
+                         ('settings_size',('auto','small','medium','custom')),
                            ('startup_priority', ('low', 'normal', 'high'))]:
         if result[key] not in allowed:
             result[key] = DEFAULTS[key]

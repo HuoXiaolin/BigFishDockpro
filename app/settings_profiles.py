@@ -2,7 +2,7 @@
 import copy
 from PyQt5.QtWidgets import QComboBox,QSpinBox,QLineEdit,QHBoxLayout
 from ui_style import ModernComboBox,button,label
-from appearance_profiles import MODES,TOP_KEYS,snapshot,apply_snapshot,apply_profile,selected_mode
+from appearance_profiles import MODES,TOP_KEYS,snapshot,apply_snapshot,switch_profile,selected_mode
 
 class AppearanceProfileMixin:
     def create_profile_controls(self,form):
@@ -53,11 +53,15 @@ class AppearanceProfileMixin:
     def choose_overall_style(self,*args):
         if self._profile_loading:return
         target=self.overall_style.currentData();current=self.profile_candidate()
-        if self._profile_mode=='custom' and target!='custom':self._profile_custom=snapshot(current)
-        current['appearance_custom']=copy.deepcopy(self._profile_custom)
-        defaults=self.api.normalize_features(copy.deepcopy(self.api.DEFAULT_CONFIG))
-        candidate=apply_profile(current,target,defaults)
-        self._profile_overlay=snapshot(candidate);self._profile_mode=target;self._profile_dirty=True
+        current['appearance_custom']=self._profile_custom
+        defaults=self.api.normalize_features(copy.deepcopy(self.api.DEFAULT_CONFIG)) if target=='default' else None
+        candidate=switch_profile(current,target,self._profile_mode,defaults)
+        self._profile_custom=candidate['appearance_custom']
+        self._profile_overlay=candidate['appearance_applied'];self._profile_mode=target;self._profile_dirty=True
+        self.show_profile_fields(candidate)
+        self.status.setText('已载入'+self.overall_style.currentText()+'，保存后应用；位置、尺寸和内容保留。')
+
+    def show_profile_fields(self,candidate):
         self._profile_loading=True;self.applying_dock_preset=True
         for key in TOP_KEYS:
             field=self.fields.get(key)
@@ -77,7 +81,6 @@ class AppearanceProfileMixin:
         self.refresh_preset_names(candidate)
         self.applying_dock_preset=False;self._profile_loading=False
         self.dock_preview.update()
-        self.status.setText('已载入'+self.overall_style.currentText()+'，保存后应用；位置、尺寸和内容保留。')
 
     def restore_all_styles(self):
         index=self.overall_style.findData('default')

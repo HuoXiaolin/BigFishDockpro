@@ -27,11 +27,22 @@ def matches(cfg,values):return all(cfg.get(key)==value for key,value in values.i
 
 
 def next_cycle(cfg,key):
+    if key == 'appearance':
+        from appearance_profiles import selected_mode, switch_profile
+        from appearance_presets import PRESET_IDS, DEFAULT_PRESET_ID
+        current = selected_mode(cfg)
+        modes = (*PRESET_IDS, 'custom')
+        index = modes.index(DEFAULT_PRESET_ID if current == 'default' else current)
+        candidate = switch_profile(cfg, modes[(index + 1) % len(modes)], current)
+        changes = {field:value for field, value in candidate.items() if cfg.get(field) != value}
+        # A component edit can invalidate a preset while its stored ID is still the same.
+        changes['appearance_mode'] = candidate['appearance_mode']
+        if 'appearance' in cfg.get('dock_quick_custom', {}):
+            changes['dock_quick_custom'] = {k:v for k, v in cfg['dock_quick_custom'].items() if k != 'appearance'}
+        return changes
+
     saved=copy.deepcopy(normalize_custom(cfg.get('dock_quick_custom')))
-    if key=='appearance':
-        choices=[dict(values) for _,values in DOCK_PRESETS]
-        if not any(matches(cfg,values) for values in choices):saved[key]={field:cfg[field] for field in APPEARANCE_FIELDS}
-    elif key=='size':
+    if key=='size':
         choices=[{'icon_size':size} for size in SIZES]
         if cfg['icon_size'] not in SIZES:saved[key]={'icon_size':cfg['icon_size']}
     elif key=='position':
