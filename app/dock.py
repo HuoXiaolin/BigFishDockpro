@@ -1147,14 +1147,14 @@ class Dock(QWidget):
             w = int(self.pad_x * 2 + body + (n - 1) * gap)
         # 左右各留一条透明带，给"外扩"用
         h = int(self.bar_h() + self.head_room() + self.foot_room())
-        return QSize(w + self.side_room() * 2 + self.extras.width(), h)
+        area=self.available_area()
+        return QSize(min(area.width(),w+self.side_room()*2+self.extras.width()),min(area.height(),h))
 
     def _build_items(self):
         previous={it["path"]:it for it in self.items if not it.get("sep")}
         self.items = []
         self.running = set()
-        screen = QGuiApplication.primaryScreen()
-        available = screen.availableGeometry().width() if screen else 1920
+        available = self.available_area().width()
         page_size = max(1, int((available-self.side_room()*2-self.pad_x*2-self.extras.width()-40) / (self.icon_size*(1+self.gap_ratio))))
         self.page_count = max(1, math.ceil(len(self.cfg['items']) / page_size))
         self.page_index = min(self.page_index, self.page_count-1)
@@ -1480,25 +1480,28 @@ class Dock(QWidget):
         self.rects = out
 
     # ---------------- 位置 ----------------
+    def available_area(self):
+        from PyQt5.QtCore import QRect
+        area=getattr(self,'_display_area',None)
+        if area is not None and area.isValid():return QRect(area)
+        screen=QGuiApplication.primaryScreen()
+        return screen.availableGeometry() if screen else QRect(0,0,1920,1080)
+
     def layout_position(self):
         """算出玻璃条应该贴在哪，并决定程序名称放条子上方还是下方。
 
         返回 (玻璃条顶边的 y 坐标, 屏幕可用区域)。
         Dock 永远是水平居中的。
         """
-        scr = QGuiApplication.primaryScreen()
-        geo = scr.availableGeometry() if scr else None
-        if geo is None:
-            return 100, QRectF(0, 0, 1920, 1080)
-        mode = str(self.cfg.get("position", "bottom"))
-        margin = round(int(self.cfg.get("bottom_margin", 6))*getattr(self,"display_scale",1.0))
-        if mode == "top":
-            bar_top = geo.top() + margin
-        elif mode == "custom":
-            off = round(int(self.cfg.get("custom_bottom", 200))*getattr(self,"display_scale",1.0))
-            bar_top = geo.bottom() + 1 - off - self.bar_h()
-        else:
-            bar_top = geo.bottom() + 1 - margin - self.bar_h()
+        geo=self.available_area()
+        mode=str(self.cfg.get('position','bottom'))
+        base=self.cfg.get('display_layout',{}).get('dock',{}).get('area')
+        vertical=geo.height()/base[3] if base and base[3]>0 else 1.0
+        margin=round(int(self.cfg.get('bottom_margin',6))*vertical)
+        if mode=='top':bar_top=geo.top()+margin
+        elif mode=='custom':bar_top=geo.bottom()+1-round(int(self.cfg.get('custom_bottom',200))*vertical)-self.bar_h()
+        else:bar_top=geo.bottom()+1-margin-self.bar_h()
+        bar_top=max(geo.top(),min(bar_top,geo.bottom()+1-self.bar_h()))
         # 上方空间不够放名称时，把名称改放到玻璃条下面
         need_above = int(self.icon_size * 0.55) + 8
         if self.cfg.get("show_name", True):
@@ -1510,6 +1513,8 @@ class Dock(QWidget):
         bar_top, geo = self.layout_position()
         x = geo.left() + (geo.width() - self.width()) // 2
         y = bar_top - self.head_room()
+        x=max(geo.left(),min(x,geo.right()+1-self.width()))
+        y=max(geo.top(),min(y,geo.bottom()+1-self.height()))
         return QPoint(int(x), int(y))
 
     def reposition(self):
@@ -1550,6 +1555,8 @@ class Dock(QWidget):
             log("apply_layer 失败: " + traceback.format_exc())
 
     def check_position(self):
+        layout=getattr(getattr(self.tray,'runtime',None),'layout',None)
+        if layout and layout.pending:return
         was_below = self.label_below
         self.layout_position()          # 顺带更新 label_below
         size = self.total_size()
@@ -2370,7 +2377,7 @@ class Dock(QWidget):
 
     def closeEvent(self, e):
         # Session shutdown must not turn a temporary native hide into user intent.
-        if QApplication.instance().isSavingSession():
+        if QApplication.instance().isSavingSession() or getattr(getattr(self.tray,'runtime',None),'session_ending',False):
             e.accept();return
         # 关闭 Dock 窗口 = 退出整个程序
         try:

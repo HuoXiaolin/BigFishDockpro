@@ -63,6 +63,7 @@ class TaskbarAppearance:
         self.xaml = None
         self.payload = None
         self.install_process = None
+        self.closed=False
         from taskbar_text import TaskbarText
         import dock as api
         self.text = TaskbarText(Path(api.CONFIG_DIR)/'taskbar-text-restore.json',log,
@@ -99,7 +100,7 @@ class TaskbarAppearance:
         return True
 
     def install_offline(self, complete):
-        if self.payload is None or self.install_process is not None:
+        if self.closed or self.payload is None or self.install_process is not None:
             return False
         from PyQt5.QtCore import QProcess
         process = QProcess(self.dock)
@@ -110,6 +111,7 @@ class TaskbarAppearance:
                 return
             self.install_process = None
             process.deleteLater()
+            if self.closed:return
             if ok and self.load_xaml():
                 self.sync()
                 complete(True, self.status)
@@ -232,7 +234,19 @@ class TaskbarAppearance:
                 restore(hwnd)
         self.active.clear()
 
-    def close(self):
-        self.text.close()
-        if self.xaml is not None:self.xaml.close()
+    def close(self,shutdown=False):
+        if getattr(self,'closed',False):return
+        self.timer.stop()
+        self.closed=True
+        process=getattr(self,'install_process',None);self.install_process=None
+        if process is not None:
+            from PyQt5.QtCore import QProcess
+            process.blockSignals(True)
+            if process.state()!=QProcess.NotRunning:
+                process.terminate()
+                if not process.waitForFinished(100 if shutdown else 300):
+                    process.kill();process.waitForFinished(100)
+            process.deleteLater()
+        self.text.close(wait_ms=0 if shutdown else 300)
+        if self.xaml is not None:self.xaml.close(shutdown=shutdown)
         else:self.restore_native()

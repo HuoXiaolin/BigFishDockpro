@@ -13,6 +13,7 @@ class RuntimeController:
         self.usage=dock.usage=UsageStore(api.CONFIG_DIR,dock,api.log)
         self.lite = False
         self.closed = False
+        self.session_ending=False
         self.auto_game = False
         self.game_active = False
         from desktop_panels import DesktopPanels
@@ -267,12 +268,8 @@ class RuntimeController:
 
     def checkpoint_session(self,*args):
         if self.closed:return False
-        if not self.notes.flush() and not self.notes.backup():self.api.log('结束会话前保存便签失败。')
-        self.panels.save_visible_geometry();self.clock.save_geometry();self.calendar.save_geometry()
-        candidate=dict(self.dock.cfg,runtime_lite=self.lite)
-        if self.api.save_config(candidate) is False:
-            self.api.log('结束会话前保存运行状态失败。');return False
-        self.dock.cfg['runtime_lite']=self.lite;return True
+        from session_state import save_state
+        return save_state(self)
 
     def request_exit(self):
         if not self.notes.flush() and not self.notes.backup():
@@ -285,6 +282,15 @@ class RuntimeController:
     def close(self):
         if self.closed: return
         self.closed = True
+        shutdown=self.session_ending or QApplication.instance().isSavingSession()
+        importer=getattr(self.tray,'importer',None)
+        if importer:importer.close()
+        self.updater.close(wait_ms=0 if shutdown else 100)
+        if self.panels.worker:self.panels.worker.cancelled.set()
+        from session_state import save_state
+        save_state(self)
+        self.layout.close()
+        for timer in (self.dock.proc_timer,self.dock.geo_timer,self.dock.blur_timer,self.dock.timer,self.dock.folder_timer):timer.stop()
         if hasattr(self,'productivity'):self.productivity.close()
         from wallpaper_source import image_file
         image_file.cache_clear()
@@ -295,14 +301,10 @@ class RuntimeController:
             try:signal.disconnect(self.checkpoint_session)
             except (TypeError,RuntimeError):pass
         self._session_signals.clear()
-        self.notes.close()
-        self.clock.dispose();self.calendar.dispose()
-        self.layout.close()
-        self.dock.cfg['runtime_lite'] = self.lite
-        self.api.save_config(self.dock.cfg)
+        self.notes.close(save=False)
+        self.clock.dispose(save_geometry=False);self.calendar.dispose(save_geometry=False)
         self.lite_timer.stop()
         self.fullscreen_timer.stop()
         self.corners.close()
-        self.taskbar.close()
-        self.panels.close()
-        self.updater.close()
+        self.panels.close(save_geometry=False,wait_ms=0 if shutdown else 100)
+        self.taskbar.close(shutdown=shutdown)

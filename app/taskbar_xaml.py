@@ -105,12 +105,12 @@ class XamlTaskbar:
             self.starting = cfg
             self.process.start()
 
-    def close(self):
+    def close(self,shutdown=False):
         self.closed = True
         self.pending = None
         self.stop_timer.stop()
         if self.process.state() != QProcess.NotRunning:
             self.process.terminate()
-            if not self.process.waitForFinished(1500):
+            if not self.process.waitForFinished(100 if shutdown else 1500):
                 self.process.kill()
-                self.process.waitForFinished(1000)
+                self.process.waitForFinished(100 if shutdown else 1000)

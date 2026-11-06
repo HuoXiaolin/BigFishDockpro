@@ -205,6 +205,8 @@ class NoteWindow(QWidget):
             cursor.mergeCharFormat(fmt);self.editor.mergeCurrentCharFormat(fmt)
         self.editor.setTextCursor(cursor);self.editor.setFocus();self.changed()
     def set_collapsed(self,value):
+        layout=getattr(self.runtime,'layout',None)
+        if layout and layout.pending:return
         if self.disposed or self.row()['collapsed']==value:return
         self.collapse_timer.stop();self.expand_timer.stop()
         if value:self.save_geometry();self._fold_expanded=list(self.geometry().getRect())
@@ -393,7 +395,12 @@ class NoteWindow(QWidget):
         if not self.loading:self.geometry_timer.start();self.refresh_timer.start()
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        if not self.loading:self.geometry_timer.start();self.refresh_timer.start();self.fit_title()
+        if not self.loading:
+            if self.row()['collapsed']:
+                target=getattr(self,'_fold_target',None);layout=getattr(self.runtime,'layout',None)
+                if target and (self.width(),self.height())!=target[2:] and layout:layout.changed()
+                return
+            self.geometry_timer.start();self.refresh_timer.start();self.fit_title()
     def capture_backdrop(self):
         appearance=self.appearance()
         if self.row()['style']!='glass' or appearance['material'] in ('clear','solid'):self.backdrop=None;self.update();return
@@ -429,7 +436,7 @@ class NoteWindow(QWidget):
         from card_design import paint_design
         paint_design(p,rect,self.dock.cfg,clear=clear,corner_radius=self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,body_top=rect.bottom() if row['collapsed'] else None,header_separator=not row['collapsed'])
     def closeEvent(self,event):
-        if self.disposed or QApplication.instance().isSavingSession():event.accept()
+        if self.disposed or QApplication.instance().isSavingSession() or getattr(self.runtime,'session_ending',False):event.accept()
         else:event.ignore();self.manager.update_and_save(self.identity,visible=False)
     def dispose(self):
         self.pages.animation.stop();self.pages.frames=None
@@ -660,10 +667,11 @@ class NotesManager(QObject):
             self.recovery.parent.mkdir(parents=True,exist_ok=True);temporary=self.recovery.with_suffix('.tmp')
             temporary.write_text(json.dumps({'project':'BigFishDockpro','notes':self.rows()},ensure_ascii=False),encoding='utf-8');os.replace(temporary,self.recovery);return True
         except OSError:return False
-    def close(self):
+    def close(self,save=True):
         if self.closed:return
-        for window in self.windows.values():window.title.finish_edit();window.save_geometry()
-        if not self.flush() and not self.backup():self.runtime.api.log('便签退出保存及恢复备份失败，请保留编辑内容。')
+        if save:
+            for window in self.windows.values():window.title.finish_edit();window.save_geometry()
+        if save and not self.flush() and not self.backup():self.runtime.api.log('便签退出保存及恢复备份失败，请保留编辑内容。')
         self.closed=True;self.timer.stop()
         if self.dialog:self.dialog.close()
         for window in self.windows.values():window.dispose()

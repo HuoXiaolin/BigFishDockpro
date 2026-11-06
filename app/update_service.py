@@ -105,7 +105,8 @@ class UpdateWorker(QObject):
             if not self.cancelled.is_set():
                 self.failed.emit(str(error))
         finally:
-            self.finished.emit()
+            try:self.finished.emit()
+            except RuntimeError:pass
 
 
 class UpdateService(QObject):
@@ -194,10 +195,10 @@ class UpdateService(QObject):
         self.runtime.api.log('检查更新失败: ' + error)
         self.set_message('检查失败：'+error[:160])
 
-    def close(self):
+    def close(self,wait_ms=500):
         self.closed = True
         self.generation += 1
         self.restart_requested = False
         if self.worker:
             self.worker.cancelled.set()
-            self.worker.wait(500)
+            if wait_ms:self.worker.wait(wait_ms)

@@ -62,14 +62,15 @@ def run(api, dock, importer, root, output, checks):
     assert launch_identity(program) != launch_identity(special)
     assert len(unique_apps([dict(name='Program',path=program),dict(name='Alias',path=alias),dict(name='Profile',path=special)])) == 2
     assert merge_items([dict(name='Program',path=program)],[dict(path=alias)])[1:3] == (0,1)
-    old_output = subprocess.check_output
+    import app_catalog
+    old_output = app_catalog.store_apps_output
     try:
-        subprocess.check_output=lambda *args,**kwargs: json.dumps([
+        app_catalog.store_apps_output=lambda *args,**kwargs: json.dumps([
             {'Name':'不显示系统组件','AppID':'Microsoft.XboxGameOverlay_test!App'},
             {'Name':'计算器','AppID':'Microsoft.WindowsCalculator_test!App'},
             {'Name':'第三方商店程序','AppID':'Vendor.Sample_test!App'}]).encode('utf-8')
         catalog=discover_apps([str(fixture)],include_store=True)
-    finally: subprocess.check_output=old_output
+    finally: app_catalog.store_apps_output=old_output
     assert len(catalog)==len({launch_identity(row['path']) for row in catalog})
     assert not any(row['name']=='不显示系统组件' for row in catalog)
     assert next(row for row in catalog if row['name']=='第三方商店程序')['column']=='apps'

@@ -401,12 +401,17 @@ def run(output):
             module.run(api,runtime,None,app,output,checks)
         from card_density_tests import run as check_card_density
         check_card_density(api,runtime,root.name,app,output,checks)
+        from display_transition_tests import run as check_display_transition
+        check_display_transition(api,runtime,root.name,app,output,checks)
+        from shutdown_tests import run as check_shutdown
+        check_shutdown(api,runtime,root.name,app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.
         # Keep it last so later tests retain a working native event loop.
         from dock_extension_tests import run as run_dock_extensions
         run_dock_extensions(api,runtime,root.name,output,checks)
-        runtime.close();runtime=None
-        checks.append('normal controller shutdown persists synthetic configuration and closes owned windows/timers')
+        shutdown_started=time.perf_counter();runtime.session_ending=True;runtime.close();runtime=None
+        shutdown_ms=round((time.perf_counter()-shutdown_started)*1000,2)
+        checks.append('simulated session-end controller cleanup persists configuration and closes owned windows/timers in %.2f ms; no OS shutdown performed'%shutdown_ms)
         result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events are simulated on a private desktop; tab reordering uses moveTab and its real persistence signal','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}
     except Exception:result={'passed':False,'scope':'current-ui-runtime','checks':checks,'error':traceback.format_exc()}
     finally:

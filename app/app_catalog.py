@@ -203,6 +203,37 @@ def is_uninstall_entry(row):
     return binary=='msiexec.exe' and bool(re.search(r'(?:^|\s)/x(?=[{\s]|$)',args,re.I))
 
 
+def store_apps_output(command,cancelled):
+    import time
+    from external_launch import clean_environment
+    owner=getattr(cancelled,'__self__',None)
+    with clean_environment() as env:
+        process=subprocess.Popen(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW,env=env)
+    register=getattr(owner,'own_process',None);release=getattr(owner,'release_process',None)
+    if register:register(process)
+    deadline=time.monotonic()+25
+    try:
+        while not cancelled():
+            remaining=deadline-time.monotonic()
+            if remaining<=0:raise subprocess.TimeoutExpired(process.args,25)
+            try:
+                output,_=process.communicate(timeout=min(.1,remaining))
+                if process.returncode:raise subprocess.CalledProcessError(process.returncode,process.args)
+                return output
+            except subprocess.TimeoutExpired:
+                if time.monotonic()>=deadline:raise
+        return b'[]'
+    finally:
+        try:
+            if process.poll() is None:
+                try:process.kill()
+                except OSError:pass
+                try:process.communicate(timeout=.2)
+                except subprocess.TimeoutExpired:pass
+        finally:
+            if release:release(process)
+
+
 def discover_apps(roots=None, include_store=True, cancelled=lambda: False):
     apps = {}
     for root in discovery_roots() if roots is None else roots:
@@ -222,9 +253,7 @@ def discover_apps(roots=None, include_store=True, cancelled=lambda: False):
         # Windows supplies launchable AppUserModelIDs, rather than package IDs.
         command = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; @(Get-StartApps | Where-Object {$_.AppID -like '*!*'}) | ConvertTo-Json -Compress"
         try:
-            output = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive',
-                                              '-Command', command], timeout=25,
-                                             creationflags=subprocess.CREATE_NO_WINDOW)
+            output = store_apps_output(command,cancelled)
             entries = json.loads(output.decode('utf-8-sig'))
             for app in entries if isinstance(entries, list) else [entries]:
                 path = 'shell:AppsFolder\\' + app['AppID']
@@ -237,6 +266,7 @@ def discover_apps(roots=None, include_store=True, cancelled=lambda: False):
             pass
     rows = []
     for app in apps.values():
+        if cancelled():return []
         identity = launch_identity(app['path'])
         target = identity[1] if identity[0] == 'target' else ''
         system = identity[0] == 'windows' or target.startswith(os.path.normcase(os.environ.get('WINDIR',r'C:\Windows')).casefold()+os.sep)

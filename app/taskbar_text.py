@@ -99,10 +99,10 @@ class TaskbarText:
             self.error='任务栏文字配色未应用：'+str(error)
             self.log(self.error);return False
 
-    def close(self):
+    def close(self,wait_ms=300):
         if not self.enabled:return
         try:self.restore()
         except OSError as error:self.log('恢复 Windows 原配色失败，已保留恢复记录：'+str(error))
         # Give the restore notification a bounded chance to reach Explorer.
         worker=_thread
-        if worker is not None:worker.join(.3)
+        if wait_ms and worker is not None:worker.join(wait_ms/1000)

@@ -1,5 +1,6 @@
 """Canonical screen-relative layouts; automatic projection never replaces user anchors."""
 import copy
+from PyQt5.QtCore import QAbstractNativeEventFilter
 
 
 def valid_record(value):
@@ -34,7 +35,9 @@ def screen_records():
     for screen in ordered:
         serial=screen.serialNumber().strip()
         identity=['hardware',screen.manufacturer(),screen.model(),serial] if serial.lower() not in ('','0','-1','unknown') and serial.strip('0') else ['connector',screen.name(),screen.manufacturer(),screen.model()]
-        records.append({'screen':'|'.join(identity),'area':list(screen.availableGeometry().getRect())})
+        area=list(screen.availableGeometry().getRect())
+        if area[2]<=0 or area[3]<=0:continue
+        records.append({'screen':'|'.join(identity),'area':area})
     return records
 
 
@@ -78,15 +81,39 @@ def project(record,screens,minimum=None,density=1.0):
     return [tx+round(ax*(tw-nw)),ty+round(ay*(th-nh)),nw,nh]
 
 
+class DisplayEvents(QAbstractNativeEventFilter):
+    """Guard saved anchors before Qt processes Windows' temporary DPI rectangles."""
+    def __init__(self,layout):super().__init__();self.layout=layout
+    def nativeEventFilter(self,event_type,message):
+        if self.layout.closed or event_type not in (b'windows_generic_MSG',b'windows_dispatcher_MSG'):return False,0
+        import ctypes
+        from ctypes import wintypes
+        msg=wintypes.MSG.from_address(int(message))
+        if msg.message==0x0016:self.layout.runtime.session_ending=bool(msg.wParam)  # WM_ENDSESSION, including cancellation.
+        elif msg.message==0x007e:self.layout.changed()  # WM_DISPLAYCHANGE
+        elif msg.message==0x02e0:  # WM_DPICHANGED: let Qt remain the DPI owner.
+            windows=[self.layout.dock,self.layout.runtime.clock,self.layout.runtime.calendar,*self.layout.runtime.panels.windows.values(),*self.layout.runtime.notes.windows.values()]
+            for window in windows:
+                try:handle=window.windowHandle()
+                except RuntimeError:continue
+                if handle is not None and int(handle.winId())==int(msg.hWnd or 0):
+                    dragging=getattr(window,'drag_origin',None) is not None or getattr(window,'drag',None) is not None
+                    if not dragging or self.layout.pending:self.layout.changed()
+                    break
+        return False,0
+
+
 class DisplayLayout:
     def __init__(self,runtime):
         from PyQt5.QtCore import QTimer
         from PyQt5.QtWidgets import QApplication
         self.runtime=runtime;self.dock=runtime.dock;self.pending=False;self.applying=False;self.closed=False
-        self.bound=[]
-        self.timer=QTimer(self.dock);self.timer.setSingleShot(True);self.timer.setInterval(180);self.timer.timeout.connect(self.apply)
+        self.bound=[];self.revision=0
+        self.timer=QTimer(self.dock);self.timer.setSingleShot(True);self.timer.setInterval(180);self.timer.timeout.connect(self.apply_pending)
+        self.settle_timer=QTimer(self.dock);self.settle_timer.setSingleShot(True);self.settle_timer.setInterval(450);self.settle_timer.timeout.connect(self.finish)
         app=QApplication.instance();self.app=app
         app.screenAdded.connect(self.changed);app.screenRemoved.connect(self.changed);app.primaryScreenChanged.connect(self.changed)
+        self.native_filter=DisplayEvents(self);app.installNativeEventFilter(self.native_filter)
         self.bind_screens()
         self.ensure_profiles()
         self.update_dock()
@@ -104,12 +131,13 @@ class DisplayLayout:
 
     def changed(self,*args):
         if self.closed:return
-        self.pending=True
+        self.pending=True;self.revision+=1
+        self.settle_timer.stop()
         self.bind_screens()
         for window in self.runtime.panels.windows.values():
-            window.resize_timer.stop();window.fit_timer.stop();window.manual_resize=False
+            window.resize_timer.stop();window.fit_timer.stop();window.expand_timer.stop();window.collapse_timer.stop();window.manual_resize=False
         for window in getattr(getattr(self.runtime,'notes',None),'windows',{}).values():
-            window.geometry_timer.stop();window.refresh_timer.stop()
+            window.geometry_timer.stop();window.refresh_timer.stop();window.collapse_timer.stop();window.expand_timer.stop()
         for name in ('clock','calendar'):
             clock=getattr(self.runtime,name,None)
             if clock:clock.geometry_timer.stop();clock.refresh_timer.stop()
@@ -179,15 +207,24 @@ class DisplayLayout:
         screens=self.screens()
         if not screens:return
         record=self.dock.cfg.get('display_layout',{}).get('dock',{})
+        from PyQt5.QtCore import QRect
+        self.dock._display_area=QRect(*screens[0]['area'])
         self.dock.display_scale=scale(record,screens[0])
         self.dock.reload()
 
-    def apply(self):
+    def apply_pending(self):
+        self.apply(settling=True)
+        if self.pending:self.settle_timer.start()
+
+    def finish(self):
+        self.apply()
+
+    def apply(self,settling=False):
         if self.closed:return
         if not self.screens():
             self.pending=True
             return  # Wait for the next display notification, without polling or saving fallback coordinates.
-        self.applying=True
+        self.applying=True;revision=self.revision
         try:
             self.update_dock()
             self.runtime.panels.reposition()
@@ -198,12 +235,19 @@ class DisplayLayout:
             dialog=getattr(self.runtime.tray,'settings_dialog',None)
             if dialog and hasattr(dialog,'adapt_interface'):dialog.adapt_interface()
             self.runtime.refresh_corners()
-        finally:self.applying=False;self.pending=False
-        self.ensure_profiles()
+        finally:
+            self.applying=False;self.pending=bool(settling or revision!=self.revision)
+        if revision!=self.revision:
+            self.timer.start();return
+        if not settling:
+            self.timer.stop();self.settle_timer.stop()
+            self.ensure_profiles()
+            self.runtime.apply_visibility()
 
     def close(self):
         if self.closed:return
-        self.closed=True;self.timer.stop()
+        self.closed=True;self.timer.stop();self.settle_timer.stop()
+        self.app.removeNativeEventFilter(self.native_filter)
         for signal in (self.app.screenAdded,self.app.screenRemoved,self.app.primaryScreenChanged):
             try:signal.disconnect(self.changed)
             except (TypeError,RuntimeError):pass

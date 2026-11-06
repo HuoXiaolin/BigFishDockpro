@@ -186,9 +186,9 @@ class DesktopPanels(QObject):
         if not self.commit(history_title="新建合并组",merge_groups=groups,desktop_panels=panels,merged_panels=True,merge_initialized=True):return False
         self.sync_windows();return key
 
-    def save_visible_geometry(self):
+    def save_visible_geometry(self,persist=True):
         for window in self.windows.values():
-            if window.isVisible(): window.store_geometry()
+            if window.isVisible(): window.store_geometry(persist=persist)
 
     def set_merged(self, identity, merged):
         self.save_visible_geometry()
@@ -533,26 +533,27 @@ class DesktopPanels(QObject):
                 window.resize_timer.stop()
             finally:window.restoring=False
 
-    def close(self):
+    def close(self,save_geometry=True,wait_ms=300):
         if self.closed: return
-        self.save_visible_geometry()
-        if self.cfg['merged_panels']:
-            window = self.windows.get(self.active_window)
-            if window: window.store_geometry()
-        panels = copy.deepcopy(self.cfg['desktop_panels'])
-        for model in panels:
-            window = self.windows.get(model['id']) if not self.is_merged(model['id']) else None
-            if window and not window.disposed:
-                geometry = window.bounds()
-                geometry[:2] = [window.x(), window.y()]
-                if not window.collapsed: geometry[2:] = [window.width(), window.height()]
-                model['geometry'] = geometry
-        if panels != self.cfg['desktop_panels']: self.commit(desktop_panels=panels)
+        if save_geometry:
+            self.save_visible_geometry()
+            if self.cfg['merged_panels']:
+                window = self.windows.get(self.active_window)
+                if window: window.store_geometry()
+            panels = copy.deepcopy(self.cfg['desktop_panels'])
+            for model in panels:
+                window = self.windows.get(model['id']) if not self.is_merged(model['id']) else None
+                if window and not window.disposed:
+                    geometry = window.bounds()
+                    geometry[:2] = [window.x(), window.y()]
+                    if not window.collapsed: geometry[2:] = [window.width(), window.height()]
+                    model['geometry'] = geometry
+            if panels != self.cfg['desktop_panels']: self.commit(desktop_panels=panels)
         self.closed = True
         self.icons.close()
         self.collected_icons.close()
         self.scan_timer.stop();self.reconcile_timer.stop()
         if self.watcher.directories(): self.watcher.removePaths(self.watcher.directories())
-        if self.worker: self.worker.close()
+        if self.worker: self.worker.close(wait_ms=wait_ms)
         for window in self.windows.values(): window.dispose()
         self.windows.clear()

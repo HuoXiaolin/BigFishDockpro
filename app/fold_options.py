@@ -82,7 +82,7 @@ def note_geometry(window,collapsed):
     options=settings(window);expanded=getattr(window,'_fold_expanded',list(window.geometry().getRect()))
     window.setMinimumSize(1,1);window.setMaximumSize(16777215,16777215)
     if collapsed:
-        target=geometry(expanded,options,max(30,round(42*window.ui_factor)));window.setFixedSize(target[2],target[3]);window.move(*target[:2]);window._fold_offset=(target[0]-expanded[0],target[1]-expanded[1])
+        target=geometry(expanded,options,max(30,round(42*window.ui_factor)));window._fold_target=tuple(target);window.setFixedSize(target[2],target[3]);window.move(*target[:2]);window._fold_offset=(target[0]-expanded[0],target[1]-expanded[1])
     elif getattr(window,'_fold_was_collapsed',False):window.setGeometry(*expanded)
     else:window._fold_expanded=list(window.geometry().getRect())
     if not collapsed:window.setMinimumSize(max(160,round(230*min(1,window.ui_factor))),max(96,round(150*min(1,window.ui_factor))))
@@ -135,6 +135,10 @@ def apply_compact_size(window,target):
     user=ctypes.windll.user32
     user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
     ratio=window.devicePixelRatioF()
+    # Use the target QScreen's DPR after a hot switch, rather than a widget's
+    # previous-screen cache. Qt still owns all logical/native DPI conversion.
+    screen=QApplication.screenAt(QPoint(target[0]+target[2]//2,target[1]+target[3]//2))
+    if screen is not None:ratio=screen.devicePixelRatio()
     user.SetWindowPos(int(window.winId()),None,0,0,round(target[2]*ratio),round(target[3]*ratio),0x16)
 
 

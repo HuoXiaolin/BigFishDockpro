@@ -208,6 +208,6 @@ class DesktopScan(QObject):
             except OSError:self.metadata[key]=None
         if not self.cancelled.is_set(): self.ready.emit(rows, errors)
 
-    def close(self):
+    def close(self,wait_ms=300):
         self.cancelled.set()
-        if self.thread.is_alive(): self.thread.join(.3)
+        if wait_ms and self.thread.is_alive(): self.thread.join(wait_ms/1000)

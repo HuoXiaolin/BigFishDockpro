@@ -96,13 +96,17 @@ class DesktopClock(QWidget):
         if bounds:
             was_loading=self.loading; self.loading=True
             self.setMinimumSize(*self.minimum);self.setMaximumSize(16777215,16777215);self.setGeometry(*bounds)
-            self.loading=was_loading;self.apply_lock()
+            self.loading=was_loading;self.apply_lock();self._applied_geometry=self.geometry().getRect()
 
-    def save_geometry(self):
+    def save_geometry(self,persist=True):
         layout = getattr(self.runtime,'layout',None)
         if self.loading or self.closed or (layout and (layout.pending or layout.applying)): return
-        value = capture(list(self.geometry().getRect()),screen_records(),density=self.dock.cfg.get('card_scale',70)/100)
-        if value: self.save(clock_layout=value)
+        rect=self.geometry().getRect()
+        if self.option('layout') and rect==getattr(self,'_applied_geometry',None):return
+        value = capture(list(rect),screen_records(),density=self.dock.cfg.get('card_scale',70)/100)
+        if value:
+            if not persist:self.dock.cfg[self.kind+'_layout']=value
+            elif self.save(clock_layout=value):self._applied_geometry=rect
 
     def capture_backdrop(self):
         cfg=self.option('appearance')
@@ -208,10 +212,12 @@ class DesktopClock(QWidget):
             painter.translate(self.width()/2,0);painter.scale(max(.015,abs(math.cos(math.pi*self.flip_progress))),1);painter.translate(-self.width()/2,0)
         draw_clock(painter,QRectF(self.rect()).adjusted(1,1,-1,-1),self.dock,dict(self.option('appearance'),_header_controls=self.kind=='clock'),'calendar_card' if face else self.option('style'),self.backdrop)
 
-    def dispose(self):
+    def dispose(self,save_geometry=True):
         if self.closed:return
         if hasattr(self,'flip_animation'):self.flip_animation.stop()
-        if self.geometry_timer.isActive(): self.geometry_timer.stop(); self.save_geometry()
+        if self.geometry_timer.isActive():
+            self.geometry_timer.stop()
+            if save_geometry:self.save_geometry()
         self.closed=True; self.tick.stop(); self.refresh_timer.stop(); self.backdrop=None; self.close(); self.deleteLater()
 
 

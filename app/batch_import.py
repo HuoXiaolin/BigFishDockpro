@@ -1,7 +1,7 @@
 from dock_folders import application_entries, remove_applications
 from ui_style import compact_dialog, compact_px
 """Staged batch additions/removals: cancel never changes the saved Dock."""
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QEvent, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QEvent, QPoint
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QFileDialog, QApplication, QTabBar)
@@ -10,18 +10,22 @@ from running_apps import discover_running_apps
 from ui_style import label, button, SettingsHeader, SettingsGrip
 
 
-class Discovery(QThread):
+from background_worker import BackgroundWorker
+
+
+class Discovery(BackgroundWorker):
     ready = pyqtSignal(object)
     failed = pyqtSignal(str)
 
     def run(self):
         try:
-            self.ready.emit(discover_apps(cancelled=self.isInterruptionRequested))
+            apps=discover_apps(cancelled=self.isInterruptionRequested)
+            if not self.isInterruptionRequested():self.ready.emit(apps)
         except Exception as error:
-            self.failed.emit(str(error))
+            if not self.isInterruptionRequested():self.failed.emit(str(error))
 
 
-class RunningDiscovery(QThread):
+class RunningDiscovery(BackgroundWorker):
     ready=pyqtSignal(int,object)
     failed=pyqtSignal(int,str)
     def __init__(self,generation,parent=None):
@@ -38,7 +42,7 @@ class BatchDialog(QDialog):
     def __init__(self, importer):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.setProperty('compactDialog', True)
-        self.importer = importer
+        self.importer = importer;self.closing=False
         self.apps = []
         self.running_apps=[];self.running_worker=None;self.running_generation=0;self.running_rescan=False;self.running_error=''
         self.catalog_released = False
@@ -127,6 +131,7 @@ class BatchDialog(QDialog):
         return True
 
     def refresh_running(self):
+        if self.closing:return
         self.running_error=''
         self.running_generation+=1
         if self.running_worker and self.running_worker.isRunning():
@@ -142,6 +147,7 @@ class BatchDialog(QDialog):
         worker.start()
 
     def running_discovered(self,generation,apps):
+        if self.closing:return
         if generation!=self.running_generation:return
         self.running_apps=apps
         keys={launch_identity(app) for app in apps}
@@ -149,12 +155,14 @@ class BatchDialog(QDialog):
         if self.mode==3:self.render()
 
     def running_failed(self,generation,message):
+        if self.closing:return
         if generation!=self.running_generation:return
         self.running_error='运行列表读取失败，请点击刷新重试。'
         self.importer.log('运行应用读取失败: '+message)
         if self.mode==3:self.status.setText('运行列表读取失败，请点击刷新重试。')
 
     def running_finished(self,worker):
+        if self.closing:return
         if worker is self.running_worker:self.running_worker=None
         worker.deleteLater()
         self.refresh_running_button.setEnabled(True)
@@ -163,15 +171,18 @@ class BatchDialog(QDialog):
         self.release_if_idle()
 
     def scan_failed(self, message):
+        if self.closing:return
         self.empty.setText('应用扫描失败，可从文件添加。详细信息已记录到日志。')
         self.importer.log('应用扫描失败: ' + message)
 
     def discovered(self, apps):
+        if self.closing:return
         self.apps = apps
         if not (self.importer.dock.lite_mode and not self.isVisible()): self.render()
         self.release_if_idle()
 
     def release_if_idle(self):
+        if self.closing:return
         if self.importer.dock.lite_mode: self.release_memory()
 
     def release_memory(self):
@@ -381,11 +392,12 @@ class BatchDialog(QDialog):
 class BatchImporter:
     def __init__(self, dock, tray, save, log=lambda message: None):
         self.dock, self.tray, self.save, self.log = dock, tray, save, log
-        self.dialog = None
+        self.dialog = None;self.closed=False
         self.last_directory = ''
         QApplication.instance().aboutToQuit.connect(self.close)
 
     def show(self):
+        if self.closed:return
         from usage_stats import record
         record(self.dock,'batch_open')
         if self.dialog is None:
@@ -423,10 +435,16 @@ class BatchImporter:
     def release_memory(self):
         return self.dialog.release_memory() if self.dialog else False
 
-    def close(self):
+    def cancel(self):
         if self.dialog:
             self.dialog.worker.requestInterruption()
-            self.dialog.worker.wait(27000)
-            if self.dialog.running_worker:
-                self.dialog.running_worker.requestInterruption();self.dialog.running_worker.wait(5000)
+            if self.dialog.running_worker:self.dialog.running_worker.requestInterruption()
+
+    def close(self):
+        if self.closed:return
+        self.closed=True;self.cancel()
+        if self.dialog:
+            self.dialog.closing=True;self.dialog.icon_timer.stop();self.dialog.running_rescan=False
+            self.dialog.worker.deleteLater()
+            if self.dialog.running_worker:self.dialog.running_worker.deleteLater()
             self.dialog.reject()

@@ -766,6 +766,7 @@ class DesktopPanel(QDialog):
         if collapsed:
             from fold_options import geometry as fold_geometry,settings
             target=fold_geometry(geometry,settings(self),metric(44,self.ui_factor,24))
+            self._fold_target=tuple(target)
             self.setFixedSize(target[2],target[3]);self.move(*target[:2]);self._fold_offset=(target[0]-geometry[0],target[1]-geometry[1])
         else:
             from PyQt5.QtCore import QPoint
@@ -800,11 +801,15 @@ class DesktopPanel(QDialog):
         self.update()
 
     def collapse(self):
+        layout=getattr(self.runtime,'layout',None)
+        if layout and layout.pending:return
         if self.disposed or self.collapsed: return
         self.store_geometry()
         if self.manager.update_panel(self.identity, collapsed=True): self.set_collapsed_geometry(True)
 
     def expand(self):
+        layout=getattr(self.runtime,'layout',None)
+        if layout and layout.pending:return
         if self.disposed or not self.collapsed: return
         if self.runtime.lite: self.runtime.set_lite(False)
         if self.manager.update_panel(self.identity, collapsed=False): self.set_collapsed_geometry(False)
@@ -865,11 +870,15 @@ class DesktopPanel(QDialog):
         if hasattr(self,'page_transition'):self.page_transition.cancel()
         super().resizeEvent(event)
         if not self.restoring:
+            if self.collapsed:
+                target=getattr(self,'_fold_target',None);layout=getattr(self.runtime,'layout',None)
+                if target and (self.width(),self.height())!=target[2:] and layout:layout.changed()
+                return
             if not self.collapsed and event.oldSize().isValid(): self.manual_resize = True
             self.resize_timer.start(250)
             self.refresh_timer.start(200)
 
-    def store_geometry(self):
+    def store_geometry(self,persist=True):
         if self.restoring or self.disposed: return
         layout=getattr(self.runtime,'layout',None)
         if layout and (layout.pending or layout.applying):return
@@ -884,6 +893,7 @@ class DesktopPanel(QDialog):
         if self.manager.is_merged(self.identity):
             changes = self.manager.group_changes(self.identity,geometry=geometry,**({'compact':False} if self.manual_resize else {}))
             if anchor is not None:changes['display_layout']=anchor
+            if not persist:self.dock.cfg.update(changes);return
             if any(self.dock.cfg.get(key)!=value for key,value in changes.items()) and not self.manager.commit(**changes):return
             self.manual_resize = False
             self._layout_geometry=self.geometry().getRect()
@@ -892,6 +902,13 @@ class DesktopPanel(QDialog):
         if self.manual_resize:
             changes['compact'] = False
             self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        if not persist:
+            import copy
+            panels=copy.deepcopy(self.dock.cfg['desktop_panels'])
+            next(row for row in panels if row['id']==self.identity).update(changes)
+            self.dock.cfg['desktop_panels']=panels
+            if anchor is not None:self.dock.cfg['display_layout']=anchor
+            return
         if anchor is not None or any(self.model.get(key) != value for key, value in changes.items()):
             if self.manager.update_panel(self.identity, _layout=anchor if anchor is not None else False, **changes):
                 self.manual_resize = False
@@ -1000,7 +1017,7 @@ class DesktopPanel(QDialog):
         else: event.ignore()
 
     def closeEvent(self, event):
-        if self.disposed or QApplication.instance().isSavingSession(): event.accept()
+        if self.disposed or QApplication.instance().isSavingSession() or getattr(self.runtime,'session_ending',False): event.accept()
         else:
             event.ignore()
             self.collapse()
