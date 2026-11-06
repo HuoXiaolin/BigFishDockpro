@@ -29,7 +29,7 @@ def run(api, runtime, main, app, output, checks):
     original['clock_appearance']['work']['start']='08:45'
     custom=snapshot(original);original['appearance_custom']=custom
     assert clean_snapshot(custom)==custom
-    assert PRESET_IDS==('crystal','liquid','flowing','paper_glass','transparent')
+    assert PRESET_IDS==('crystal','liquid','flowing','vivid','paper_glass','transparent')
     liquid=DOCK_PRESETS[PRESET_IDS.index('liquid')][1]
     assert liquid['dock_highlight']==36 and liquid['transparency']==100
     configs=[]

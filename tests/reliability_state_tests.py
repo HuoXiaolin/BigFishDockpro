@@ -165,6 +165,106 @@ def check_taskbar_retries():
         backend.stop_timer.deleteLater()
 
 
+def check_taskbar_effect_status(runtime, checks):
+    from taskbar_appearance import TaskbarAppearance
+    from taskbar_xaml import XamlTaskbar, effect_key
+    from dock_extras import DockQuickSettings
+
+    dock = runtime.dock
+    original = {k:dock.cfg[k] for k in ('taskbar_mode','taskbar_color','taskbar_opacity','taskbar_blur')}
+    saved_component = runtime.taskbar
+    component = TaskbarAppearance(dock, Mock())  # The private desktop disables native effects.
+    runtime.taskbar = component
+    with tempfile.TemporaryDirectory(prefix='bfp-taskbar-status-') as directory:
+        backend = XamlTaskbar(dock, Path(directory), component.log, component.xaml_completed)
+        component.xaml = component.backend = backend
+        state = QProcess.NotRunning
+        def start():
+            nonlocal state
+            state = QProcess.Running
+            backend.process.started.emit()
+        def finish(code=0, status=QProcess.NormalExit):
+            nonlocal state
+            state = QProcess.NotRunning
+            backend.process.finished.emit(code, status)
+        popup = DockQuickSettings(dock.extras)
+        try:
+            with patch('taskbar_xaml.resident_program', return_value=None) as resident, \
+                 patch.object(backend.process,'state',side_effect=lambda:state), \
+                 patch.object(backend.process,'start',side_effect=start) as starts, \
+                 patch.object(backend.process,'terminate') as stops:
+                dock.cfg['taskbar_mode'] = 'clear'
+                assert component.sync()
+                popup.refresh()
+                for mode in ('color','acrylic','glass','clear'):
+                    dock.cfg['taskbar_mode'] = mode
+                    assert component.sync() and backend.configuration_matches(dock.cfg)
+                assert starts.call_count == 1 and not stops.called
+
+                backend.process.errorOccurred.emit(QProcess.ReadError)
+                assert not component.error and popup.tiles['taskbar'].value == '全透明'
+                resident.return_value = backend.program
+                component.set_status('旧状态','旧错误')
+                assert popup.tiles['taskbar'].value == '应用失败'
+                popup.show()
+                assert popup.tiles['taskbar'].value == '全透明' and not component.error
+                assert '失败' not in popup.status.text() and not popup.status.toolTip()
+
+                dock.cfg['taskbar_mode'] = 'color'
+                with patch.object(backend, 'write', side_effect=PermissionError('denied')):
+                    assert not component.sync()
+                component.reconcile_status()
+                assert component.error and popup.tiles['taskbar'].value == '应用失败'
+                assert component.retry() and popup.tiles['taskbar'].value == '自定义颜色'
+                # An old request cannot overwrite a newer selection.
+                component.xaml_completed(effect_key(dict(dock.cfg,taskbar_mode='clear')),False,'old')
+                assert not component.error
+
+                # A -> system -> A while the owned process is stopping.
+                resident.return_value = None
+                dock.cfg['taskbar_mode'] = 'system'
+                component.sync()
+                dock.cfg['taskbar_mode'] = 'color'
+                component.sync()
+                assert stops.call_count == 1 and popup.tiles['taskbar'].value == '正在应用…'
+                finish()
+                assert starts.call_count == 2 and not backend.stop_timer.isActive()
+                assert popup.tiles['taskbar'].value == '自定义颜色'
+                # A normal handoff is valid only with the exact resident and matching JSON.
+                resident.return_value = backend.program
+                finish()
+                assert backend.shared and not component.error
+                dock.cfg['taskbar_mode'] = 'glass'
+                assert component.sync() and starts.call_count == 2
+                resident.return_value = Path(directory).parent/'other'/'TranslucentTB.exe'
+                component.reconcile_status()
+                assert component.error and popup.tiles['taskbar'].value == '应用失败'
+                finish()
+                assert component.error
+                component.reconcile_status()
+                assert popup.tiles['taskbar'].value == '应用失败'
+                resident.return_value = None
+                assert component.retry()
+                finish(1,QProcess.CrashExit)
+                assert component.error and '退出码 1' in component.error
+                with patch.object(backend.process, 'start', side_effect=lambda:backend.process.errorOccurred.emit(QProcess.FailedToStart)):
+                    assert not component.retry()
+                    assert '未能启动' in component.error
+                assert component.retry() and not component.error
+                dock.cfg['taskbar_mode'] = 'system'
+                component.sync()
+                finish()
+                assert popup.tiles['taskbar'].value == '跟随系统' and not component.error
+            checks.append('Taskbar: live config reload reuses one simulated process; channel errors, stale notifications, rapid reversal and verified same-path handoff keep the mode label. Disk mismatch, foreign instance, start failure and crash remain visible; Quick Settings reopens and recovers from stale failure. No desktop taskbar modified.')
+        finally:
+            state = QProcess.NotRunning
+            popup.close()
+            popup.deleteLater()
+            component.close()
+            runtime.taskbar = saved_component
+            dock.cfg.update(original)
+
+
 def run(api, runtime, main, app, output, checks):
     from config_store import ConfigStore
     from feature_config import LEGACY_STYLE_DEFAULTS
@@ -185,4 +285,5 @@ def run(api, runtime, main, app, output, checks):
     check_config_store()
     check_update_generation(app)
     check_taskbar_retries()
+    check_taskbar_effect_status(runtime, checks)
     checks.append('configuration recovery: bounded last-good/damaged copies, corrupted/unreadable source protection, explicit recovery and atomic failure; update source generations discard stale success/error and serialize rechecks; taskbar write failure/exit retry and text-only cache via fake process; no system settings or network changed')

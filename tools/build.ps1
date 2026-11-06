@@ -49,6 +49,12 @@ try {
             $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = (Resolve-Path -LiteralPath artifacts/native_launch_probe.exe).Path
         }
     }
+    & $taskPython tools/prepare_pawnio.py
+    if ($LASTEXITCODE -ne 0) { throw 'PawnIO offline package preparation failed' }
+    & $taskPython tools/prepare_presentmon.py
+    if ($LASTEXITCODE -ne 0) { throw 'FPS probe preparation failed' }
+    & $taskPython tools/prepare_bluetooth.py
+    if ($LASTEXITCODE -ne 0) { throw 'Bluetooth probe preparation failed' }
     $taskVersion = & $taskPython tools/release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
     if ($taskExtended) { Invoke-TaskCheck 'dock.py' 'artifacts/source-test' 'source-runtime' $taskScopeArgs }

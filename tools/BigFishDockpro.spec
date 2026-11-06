@@ -15,7 +15,7 @@ if single_file:
     taskbar_data += [(str(payload / 'backend'), 'taskbar-payload/backend'),
                      (str(root / 'tools/install_taskbar_frameworks.ps1'), 'taskbar-payload')]
 a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('app','tests','tools')],
-    binaries=[], datas=[(str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
+    binaries=[], datas=[(str(root / 'artifacts/pawnio/PawnIO_setup.exe'),'resource-probe'), (str(root / 'artifacts/generated/DesktopResourceProbe.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/PresentMon.exe'), 'resource-probe'), (str(root / 'licenses/PresentMon-LICENSE.txt'),'licenses'), (str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
                         (str(root / 'licenses'), 'licenses'),
                         (str(root / 'artifacts/generated/version.json'), '.')] + tls_data + taskbar_data,
     hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],

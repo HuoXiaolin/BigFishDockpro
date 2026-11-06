@@ -3,6 +3,8 @@ import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
 DEFAULTS = {
+    'flash_enabled':False, 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
+    'flash_auto_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
     'taskbar_text_mode':'system', 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
@@ -32,6 +34,9 @@ DEFAULTS = {
     'game_mode': False, 'fullscreen_detection': False,
     'check_updates_on_start': False, 'update_use_proxy': True, 'update_source': DEFAULT_SOURCE,
 }
+
+from resource_options import DEFAULTS as RESOURCE_DEFAULTS
+DEFAULTS.update(RESOURCE_DEFAULTS)
 
 # Missing style fields in existing configurations retain pre-1.1.3 defaults.
 LEGACY_STYLE_DEFAULTS={key:DEFAULTS[key] for key in ('card_design','appearance_mode','appearance_custom','appearance_applied','note_appearance','clock_appearance','calendar_appearance','panel_opacity','panel_blur','panel_highlight','panel_material','panel_theme','panel_color','theme_color','dock_highlight','dock_material','clear_background')}
@@ -117,6 +122,16 @@ def normalize(cfg):
     from screen_layout import valid_record
     result['clock_layout']=valid_record(result.get('clock_layout'))
     result['calendar_layout']=valid_record(result.get('calendar_layout'))
+    from flash_data import COLORS, PALETTES, normalize_entries, normalize_draft
+    from resource_options import normalize as normalize_resources
+    normalize_resources(result)
+    result['flash_layout']=valid_record(result.get('flash_layout'))
+    result['flash_entries']=normalize_entries(result.get('flash_entries'))
+    result['flash_draft']=normalize_draft(result.get('flash_draft'))
+    for key,options in [('flash_color',tuple(COLORS)),('flash_palette',tuple(v for _,v in PALETTES)),('flash_side',('left','right'))]:
+        if result[key] not in options: result[key]=DEFAULTS[key]
+    delay=result['flash_delay']
+    result['flash_delay']=max(1,min(30,delay)) if type(delay) is int else DEFAULTS['flash_delay']
     from card_metrics import normalize_profile
     result['card_sizing']=normalize_profile(result.get('card_sizing'))
     from sticky_notes_store import normalize_notes

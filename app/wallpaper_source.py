@@ -76,6 +76,11 @@ def render(image,position,color,monitor,bounds,region,size):
     painter.end();return result
 
 
+def invalidate_source():
+    _metadata.clear()
+    image_file.cache_clear()
+
+
 def source_info(window,screen):
     key=screen.name();now=time.monotonic();cached=_metadata.get(key)
     if cached is None or now-cached[0]>=2:

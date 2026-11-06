@@ -66,7 +66,7 @@ class ConfigStore:
             except OSError as failure:
                 self.log('无法保留损坏配置：'+str(failure))
 
-    def load(self, defaults, missing_defaults=None):
+    def load(self, defaults, missing_defaults=None, migrate=None):
         self.blocked = False
         self.message = ''
         self._preserved = None
@@ -90,6 +90,7 @@ class ConfigStore:
             else:
                 self.message = '已读取最近有效配置；原文件无法读取或保留，暂不自动覆盖。'
             data = recovered
+        if migrate:data=migrate(data)
         result = copy.deepcopy(defaults)
         for key,value in (missing_defaults or {}).items():
             if key in defaults and key not in data:result[key]=copy.deepcopy(value)

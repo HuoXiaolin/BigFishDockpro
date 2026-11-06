@@ -176,6 +176,16 @@ class TaskbarAppearance:
         self._effect = effect if success else None
         self.set_status(message, '' if success else message)
 
+    def reconcile_status(self):
+        if self.xaml is None or self._pending_effect is not None or not (self.error or self.xaml.shared):
+            return
+        cfg = self.dock.cfg
+        if self.xaml.confirmed(cfg):
+            if self.error:
+                self.xaml_completed(effect_key(cfg), True, '任务栏组件正在使用当前效果配置。')
+        elif self.xaml.shared and not self.error:
+            self.xaml_completed(effect_key(cfg), False, '共享任务栏组件已退出或配置已改变，可点击重新应用。')
+
     def retry(self):
         self._effect = None
         self._pending_effect = None
@@ -184,10 +194,11 @@ class TaskbarAppearance:
     def sync(self, force=False):
         self.text.sync(self.dock.cfg.get('taskbar_text_mode','system'))
         effect = effect_key(self.dock.cfg)
-        if not force and (getattr(self, '_effect', None) == effect or
-                          getattr(self, '_pending_effect', None) == effect):
+        pending = getattr(self, '_pending_effect', None)
+        if not force and (pending == effect or (pending is None and getattr(self, '_effect', None) == effect)):
             return not bool(getattr(self, 'error', ''))
         if self.xaml is not None:
+            self._effect = None
             self._pending_effect = effect
             self.set_status('正在应用任务栏效果…')
             self.xaml.sync()

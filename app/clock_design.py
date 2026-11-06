@@ -11,9 +11,10 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
     wide=o['layout']=='wide' or (o['layout']=='auto' and w>=h*1.4)
     compact=w<230 or h<145
     weekdays='一二三四五六日';date='%d月%d日'% (now.month,now.day);weekday='星期'+weekdays[now.weekday()]
-    from appearance_presets import THEME_RINGS,THEME_ACCENTS,PROGRESS_COLORS
+    from appearance_presets import THEME_RINGS,THEME_ACCENTS,PROGRESS_COLORS,VIVID_BLUE,VIVID_GREEN,VIVID_RED
     family=o.get('material') if o.get('material') in THEME_RINGS else o.get('design')
     dopamine=family in THEME_RINGS and o.get('accent_color','') in ('',THEME_ACCENTS.get(family))
+    progress_colors=((VIVID_BLUE,'#416fca'),(VIVID_GREEN,'#35b56a'),(VIVID_RED,'#e35260')) if family=='vivid' else PROGRESS_COLORS
     ring_colors=tuple(QColor(value) for value in THEME_RINGS[family]) if dopamine else (accent.lighter(120),accent)
     def wash(box,alpha=20,r=12,color=accent):
         c=QColor(color);c.setAlpha(alpha);p.setPen(Qt.NoPen);p.setBrush(c);p.drawRoundedRect(box,r,r)
@@ -26,7 +27,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         size=max(size,12*min(1.35,max(.8,min(w/420,h/260))))
         text(box,value,size,color,weight,align)
     def bar(box,ratio,period_index=None):
-        pair=tuple(QColor(v) for v in PROGRESS_COLORS[period_index%3]) if dopamine and period_index is not None else ring_colors
+        pair=tuple(QColor(v) for v in progress_colors[period_index%3]) if dopamine and period_index is not None else ring_colors
         wash(box,48,box.height()/2,pair[1])
         if ratio and ratio>0:
             gradient=QLinearGradient(box.topLeft(),box.topRight());gradient.setColorAt(0,pair[0]);gradient.setColorAt(1,pair[1])

@@ -35,6 +35,10 @@ def matches(cfg,notes,settings,query,scope='all',limit=100):
             seen.add(key);add('files',row.get('name') or os.path.basename(row['path']),row['path'],row['path'])
     if scope in ('all','notes'):
         for row in notes:add('notes',row['title'],row.get('text','').replace('\n',' ')[:100],row['id'],row.get('text',''))
+    if scope in ('all','flash'):
+        for row in cfg.get('flash_entries',[]):
+            if not row['deleted']:
+                add('flash',row['text'].splitlines()[0][:75],'已完成' if row['done'] else '未完成',row['id'],row['text'])
     if scope in ('all','settings'):
         for row in settings:add('settings',row['title'],row['page'],row['key'],row.get('options','')+' '+row['key'])
     found.sort(key=lambda row:(row[0],row[1]['kind'],row[1]['name'].casefold()))
@@ -48,9 +52,9 @@ class SearchDialog(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose);self.results=[]
         body=QVBoxLayout(self);body.setContentsMargins(18,12,18,14);body.setSpacing(12)
         body.addWidget(SettingsHeader(self,'搜索已收纳内容'))
-        controls=QHBoxLayout();self.query=QLineEdit();self.query.setPlaceholderText('搜索应用、文件、便签和设置');self.query.setClearButtonEnabled(True)
+        controls=QHBoxLayout();self.query=QLineEdit();self.query.setPlaceholderText('搜索应用、文件、便签、闪念和设置');self.query.setClearButtonEnabled(True)
         controls.addWidget(self.query,1);self.scope=ModernComboBox()
-        for name,key in [('全部','all'),('应用','apps'),('文件','files'),('便签','notes'),('设置','settings')]:self.scope.addItem(name,key)
+        for name,key in [('全部','all'),('应用','apps'),('文件','files'),('便签','notes'),('闪念','flash'),('设置','settings')]:self.scope.addItem(name,key)
         if settings_only:self.scope.setCurrentIndex(self.scope.findData('settings'))
         controls.addWidget(self.scope);body.addLayout(controls)
         self.list=QListWidget();self.list.setIconSize(QSize(28,28));body.addWidget(self.list,1)
@@ -77,7 +81,7 @@ class SearchDialog(QDialog):
         targets=self.settings_window().search_targets() if scope in ('all','settings') else []
         self.results,total=matches(self.runtime.dock.cfg,self.runtime.notes.rows(),targets,self.query.text(),self.scope.currentData())
         self.list.clear()
-        names={'apps':'应用','files':'文件','notes':'便签','settings':'设置'}
+        names={'apps':'应用','files':'文件','notes':'便签','flash':'闪念','settings':'设置'}
         for result in self.results:
             item=QListWidgetItem(result['name']+'    · '+names[result['kind']]+'\n'+result['detail'])
             item.setToolTip(result['detail']);item.setSizeHint(QSize(0,56));self.list.addItem(item)
@@ -98,6 +102,11 @@ class SearchDialog(QDialog):
         row=self.results[index];runtime=self.runtime
         if row['kind']=='settings':
             runtime.show_settings();runtime.tray.settings_dialog.focus_setting(row['payload'])
+        elif row['kind']=='flash':
+            target=runtime.flash.item(row['payload'])
+            if not target or target['deleted']:
+                self.refresh();self.status.setText('该闪念已移入回收站。');return
+            runtime.flash.open(identity=row['payload'])
         elif row['kind']=='notes':
             if not any(note['id']==row['payload'] for note in runtime.notes.rows()):
                 self.refresh();self.status.setText('该便签已删除，请重新选择。');return

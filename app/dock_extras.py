@@ -51,6 +51,11 @@ def symbol(p,rect,kind,color):
     elif kind=='repair':
         p.drawRoundedRect(QRectF(3,3,12,18),2,2);p.drawLine(6,8,11,8);p.drawLine(6,12,10,12)
         p.drawEllipse(QRectF(12,12,7,7));p.drawLine(18,18,22,22)
+    elif kind=='monitor':
+        for x,y in ((4,13),(10,5),(16,10)):p.drawRoundedRect(QRectF(x,y,3,20-y),1,1)
+    elif kind=='flash':
+        from PyQt5.QtGui import QPainterPath
+        path=QPainterPath(QPointF(13,2));path.lineTo(5,14);path.lineTo(11,14);path.lineTo(10,22);path.lineTo(19,9);path.lineTo(13,9);path.closeSubpath();p.drawPath(path)
     elif kind=='notes':
         p.drawRoundedRect(QRectF(4,3,16,18),2,2);p.drawLine(8,8,16,8);p.drawLine(8,12,16,12);p.drawLine(8,16,13,16)
     elif kind=='clock':p.drawEllipse(QRectF(3,3,18,18));p.drawLine(12,6,12,12);p.drawLine(12,12,17,14)
@@ -253,6 +258,11 @@ class DockQuickSettings(QDialog):
                 'corners':'已开启' if cfg['screen_corners'] else '已关闭',
                 'search':'应用 / 文件 / 便签','undo':'暂无可撤销',
                 'layouts':'保存 / 切换布局','references':'检查 / 重新定位'}
+        values['taskbar_monitor']='已开启' if cfg['resource_taskbar'] else '已关闭'
+        values['resources']='查看系统读数' if cfg['resource_enabled'] else '打开资源监控'
+        self.tiles['resources'].setToolTip('打开资源详情，右键可以切换层级、收起形态和采样项目。')
+        values['flash']='记一条闪念' if not cfg['flash_enabled'] else '%d 条未完成'%sum(not r['done'] and not r['deleted'] for r in cfg['flash_entries'])
+        self.tiles['flash'].setToolTip('打开闪念胶囊并输入。可在桌面收纳设置中调整配色或关闭。')
         productivity=getattr(runtime,'productivity',None)
         if productivity:
             history=getattr(productivity,'history',None);steps=len(getattr(history,'entries',[]))
@@ -260,7 +270,7 @@ class DockQuickSettings(QDialog):
             self.tiles['undo'].setToolTip(getattr(history,'message','撤销最近的引用和布局整理，原文件保持不变。'))
         else:
             for key in ('search','undo','layouts','references'):values[key]='暂不可用'
-        self.tiles['search'].setToolTip('搜索已添加的应用、卡片文件、便签和设置，不扫描磁盘。')
+        self.tiles['search'].setToolTip('搜索已添加的应用、卡片文件、便签、闪念和设置，不扫描磁盘。')
         self.tiles['layouts'].setToolTip('保存当前桌面布局，或切换到已保存的方案。')
         self.tiles['references'].setToolTip('手动检查失效入口、重新定位或移除引用；原文件保持不变。')
         from taskbar_appearance import MODES
@@ -294,11 +304,17 @@ class DockQuickSettings(QDialog):
             values['taskbar']='正在应用…'
         if cfg['icon_size'] not in (32,42,54,64):values['size']='自定义 · '+str(cfg['icon_size'])
         if cfg['position']=='custom':values['position']='自定义 · '+str(cfg['custom_bottom'])
-        self.tiles['appearance'].setToolTip('一起切换 Dock、桌面卡片、便签、时钟和日历的主题，循环后恢复各自的自定义外观。')
+        self.tiles['appearance'].setToolTip('一起切换 Dock、桌面卡片、便签、时钟、日历和闪念胶囊的主题，循环后恢复各自的自定义外观。')
         for key in ('size','position'):self.tiles[key].setToolTip('点击循环切换，循环一轮可回到已保存的自定义值。')
         for key,tile in self.tiles.items():tile.value=values[key];tile.active=values[key]=='已开启';tile.update()
         colors=self.colors();self.title.setStyleSheet('background:transparent;font-size:15px;font-weight:600;color:'+colors['ink'].name())
         self.status.setStyleSheet('background:transparent;font-size:10px;color:'+colors['muted'].name());self.update()
+    def showEvent(self, event):
+        super().showEvent(event)
+        taskbar = self._bound_taskbar
+        if hasattr(taskbar, 'reconcile_status'):
+            taskbar.reconcile_status()
+
     def taskbar_status_changed(self,message):
         self.refresh()
         error=getattr(self._bound_taskbar,'error','')
@@ -317,6 +333,17 @@ class DockQuickSettings(QDialog):
         tray=self.dock.tray;runtime=getattr(tray,'runtime',None)
         if not tray:return
         self.status.setToolTip('')
+        if key=='taskbar_monitor':
+            if runtime:runtime.resources.set_options(resource_taskbar=not runtime.dock.cfg['resource_taskbar'])
+            self.refresh();return
+        if key=='resources':
+            self.close()
+            if runtime:runtime.resources.open()
+            return
+        if key=='flash':
+            self.close()
+            if runtime:runtime.flash.open(compose=True)
+            return
         if key in ('search','undo','layouts','references'):
             service=getattr(runtime,'productivity',None)
             if service is None or getattr(service,'closed',False):

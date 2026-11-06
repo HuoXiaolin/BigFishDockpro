@@ -1,7 +1,7 @@
 """Light card compositions inspired by Uiverse, colored by this app's accent."""
 from PyQt5.QtCore import Qt,QPointF,QRectF
 from PyQt5.QtGui import QColor,QLinearGradient,QPen,QPainterPath
-DESIGNS=[('液态玻璃','aurora'),('浅色渐变','gradient'),('经典纸张','paper'),('极简纯色','minimal'),('清透水晶','crystal'),('柔光流彩','flowing'),('浅色纸玻璃','paper_glass')]
+DESIGNS=[('液态玻璃','aurora'),('浅色渐变','gradient'),('经典纸张','paper'),('极简纯色','minimal'),('清透水晶','crystal'),('柔光流彩','flowing'),('活力原色','vivid'),('浅色纸玻璃','paper_glass')]
 
 
 def accent_color(cfg):return QColor(cfg.get('theme_color') or cfg.get('panel_color') or '#b8d9ef')
@@ -26,7 +26,14 @@ def paint_design(painter,rect,cfg,design=None,clear=False,body_top=None,body_ins
             header=QColor('#ffffff');header.setAlpha(22 if design!='paper_glass' else 46)
             painter.fillRect(QRectF(rect.left(),rect.top(),rect.width(),max(0,boundary-rect.top())),header)
         painter.restore();painter.restore();return
-    if design=='aurora':
+    if design=='vivid':
+        from appearance_presets import VIVID_BLUE, VIVID_GREEN, VIVID_RED
+        wash=QLinearGradient(rect.topLeft(),rect.topRight())
+        for stop,rgb in ((0,VIVID_BLUE),(.63,VIVID_GREEN),(1,VIVID_RED)):
+            tone=QColor(rgb);tone.setAlpha(34);wash.setColorAt(stop,tone)
+        end=body_top if body_top is not None else rect.top()+min(38,rect.height()*.25)
+        painter.fillRect(QRectF(rect.left(),rect.top(),rect.width(),max(0,end-rect.top())),wash)
+    elif design=='aurora':
         wash=QLinearGradient(rect.topLeft(),rect.bottomRight());a=QColor(accent);a.setAlpha(28);b=QColor('#ffffff');b.setAlpha(8)
         wash.setColorAt(0,a);wash.setColorAt(.55,b);wash.setColorAt(1,a);painter.fillPath(path,wash)
     elif design=='gradient':

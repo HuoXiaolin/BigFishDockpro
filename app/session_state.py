@@ -9,6 +9,10 @@ def save_state(runtime):
         notes.timer.stop()
         runtime.panels.save_visible_geometry(persist=False)
         runtime.clock.save_geometry(persist=False);runtime.calendar.save_geometry(persist=False)
+        flash=getattr(runtime,'flash',None)
+        if flash and flash.panel is not None and flash.panel.editing:
+            from flash_data import normalize_draft
+            cfg['flash_draft']=normalize_draft(flash.panel.draft(),strict=True)
         cfg.update(sticky_notes=notes.rows(),runtime_lite=runtime.lite)
         if runtime.api.save_config(cfg) is False:raise OSError('configuration write failed')
     except (OSError,ValueError,TypeError,RuntimeError) as error:

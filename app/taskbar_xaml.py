@@ -31,11 +31,43 @@ def effect_key(cfg):
     return tuple(cfg.get(key) for key in EFFECT_KEYS)
 
 
+def resident_program():
+    """Identify the TranslucentTB control window on this desktop, including portable copies."""
+    import ctypes
+    from ctypes import wintypes
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user.FindWindowW.restype = wintypes.HWND
+    window = user.FindWindowW('TrayWindow', 'TranslucentTB')
+    if not window:
+        return None
+    pid = wintypes.DWORD()
+    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user.GetWindowThreadProcessId(window, ctypes.byref(pid))
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                ctypes.POINTER(wintypes.DWORD)]
+    process = kernel.OpenProcess(0x1000, False, pid.value)
+    if process:
+        try:
+            path = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(path))
+            if kernel.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(size)):
+                return Path(path.value)
+        finally:
+            kernel.CloseHandle(process)
+    return None
+
+
 class XamlTaskbar:
     def __init__(self, dock, directory, log, complete=None):
         self.dock, self.directory, self.log = dock, Path(directory), log
         self.process = QProcess(dock)
-        self.process.setProgram(str(self.directory / 'TranslucentTB.exe'))
+        self.program = self.directory / 'TranslucentTB.exe'
+        self.process.setProgram(str(self.program))
         self.process.setWorkingDirectory(str(self.directory))
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.failed)
@@ -45,6 +77,7 @@ class XamlTaskbar:
         self.starting = None
         self.active = None
         self.closed = False
+        self.shared = False
         self.stop_timer = QTimer(dock)
         self.stop_timer.setSingleShot(True)
         self.stop_timer.timeout.connect(self.process.kill)
@@ -55,14 +88,65 @@ class XamlTaskbar:
         temporary.write_text(json.dumps(configuration(cfg), ensure_ascii=False, indent=2), encoding='utf-8')
         os.replace(temporary, path)
 
+    def configuration_matches(self, cfg):
+        try:
+            with (self.directory / 'settings.json').open('rb') as stream:
+                content = stream.read(65537)
+            if len(content) > 65536:
+                return False
+            actual = json.loads(content.decode('utf-8-sig'))
+        except (OSError, ValueError, RecursionError):
+            return False
+        expected = configuration(cfg)
+        return isinstance(actual, dict) and all(actual.get(key) == value for key, value in expected.items())
+
+    def confirmed(self, cfg):
+        return (cfg['taskbar_mode'] != 'system' and self.pending is None
+                and resident_program() == self.program and self.configuration_matches(cfg))
+
     def sync(self):
-        self.pending = dict(self.dock.cfg)
-        if self.process.state() != QProcess.NotRunning:
-            # Only the process started by this adapter is asked to exit.
-            self.process.terminate()
+        cfg = {key:self.dock.cfg[key] for key in EFFECT_KEYS}
+        if self.pending is not None:
+            # The owned process is stopping. Only the most recent request should run next.
+            self.pending = cfg
+            return
+        if cfg['taskbar_mode'] == 'system' and self.process.state() != QProcess.NotRunning:
+            self.pending = cfg
             self.stop_timer.start(2000)
+            self.process.terminate()
+            return
+        self.apply(cfg)
+
+    def apply(self, cfg):
+        try:
+            self.write(cfg)
+        except OSError as error:
+            self.report(cfg, False, '任务栏效果未应用：无法保存组件配置，'+str(error)+'；可点击重新应用。')
+            return
+        state = self.process.state()
+        if cfg['taskbar_mode'] == 'system':
+            self.active = self.starting = None
+            self.shared = False
+            self.report(cfg, True, '任务栏外观已恢复跟随系统。')
+        elif state == QProcess.Starting:
+            self.starting = cfg
+        elif state == QProcess.Running:
+            # The portable backend watches settings.json, including atomic replacement.
+            self.starting = None
+            self.active = cfg
+            self.report(cfg, True, '已更新运行中的任务栏组件配置。')
         else:
-            self.finished()
+            resident = resident_program()
+            if resident == self.program:
+                self.shared = True
+                self.active = cfg
+                self.report(cfg, True, '已更新运行中的任务栏组件配置。')
+            elif resident is not None:
+                self.report(cfg, False, '另一份 TranslucentTB 正在管理任务栏。退出该实例后可重新应用。')
+            else:
+                self.shared = False
+                self.starting = cfg
+                self.process.start()
 
     def report(self, cfg, success, message):
         if not success:
@@ -71,42 +155,48 @@ class XamlTaskbar:
             self.complete(effect_key(cfg), success, message)
 
     def started(self):
-        if self.closed or self.starting is None:
+        if self.closed or self.starting is None or self.pending is not None:
             return
         self.active, self.starting = self.starting, None
         self.report(self.active, True, '任务栏组件已启动。')
 
     def failed(self, error):
-        if self.closed or (self.pending is not None and error == QProcess.Crashed):
+        # Read/write channel errors are unrelated to the watched settings file.
+        # A crash is reported once with its exit code by finished().
+        if self.closed or error != QProcess.FailedToStart:
             return
-        cfg = self.starting or self.active or self.pending or self.dock.cfg
-        self.starting = self.active = None
-        self.report(cfg, False, '任务栏效果未应用：'+self.process.errorString()+'；可点击重新应用。')
+        if self.pending is not None:
+            self.finished()
+        elif self.starting is not None:
+            cfg, self.starting = self.starting, None
+            self.report(cfg, False, '任务栏组件未能启动：'+self.process.errorString()+'；可点击重新应用。')
 
-    def finished(self, *args):
+    def finished(self, code=0, status=QProcess.NormalExit):
         self.stop_timer.stop()
         if self.closed:
             return
         previous = self.active or self.starting
         self.active = self.starting = None
-        if self.pending is None:
-            if previous is not None:
-                self.report(previous, False, '任务栏组件已退出，可点击重新应用。')
-            return
-        cfg, self.pending = self.pending, None
-        try:
-            self.write(cfg)
-        except OSError as error:
-            self.report(cfg, False, '任务栏效果未应用：无法保存组件配置，'+str(error)+'；可点击重新应用。')
-            return
-        if cfg.get('taskbar_mode', 'system') == 'system':
-            self.report(cfg, True, '任务栏外观已恢复跟随系统。')
-        else:
-            self.starting = cfg
-            self.process.start()
+        if self.pending is not None:
+            cfg, self.pending = self.pending, None
+            self.apply(cfg)
+        elif previous is not None:
+            # A second TranslucentTB launcher exits normally after handing off to its resident.
+            if status == QProcess.NormalExit and code == 0 and self.confirmed(previous):
+                self.active = previous
+                self.shared = True
+                self.report(previous, True, '任务栏效果由现有组件提供。')
+            else:
+                self.report(previous, False, f'任务栏组件已退出（退出码 {code}），可点击重新应用。')
 
     def close(self,shutdown=False):
         self.closed = True
+        if getattr(self, 'shared', False) and self.active and self.confirmed(self.active):
+            # Restore only our last configuration. The other process owns its lifecycle.
+            try:
+                self.write(dict(self.active, taskbar_mode='system'))
+            except OSError as error:
+                self.log('未能恢复共享任务栏组件配置：'+str(error))
         self.pending = None
         self.stop_timer.stop()
         if self.process.state() != QProcess.NotRunning:

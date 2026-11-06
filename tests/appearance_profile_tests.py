@@ -36,7 +36,7 @@ def run(api,runtime,main,app,output,checks):
         assert clean_snapshot(json.loads(json.dumps(snapshot(styled))))==snapshot(styled)
     invalid=copy.deepcopy(original);invalid['notes']['style-fixture']['style']=[]
     assert not clean_snapshot(invalid)['notes']
-    checks.append('five common theme names; default resets clock layout; custom roundtrip preserves geometry, content, switches, work schedule and newer note edits')
+    checks.append('six common preset names; default resets clock layout; custom roundtrip preserves geometry, content, switches, work schedule and newer note edits')
     # Exercise the actual Save transaction and failure branch using the live dialog.
     before=copy.deepcopy(runtime.dock.cfg)
     main.fields['theme_color'].setText('#3b789a');main.fields['panel_highlight'].setValue(61)

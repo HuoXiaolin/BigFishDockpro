@@ -51,6 +51,10 @@ class RuntimeController:
         self.clock=DesktopClock(self)
         from desktop_calendar import DesktopCalendar
         self.calendar=DesktopCalendar(self)
+        from flash_capsule import FlashCapsule
+        self.flash=FlashCapsule(self)
+        from resource_capsule import ResourceCapsule
+        self.resources=ResourceCapsule(self)
         self.layout = DisplayLayout(self)
         from productivity import Productivity
         self.productivity=Productivity(self)
@@ -132,6 +136,7 @@ class RuntimeController:
             self.refresh_corners()
             if was_lite:self.panels.set_lite(False)
         self.notes.set_lite()
+        self.resources.sync()
         # A mode switch must not rebuild/repaint visible components or change
         # their appearance. Only invisible editing/catalog resources are freed.
         if enabled:
@@ -218,20 +223,25 @@ class RuntimeController:
         elif not wanted and self.dock.isVisible():self.dock.hide()
         if changed:
             self.dock.sync_background_polling(refresh=not active)
-            self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync()
+            self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync();self.flash.sync();self.resources.sync()
         self.refresh_corners()
 
     def apply_settings(self,changed=None):
+        if changed is not None:changed=set(changed)
         if self.updater.source_key()!=getattr(self,'_update_source_key',None):
             self.updater.settings_changed();self._update_source_key=self.updater.source_key()
         if changed is not None and 'motion_enabled' in changed and not self.dock.cfg.get('motion_enabled',True):
             for window in [self.dock,self.clock,self.calendar,*self.panels.windows.values(),*self.notes.windows.values()]:
                 controller=getattr(window,'_interaction_motion',None)
                 if controller:controller.stop()
+        capsule_style={'theme','theme_color','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
+        if changed is None or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'runtime_lite','taskbar_text_mode'}):
+            self.resources.sync()
+        if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
+            self.flash.sync()
         if changed is None or any(key.startswith('taskbar_') for key in changed):
             self.taskbar.sync()
         if changed is not None and not set(changed)&{'game_mode','lite_enabled','runtime_lite'}:
-            changed=set(changed)
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
             if 'hide_tray' in changed:self.tray.setVisible(not self.dock.cfg['hide_tray'])
             panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
@@ -272,6 +282,7 @@ class RuntimeController:
         return save_state(self)
 
     def request_exit(self):
+        if not self.flash.save_draft(): return False
         if not self.notes.flush() and not self.notes.backup():
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.warning(None,'便签尚未保存','无法保存便签或恢复备份。请先复制内容或修复数据目录，再退出。')
@@ -289,6 +300,8 @@ class RuntimeController:
         if self.panels.worker:self.panels.worker.cancelled.set()
         from session_state import save_state
         save_state(self)
+        self.resources.close()
+        self.flash.close()
         self.layout.close()
         for timer in (self.dock.proc_timer,self.dock.geo_timer,self.dock.blur_timer,self.dock.timer,self.dock.folder_timer):timer.stop()
         if hasattr(self,'productivity'):self.productivity.close()

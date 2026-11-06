@@ -309,7 +309,8 @@ def recover_config_defaults(cfg=None):
 
 def load_config():
     from feature_config import LEGACY_STYLE_DEFAULTS
-    cfg = _configuration_store().load(DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS)
+    from resource_options import migrate_docked
+    cfg = _configuration_store().load(DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS,migrate=migrate_docked)
     if not isinstance(cfg.get("items"), list):
         cfg["items"] = []
     if str(cfg.get("theme")) == "fog":
@@ -1011,6 +1012,8 @@ class Dock(QWidget):
             runtime = getattr(getattr(self, 'tray', None), 'runtime', None)
             if runtime:
                 for panel in runtime.panels.windows.values(): panel.apply_options()
+                if runtime.resources.window:runtime.resources.window.sync_window()
+                if runtime.flash.edge:runtime.flash.sync()
 
     # ---------------- 尺寸与布局 ----------------
     def _ui_mult(self):

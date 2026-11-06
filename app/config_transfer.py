@@ -21,6 +21,8 @@ def _pairs(pairs):
 def normalize(data,api):
     if not isinstance(data,dict):raise ValueError('配置内容必须是 JSON 对象。')
     if not {'items','icon_size','position'}<=set(data):raise ValueError('不是完整的 BigFishDockpro 配置。')
+    from resource_options import migrate_docked
+    data=migrate_docked(data)
     cfg=copy.deepcopy(api.DEFAULT_CONFIG)
     from feature_config import LEGACY_STYLE_DEFAULTS
     cfg.update(copy.deepcopy(LEGACY_STYLE_DEFAULTS))
@@ -50,6 +52,14 @@ def normalize(data,api):
     if manual and (len(manual)!=2 or not all(type(v) is int and 200<=v<=10000 for v in manual)):raise ValueError('设置窗口尺寸无效。')
     for key,limit in [('merge_groups',64),('items',4096),('desktop_panels',256),('desktop_entries',20000),('groups',256)]:
         if len(cfg[key])>limit:raise ValueError('配置条目过多：'+key)
+    from resource_options import normalize as normalize_resources
+    normalize_resources(cfg,strict=True)
+    from flash_data import normalize_entries, normalize_draft, COLORS, PALETTES
+    cfg['flash_entries']=normalize_entries(cfg['flash_entries'],strict=True)
+    cfg['flash_draft']=normalize_draft(cfg['flash_draft'],strict=True)
+    if (cfg['flash_color'] not in COLORS or cfg['flash_palette'] not in dict(PALETTES).values()
+            or cfg['flash_side'] not in ('left','right') or not 1<=cfg['flash_delay']<=30):
+        raise ValueError('闪念胶囊的颜色、停靠位置或收起时间无效。')
     from sticky_notes_store import normalize_notes
     cfg['sticky_notes']=normalize_notes(cfg['sticky_notes'],strict=True)
     cfg['notes_trash']=normalize_notes(cfg['notes_trash'],strict=True,limit=32)

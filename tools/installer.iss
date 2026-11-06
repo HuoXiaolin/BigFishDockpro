@@ -30,6 +30,7 @@ WizardStyle=modern
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "pawnio"; Description: "安装 CPU 温度与功率驱动（PawnIO）"; Flags: unchecked; Check: NeedsPawnIO
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 Name: "taskbar"; Description: "安装 Windows 11 任务栏效果组件（离线）"; Check: SupportsTaskbarComponent
@@ -48,9 +49,27 @@ Name: "{group}\卸载大肥鱼Dock"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\大肥鱼Dock"; Filename: "{app}\BigFishDockpro.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\_internal\resource-probe\PawnIO_setup.exe"; Verb: "runas"; Parameters: "-install -silent"; Tasks: pawnio; Check: CheckedPawnInstaller; Flags: shellexec waituntilterminated; StatusMsg: "安装 CPU 传感器驱动…"
 Filename: "{app}\BigFishDockpro.exe"; Description: "启动大肥鱼Dock"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function NeedsPawnIO: Boolean;
+var
+  Current: String;
+  InstalledVersion, RequiredVersion: Int64;
+begin
+  Result := True;
+  if RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO', 'DisplayVersion', Current)
+    and StrToVersion(Current, InstalledVersion) and StrToVersion('2.2.0.0', RequiredVersion) then
+    Result := InstalledVersion < RequiredVersion;
+end;
+
+function CheckedPawnInstaller: Boolean;
+begin
+  Result := NeedsPawnIO and (CompareText(GetSHA256OfFile(ExpandConstant('{app}\_internal\resource-probe\PawnIO_setup.exe')),
+    '1f519a22e47187f70a1379a48ca604981c4fcf694f4e65b734aaa74a9fba3032') = 0);
+end;
+
 function SupportsTaskbarComponent: Boolean;
 var
   Version: TWindowsVersion;

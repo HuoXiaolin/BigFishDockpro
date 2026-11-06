@@ -159,7 +159,7 @@ def check_theme(api, runtime, main, checks):
         legacy.update(next_cycle(legacy,'appearance'))
         assert all(legacy['appearance_custom']['values'][k]==v for k,v in old_dock.items())
         assert legacy['dock_quick_custom']=={'size':{'icon_size':53}}
-        checks.append('Quick tile cycles all five component themes and restores per-component custom styles after reload, including pending note text, a new note and note geometry. Both directions with main settings, unrelated drafts, old custom Dock slots and a failed save verified.')
+        checks.append('Quick tile cycles all shared theme presets and restores per-component custom styles after reload, including pending note text, a new note and note geometry. Both directions with main settings, unrelated drafts, old custom Dock slots and a failed save verified.')
     finally:
         popup.close()
         popup.deleteLater()

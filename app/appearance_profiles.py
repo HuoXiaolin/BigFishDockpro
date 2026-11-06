@@ -1,10 +1,10 @@
 """Bounded appearance snapshots, deliberately excluding user content and geometry."""
 import copy
 import re
-from appearance_presets import DOCK_PRESETS, PANEL_PRESETS, PRESET_IDS, NEW_PRESET_IDS, DEFAULT_PRESET_ID, DEFAULT_DOCK_STYLE, normalize_note_appearance
+from appearance_presets import DOCK_PRESETS, PANEL_PRESETS, PRESET_IDS, preset_design, DEFAULT_PRESET_ID, DEFAULT_DOCK_STYLE, normalize_note_appearance
 from clock_appearance import DEFAULTS as CLOCK_DEFAULTS, normalize as normalize_clock
 
-TOP_DEFAULTS = dict(DEFAULT_DOCK_STYLE, card_design=DEFAULT_PRESET_ID, note_style='glass', clock_style='digital', clock_flipped=False)
+TOP_DEFAULTS = dict(DEFAULT_DOCK_STYLE, card_design=DEFAULT_PRESET_ID, note_style='glass', clock_style='digital', clock_flipped=False, flash_palette='theme',resource_palette='theme',resource_tints={})
 TOP_KEYS = tuple(TOP_DEFAULTS) + tuple('panel_'+key for key in PANEL_PRESETS[0][1])
 CLOCK_KEYS = tuple(key for key in CLOCK_DEFAULTS if key != 'work')
 NOTE_KEYS = ('style','color','font_size','font_scale','body_font_size','body_font_scale','appearance')
@@ -35,6 +35,11 @@ def clean_snapshot(value):
         if not isinstance(raw.get(key),str) or raw[key] not in options:return {}
         values[key]=raw[key]
     values['clock_flipped']=raw.get('clock_flipped') is True
+    values['flash_palette']='vivid' if raw.get('flash_palette')=='vivid' else 'theme'
+    values['resource_palette']=raw.get('resource_palette') if raw.get('resource_palette') in ('vivid','custom') else 'theme'
+    from resource_options import TINTS
+    tints=raw.get('resource_tints',{})
+    values['resource_tints']={key:v.lower() for key,v in tints.items() if key in TINTS and isinstance(v,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',v)} if isinstance(tints,dict) else {}
     panel=normalize_note_appearance({key[6:]:v for key,v in raw.items() if isinstance(key,str) and key.startswith('panel_')})
     values.update({'panel_'+key:v for key,v in panel.items()})
     color=raw.get('panel_color','')
@@ -88,6 +93,7 @@ def apply_profile(cfg, mode, defaults):
         return result
     result=copy.deepcopy(cfg)
     if mode=='default':
+        result['resource_background']='global'
         for key in TOP_KEYS:result[key]=copy.deepcopy(defaults[key])
         for component in ('clock','calendar'):
             work=result[component+'_appearance']['work']
@@ -111,7 +117,8 @@ def apply_profile(cfg, mode, defaults):
     index=PRESET_IDS.index(mode);values=PANEL_PRESETS[index][1]
     result.update(DOCK_PRESETS[index][1])
     result.update({'panel_'+key:v for key,v in values.items()})
-    result.update(card_design=mode if mode in NEW_PRESET_IDS else 'aurora',note_style='glass',note_appearance=normalize_note_appearance(values))
+    result.update(card_design=preset_design(mode),flash_palette='vivid' if mode=='vivid' else 'theme',resource_palette='vivid' if mode=='vivid' else 'theme',
+                  note_style='glass',note_appearance=normalize_note_appearance(values))
     from clock_appearance import PRESETS
     for component in ('clock','calendar'):result[component+'_appearance'].update(PRESETS[index][1])
     for row in result.get('sticky_notes',[]):

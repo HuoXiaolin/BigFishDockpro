@@ -88,7 +88,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
-        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','hide_tray','game_mode','lite_enabled')
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','lite_enabled')
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = {}
         self.import_candidate=None;self.import_path=None
@@ -240,6 +240,23 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         from sticky_notes_store import STYLES
         self.combo(panel,'note_style','新便签装饰样式',STYLES)
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
+
+        from flash_data import COLORS, PALETTES
+        section_marker(panel,'闪念胶囊')
+        self.component_row(panel,'flash_enabled','显示贴边胶囊',button('记一条',lambda:self.tray.runtime.flash.open(compose=True)),button('查看闪念',lambda:self.tray.runtime.flash.open()))
+        self.combo(panel,'flash_palette','胶囊配色',PALETTES)
+        self.combo(panel,'flash_color','新闪念颜色',[(name,key) for key,(name,_) in COLORS.items()])
+        from flash_view import color_icon
+        for index,key in enumerate(COLORS):self.fields['flash_color'].setItemIcon(index,color_icon(key))
+        self.combo(panel,'flash_side','停靠边缘',[('右侧','right'),('左侧','left')])
+        self.check(panel,'flash_drop','拖入选中文字生成闪念')
+        self.check(panel,'flash_auto_hide','鼠标离开后自动收起')
+        self.number(panel,'flash_delay','收起延迟（秒）',1,30)
+
+        section_marker(panel,'资源胶囊')
+        self.component_row(panel,'resource_enabled','显示资源胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
+        self.check(panel,'resource_taskbar','显示任务栏监控')
+        self.check(panel,'resource_bt_tray','蓝牙电量托盘图标')
 
         apps = self.section('应用管理')
         section_marker(apps,'Dock 应用')
@@ -551,6 +568,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fill_fields(cfg);self.adapt_interface()
         runtime = getattr(self.tray, 'runtime', None)
         if runtime:
+            runtime.taskbar.reconcile_status()
             self.update_changed(runtime.updater.message)
         self.check_startup()
         self.status.setText('未保存的修改会在关闭时放弃。')
@@ -598,6 +616,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         if runtime:
             runtime.panels.shown=self.tray.cfg['panels_visible']
             runtime.was_dock_visible=self.tray.cfg['dock_visible']
+            runtime.flash.sync(reload=True)
             runtime.apply_settings()
             if getattr(runtime,'notes',None):runtime.notes.reload()
             runtime.layout.apply()
@@ -626,6 +645,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         notes=getattr(getattr(self.tray,'runtime',None),'notes',None)
         if notes and not notes.flush():
             self.status.setText('便签尚未保存，请先保存便签后重试。');return
+        flash=getattr(getattr(self.tray,'runtime',None),'flash',None)
+        if flash and not flash.save_draft():
+            self.status.setText('闪念草稿尚未保存，请先检查后重试。');return
         imported=self.import_candidate is not None
         previous=copy.deepcopy(self.tray.cfg)
         cfg = copy.deepcopy(self.import_candidate) if imported else dict(self.tray.cfg)

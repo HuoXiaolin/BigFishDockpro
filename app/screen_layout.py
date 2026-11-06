@@ -90,6 +90,16 @@ class DisplayEvents(QAbstractNativeEventFilter):
         from ctypes import wintypes
         msg=wintypes.MSG.from_address(int(message))
         if msg.message==0x0016:self.layout.runtime.session_ending=bool(msg.wParam)  # WM_ENDSESSION, including cancellation.
+        elif msg.message==0x001a and msg.wParam==20:  # SPI_SETDESKWALLPAPER
+            if msg.hWnd==int(self.layout.dock.winId()):
+                from wallpaper_source import invalidate_source
+                invalidate_source()
+                resources=self.layout.runtime.resources.window
+                if resources:resources.glass.clear();resources.update()
+                flash=self.layout.runtime.flash.panel
+                if flash:
+                    for bar in (flash.toolbar,flash.filters_bar,flash.launch_shell,flash.composer):
+                        bar.material.clear();bar.update()
         elif msg.message==0x007e:self.layout.changed()  # WM_DISPLAYCHANGE
         elif msg.message==0x02e0:  # WM_DPICHANGED: let Qt remain the DPI owner.
             windows=[self.layout.dock,self.layout.runtime.clock,self.layout.runtime.calendar,*self.layout.runtime.panels.windows.values(),*self.layout.runtime.notes.windows.values()]
@@ -232,6 +242,10 @@ class DisplayLayout:
             for name in ('clock','calendar'):
                 component=getattr(self.runtime,name,None)
                 if component:component.reposition();component.refresh_timer.start()
+            flash=getattr(self.runtime,'flash',None)
+            if flash:flash.reposition()
+            resources=getattr(self.runtime,'resources',None)
+            if resources:resources.reposition()
             dialog=getattr(self.runtime.tray,'settings_dialog',None)
             if dialog and hasattr(dialog,'adapt_interface'):dialog.adapt_interface()
             self.runtime.refresh_corners()

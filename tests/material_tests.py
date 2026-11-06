@@ -59,7 +59,7 @@ def check_clock_materials(api,runtime,output,checks):
     dock=runtime.dock;before=copy.deepcopy(dock.cfg);dialog=None
     try:
         assert [n for n,_ in PRESETS]==[n for n,_ in PANEL_PRESETS]==[n for n,_ in DOCK_PRESETS]
-        assert len(PRESETS)==5 and ('液态玻璃','liquid') in MATERIAL_CHOICES
+        assert len(PRESETS)==6 and ('液态玻璃','liquid') in MATERIAL_CHOICES
         for component in (runtime.clock,runtime.calendar):
             original=copy.deepcopy(component.option('appearance'))
             dialog=ClockOptions(component);dialog.show();dialog.tabs.setCurrentIndex(2);QApplication.processEvents()
@@ -93,7 +93,7 @@ def check_clock_materials(api,runtime,output,checks):
         assert not any(row['key']=='card_design' for row in dialog.search_targets())
         assert dialog.profile_candidate()['card_design']=='paper'
         dialog.reject();dialog.deleteLater();dialog=None
-        checks.append('five common themes including liquid glass; clock/calendar full-transparent rendering, save/reopen and cancel; material controls follow preset changes; legacy custom materials and decoration preserved')
+        checks.append('six common presets including liquid glass and vivid colours; clock/calendar full-transparent rendering, save/reopen and cancel; material controls follow preset changes; legacy custom materials and decoration preserved')
     finally:
         if dialog:dialog.reject();dialog.deleteLater()
         dock.cfg.clear();dock.cfg.update(before);api.save_config(dock.cfg);runtime.apply_settings();QApplication.processEvents()
