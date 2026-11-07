@@ -41,6 +41,10 @@ def run(app,api,runtime,root,checks):
     windows=[QWidget(),QWidget()];windows[0].show();app.processEvents()
     handles=[int(w.winId()) for w in windows]
     icons=DesktopIcons(finder=lambda:handles,journal_path=str(Path(root)/'middle-icon-state.json'))
+    # The hidden test launcher can suppress a frozen application's first show.
+    # Seed the native states explicitly before verifying exact restoration.
+    icons.user.ShowWindow(handles[0],4)
+    icons.user.ShowWindow(handles[1],0)
     manager=runtime.panels;saved_icons=manager.icons;cfg=copy.deepcopy(runtime.dock.cfg)
     visible=lambda handle:bool(icons.user.GetWindowLongW(handle,-16)&0x10000000)
     try:

@@ -1,5 +1,4 @@
 """An independently enabled, two-line resource display in a verified taskbar gap."""
-import ctypes
 from ctypes import wintypes
 from PyQt5.QtCore import Qt,QRect,QRectF,QPointF
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter
@@ -67,7 +66,7 @@ def columns(service):
 class TaskbarReadout(QWidget):
     def __init__(self,service):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint|Qt.WindowDoesNotAcceptFocus)
-        self.service=service;self.placement=Placement(self);self.press=None;self.page=0;self.page_count=1;self.host=0;self.cells=[]
+        self.service=service;self.placement=Placement(self);self.press=None;self.page=0;self.page_count=1;self.cells=[]
         self.media_actions={};self.media_bounds=[];self.text_bounds=[];self.wanted=288;self.press_media=None
         self.native_layer = None
         self.setMouseTracking(True)
@@ -76,36 +75,37 @@ class TaskbarReadout(QWidget):
 
     def reposition(self):
         slot=self.placement.slot
-        if slot is None or self.placement.slot_bar != self.placement.target:self.hide();return
+        if slot is None or self.placement.slot_bar != self.placement.target or self.placement.suppressed():self.hide();return
         if self.geometry()!=slot:self.setGeometry(slot)
         was_visible = self.isVisible()
         self.show()
+        from window_layers import click_through
+        click_through(self,self.service.cfg['resource_taskbar_click_through'])
         if self.service.runtime.dock.preview:return
         hwnd=self.placement.target['hwnd']
         win = int(self.winId())
-        changed_host = self.host != hwnd
-        if changed_host:
-            user=ctypes.windll.user32
-            user.SetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_ssize_t];user.SetWindowLongPtrW.restype=ctypes.c_ssize_t
-            user.SetWindowLongPtrW(win,-8,hwnd);self.host=hwnd
         layer = self.service.cfg['resource_taskbar_layer']
-        if changed_host or not was_visible or self.native_layer != layer:
+        state = (win, hwnd, layer)
+        if not was_visible or self.native_layer != state:
             from taskbar_input import place_layer
-            self.native_layer = layer
-            place_layer(win, hwnd, layer)
+            from platform_services import fullscreen_window
+            if place_layer(win, hwnd, layer, cover=fullscreen_window() if layer=='top' else None):
+                self.native_layer = state
         else:
             self.restore_input_layer()
 
-    def restore_input_layer(self):
+    def restore_input_layer(self, cover=None):
         if (not self.isVisible() or self.placement.slot_bar != self.placement.target
                 or not self.placement.target or self.service.runtime.dock.preview):
             return
         from taskbar_input import place_layer, restore_input_layer
         win, hwnd = int(self.winId()), self.placement.target['hwnd']
-        if self.native_layer == 'bottom':
+        if self.service.cfg['resource_taskbar_layer'] == 'bottom':
             place_layer(win, hwnd, 'bottom')
         else:
-            restore_input_layer(win, hwnd)
+            from platform_services import fullscreen_window
+            restore_input_layer(win, hwnd, cover=fullscreen_window() if cover is None else cover,
+                                transparent=self.service.cfg['resource_taskbar_click_through'])
 
     def placement_changed(self):
         self.reposition();self.service.sync()
@@ -229,7 +229,7 @@ class TaskbarReadout(QWidget):
         if event_type in (b'windows_generic_MSG',b'windows_dispatcher_MSG'):
             msg=wintypes.MSG.from_address(int(message))
             if msg.message==0x0021:return True,3  # MA_NOACTIVATE: preserve the first click.
-            if msg.message==0x0084:return True,1  # This verified slot is an interactive client area.
+            if msg.message==0x0084:return True,-1 if self.service.cfg['resource_taskbar_click_through'] else 1
             if msg.message in (0x001a,0x031a,0x0320):self.sync_style()
         return super().nativeEvent(event_type,message)
 
@@ -270,6 +270,8 @@ class TaskbarReadout(QWidget):
         for key,title in TASKBAR_LAYERS.items():
             action=layers.addAction(title);action.setCheckable(True);action.setChecked(self.service.cfg['resource_taskbar_layer']==key)
             action.triggered.connect(lambda checked,key=key:self.service.set_options(resource_taskbar_layer=key))
+        passing=menu.addAction('鼠标穿透');passing.setCheckable(True);passing.setChecked(self.service.cfg['resource_taskbar_click_through'])
+        passing.triggered.connect(lambda on:self.service.set_options(resource_taskbar_click_through=on))
         colors=menu.addAction('文字阈值变色');colors.setCheckable(True);colors.setChecked(self.service.cfg.get('resource_task_threshold',False))
         colors.triggered.connect(lambda on:self.service.set_options(resource_task_threshold=on))
         music=menu.addAction('显示任务栏音乐');music.setCheckable(True);music.setChecked(self.service.cfg['resource_task_music'])

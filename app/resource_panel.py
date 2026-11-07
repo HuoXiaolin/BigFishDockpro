@@ -1,7 +1,4 @@
 """Movable monitor panel. Compact and expanded states share one header-centre anchor."""
-import ctypes as C
-from ctypes import wintypes as W
-import os
 import time
 from PyQt5.QtCore import Qt,QRect,QRectF,QPoint,QPointF,QSize,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap
@@ -10,7 +7,7 @@ from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
 from ui_style import AlignedMenu
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import HALO_SPEEDS,METRICS,SENSOR_UNITS,background
+from resource_options import HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,background
 from flash_view import palette_for,icon
 
 
@@ -62,7 +59,7 @@ class BatteryRows(QWidget):
         return '未报告' if row['level'] is None else f"{row['level']}%"
 
     def paintEvent(self,event):
-        from bluetooth_gauge import draw_rings
+        from bluetooth_gauge import draw_rings,ring_ink
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         c=self.owner_window.colors
         draw_rings(p,QRectF(1,3,54,54),self.legend,not c['light'])
@@ -83,7 +80,7 @@ class BatteryRows(QWidget):
         first=(self.height()-19*len(self.legend))//2
         for i,row in enumerate(self.legend):
             y=first+19*i
-            p.setPen(Qt.NoPen);p.setBrush(QColor(row['ink']));p.drawEllipse(QPointF(64,y+9),3,3)
+            p.setPen(Qt.NoPen);p.setBrush(QColor(ring_ink(row)));p.drawEllipse(QPointF(64,y+9),3,3)
             p.setPen(QColor(c['ink']));p.setFont(font)
             p.drawText(QRect(name_x,y,self.name_width+1,19),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,self.name_width+1))
             p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,19),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
@@ -326,7 +323,7 @@ class ResourceWindow(QWidget):
         if compact or not cfg['resource_rank']:
             self.rank_icons.clear();self.rank_frame=self.rank_style=None
             for mark,*_ in self.rank_labels:mark.clear()
-        if cfg['resource_expand_mode']!='hover':self.enter_timer.stop()
+        if cfg['resource_expand_mode']!='hover' or cfg['resource_click_through']:self.enter_timer.stop()
         self.reposition();self.refresh();self.sync_animation()
         self.sync_auto_fold()
         if opening:
@@ -371,25 +368,25 @@ class ResourceWindow(QWidget):
         rect=attached(rect,area,edge)
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
+        from window_layers import click_through
+        click_through(self,cfg['resource_click_through'])
     def taskbar_at(self,point):
         if self.service.runtime.dock.preview:return None
         from resource_taskbar import taskbars
         return next((bar for bar in taskbars() if bar['rect'].contains(point)),None)
 
     def layer(self):
-        target=0;mode=self.service.cfg['resource_layer']
-        state=(mode,target)
-        if self.last_layer==state or self.service.runtime.dock.preview:return
-        self.last_layer=state
-        user=C.windll.user32;user.GetShellWindow.restype=W.HWND
-        user.SetWindowLongPtrW.argtypes=[W.HWND,C.c_int,C.c_ssize_t];user.SetWindowLongPtrW.restype=C.c_ssize_t
-        user.SetWindowPos.argtypes=[W.HWND,W.HWND,C.c_int,C.c_int,C.c_int,C.c_int,W.UINT]
-        window=int(self.winId());owner=target if target else (user.GetShellWindow() or 0) if mode=='bottom' else 0
-        user.SetWindowLongPtrW(window,-8,owner)
-        if mode=='bottom':user.SetWindowPos(window,-2,0,0,0,0,0x13)
-        user.SetWindowPos(window,1 if mode=='bottom' else -1,0,0,0,0,0x13)
+        if self.service.runtime.dock.preview:return
+        from window_layers import desktop_layer, is_topmost, shell_owner, owner_of
+        hwnd=int(self.winId());top=self.service.cfg['resource_layer']=='top'
+        owner=0 if top else shell_owner()
+        state=(hwnd,top,owner)
+        if self.last_layer!=state or is_topmost(hwnd)!=top or owner_of(hwnd)!=owner:
+            if desktop_layer(hwnd,top,owner):self.last_layer=state
     def raise_if_top(self):
-        if self.service.cfg['resource_layer']=='top':self.raise_()
+        if self.service.cfg['resource_layer']=='top' and not self.service.runtime.dock.preview:
+            from window_layers import restack
+            restack(int(self.winId()),-1)
     def select_sort(self,key):
         self.rank_by=key
         self.refresh()
@@ -553,7 +550,7 @@ class ResourceWindow(QWidget):
         else:event.ignore()
     def enterEvent(self,event):
         self.outside_since = None
-        if self.service.cfg['resource_expand_mode']=='hover' and self.service.compact:self.enter_timer.start()
+        if self.service.cfg['resource_expand_mode']=='hover' and not self.service.cfg['resource_click_through'] and self.service.compact:self.enter_timer.start()
         super().enterEvent(event)
     def expand_hover(self):
         if self.service.cfg['resource_expand_mode']=='hover' and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(QCursor.pos()):self.service.fold(False,automatic=True)
@@ -601,9 +598,16 @@ class ResourceWindow(QWidget):
     def contextMenuEvent(self,event):
         self.enter_timer.stop();self.outside_since=None;menu=AlignedMenu(self);cfg=self.service.cfg
         menu.addAction('展开详情' if self.service.compact else '收起胶囊',lambda:self.service.fold(not self.service.compact))
+        opening=menu.addMenu('展开后默认页面')
+        for key,label in OPEN_PAGES.items():
+            item=opening.addAction(label);item.setCheckable(True);item.setChecked(cfg['resource_open_page']==key)
+            item.setEnabled(key=='last' or self.page_enabled(key))
+            item.triggered.connect(lambda checked,key=key:self.service.set_options(resource_open_page=key))
         for name,layer in [('置顶显示','top'),('置于底层','bottom')]:
             item=menu.addAction(name);item.setCheckable(True);item.setChecked(cfg['resource_layer']==layer)
             item.triggered.connect(lambda checked,layer=layer:self.service.set_options(resource_layer=layer))
+        passing=menu.addAction('鼠标穿透');passing.setCheckable(True);passing.setChecked(cfg['resource_click_through'])
+        passing.triggered.connect(lambda on:self.service.set_options(resource_click_through=on))
         bar=menu.addAction('任务栏监控');bar.setCheckable(True);bar.setChecked(cfg['resource_taskbar'])
         bar.triggered.connect(lambda enabled:self.service.set_options(resource_taskbar=enabled))
         auto=menu.addAction('鼠标离开自动收起');auto.setCheckable(True);auto.setChecked(cfg['resource_auto_hide'])
@@ -622,6 +626,7 @@ class ResourceWindow(QWidget):
         super().hideEvent(event)
     def showEvent(self,event):
         super().showEvent(event)
+        self.last_layer=None
         self.sync_auto_fold()
         if self.colors:self.sync_animation();self.liquid.sync()
         if self.service.extras:self.service.extras.sync()

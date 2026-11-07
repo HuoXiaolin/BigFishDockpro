@@ -21,6 +21,13 @@ def main():
             cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[],hide_tray=True,desktop_auto_sort=False,desktop_icon_mode='both',screen_corners=False,lite_enabled=False)
             dock=api.Dock(cfg,preview=True);tray=api.DockTray(dock);dock.tray=tray
             runtime=tray.runtime=RuntimeController(dock,tray,api)
+            from window_layer_tests import run as run_window_layers, bluetooth_rings
+            run_window_layers(api,runtime,app,output,checks)
+            bluetooth_rings(checks)
+            from startup_tests import early_logon
+            early_logon(root,checks)
+            from reliability_state_tests import check_taskbar_shell_recovery
+            check_taskbar_shell_recovery(checks)
             from flash_capsule_tests import run as flash
             flash(api,runtime,root,app,output,checks)
             from resource_capsule_tests import run as existing

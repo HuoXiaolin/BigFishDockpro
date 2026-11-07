@@ -45,6 +45,8 @@ def run(output):
             (output/'rank-memory.json').write_text(json.dumps(measure(runtime,app),indent=2),encoding='utf-8')
         from corner_stacking_tests import run as run_corner_stacking
         run_corner_stacking(app, output, checks)
+        from startup_tests import early_logon
+        early_logon(root.name,checks)
         from desktop_shortcut_tests import run as run_desktop_shortcut
         run_desktop_shortcut(app,api,runtime,root.name,checks)
         from update_source_tests import run as run_update_sources
@@ -414,6 +416,9 @@ def run(output):
         check_flash_capsule(api,runtime,root.name,app,output,checks)
         from settings_interaction_tests import run as check_settings_interaction
         check_settings_interaction(api,runtime,root.name,app,output,checks)
+        from window_layer_tests import run as run_window_layers, bluetooth_rings
+        run_window_layers(api,runtime,app,output,checks)
+        bluetooth_rings(checks)
         from shutdown_tests import run as check_shutdown
         check_shutdown(api,runtime,root.name,app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.

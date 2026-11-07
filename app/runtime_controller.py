@@ -2,7 +2,7 @@
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication, QDialog
 from screen_corners import CornerManager
-from platform_services import foreground_fullscreen, set_priority
+from platform_services import foreground_fullscreen, fullscreen_window, set_priority
 from update_service import UpdateService
 
 
@@ -16,6 +16,7 @@ class RuntimeController:
         self.session_ending=False
         self.auto_game = False
         self.game_active = False
+        self.manual_game = False
         from desktop_panels import DesktopPanels
         self.panels = DesktopPanels(self)
         self.settings_open = False
@@ -66,6 +67,8 @@ class RuntimeController:
         self.arm_lite()
         from memory_budget import MemoryBudget
         self.memory_budget=MemoryBudget(self)
+        from window_layers import ForegroundLayers
+        self.foreground_layers=None if dock.preview else ForegroundLayers(dock,self.refresh_layers)
         if not dock.preview and not os.environ.get('FISHDOCK_TEST_DESKTOP'):
             status=api.config_status()
             if status.get('message'):
@@ -216,8 +219,10 @@ class RuntimeController:
         self.refresh_corners()
 
     def apply_visibility(self):
-        active = bool(self.dock.cfg['game_mode'] or self.auto_game) and not self.settings_open
+        manual = self.dock.cfg['game_mode'] and not self.settings_open
+        active = (manual or self.auto_game) and not self.settings_open
         changed=active!=self.game_active;self.game_active=active
+        manual_changed=manual!=self.manual_game;self.manual_game=manual
         # Saved intent owns visibility; temporary game/shutdown hides never do.
         self.was_dock_visible=bool(self.dock.cfg['dock_visible'])
         wanted=self.was_dock_visible and not active
@@ -226,7 +231,23 @@ class RuntimeController:
         if changed:
             self.dock.sync_background_polling(refresh=not active)
             self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync();self.flash.sync();self.resources.sync()
+        elif manual_changed:self.resources.sync()
         self.refresh_corners()
+
+    def refresh_layers(self):
+        if self.closed:return
+        strip=self.resources.strip
+        if strip:strip.placement.shell_changed()
+        cfg=self.dock.cfg
+        windows=[self.dock if cfg['layer']=='top' else None,
+                 self.resources.window if cfg['resource_layer']=='top' else None,
+                 self.flash.edge,self.flash.panel,self.flash.toast]
+        windows.extend(note for note in self.notes.windows.values() if note.row()['pinned'])
+        visible=[w for w in windows if w is not None and w.isVisible()]
+        if visible:
+            from window_layers import repair_top
+            cover=fullscreen_window()
+            for w in visible:repair_top(int(w.winId()),cover)
 
     def apply_settings(self,changed=None):
         if changed is not None:changed=set(changed)
@@ -323,6 +344,7 @@ class RuntimeController:
         self.clock.dispose(save_geometry=False);self.calendar.dispose(save_geometry=False)
         self.lite_timer.stop()
         self.fullscreen_timer.stop()
+        if self.foreground_layers:self.foreground_layers.close()
         self.corners.close()
         self.panels.close(save_geometry=False,wait_ms=0 if shutdown else 100)
         self.taskbar.close(shutdown=shutdown)

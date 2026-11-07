@@ -34,8 +34,8 @@ class ResourceOptions(QDialog):
         5: ('limit_fields',),
     }
     field_pages=[
-        {'resource_'+key for key in METRICS}|{'resource_enabled','resource_auto_hide','resource_bt_tray','resource_hide_unavailable','resource_layer','resource_fold','resource_interval','resource_delay','resource_open_page'},
-        {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font'},
+        {'resource_'+key for key in METRICS}|{'resource_enabled','resource_auto_hide','resource_bt_tray','resource_hide_unavailable','resource_layer','resource_fold','resource_interval','resource_delay','resource_open_page','resource_click_through'},
+        {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_compact_rotate','resource_ring_letters','resource_quota_alert'},
         {'resource_ai','resource_ai_tray','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_threshold','resource_background','resource_palette'},set(),
@@ -154,11 +154,12 @@ class ResourceOptions(QDialog):
 
         def build_0():
             desktop=page('桌面监控')
-            for key,title in [('resource_enabled','显示资源胶囊'),('resource_auto_hide','鼠标离开后收起'),('resource_bt_tray','蓝牙电量托盘图标'),('resource_hide_unavailable','隐藏未提供读数的传感器')]:
-                self.fields[key]=check(title,cfg[key]);desktop.addWidget(self.fields[key])
+            self.fields['resource_enabled']=check('显示资源胶囊',cfg['resource_enabled']);desktop.addWidget(self.fields['resource_enabled'])
             form=QFormLayout();desktop.addLayout(form)
-            combo(form,'resource_open_page','展开首选页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
+            combo(form,'resource_open_page','展开后默认页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
             combo(form,'resource_layer','桌面层级',[('置顶','top'),('置底','bottom')],cfg['resource_layer'],self.fields)
+            for key,title in [('resource_click_through','鼠标穿透（可从托盘设置关闭）'),('resource_auto_hide','鼠标离开后收起'),('resource_bt_tray','蓝牙电量托盘图标'),('resource_hide_unavailable','隐藏未提供读数的传感器')]:
+                self.fields[key]=check(title,cfg[key]);form.addRow(self.fields[key])
             combo(form,'resource_fold','收起形态',[('胶囊','pill'),('圆球','ball'),('方条','bar')],cfg['resource_fold'],self.fields)
             combo(form,'resource_interval','采样间隔',[(str(s)+' 秒',s) for s in (1,2,5)],cfg['resource_interval'],self.fields)
             spin(form,'resource_delay','收起延迟（秒）',1,30,cfg['resource_delay'],self.fields)
@@ -177,6 +178,7 @@ class ResourceOptions(QDialog):
             combo(placement_form,'resource_taskbar_position','任务栏位置',[('靠左','left'),('居中','center'),('靠右','right')],cfg['resource_taskbar_position'],self.fields)
             from resource_options import TASKBAR_LAYERS
             combo(placement_form,'resource_taskbar_layer','显示层级',[(title,key) for key,title in TASKBAR_LAYERS.items()],cfg['resource_taskbar_layer'],self.fields)
+            self.fields['resource_taskbar_click_through']=check('鼠标穿透（可从托盘设置关闭）',cfg['resource_taskbar_click_through']);bar.addWidget(self.fields['resource_taskbar_click_through'])
             self.fields['resource_task_threshold']=check('文字阈值变色（关闭时跟随系统字体颜色）',cfg['resource_task_threshold']);bar.addWidget(self.fields['resource_task_threshold'])
             self.fields['resource_task_music']=check('横向任务栏显示音乐（封面、控制与律动）',cfg['resource_task_music']);bar.addWidget(self.fields['resource_task_music'])
             self.fields['resource_task_music_colorful']=check('音乐多彩样式（频谱与进度线）',cfg['resource_task_music_colorful']);bar.addWidget(self.fields['resource_task_music_colorful'])

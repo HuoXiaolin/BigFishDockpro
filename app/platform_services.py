@@ -4,7 +4,7 @@ from ctypes import wintypes
 import os
 
 
-def foreground_fullscreen(exclude_pid=None):
+def fullscreen_window(exclude_pid=None):
     user = ctypes.windll.user32
     user.GetForegroundWindow.restype = wintypes.HWND
     user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
@@ -38,8 +38,21 @@ def foreground_fullscreen(exclude_pid=None):
     info.size = ctypes.sizeof(info)
     if not user.GetMonitorInfoW(user.MonitorFromWindow(hwnd, 2), ctypes.byref(info)):
         return False
-    return covers_monitor((rect.left, rect.top, rect.right, rect.bottom),
-                          (info.monitor.left, info.monitor.top, info.monitor.right, info.monitor.bottom))
+    return hwnd if covers_monitor((rect.left, rect.top, rect.right, rect.bottom),
+                                  (info.monitor.left, info.monitor.top, info.monitor.right, info.monitor.bottom)) else None
+
+
+def foreground_fullscreen(exclude_pid=None):
+    return bool(fullscreen_window(exclude_pid))
+
+
+def same_monitor(a, b):
+    if not a or not b:return False
+    user = ctypes.windll.user32
+    user.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user.MonitorFromWindow.restype = wintypes.HANDLE
+    first = user.MonitorFromWindow(a, 0)
+    return bool(first and first == user.MonitorFromWindow(b, 0))
 
 
 def covers_monitor(rect, monitor):

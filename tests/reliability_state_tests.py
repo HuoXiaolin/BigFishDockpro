@@ -165,6 +165,51 @@ def check_taskbar_retries():
         backend.stop_timer.deleteLater()
 
 
+def check_taskbar_shell_recovery(checks):
+    from taskbar_xaml import XamlTaskbar
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory(prefix='bfp-taskbar-boot-') as directory:
+        dock=QObject()
+        dock.cfg={'taskbar_mode':'clear','taskbar_color':'#85c6ed','taskbar_opacity':32,'taskbar_blur':12}
+        backend=XamlTaskbar(dock,Path(directory),Mock())
+        backend.monitor_shell=True
+        state=[QProcess.NotRunning]
+        def start():
+            state[0]=QProcess.Running
+            backend.started()
+        with patch('taskbar_xaml.shell_handle',return_value=None) as shell, \
+             patch('taskbar_xaml.resident_program',return_value=None), \
+             patch.object(backend.process,'state',side_effect=lambda:state[0]), \
+             patch.object(backend.process,'start',side_effect=start) as starts, \
+             patch.object(backend.process,'terminate'):
+            try:
+                backend.sync()
+                assert backend.shell_timer.isActive() and not starts.called
+                shell.return_value=10;backend.shell_changed()
+                assert backend.apply_timer.isActive() and not starts.called
+                backend.apply_timer.stop();backend.apply_desired()
+                assert starts.call_count==1 and backend.configuration_matches(dock.cfg)
+                state[0]=QProcess.NotRunning;backend.finished(1,QProcess.CrashExit)
+                assert backend.apply_timer.isActive() and backend.retries==1
+                backend.apply_timer.stop();backend.apply_desired()
+                assert starts.call_count==2
+                shell.return_value=11;backend.shell_changed()
+                assert backend.apply_timer.isActive()
+                with patch.object(backend,'write',wraps=backend.write) as write:
+                    backend.apply_timer.stop();backend.apply_desired()
+                    write.assert_called_once()
+                assert starts.call_count==2
+                dock.cfg['taskbar_mode']='system'
+                backend.sync()
+                assert not backend.shell_timer.isActive() and not backend.apply_timer.isActive()
+                state[0]=QProcess.NotRunning;backend.finished()
+                assert not backend.desired
+            finally:
+                state[0]=QProcess.NotRunning
+                backend.close()
+    checks.append('Taskbar transparency waits for Explorer at login, reapplies after a new shell HWND, retries owned startup failure, and cancels retries in system mode.')
+
+
 def check_taskbar_effect_status(runtime, checks):
     from taskbar_appearance import TaskbarAppearance
     from taskbar_xaml import XamlTaskbar, effect_key
@@ -310,5 +355,6 @@ def run(api, runtime, main, app, output, checks):
     check_config_store()
     check_update_generation(app)
     check_taskbar_retries()
+    check_taskbar_shell_recovery(checks)
     check_taskbar_effect_status(runtime, checks)
     checks.append('configuration recovery: bounded last-good/damaged copies, corrupted/unreadable source protection, explicit recovery and atomic failure; update source generations discard stale success/error and serialize rechecks; taskbar write failure/exit retry and text-only cache via fake process; no system settings or network changed')

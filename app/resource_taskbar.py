@@ -5,6 +5,7 @@ import json
 import time
 from PyQt5.QtCore import QObject,QTimer,QProcess,Qt,QRect,QPoint,pyqtSignal
 from PyQt5.QtWidgets import QApplication
+from platform_services import fullscreen_window, same_monitor
 from resource_probes import binary
 
 
@@ -77,6 +78,7 @@ class Placement(QObject):
         super().__init__(window);self.window=window;self.slot=None;self.slot_bar=None;self.target=None;self.proposal=False
         self.closed=False;self.process=None;self.waiting=None;self.checked=False;self.retry_at=0.;self.hook=None;self.callback=None;self.deferred=None
         self.request=None
+        self.shell_missing=False;self.fullscreen=False
         self.debounce=QTimer(self);self.debounce.setSingleShot(True);self.debounce.setInterval(600)
         self.debounce.timeout.connect(self.check);self.layout_changed.connect(self.schedule_check,Qt.QueuedConnection)
         self.shell_timer=QTimer(self);self.shell_timer.setInterval(2500);self.shell_timer.timeout.connect(self.shell_changed)
@@ -92,36 +94,52 @@ class Placement(QObject):
         if self.closed or self.proposal:return
         anchor=self.window.service.cfg['resource_taskbar_anchor']
         previous=getattr(self,'ratio',None);self.ratio=self.configured_ratio()
-        current=next((r for r in self.bars() if r['screen']==anchor.get('screen')),None)
-        if current is None:current=next(iter(self.bars()),None)
+        bars=self.bars()
+        current=next((r for r in bars if r['screen']==anchor.get('screen')),bars[0] if bars else None)
+        self.shell_missing=current is None
+        self.fullscreen=bool(current and same_monitor(fullscreen_window(),current['hwnd']))
         if current and (not self.target or current!=self.target or not self.checked or previous!=self.ratio):
             self.target=current;self.query(current,self.ratio)
         if not self.shell_timer.isActive():self.shell_timer.start()
     def bars(self):
         return [] if self.window.service.runtime.dock.preview else taskbars()
+    def suppressed(self):
+        if self.window.service.cfg['resource_taskbar_layer']=='bottom':
+            return self.shell_missing or self.fullscreen
+        if self.shell_missing and self.slot_bar and self.slot:
+            return not any(s.name()==self.slot_bar['screen'] and s.geometry().contains(self.slot)
+                           for s in QApplication.screens())
+        return False
     def shell_changed(self):
         if self.closed:return
+        hidden=self.suppressed()
         anchor=self.window.service.cfg['resource_taskbar_anchor']
         bars=self.bars()
-        bar=next((b for b in bars if b['screen']==anchor.get('screen')),bars[0] if bars else None)
-        if bar and not self.window.service.runtime.dock.preview:
-            from platform_services import foreground_fullscreen
-            if foreground_fullscreen():bar=None
+        screen=anchor.get('screen') or (self.slot_bar or {}).get('screen')
+        bar=next((b for b in bars if b['screen']==screen),None)
         if bar is None:
-            if self.slot is not None or self.target is not None:
-                self.slot=None;self.slot_bar=None;self.target=None;self.checked=False;self.window.placement_changed()
-            return
-        if self.target!=bar or not self.checked or (self.slot is None and time.monotonic()>=self.retry_at):
+            # A fullscreen app can slide its taskbar offscreen. Keep the top
+            # readout in the last checked slot on that display while it returns.
+            retain=(self.window.service.cfg['resource_taskbar_layer']=='top' and self.slot_bar
+                    and self.slot_bar['screen']==screen and any(s.name()==screen for s in QApplication.screens()))
+            if not retain:bar=bars[0] if bars else None
+        cover=fullscreen_window()
+        self.shell_missing=bar is None
+        self.fullscreen=bool(bar and same_monitor(cover,bar['hwnd']))
+        if hidden!=self.suppressed():
+            self.window.placement_changed()
+            if self.closed:return
+        if bar and not self.suppressed() and (self.target!=bar or not self.checked or (self.slot is None and time.monotonic()>=self.retry_at)):
             changed = self.target != bar
             self.target=bar;self.query(bar,self.ratio)
             if changed:self.window.reposition()
-        self.window.restore_input_layer()
+        self.window.restore_input_layer(cover)
     def schedule_check(self):
         if not self.closed:
             self.window.restore_input_layer()
             if not self.debounce.isActive():self.debounce.start()
     def check(self):
-        if self.target:self.query(self.target,self.ratio)
+        if self.target and not self.shell_missing and not self.suppressed():self.query(self.target,self.ratio)
     def query(self,bar,ratio):
         if self.closed:return
         request=(bar,ratio)

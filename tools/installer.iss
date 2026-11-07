@@ -52,6 +52,9 @@ Name: "{autodesktop}\大肥鱼Dock"; Filename: "{app}\BigFishDockpro.exe"; Tasks
 Filename: "{app}\_internal\resource-probe\PawnIO_setup.exe"; Verb: "runas"; Parameters: "-install -silent"; Tasks: pawnio; Check: CheckedPawnInstaller; Flags: shellexec waituntilterminated; StatusMsg: "安装 CPU 传感器驱动…"
 Filename: "{app}\BigFishDockpro.exe"; Description: "启动大肥鱼Dock"; Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+Filename: "{app}\BigFishDockpro.exe"; Parameters: "--remove-startup"; Flags: runhidden; RunOnceId: "RemoveOwnedLogonTask"
+
 [Code]
 function NeedsPawnIO: Boolean;
 var

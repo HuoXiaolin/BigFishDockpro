@@ -1,17 +1,17 @@
-"""Repair only a taskbar overlay hidden beneath its own Explorer surface."""
+"""Stack the readout without activating it or moving Explorer or pinned tools."""
 import ctypes as C
 import os
 from ctypes import wintypes as W
+from platform_services import same_monitor
+from window_layers import LAYER_FLAGS, covers_above, is_topmost
 
 
-LAYER_FLAGS = 0x0213  # No activation, movement, resize, or change to Explorer's order.
-
-
-def place_layer(hwnd, taskbar, layer, user=None):
+def place_layer(hwnd, taskbar, layer, user=None, *, cover=None):
     user = user or C.windll.user32
     user.SetWindowPos.argtypes = [W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT]
     if layer == 'top':
-        after = overlapping_topmost(hwnd, taskbar, user) or -1
+        if not same_monitor(cover,hwnd):cover=None
+        after = overlapping_topmost(hwnd, taskbar, user, cover) or -1
     else:
         user.GetWindow.argtypes = [W.HWND, W.UINT]
         user.GetWindow.restype = W.HWND
@@ -31,8 +31,11 @@ def place_layer(hwnd, taskbar, layer, user=None):
     return bool(user.SetWindowPos(hwnd, after, 0, 0, 0, 0, LAYER_FLAGS))
 
 
-def restore_input_layer(hwnd,taskbar,user=None):
+def restore_input_layer(hwnd,taskbar,user=None,*,cover=None,transparent=False):
     user=user or C.windll.user32
+    if covers_above(cover,hwnd) or (transparent and (not is_topmost(hwnd) or covers_above(taskbar,hwnd))):
+        return place_layer(hwnd,taskbar,'top',user,cover=cover)
+    if transparent:return False
     user.GetWindowRect.argtypes=[W.HWND,C.POINTER(W.RECT)]
     user.WindowFromPoint.argtypes=[W.POINT];user.WindowFromPoint.restype=W.HWND
     user.GetAncestor.argtypes=[W.HWND,W.UINT];user.GetAncestor.restype=W.HWND
@@ -44,12 +47,12 @@ def restore_input_layer(hwnd,taskbar,user=None):
         root=user.GetAncestor(hit,2) if hit else 0
         if root==taskbar:hidden=True
         elif root!=hwnd:return False  # Respect menus, dialogs and other apps.
-    if not hidden:return False
+    if not hidden and is_topmost(hwnd):return False
     # No activation, geometry or owner changes. Reassert only our own window.
-    return place_layer(hwnd, taskbar, 'top', user)
+    return place_layer(hwnd, taskbar, 'top', user, cover=cover)
 
 
-def overlapping_topmost(hwnd, taskbar, user):
+def overlapping_topmost(hwnd, taskbar, user, cover=None):
     """Find the lowest overlapping topmost window so pinned tools stay interactive."""
     dwm = C.windll.dwmapi
     user.GetWindowRect.argtypes = [W.HWND, C.POINTER(W.RECT)]
@@ -72,6 +75,10 @@ def overlapping_topmost(hwnd, taskbar, user):
     @callback_type
     def visit(window, _):
         nonlocal found
+        # The fullscreen window may itself be topmost. Leave small pinned tools
+        # already above it in place, and don't insert under the fullscreen window.
+        if window == cover:
+            return False
         if window in (hwnd, taskbar) or not user.IsWindowVisible(window) or user.IsIconic(window):
             return True
         style = user.GetWindowLongPtrW(window, -20)

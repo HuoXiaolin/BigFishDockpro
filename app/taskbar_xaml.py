@@ -6,6 +6,15 @@ from PyQt5.QtCore import QProcess, QTimer
 from PyQt5.QtGui import QColor
 
 
+def shell_handle():
+    import ctypes
+    from ctypes import wintypes
+    user=ctypes.windll.user32
+    user.FindWindowW.argtypes=[wintypes.LPCWSTR,wintypes.LPCWSTR]
+    user.FindWindowW.restype=wintypes.HWND
+    return user.FindWindowW('Shell_TrayWnd',None)
+
+
 def configuration(cfg):
     modes = {'system': 'normal', 'clear': 'clear', 'color': 'opaque',
              'acrylic': 'acrylic', 'glass': 'blur'}
@@ -81,6 +90,33 @@ class XamlTaskbar:
         self.stop_timer = QTimer(dock)
         self.stop_timer.setSingleShot(True)
         self.stop_timer.timeout.connect(self.process.kill)
+        self.monitor_shell = not (getattr(dock,'preview',False) or os.environ.get('FISHDOCK_TEST_DESKTOP'))
+        self.shell = None
+        self.desired = None
+        self.retries = 0
+        self.shell_timer = QTimer(dock);self.shell_timer.setInterval(2500)
+        self.shell_timer.timeout.connect(self.shell_changed)
+        self.apply_timer = QTimer(dock);self.apply_timer.setSingleShot(True)
+        self.apply_timer.timeout.connect(self.apply_desired)
+
+    def shell_changed(self):
+        if self.closed or self.desired is None:return
+        current=shell_handle()
+        if current!=self.shell:
+            self.shell=current;self.retries=0
+            self.apply_timer.stop()
+            if current:self.apply_timer.start(750)
+
+    def apply_desired(self):
+        if self.closed or self.pending is not None or self.desired is None:return
+        current=shell_handle()
+        if current and current==self.shell:self.apply(self.desired)
+        elif current!=self.shell:self.shell_changed()
+
+    def schedule_recovery(self):
+        delays=(1000,2000,4000,8000)
+        if self.monitor_shell and self.desired is not None and self.shell and self.retries<len(delays):
+            self.apply_timer.start(delays[self.retries]);self.retries+=1
 
     def write(self, cfg):
         path = self.directory / 'settings.json'
@@ -106,6 +142,15 @@ class XamlTaskbar:
 
     def sync(self):
         cfg = {key:self.dock.cfg[key] for key in EFFECT_KEYS}
+        self.apply_timer.stop()
+        self.retries=0
+        self.desired=None if cfg['taskbar_mode']=='system' else cfg
+        if self.monitor_shell:
+            if self.desired is None:
+                self.shell_timer.stop();self.shell=None
+            else:
+                self.shell=shell_handle()
+                if not self.shell_timer.isActive():self.shell_timer.start()
         if self.pending is not None:
             # The owned process is stopping. Only the most recent request should run next.
             self.pending = cfg
@@ -115,7 +160,12 @@ class XamlTaskbar:
             self.stop_timer.start(2000)
             self.process.terminate()
             return
-        self.apply(cfg)
+        self.apply_when_ready(cfg)
+
+    def apply_when_ready(self,cfg):
+        if self.monitor_shell and cfg['taskbar_mode']!='system' and self.process.state()==QProcess.NotRunning:
+            if self.shell:self.apply_timer.start(750)
+        else:self.apply(cfg)
 
     def apply(self, cfg):
         try:
@@ -170,6 +220,7 @@ class XamlTaskbar:
         elif self.starting is not None:
             cfg, self.starting = self.starting, None
             self.report(cfg, False, '任务栏组件未能启动：'+self.process.errorString()+'；可点击重新应用。')
+            self.schedule_recovery()
 
     def finished(self, code=0, status=QProcess.NormalExit):
         self.stop_timer.stop()
@@ -179,7 +230,7 @@ class XamlTaskbar:
         self.active = self.starting = None
         if self.pending is not None:
             cfg, self.pending = self.pending, None
-            self.apply(cfg)
+            self.apply_when_ready(cfg)
         elif previous is not None:
             # A second TranslucentTB launcher exits normally after handing off to its resident.
             if status == QProcess.NormalExit and code == 0 and self.confirmed(previous):
@@ -188,9 +239,13 @@ class XamlTaskbar:
                 self.report(previous, True, '任务栏效果由现有组件提供。')
             else:
                 self.report(previous, False, f'任务栏组件已退出（退出码 {code}），可点击重新应用。')
+                self.schedule_recovery()
 
     def close(self,shutdown=False):
         self.closed = True
+        for name in ('shell_timer','apply_timer'):
+            timer=getattr(self,name,None)
+            if timer is not None:timer.stop()
         if getattr(self, 'shared', False) and self.active and self.confirmed(self.active):
             # Restore only our last configuration. The other process owns its lifecycle.
             try:

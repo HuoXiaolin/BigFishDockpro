@@ -1,6 +1,5 @@
 """Event-driven desktop sticky notes, with three selectable visual styles."""
 import copy
-import ctypes
 import datetime
 import json
 import os
@@ -388,17 +387,10 @@ class NoteWindow(QWidget):
         return font_pixels(self.dock.cfg,self.ui_factor)
 
     def layer(self):
-        user=ctypes.windll.user32
-        from ctypes import wintypes
-        user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
-        if self.row()['pinned']:user.SetWindowPos(int(self.winId()),-1,0,0,0,0,0x13)
-        else:
-            user.SetWindowPos(int(self.winId()),-2,0,0,0,0,0x13)
-            if not self.dock.preview and not os.environ.get('FISHDOCK_TEST_DESKTOP'):
-                user.GetShellWindow.restype=wintypes.HWND;owner=user.GetShellWindow()
-                if owner:
-                    user.SetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_ssize_t];user.SetWindowLongPtrW(int(self.winId()),-8,int(owner))
-            user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
+        from window_layers import desktop_layer,shell_owner
+        top=self.row()['pinned']
+        owner=0 if top or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP') else shell_owner()
+        desktop_layer(int(self.winId()),top,owner)
     def showEvent(self,event):super().showEvent(event);self.layer();self.refresh_timer.start();self.collapse_timer.start() if self.row()['auto_hide'] else None
     def moveEvent(self,event):
         super().moveEvent(event)

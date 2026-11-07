@@ -786,7 +786,7 @@
       "enabled": true
     }
   ],
-  "startup_priority": "low",
+  "startup_priority": "normal",
   "startup_delay": 0,
   "game_mode": false,
   "fullscreen_detection": false,
@@ -795,6 +795,7 @@
   "update_source": "https://github.com/HuoXiaolin/BigFishDockpro/releases/latest",
   "resource_enabled": true,
   "resource_layer": "bottom",
+  "resource_click_through": false,
   "resource_auto_hide": true,
   "resource_fold": "pill",
   "resource_collapsed": false,
@@ -818,6 +819,7 @@
   "resource_taskbar": false,
   "resource_taskbar_position": "right",
   "resource_taskbar_layer": "bottom",
+  "resource_taskbar_click_through": false,
   "resource_taskbar_anchor": {
     "screen": "",
     "ratio": 0.6106770833333334

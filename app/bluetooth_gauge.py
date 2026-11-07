@@ -9,8 +9,14 @@ from PyQt5.QtGui import QPainter,QPen,QColor,QPixmap,QIcon
 from PyQt5.QtWidgets import QApplication,QSystemTrayIcon
 from ui_style import AlignedMenu
 
-HUES=('#5b8def','#41b66a','#ff6667','#ac81e2','#e99d36','#35adb3')
+HUES=('#5b8def','#41b66a','#8297c9','#ac81e2','#e99d36','#35adb3')
+LOW_BATTERY='#e34851'
 GROUP=3
+
+
+def ring_ink(row):
+    level=row['level']
+    return LOW_BATTERY if level is not None and level<15 else row['ink']
 
 
 def devices(raw):
@@ -34,12 +40,14 @@ def draw_rings(painter,rect,rows,dark=False):
     pitch=diam/(2*n+1);width=max(1.,pitch*.64);radius=diam/2-width/2-0.6
     for index,row in enumerate(rows or [{'level':None,'ink':'#8795a1'}]):
         r=max(.55,radius-index*pitch);circle=QRectF(center.x()-r,center.y()-r,2*r,2*r)
+        value=row['level']
         track=QColor('#aab3bc' if dark else '#657581');track.setAlpha(105)
+        if value==0:
+            track=QColor(LOW_BATTERY);track.setAlpha(165)  # Warn without showing a filled battery.
         pen=QPen(track,width,Qt.DotLine if row['level'] is None else Qt.SolidLine,Qt.RoundCap)
         painter.setPen(pen);painter.setBrush(Qt.NoBrush);painter.drawEllipse(circle)
-        value=row['level']
         if value is not None and value>0:
-            pen=QPen(QColor(row['ink']),width,Qt.SolidLine,Qt.RoundCap);painter.setPen(pen)
+            pen=QPen(QColor(ring_ink(row)),width,Qt.SolidLine,Qt.RoundCap);painter.setPen(pen)
             painter.drawArc(circle,90*16,-round(value*360*16/100))
     painter.restore()
 

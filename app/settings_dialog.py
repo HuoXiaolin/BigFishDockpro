@@ -546,11 +546,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         running.addRow(label('修复会立即将当前运行版本登记为开机自启动，其他未保存的设置保持不变。', 'muted'))
         self.add_field(running, 'startup_priority')
         self.add_field(running, 'startup_delay')
-        running.addRow(label('延迟仅作用于开机自启动，手动启动不等待。进程优先级不保证 Windows 登录启动顺序。', 'muted'))
+        running.addRow(label('启用后在登录时尽早启动。设为 0 秒可免除程序等待；进程优先级作用于运行期间。', 'muted'))
         section_marker(running,'游戏与全屏')
         self.add_field(running, 'game_mode')
         self.add_field(running, 'fullscreen_detection')
-        running.addRow(label('游戏模式隐藏 Dock、卡片和圆角。全屏检测不含普通最大化窗口，精简模式下暂停。', 'muted'))
+        running.addRow(label('手动游戏模式隐藏 Dock、卡片和圆角。自动全屏隐藏保留已置顶的任务栏监控，精简模式下暂停。', 'muted'))
 
     def build_updates(self, updates):
         tray, api = self.tray, self.api

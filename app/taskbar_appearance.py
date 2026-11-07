@@ -232,10 +232,13 @@ class TaskbarAppearance:
             self.set_status('系统未接受部分任务栏效果，可点击重新应用。', '系统未接受部分任务栏效果。')
             if force:
                 self.log(self.error)
-        elif force or self.error:
+        elif not current:
+            self._effect = None
+            self.set_status('正在等待 Windows 任务栏就绪…')
+        elif force or self.error or self._effect is None:
             self._effect = effect_key(cfg)
             self.set_status('任务栏效果已应用。')
-        return not rejected
+        return bool(current) and not rejected
 
     def restore_native(self):
         self.timer.stop()

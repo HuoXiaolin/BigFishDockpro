@@ -7,7 +7,7 @@ Liquid Glass Dock —— Windows 11 仿 macOS / iOS 液态玻璃桌面图标栏
   * 屏幕底部居中悬浮，真毛玻璃（自己抓屏模糊）+ 液态玻璃高光
   * macOS 风格鼠标放大（鱼眼）效果，点击有回弹动画
   * Dock 右键可管理应用、打开设置，支持快捷方式拖入和独立桌面收纳
-  * 一键设置开机自启动（写入注册表 HKCU Run）
+  * 当前用户登录时自动启动，任务计划不可用时使用 HKCU Run
   * 配置文件：%APPDATA%\\LiquidGlassDock\\config.json
   * 日志文件：%APPDATA%\\LiquidGlassDock\\dock.log
 
@@ -224,14 +224,6 @@ def T(s):
 
 def set_lang(v):
     LANG["cur"] = "en" if str(v) == "en" else "zh"
-
-# SetWindowPos 用的常量
-HWND_TOPMOST = -1
-HWND_BOTTOM = 1
-SWP_NOSIZE = 0x0001
-SWP_NOMOVE = 0x0002
-SWP_NOACTIVATE = 0x0010
-
 
 # ----------------------------------------------------------------------------
 # 日志
@@ -627,43 +619,13 @@ def autostart_command():
 
 
 def set_autostart(enable):
-    import winreg
-    try:
-        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
-    except Exception:
-        return False
-    try:
-        if enable:
-            cmd = autostart_command()
-            winreg.SetValueEx(key, COMPAT_NAME, 0, winreg.REG_SZ, cmd)
-            log("已设置开机自启动: " + cmd)
-        else:
-            try:
-                winreg.DeleteValue(key, COMPAT_NAME)
-                log("已取消开机自启动")
-            except FileNotFoundError:
-                pass
-        return True
-    except Exception:
-        log("设置开机自启动失败: " + traceback.format_exc())
-        return False
-    finally:
-        winreg.CloseKey(key)
+    from startup_service import set_enabled
+    return set_enabled(sys.modules[__name__], bool(enable))
 
 
 def get_autostart():
-    import winreg
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_QUERY_VALUE)
-        try:
-            val, _ = winreg.QueryValueEx(key, COMPAT_NAME)
-            return bool(val)
-        except FileNotFoundError:
-            return False
-        finally:
-            winreg.CloseKey(key)
-    except Exception:
-        return False
+    from startup_service import inspect_startup
+    return inspect_startup(sys.modules[__name__])['status']=='ok'
 
 
 def system_is_light():
@@ -1559,15 +1521,8 @@ class Dock(QWidget):
         if self.preview:
             return
         try:
-            user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND,
-                                            ctypes.c_int, ctypes.c_int,
-                                            ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-            user32.SetWindowPos.restype = wintypes.BOOL
-            hwnd = wintypes.HWND(int(self.winId()))
-            layer = str(self.cfg.get("layer", "bottom"))
-            target = HWND_TOPMOST if layer == "top" else HWND_BOTTOM
-            user32.SetWindowPos(hwnd, wintypes.HWND(target), 0, 0, 0, 0,
-                                SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+            from window_layers import BOTTOM, TOPMOST, restack
+            restack(int(self.winId()), TOPMOST if self.cfg.get('layer')=='top' else BOTTOM)
         except Exception:
             log("apply_layer 失败: " + traceback.format_exc())
 
@@ -2774,6 +2729,10 @@ def run_preview(out_path, hover_index=None, size_px=None):
 # ----------------------------------------------------------------------------
 def main():
     args = sys.argv[1:]
+    if args == ['--remove-startup']:
+        from startup_service import remove_owned
+        remove_owned(sys.modules[__name__])
+        return 0
     if '--memory-profile' in args:
         from configured_memory_runner import main as profile_memory
         return profile_memory()
@@ -2861,7 +2820,7 @@ def main():
 
     def initialize():
         from platform_services import set_priority
-        set_priority(cfg['startup_priority'])
+        set_priority('normal' if '--autostart' in args else cfg['startup_priority'])
         dock = Dock(cfg, preview=bool(probe and probe.fresh))
         tray = DockTray(dock)
         dock.tray = tray
@@ -2870,8 +2829,6 @@ def main():
         from ui_style import apply_theme
         apply_theme(app, dock.is_light())
         tray.setVisible(not cfg['hide_tray'])
-        if cfg.get('autostart'):
-            set_autostart(True)
         if cfg.get('dock_visible', True):
             dock.show()
             dock.start_backdrop()
@@ -2879,6 +2836,12 @@ def main():
         tray.runtime = RuntimeController(dock, tray, sys.modules[__name__])
         dock.winId()  # A hidden instance still needs its settings-wake HWND.
         state.update(dock=dock, tray=tray, runtime=tray.runtime)
+        if not probe and cfg.get('autostart') and '--scheduled-startup' not in args:
+            # Defer migration until the first frame; the logon path itself
+            # never has to wait for a scheduler query or registry write.
+            from startup_service import set_enabled
+            QTimer.singleShot(250,lambda: cfg.get('autostart') and
+                              set_enabled(sys.modules[__name__],True,automatic=True))
         if probe:
             QTimer.singleShot(200, lambda: probe.complete(state))
         if cfg['check_updates_on_start']:

@@ -62,6 +62,9 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         bt.triggered.connect(lambda on:runtime.resources.set_options(resource_bt_tray=on))
         strip=monitor.addAction('任务栏监控');strip.setCheckable(True);strip.setChecked(tray.cfg['resource_taskbar'])
         strip.triggered.connect(lambda on:runtime.resources.set_options(resource_taskbar=on))
+        for key,title in [('resource_click_through','桌面胶囊鼠标穿透'),('resource_taskbar_click_through','任务栏监控鼠标穿透')]:
+            action=monitor.addAction(title);action.setCheckable(True);action.setChecked(tray.cfg[key])
+            action.triggered.connect(lambda on,key=key:runtime.resources.set_options(**{key:on}))
     clock_menu=menu.addMenu('桌面时钟');clock_menu.menuAction().setEnabled(runtime is not None)
     clock=clock_menu.addAction('显示 / 隐藏时钟');clock.setCheckable(True);clock.setChecked(bool(runtime and tray.cfg['clock_enabled']))
     clock.triggered.connect(lambda checked:runtime.clock.set_enabled(checked) if runtime else None)

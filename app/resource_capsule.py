@@ -122,7 +122,7 @@ class ResourceCapsule(QObject):
             self.settings_focus_changed()
 
     def needs(self):
-        if self.closed or self.runtime.game_active:return set()
+        if self.closed:return set()
         desktop=set()
         if self.window and self.window.isVisible() and not (self.compact and self.cfg['resource_fold']=='ball'):
             from resource_options import METRICS
@@ -137,6 +137,10 @@ class ResourceCapsule(QObject):
 
     def active_keys(self):
         return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank','traffic'}
+
+    def strip_allowed(self):
+        return not self.runtime.game_active or (
+            self.runtime.auto_game and not self.cfg['game_mode'] and self.cfg['resource_taskbar_layer']=='top')
 
     def make_strip(self):
         if self.strip is None:
@@ -178,12 +182,13 @@ class ResourceCapsule(QObject):
                 self.extras=ResourceExtras(self)
             self.extras.sync()
         elif self.extras:self.extras.close();self.extras=None
-        if self.cfg['resource_taskbar'] and (self.cfg['resource_task_metrics'] or self.cfg['resource_task_music']) and not self.runtime.game_active:
+        strip_allowed=self.strip_allowed()
+        if self.cfg['resource_taskbar'] and (self.cfg['resource_task_metrics'] or self.cfg['resource_task_music']) and strip_allowed:
             fresh=self.strip is None
             strip=self.make_strip()
             if fresh or getattr(strip.placement,'ratio',None)!=strip.placement.configured_ratio():strip.placement.restore()
             strip.reposition();strip.sync_style()
-        elif self.strip and (self.runtime.game_active or not self.strip.placement.proposal):
+        elif self.strip and (not strip_allowed or not self.strip.placement.proposal):
             strip,self.strip=self.strip,None;strip.dispose()
         demand=self.needs()
         want_tray=self.cfg['resource_ai_tray'] and not self.runtime.game_active
