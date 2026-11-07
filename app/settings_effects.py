@@ -43,26 +43,13 @@ def save_changes(tray,api,changes):
 
 def sync_main_fields(tray,changes):
     dialog=getattr(tray,'settings_dialog',None)
-    if dialog and dialog.isVisible():
+    if dialog and (dialog.isVisible() or getattr(dialog, '_suspended', False)):
         if 'appearance_mode' in changes:
             if dialog.import_candidate is None:
                 dialog.load_profile(tray.cfg)
                 dialog.show_profile_fields(tray.cfg)
             return
-        from PyQt5.QtWidgets import QComboBox,QSpinBox,QLineEdit
-        for key,value in changes.items():
-            field=dialog.fields.get(key)
-            if field is None:continue
-            blocked=field.blockSignals(True)
-            try:
-                if key in ('dock_material','panel_material'):
-                    from appearance_presets import select_material
-                    select_material(field,value)
-                elif isinstance(field,QComboBox):field.setCurrentIndex(field.findData(value))
-                elif isinstance(field,QSpinBox):field.setValue(100-value if key=='transparency' else value)
-                elif isinstance(field,QLineEdit):field.setText(str(value))
-                else:field.setChecked(bool(value))
-            finally:field.blockSignals(blocked)
-            if key in dialog._runtime_switch_baseline:dialog._runtime_switch_baseline[key]=value
-        from settings_design import NumericControl
-        for control in dialog.findChildren(NumericControl):control.slider.setValue(control.spin.value())
+        dialog.set_draft_values(changes)
+        for key, value in changes.items():
+            if key in dialog._runtime_switch_baseline:
+                dialog._runtime_switch_baseline[key] = value

@@ -8,8 +8,9 @@ from background_worker import BackgroundWorker
 
 class MonitorJob(BackgroundWorker):
     sample_ready=pyqtSignal(object)
-    def __init__(self,keys,seconds):
+    def __init__(self,keys,seconds,traffic_path=None):
         super().__init__()
+        self.traffic_path=traffic_path
         self.signature=(frozenset(keys),seconds)
         self.lock=threading.Lock();self.wake=threading.Event()
 
@@ -23,7 +24,7 @@ class MonitorJob(BackgroundWorker):
         from resource_metrics import Sampler
         reader=None
         try:
-            reader=Sampler(set())
+            reader=Sampler(set(),self.traffic_path)
             while not self.cancelled.is_set():
                 with self.lock:
                     self.wake.clear();keys,interval=self.signature
@@ -42,14 +43,37 @@ class ResourceCapsule(QObject):
         super().__init__(runtime.dock)
         self.runtime=runtime;self.window=self.strip=self.job=self.bluetooth=None
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
-        self.sensors=self.fps=None;self.auto_compact=None
+        self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
+        self.extras=None
+        self.main_settings = False
+        self.settings_depth = 0
+        self.preview_detail = False
 
     @property
     def cfg(self):return self.runtime.dock.cfg
 
     @property
     def compact(self):
+        if self.editing and not self.preview_detail:
+            return True
         return self.cfg['resource_collapsed'] if self.auto_compact is None else self.auto_compact
+
+    @property
+    def editing(self):
+        return self.main_settings or self.settings_depth > 0
+
+    def set_main_settings(self, open_):
+        if self.main_settings == open_:
+            return
+        self.main_settings = open_
+        self.settings_focus_changed()
+
+    def settings_focus_changed(self):
+        if not self.editing:
+            self.preview_detail = False
+        self.sync()
+        if self.editing and self.window is not None:
+            self.window.release_inactive_views()
 
     def set_options(self,**changes):
         from settings_effects import save_changes
@@ -62,19 +86,40 @@ class ResourceCapsule(QObject):
 
     def open(self):
         if self.runtime.game_active:return
+        self.preview_detail = self.editing
         self.set_options(resource_enabled=True,resource_collapsed=False)
-        if self.window:self.window.raise_if_top()
+        if self.window:
+            self.window.sync_window()
+            self.window.raise_if_top()
 
     def fold(self,compact,automatic=False):
+        if self.editing and not compact and not self.preview_detail:
+            if automatic:
+                return True
+            self.preview_detail = True
+            if self.cfg['resource_collapsed'] is False:
+                self.auto_compact = None
+                self.sync()
+                return True
         if automatic:
             if self.compact!=bool(compact):
                 self.auto_compact=bool(compact);self.sync()
             return True
         return self.set_options(resource_collapsed=bool(compact))
     def settings(self):
+        from contextlib import nullcontext
         from resource_panel import ResourceOptions
         from ui_style import exec_dialog
-        exec_dialog(ResourceOptions(self))
+        main = getattr(self.runtime.tray, 'settings_dialog', None)
+        scope = main.suspend_page() if main is not None and main.isVisible() else nullcontext()
+        self.settings_depth += 1
+        self.settings_focus_changed()
+        try:
+            with scope:
+                exec_dialog(ResourceOptions(self))
+        finally:
+            self.settings_depth -= 1
+            self.settings_focus_changed()
 
     def needs(self):
         if self.closed or self.runtime.game_active:return set()
@@ -82,13 +127,16 @@ class ResourceCapsule(QObject):
         if self.window and self.window.isVisible() and not (self.compact and self.cfg['resource_fold']=='ball'):
             from resource_options import METRICS
             desktop={k for k in METRICS if self.cfg['resource_'+k]}
-            if self.compact:desktop.difference_update(('gpu','rank'))
-            elif 'cpu' in desktop:desktop.add('cpu_cores')
+            if self.compact:desktop.intersection_update(self.cfg['resource_compact_metrics'])
+            elif self.window.page_key=='resources':
+                if 'cpu' in desktop:desktop.add('cpu_cores')
+            else:desktop.discard('rank')
+        if self.window and self.window.isVisible() and self.cfg['resource_traffic']:desktop.add('traffic')
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
         return desktop
 
     def active_keys(self):
-        return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank'}
+        return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank','traffic'}
 
     def make_strip(self):
         if self.strip is None:
@@ -116,7 +164,7 @@ class ResourceCapsule(QObject):
     def sync(self):
         if self.closed:return
         visible=self.cfg['resource_enabled'] and not self.runtime.game_active
-        if not visible or not self.cfg['resource_auto_hide']:self.auto_compact=None
+        if not visible:self.auto_compact=None
         if visible:
             if self.window is None:
                 from resource_panel import ResourceWindow
@@ -124,14 +172,33 @@ class ResourceCapsule(QObject):
             self.window.sync_window()
         elif self.window is not None:
             window,self.window=self.window,None;window.dispose()
-        if self.cfg['resource_taskbar'] and self.cfg['resource_task_metrics'] and not self.runtime.game_active:
+        if visible and self.cfg['resource_weather']:
+            if self.extras is None:
+                from resource_extras import ResourceExtras
+                self.extras=ResourceExtras(self)
+            self.extras.sync()
+        elif self.extras:self.extras.close();self.extras=None
+        if self.cfg['resource_taskbar'] and (self.cfg['resource_task_metrics'] or self.cfg['resource_task_music']) and not self.runtime.game_active:
             fresh=self.strip is None
             strip=self.make_strip()
-            if fresh:strip.placement.restore()
+            if fresh or getattr(strip.placement,'ratio',None)!=strip.placement.configured_ratio():strip.placement.restore()
             strip.reposition();strip.sync_style()
         elif self.strip and (self.runtime.game_active or not self.strip.placement.proposal):
             strip,self.strip=self.strip,None;strip.dispose()
         demand=self.needs()
+        want_tray=self.cfg['resource_ai_tray'] and not self.runtime.game_active
+        want_music=bool(self.strip and self.strip.music_requested())
+        want_deck=visible and (self.cfg['resource_ai'] or self.cfg['resource_music']) or want_tray or want_music
+        if want_deck:
+            if self.deck is None:
+                from resource_deck import DeckBridge
+                self.deck=DeckBridge(self)
+            self.deck.configure()
+        elif self.deck:self.deck.close();self.deck=None
+        if want_tray and self.ai_tray is None:
+            from resource_ai_tray import AiTray
+            self.ai_tray=AiTray(self)
+        elif not want_tray and self.ai_tray:self.ai_tray.close();self.ai_tray=None
         bt_visible='bluetooth' in demand
         use_bt=bt_visible or self.cfg['resource_bt_tray']
         if use_bt and self.bluetooth is None:
@@ -141,7 +208,8 @@ class ResourceCapsule(QObject):
             self.bluetooth.set_tray(self.cfg['resource_bt_tray'])
         elif self.bluetooth is not None:
             bt,self.bluetooth=self.bluetooth,None;bt.close()
-        sensors=frozenset(demand & {'cpu_temp','gpu_temp','cpu_power','gpu_power'})
+        from resource_options import SENSOR_UNITS
+        sensors=frozenset(demand & SENSOR_UNITS.keys())
         if self.sensors and self.sensors.keys!=sensors:
             self.sensors.close();self.sensors=None
         if sensors and not self.sensors:
@@ -179,7 +247,8 @@ class ResourceCapsule(QObject):
 
     def start_job(self):
         if self.closed or not self.signature or self.runtime.dock.preview:return
-        self.job=MonitorJob(*self.signature)
+        from pathlib import Path
+        self.job=MonitorJob(*self.signature,traffic_path=Path(self.runtime.api.CONFIG_DIR)/'network-traffic.json')
         self.job.sample_ready.connect(self.receive,Qt.QueuedConnection)
         self.job.finished.connect(self.job_finished,Qt.QueuedConnection);self.job.start()
 
@@ -211,6 +280,7 @@ class ResourceCapsule(QObject):
     def display(self):
         if self.window:self.window.refresh()
         if self.strip:self.strip.refresh()
+        if self.ai_tray:self.ai_tray.refresh()
     def reposition(self):
         if self.window:self.window.reposition()
         if self.strip:self.strip.placement.restore();self.strip.reposition()
@@ -223,3 +293,6 @@ class ResourceCapsule(QObject):
         if self.fps:self.fps.close();self.fps=None
         if self.window:self.window.dispose();self.window=None
         if self.strip:self.strip.dispose();self.strip=None
+        if self.deck:self.deck.close();self.deck=None
+        if self.ai_tray:self.ai_tray.close();self.ai_tray=None
+        if self.extras:self.extras.close();self.extras=None

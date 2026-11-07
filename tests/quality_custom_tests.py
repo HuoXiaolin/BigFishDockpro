@@ -53,6 +53,15 @@ def run(api,runtime,root,output,checks):
         assert line[0]<3 and line[-1]>250 and max(abs(a-b) for a,b in zip(line,line[1:]))<90,(ratio,line)
         assert result.pixelColor(0,0).alpha()>245 and result.pixelColor(width-1,height-1).alpha()>245
         blurred.save(str(output/('glass-native-blur-'+str(ratio)+'.png')))
+        # A large frosted texture keeps half-resolution pixels, but exactly the
+        # same logical destination. Text and outlines have their own native pass.
+        large=QPixmap(round(640*ratio),round(360*ratio));large.fill(QColor('#80b9d3'));large.setDevicePixelRatio(ratio)
+        small=smooth_backdrop(large,8)
+        assert small.width()*small.height()<=large.width()*large.height()//4
+        assert abs(small.width()/small.devicePixelRatio()-640)<=1
+        assert abs(small.height()/small.devicePixelRatio()-360)<=1
+        assert small.toImage().pixelColor(0,0).alpha()>245
+        assert abs(small.toImage().pixelColor(small.width()//2,small.height()//2).blue()-211)<3
         # Draw fractional-DPR rounded outlines, without clipping off half a stroke.
         frame=QImage(round(320*ratio),round(160*ratio),QImage.Format_ARGB32_Premultiplied);frame.setDevicePixelRatio(ratio);frame.fill(Qt.transparent)
         p=QPainter(frame);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.SmoothPixmapTransform)

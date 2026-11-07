@@ -66,7 +66,7 @@ class ConfigStore:
             except OSError as failure:
                 self.log('无法保留损坏配置：'+str(failure))
 
-    def load(self, defaults, missing_defaults=None, migrate=None):
+    def load(self, defaults, missing_defaults=None, migrate=None, first_run=None):
         self.blocked = False
         self.message = ''
         self._preserved = None
@@ -75,7 +75,10 @@ class ConfigStore:
             payload = _read(self.path)
             data = _decode(payload)
         except FileNotFoundError:
-            return copy.deepcopy(defaults)
+            result = copy.deepcopy(defaults)
+            if first_run is not None:
+                result.update({key: value for key, value in first_run().items() if key in defaults})
+            return result
         except (OSError, ValueError, UnicodeError, RecursionError) as error:
             self._protect(error, payload)
             try:

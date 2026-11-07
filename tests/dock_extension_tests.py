@@ -99,10 +99,15 @@ def run(api,runtime,root,output,checks):
         from taskbar_text import MODES as TEXT_MODES
         text_field=QComboBox();pending=QLineEdit('尚未保存的主题色')
         for title,value in TEXT_MODES:text_field.addItem(title,value)
-        tray.settings_dialog=SimpleNamespace(isVisible=lambda:True,fields={'taskbar_text_mode':text_field,'theme_color':pending},_runtime_switch_baseline={},findChildren=lambda *args:[])
+        from settings_dialog import SettingsDialog
+        settings=SimpleNamespace(isVisible=lambda:True,fields={'taskbar_text_mode':text_field,'theme_color':pending},
+            catalog={'taskbar_text_mode':None,'theme_color':None},_draft={},_runtime_switch_baseline={},findChildren=lambda *args:[])
+        settings.set_draft_values=lambda changes:SettingsDialog.set_draft_values(settings,changes)
+        tray.settings_dialog=settings
         for mode,label in [('light','浅色文字 · 白字'),('dark','深色文字 · 黑字'),('system','跟随系统')]:
             popup.tiles['taskbar_text'].click()
             assert cfg['taskbar_text_mode']==api.load_config()['taskbar_text_mode']==text_field.currentData()==mode
+            assert settings._draft['taskbar_text_mode']==mode
             assert popup.tiles['taskbar_text'].value==label
             assert fake_runtime.apply_settings.call_args.args==({'taskbar_text_mode'},)
             assert not callbacks and pending.text()=='尚未保存的主题色'
@@ -144,7 +149,7 @@ def run(api,runtime,root,output,checks):
             point=QPointF(widget.rect().center());global_point=QPointF(widget.mapToGlobal(widget.rect().center()))
             event=QWheelEvent(point,global_point,QPoint(),QPoint(0,delta),Qt.NoButton,Qt.NoModifier,Qt.NoScrollPhase,False)
             QApplication.sendEvent(widget,event)
-        wheel_on(popup.tiles['settings'],-120);assert popup.pages.currentIndex()==1
+        wheel_on(popup.tiles['flash'],-120);assert popup.pages.currentIndex()==1
         popup.grab().save(str(output/'dock-quick-components.png'))
         for key,field in [('notes','notes_enabled'),('clock','clock_enabled'),('calendar','calendar_enabled'),('blur','glass'),('panel_auto_hide','panel_auto_hide'),('corners','screen_corners')]:
             original_value=cfg[field]
@@ -152,11 +157,12 @@ def run(api,runtime,root,output,checks):
             assert cfg[field]!=original_value and api.load_config()[field]==cfg[field]
             with patch.object(dock,'start_backdrop'):popup.tiles[key].click()
             assert cfg[field]==original_value
-        wheel_on(popup.tiles['notes'],120);assert popup.pages.currentIndex()==0
-        from quick_actions import normalize_order,DEFAULT_ORDER,MIME
-        assert normalize_order(['clock','clock','not-an-action'])==['clock']+[key for key in DEFAULT_ORDER if key!='clock']
+        wheel_on(popup.tiles['settings'],120);assert popup.pages.currentIndex()==0
+        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_ORDER,PRIORITY_ORDER,MIME
+        assert DEFAULT_ORDER[:15] == PRIORITY_ORDER and normalize_order(PREVIOUS_ORDER) == DEFAULT_ORDER
+        assert normalize_order(['clock','clock','not-an-action'])==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
         assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
-        previous_twenty=[key for key in DEFAULT_ORDER if key not in PRODUCTIVITY_ACTIONS]
+        previous_twenty=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
         assert len(previous_twenty)==20 and normalize_order(previous_twenty)==DEFAULT_ORDER
         custom_twenty=list(reversed(previous_twenty))
         assert normalize_order(custom_twenty)==custom_twenty+list(PRODUCTIVITY_ACTIONS)
@@ -177,13 +183,13 @@ def run(api,runtime,root,output,checks):
         old_order=popup.order()
         # Real widget mouse handlers build a move-only drag; external data is rejected.
         from PyQt5.QtCore import QMimeData
-        tile=popup.tiles['settings'];center=QPointF(tile.rect().center())
+        tile=popup.tiles['flash'];center=QPointF(tile.rect().center())
         with patch('dock_extras.QDrag') as make_drag:
             make_drag.return_value.exec_.return_value=Qt.MoveAction
             QApplication.sendEvent(tile,QMouseEvent(QEvent.MouseButtonPress,center,Qt.LeftButton,Qt.LeftButton,Qt.NoModifier))
             QApplication.sendEvent(tile,QMouseEvent(QEvent.MouseMove,center+QPointF(30,0),Qt.NoButton,Qt.LeftButton,Qt.NoModifier))
             QApplication.sendEvent(tile,QMouseEvent(QEvent.MouseButtonRelease,center+QPointF(30,0),Qt.LeftButton,Qt.NoButton,Qt.NoModifier))
-            assert make_drag.called and bytes(make_drag.return_value.setMimeData.call_args.args[0].data(MIME))==b'settings'
+            assert make_drag.called and bytes(make_drag.return_value.setMimeData.call_args.args[0].data(MIME))==b'flash'
         assert popup.order()==old_order
         mime=QMimeData();mime.setData(MIME,b'clock')
         external=SimpleNamespace(source=lambda:None,mimeData=lambda:mime)
@@ -241,7 +247,6 @@ def run(api,runtime,root,output,checks):
         dock.extras.prepare(dock.items);dock.refresh_geometry();dock.extras.sync_clock()
         assert dock.extras.width()==0 and not dock.extras.rects() and not dock.extras.clock.isActive() and all('_reflected' not in it for it in dock.items)
         # Main Save does not repaint the entire application or reload every icon.
-        from settings_dialog import SettingsDialog
         dialog=SettingsDialog(runtime.tray,api);dialog.reveal();dialog.commit()
         try:
             from ui_style import apply_theme

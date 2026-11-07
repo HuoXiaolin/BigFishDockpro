@@ -2,6 +2,8 @@ from ui_style import compact_dialog, compact_px
 """Settings for existing upstream features; edits apply only on Save."""
 import os
 import copy
+from contextlib import contextmanager
+from weakref import proxy
 from PyQt5.QtCore import Qt, QSize, QRectF, QEvent
 from PyQt5.QtGui import QPalette, QColor, QIcon, QPixmap, QPainter
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
@@ -78,11 +80,45 @@ class SettingsPages(QWidget):
         super().resizeEvent(event)
 
 
-from settings_layout import SettingsSizingMixin
+from settings_layout import SETTINGS_MINIMUM, SETTINGS_SIZE, SettingsSizingMixin
 from settings_profiles import AppearanceProfileMixin
 
 
+class SettingsFields(dict):
+    def __init__(self, dialog):
+        super().__init__()
+        self.dialog = proxy(dialog)
+
+    def __missing__(self, key):
+        if key not in self.dialog.catalog:
+            raise KeyError(key)
+        self.dialog.ensure_page(self.dialog.catalog[key][0])
+        return dict.__getitem__(self, key)
+
+
 class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
+    PAGE_ATTRIBUTES = {
+        'dock_preset': 0,
+        'dock_preview': 0,
+        'overall_style': 0,
+        'restore_style': 0,
+        'taskbar_text_status': 0,
+        'panel_preset': 1,
+        'current_startup_path': 3,
+        'startup_check': 3,
+        'startup_path': 3,
+        'startup_repair': 3,
+        'startup_status': 3,
+        'update_link': 4,
+        'update_status': 4,
+        'usage_page': 5,
+        'config_recovery': 6,
+        'config_status': 6,
+        'project': 6,
+        'transfer_status': 6,
+    }
+    PAGE_BUILDERS = ('build_appearance', 'build_panel', 'build_apps', 'build_running', 'build_updates', 'build_usage', 'build_info')
+
     def __init__(self, tray, api):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.setObjectName('SettingsDialog')
@@ -90,12 +126,13 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.tray, self.api = tray, api
         self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','lite_enabled')
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
-        self.fields = {}
+        self.fields = SettingsFields(self)
         self.import_candidate=None;self.import_path=None
+        self.default_candidate = None
         self.applying_dock_preset = False
         self.setWindowTitle('设置 · 大肥鱼Dock')
-        self.resize(800, 640)
-        self.setMinimumSize(640, 480)
+        self.resize(*SETTINGS_SIZE)
+        self.setMinimumSize(*SETTINGS_MINIMUM)
         body = QVBoxLayout(self)
         body.setContentsMargins(18, 12, 18, 12)
         body.setSpacing(12)
@@ -108,28 +145,220 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         search_row.addWidget(self.setting_query,1);search_row.addWidget(button('搜索',self.search_settings));body.addLayout(search_row)
         self.tabs = SettingsPages()
         body.addWidget(self.tabs, 1)
+        from settings_catalog import PAGES, field_catalog
+        self.catalog = field_catalog(api, tray.cfg)
+        self._draft = {key: tray.cfg[key] for key in self.catalog}
+        self._mounted = {}
+        self._page_density = {}
+        self._scroll_positions = {}
+        self._suspended = False
+        self.transfer_help = '导出已保存的应用、卡片、便签正文和偏好；导入先预览，保存后替换当前配置并保留一份导入前备份。应用和桌面文件仅保存路径引用。便签正文包含在导出文件中，请妥善保管。'
+        self._transfer_message = self.transfer_help
+        for name in PAGES:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            self.tabs.addTab(scroll, name)
+        self.status = label('修改后保存，关闭不保存。', 'muted')
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        actions.addWidget(self.status, 1)
+        actions.addWidget(button('关闭', self.reject))
+        self.save = button('保存设置', self.commit, 'primary')
+        self.save.setDefault(True)
+        actions.addWidget(self.save)
+        self.grip = SettingsGrip(self)
+        self.grip.setFixedSize(12, 18)
+        self.grip.setAccessibleName('调整设置窗口大小')
+        actions.addWidget(self.grip, 0, Qt.AlignBottom)
+        body.addLayout(actions)
+        runtime = getattr(tray, 'runtime', None)
+        if runtime:
+            runtime.updater.changed.connect(self.update_changed)
+            runtime.panels.shared_settings_changed.connect(self.refresh_shared_panel_fields)
+        self.load_profile(tray.cfg)
+        compact_dialog(self)
+        from idle_resources import watch
+        watch(self)
+        self.initialize_size_behavior()
+        self.tabs.nav.currentRowChanged.connect(self.show_page)
+        self.ensure_page(0)
+
+    def __getattr__(self, name):
+        page = self.PAGE_ATTRIBUTES.get(name)
+        if page is not None and '_mounted' in self.__dict__:
+            self.ensure_page(page)
+            if name in self.__dict__:
+                return self.__dict__[name]
+        raise AttributeError(name)
+
+    def ensure_page(self, index):
+        if index < 0 or index in self._mounted:
+            return
+        from settings_design import group_form
+        from settings_layout import apply_density, capture_density
+        from ui_style import compact_widget_tree
+
+        form = self.section(index)
+        self._mounted[index] = ()
+        getattr(self, self.PAGE_BUILDERS[index])(form)
+        keys = tuple(key for key in self.fields if self.catalog[key][0] == index)
+        self._mounted[index] = keys
+        self.set_draft_values({key: self._draft[key] for key in keys})
+        self.connect_profile_fields(keys)
+        if index == 0:
+            self.position_changed()
+            self.sync_profile_selector()
+        elif index == 3:
+            self.check_startup()
+        elif index == 4:
+            runtime = getattr(self.tray, 'runtime', None)
+            if runtime:
+                self.update_changed(runtime.updater.message)
+        elif index == 6:
+            self.refresh_config_status()
+        self.refresh_preset_names(self._draft)
+        group_form(form, self)
+        page = form.parentWidget()
+        compact_widget_tree(page)
+        reference = capture_density(page)
+        self._page_density[index] = reference
+        apply_density(reference, float(self.property('interfaceScale') or .7))
+        scroll = self.tabs.pages.widget(index)
+        scroll.verticalScrollBar().setValue(self._scroll_positions.get(index, 0))
+
+    def unmount_page(self, index):
+        keys = self._mounted.pop(index)
+        for key in keys:
+            field = self.fields.pop(key)
+            self._draft[key] = self.field_value(key, field)
+        scroll = self.tabs.pages.widget(index)
+        self._scroll_positions[index] = scroll.verticalScrollBar().value()
+        page = scroll.takeWidget()
+        self._page_density.pop(index, None)
+        for name, owner in self.PAGE_ATTRIBUTES.items():
+            if owner == index:
+                self.__dict__.pop(name, None)
+        if page is not None:
+            page.hide()
+            page.deleteLater()
+
+    def show_page(self, index):
+        if index < 0 or self._suspended:
+            return
+        for previous in tuple(self._mounted):
+            if previous != index:
+                self.unmount_page(previous)
+        self.ensure_page(index)
+        page = self.__dict__.get('usage_page')
+        if page is not None:
+            page.refresh()
+
+    @contextmanager
+    def suspend_page(self):
+        """Release the main editor's widgets and backing store for a modal editor."""
+        index = self.tabs.currentIndex()
+        self._suspended = True
+        self.hide()
+        for previous in tuple(self._mounted):
+            self.unmount_page(previous)
+        self.destroy()
+        self._bound_settings_screen = False
+        try:
+            yield
+        finally:
+            self._suspended = False
+            if not self.tray.runtime.closed:
+                self.ensure_page(index)
+                self.show()
+
+    @staticmethod
+    def field_value(key, field):
+        if isinstance(field, QComboBox):
+            return field.currentData()
+        if isinstance(field, QSpinBox):
+            return 100 - field.value() if key == 'transparency' else field.value()
+        if isinstance(field, QLineEdit):
+            return field.text().strip()
+        return field.isChecked()
+
+    @staticmethod
+    def change_signal(field):
+        if isinstance(field, QComboBox):
+            return field.currentIndexChanged
+        if isinstance(field, QSpinBox):
+            return field.valueChanged
+        if isinstance(field, QLineEdit):
+            return field.textChanged
+        return field.toggled
+
+    def draft_values(self):
+        return dict(self._draft, **{key: self.field_value(key, field) for key, field in self.fields.items()})
+
+    def set_draft_values(self, changes):
+        for key, value in changes.items():
+            if key not in self.catalog:
+                continue
+            self._draft[key] = value
+            field = self.fields.get(key)
+            if field is None:
+                continue
+            blocked = field.blockSignals(True)
+            try:
+                if key in ('dock_material', 'panel_material'):
+                    select_material(field, value)
+                elif isinstance(field, QComboBox):
+                    field.setCurrentIndex(max(0, field.findData(value)))
+                elif isinstance(field, QSpinBox):
+                    field.setValue(100 - value if key == 'transparency' else value)
+                    if isinstance(field, ModernSpinBox):
+                        field.sync_steps()
+                elif isinstance(field, QLineEdit):
+                    field.setText(value)
+                else:
+                    field.setChecked(bool(value))
+            finally:
+                field.blockSignals(blocked)
+        from settings_design import NumericControl
+        for control in self.findChildren(NumericControl):
+            control.slider.setValue(control.spin.value())
+
+    def add_field(self, form, key, visible=True):
+        _, title, kind, options = self.catalog[key]
+        if kind == 'combo':
+            self.combo(form, key, title, options, visible=visible)
+        elif kind == 'number':
+            self.number(form, key, title, *options)
+        else:
+            getattr(self, kind)(form, key, title)
+
+    def build_appearance(self, appearance):
+        tray, api = self.tray, self.api
         from settings_design import section_marker
-        appearance = self.section('外观设置')
+        section_marker(appearance, '默认设置')
+        defaults = QHBoxLayout()
+        defaults.addWidget(button('使用默认设置', self.stage_defaults))
+        defaults.addWidget(label('载入 Dock、卡片和资源胶囊等组件的默认偏好，保存后生效。', 'muted'), 1)
+        appearance.addRow(defaults)
         self.create_profile_controls(appearance)
         section_marker(appearance,'Dock 材质与配色')
         self.dock_preset = ModernComboBox()
         self.dock_preset.addItem('自定义')
         self.dock_preset.addItems([name for name, _ in DOCK_PRESETS])
         appearance.addRow(self.field_label('主题预设'), self.dock_preset)
-        self.combo(appearance, 'dock_material', '材质', material_choices(tray.cfg['dock_material']))
-        self.combo(appearance, 'theme', '明暗模式', COLOR_MODES)
-        self.color(appearance, 'theme_color', '主题色')
+        self.add_field(appearance, 'dock_material')
+        self.add_field(appearance, 'theme')
+        self.add_field(appearance, 'theme_color')
         section_marker(appearance,'质感与尺寸')
-        self.number(appearance, 'dock_highlight', '高光（%）', 0, 100)
-        self.number(appearance, 'transparency', '不透明度（%）', 0, 100)
-        self.number(appearance, 'blur_px', '模糊强度', 3, 30)
-        self.number(appearance, 'icon_size', '图标大小（像素）', 20, 256)
-        self.check(appearance, 'glass', '背景模糊')
-        self.check(appearance, 'clear_background', '背景全透明')
+        self.add_field(appearance, 'dock_highlight')
+        self.add_field(appearance, 'transparency')
+        self.add_field(appearance, 'blur_px')
+        self.add_field(appearance, 'icon_size')
+        self.add_field(appearance, 'glass')
+        self.add_field(appearance, 'clear_background')
         self.fields['clear_background'].setToolTip('仅保留图标与文字，不绘制玻璃背景。')
-        self.combo(appearance, 'blur_mode', '壁纸取样刷新', api.BLUR_MODES)
-        self.check(appearance, 'magnify', '悬停放大图标')
-        self.check(appearance, 'motion_enabled', '交互柔光动效')
+        self.add_field(appearance, 'blur_mode')
+        self.add_field(appearance, 'magnify')
+        self.add_field(appearance, 'motion_enabled')
         self.fields['motion_enabled'].setToolTip('悬停、展开和切换时短暂流动，静止后停止；壁纸取样位置保持不变。')
         section_marker(appearance,'Dock 扩展')
         from settings_design import ResponsiveFields
@@ -137,31 +366,29 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         for key,title in [('dock_reflections','图标倒影'),('dock_clock','时间'),('dock_quick_settings','九宫格'),('dock_add_button','＋ 添加')]:
             control=ModernCheckBox(title);self.fields[key]=control;extras.add(control)
         appearance.addRow(extras)
-        self.combo(appearance, 'bump_level', '拉伸鼓包', [(title, key) for key, title, _ in api.BUMP_LEVELS])
+        self.add_field(appearance, 'bump_level')
         layout = appearance
         section_marker(layout,'停靠与交互')
-        self.combo(layout, 'position', '停靠位置', api.POSITIONS)
-        self.number(layout, 'custom_bottom', '自定义距底部（像素）', 0, 2000)
-        self.number(layout, 'bottom_margin', '边缘距离（像素）', 0, 200)
-        self.combo(layout, 'layer', '窗口层级', api.LAYERS)
-        self.check(layout, 'show_name', '悬停时显示应用名称')
-        self.check(layout, 'sep_split', '分隔符切开玻璃背景')
-        self.combo(layout, 'lang', '原 Dock 菜单语言', [(name, key) for name, key in api.LANGS])
+        self.add_field(layout, 'position')
+        self.add_field(layout, 'custom_bottom')
+        self.add_field(layout, 'bottom_margin')
+        self.add_field(layout, 'layer')
+        self.add_field(layout, 'show_name')
+        self.add_field(layout, 'sep_split')
+        self.add_field(layout, 'lang')
         section_marker(layout,'屏幕圆角')
-        self.check(layout, 'screen_corners', '启用屏幕圆角')
+        self.add_field(layout, 'screen_corners')
         self.fields['screen_corners'].setToolTip('仅在游戏模式隐藏，圆角区域允许鼠标穿透。')
-        self.number(layout, 'corner_radius', '屏幕圆角半径（像素）', 0, 120)
+        self.add_field(layout, 'corner_radius')
 
         section_marker(appearance, 'Windows 任务栏')
-        from taskbar_appearance import MODES
-        self.combo(appearance, 'taskbar_mode', '任务栏效果', MODES)
-        from taskbar_text import MODES as TEXT_MODES
-        self.combo(appearance,'taskbar_text_mode','任务栏文字与系统图标',TEXT_MODES)
+        self.add_field(appearance, 'taskbar_mode')
+        self.add_field(appearance, 'taskbar_text_mode')
         self.taskbar_text_status=label('文字明暗联动 Windows 模式，开始菜单等系统区域也会改变；普通应用配色保留。退出后恢复原设置。','muted')
         appearance.addRow(self.taskbar_text_status)
-        self.color(appearance, 'taskbar_color', '任务栏颜色')
-        self.number(appearance, 'taskbar_opacity', '任务栏不透明度（%）', 0, 100)
-        self.number(appearance, 'taskbar_blur', '任务栏模糊强度', 0, 50)
+        self.add_field(appearance, 'taskbar_color')
+        self.add_field(appearance, 'taskbar_opacity')
+        self.add_field(appearance, 'taskbar_blur')
         taskbar = getattr(getattr(tray, 'runtime', None), 'taskbar', None)
         if taskbar:
             taskbar_status = label(taskbar.status, 'muted')
@@ -196,32 +423,50 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                 for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
                     self.fields[key].setEnabled(False)
 
-        panel = self.section('桌面收纳')
+        self.fields['position'].currentIndexChanged.connect(self.position_changed)
+        self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
+        self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
+        for key in DOCK_PRESETS[0][1]:
+            self.change_signal(self.fields[key]).connect(self.customize_dock)
+        from settings_design import DockPreview
+        self.dock_preview = DockPreview(self)
+        appearance.insertRow(4, self.dock_preview)
+
+    def build_panel(self, panel):
+        tray, api = self.tray, self.api
+        from settings_design import section_marker
         panel.addRow(label('外观与收起选项应用到全部卡片，位置和内容分别保存。', 'muted'))
         section_marker(panel,'显示与分类')
-        self.check(panel, 'panel_enabled', '显示桌面卡片')
-        self.check(panel, 'desktop_auto_sort', '按文件类型自动分类')
+        self.add_field(panel, 'panel_enabled')
+        self.add_field(panel, 'desktop_auto_sort')
         section_marker(panel,'卡片材质与配色')
         from appearance_presets import PANEL_PRESETS
         self.panel_preset=ModernComboBox();self.panel_preset.addItem('自定义')
         self.panel_preset.addItems([name for name,_ in PANEL_PRESETS])
         panel.addRow(self.field_label('主题预设'),self.panel_preset)
         self.panel_preset.currentIndexChanged.connect(self.apply_panel_preset)
-        from card_design import DESIGNS
-        self.combo(panel,'card_design','装饰样式',DESIGNS,visible=False)
-        self.combo(panel, 'panel_material', '材质', material_choices(tray.cfg['panel_material']))
-        self.combo(panel, 'panel_theme', '明暗模式', COLOR_MODES)
-        self.color(panel, 'panel_color', '主题色')
-        self.number(panel, 'panel_highlight', '高光（%）', 0, 100)
-        self.number(panel, 'panel_opacity', '不透明度（%）', 0, 100)
-        self.number(panel, 'panel_blur', '模糊强度', 2, 30)
+        self.add_field(panel, 'card_design', visible=False)
+        self.add_field(panel, 'panel_material')
+        self.add_field(panel, 'panel_theme')
+        self.add_field(panel, 'panel_color')
+        self.add_field(panel, 'panel_highlight')
+        self.add_field(panel, 'panel_opacity')
+        self.add_field(panel, 'panel_blur')
         section_marker(panel,'收起与桌面交互')
-        self.check(panel, 'panel_locked', '锁定卡片位置与大小')
-        self.check(panel, 'panel_auto_hide', '鼠标离开后自动收起')
-        self.combo(panel, 'panel_collapse_style', '收起形状', [('胶囊', 'capsule'), ('圆球', 'ball'), ('方条', 'bar')])
-        self.number(panel, 'panel_capsule_ratio', '胶囊宽度比例（%）', 30, 100)
-        self.combo(panel, 'desktop_icon_mode', '桌面图标显示', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')])
-        self.check(panel, 'desktop_middle_toggle', '鼠标中键切换桌面图标')
+        self.add_field(panel, 'panel_locked')
+        self.add_field(panel, 'card_snap')
+        self.add_field(panel, 'card_snap_distance')
+        self.fields['card_snap_distance'].setToolTip('松手时检查与屏幕边缘、相邻卡片的距离。')
+        self.add_field(panel, 'panel_auto_hide')
+        self.add_field(panel, 'panel_expand_mode')
+        self.add_field(panel, 'panel_face')
+        self.add_field(panel, 'panel_face_interactive')
+        self.add_field(panel, 'panel_face_mood')
+        self.add_field(panel, 'panel_face_scale')
+        self.add_field(panel, 'panel_collapse_style')
+        self.add_field(panel, 'panel_capsule_ratio')
+        self.add_field(panel, 'desktop_icon_mode')
+        self.add_field(panel, 'desktop_middle_toggle')
         self.fields['desktop_middle_toggle'].setToolTip('仅点击 Windows 桌面时触发；滚动滚轮、点击任务栏、卡片或其他软件均不触发。')
         self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标；隐藏全部只影响桌面图标视图，不修改文件属性。')
         self.fields['panel_material'].setToolTip('材质控制质感，颜色模式控制明暗，主题色控制配色；全部桌面卡片同步。')
@@ -237,42 +482,49 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.component_row(panel, 'clock_enabled', '桌面时钟', button('时钟设置', lambda:self.tray.runtime.clock.open_settings()))
         self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
-        from sticky_notes_store import STYLES
-        self.combo(panel,'note_style','新便签装饰样式',STYLES)
+        self.add_field(panel, 'note_style')
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
 
-        from flash_data import COLORS, PALETTES
+        from flash_data import COLORS
         section_marker(panel,'闪念胶囊')
         self.component_row(panel,'flash_enabled','显示贴边胶囊',button('记一条',lambda:self.tray.runtime.flash.open(compose=True)),button('查看闪念',lambda:self.tray.runtime.flash.open()))
-        self.combo(panel,'flash_palette','胶囊配色',PALETTES)
-        self.combo(panel,'flash_color','新闪念颜色',[(name,key) for key,(name,_) in COLORS.items()])
+        self.add_field(panel, 'flash_palette')
+        self.add_field(panel, 'flash_color')
         from flash_view import color_icon
         for index,key in enumerate(COLORS):self.fields['flash_color'].setItemIcon(index,color_icon(key))
-        self.combo(panel,'flash_side','停靠边缘',[('右侧','right'),('左侧','left')])
-        self.check(panel,'flash_drop','拖入选中文字生成闪念')
-        self.check(panel,'flash_auto_hide','鼠标离开后自动收起')
-        self.number(panel,'flash_delay','收起延迟（秒）',1,30)
+        self.add_field(panel, 'flash_side')
+        self.add_field(panel, 'flash_edge_hide')
+        self.add_field(panel, 'flash_drop')
+        self.add_field(panel, 'flash_auto_hide')
+        self.add_field(panel, 'flash_delay')
 
         section_marker(panel,'资源胶囊')
         self.component_row(panel,'resource_enabled','显示资源胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
-        self.check(panel,'resource_taskbar','显示任务栏监控')
-        self.check(panel,'resource_bt_tray','蓝牙电量托盘图标')
+        self.add_field(panel, 'resource_taskbar')
+        self.add_field(panel, 'resource_bt_tray')
+        self.add_field(panel, 'resource_ai_tray')
 
-        apps = self.section('应用管理')
+        self.fields['panel_material'].currentIndexChanged.connect(self.panel_material_changed)
+
+    def build_apps(self, apps):
+        tray, api = self.tray, self.api
+        from settings_design import section_marker
         section_marker(apps,'Dock 应用')
         apps.addRow(label('添加应用、Windows 工具或正在运行的软件，管理 Dock 中的快捷入口。', 'muted'))
         self.action_row(apps,'应用列表',button('批量管理…',self.open_batch))
-        self.check(apps, 'reorder', '允许拖动 Dock 图标排序')
-        self.check(apps, 'running_dots', '显示 Dock 应用的运行标记')
+        self.add_field(apps, 'reorder')
+        self.add_field(apps, 'running_dots')
         apps.addRow(label('也可直接拖入应用或快捷方式。Dock 仅保存快捷引用，移除入口不会删除原文件。', 'muted'))
 
-        running = self.section('启动与运行')
+    def build_running(self, running):
+        tray, api = self.tray, self.api
+        from settings_design import section_marker
         section_marker(running,'后台运行')
-        self.check(running, 'lite_enabled', '关闭设置 1 分钟后自动精简')
+        self.add_field(running, 'lite_enabled')
         running.addRow(label('保留全部组件外观，减少后台轮询并释放闲置资源；打开设置恢复完整模式。', 'muted'))
-        self.check(running, 'hide_tray', '隐藏托盘图标')
+        self.add_field(running, 'hide_tray')
         section_marker(running,'开机启动')
-        self.check(running, 'autostart', '开机自动启动')
+        self.add_field(running, 'autostart')
         running.addRow(label('启动后恢复上次的显示与运行状态。', 'muted'))
         self.startup_status = label('', 'muted')
         running.addRow(self.startup_status)
@@ -292,29 +544,38 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         startup_actions.addStretch()
         running.addRow('', startup_actions)
         running.addRow(label('修复会立即将当前运行版本登记为开机自启动，其他未保存的设置保持不变。', 'muted'))
-        self.combo(running, 'startup_priority', '进程优先级', [('低（节省后台竞争）', 'low'), ('普通', 'normal'), ('较高（非实时）', 'high')])
-        self.number(running, 'startup_delay', '登录后延迟（秒）', 0, 300)
+        self.add_field(running, 'startup_priority')
+        self.add_field(running, 'startup_delay')
         running.addRow(label('延迟仅作用于开机自启动，手动启动不等待。进程优先级不保证 Windows 登录启动顺序。', 'muted'))
         section_marker(running,'游戏与全屏')
-        self.check(running, 'game_mode', '游戏模式')
-        self.check(running, 'fullscreen_detection', '全屏时自动隐藏 Dock 和卡片')
+        self.add_field(running, 'game_mode')
+        self.add_field(running, 'fullscreen_detection')
         running.addRow(label('游戏模式隐藏 Dock、卡片和圆角。全屏检测不含普通最大化窗口，精简模式下暂停。', 'muted'))
 
-        updates = self.section('更新设置')
+    def build_updates(self, updates):
+        tray, api = self.tray, self.api
+        from settings_design import section_marker
         section_marker(updates,'检查方式')
-        self.check(updates, 'check_updates_on_start', '启动时检查更新')
-        self.check(updates, 'update_use_proxy', '使用系统 / 环境代理')
+        self.add_field(updates, 'check_updates_on_start')
+        self.add_field(updates, 'update_use_proxy')
         section_marker(updates,'更新来源')
-        self.text(updates, 'update_source', '安装包发布 / 更新地址')
+        self.add_field(updates, 'update_source')
         updates.addRow(label('默认读取本项目 GitHub 正式 Release，优先打开 x64 安装包；也可填写 HTTPS 版本清单。安装更新由你确认。', 'muted'))
         self.update_status = label('已配置本项目安装包发布源，尚未检查', 'muted')
         updates.addRow(self.update_status)
         self.update_link=button('打开安装包 / 发布页',self.open_update_link);self.update_link.setEnabled(bool(getattr(getattr(self.tray,'runtime',None),'updater',None) and self.tray.runtime.updater.release_url))
         self.action_row(updates,'更新操作',button('检查更新',self.check_update),self.update_link)
+
+    def build_usage(self, usage):
+        tray, api = self.tray, self.api
+        from settings_design import section_marker
         from usage_stats import UsagePage
-        self.usage_page=UsagePage(self,self.section('使用统计'))
-        self.tabs.nav.currentRowChanged.connect(lambda index:self.usage_page.refresh() if self.tabs.nav.item(index) and self.tabs.nav.item(index).text()=='使用统计' else None)
-        info = self.section('关于与数据')
+        self.usage_page = UsagePage(self, usage)
+        self.usage_page.refresh()
+
+    def build_info(self, info):
+        tray, api = self.tray, self.api
+        from settings_design import section_marker
         info.addRow(label('大肥鱼Dock  ' + VERSION, 'section'))
         info.addRow(label('用液态玻璃 Dock 启动常用应用，用桌面悬浮面板分类收纳文件与快捷方式。', 'muted'))
         info.addRow('维护作者', label(AUTHOR))
@@ -345,52 +606,15 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         transfer.addWidget(button('导入配置…',self.import_configuration))
         transfer.addWidget(button('导出配置…',self.export_configuration))
         info.addRow('配置迁移',transfer)
-        self.transfer_help='导出已保存的应用、卡片、便签正文和偏好；导入先预览，保存后替换当前配置并保留一份导入前备份。应用和桌面文件仅保存路径引用。便签正文包含在导出文件中，请妥善保管。'
-        self.transfer_status=label(self.transfer_help,'muted')
+        self.project.setText('<a href="%s">BigFishDockpro</a>' % PROJECT_URL)
+        self.transfer_status=label(self._transfer_message,'muted')
         info.addRow(self.transfer_status)
         self.config_status=label('','muted');info.addRow(self.config_status)
         self.config_recovery=button('恢复默认配置…',self.recover_configuration)
         info.addRow(self.config_recovery)
-        self.refresh_config_status()
-        self.status = label('修改后保存，关闭不保存。', 'muted')
-        actions = QHBoxLayout()
-        actions.setSpacing(10)
-        actions.addWidget(self.status, 1)
-        actions.addWidget(button('关闭', self.reject))
-        self.save = button('保存设置', self.commit, 'primary')
-        self.save.setDefault(True)
-        actions.addWidget(self.save)
-        self.grip = SettingsGrip(self)
-        self.grip.setFixedSize(12, 18)
-        self.grip.setAccessibleName('调整设置窗口大小')
-        actions.addWidget(self.grip, 0, Qt.AlignBottom)
-        body.addLayout(actions)
-        self.fields['position'].currentIndexChanged.connect(self.position_changed)
-        self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
-        self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
-        self.fields['panel_material'].currentIndexChanged.connect(self.panel_material_changed)
-        for key in DOCK_PRESETS[0][1]:
-            field = self.fields[key]
-            signal = (field.currentIndexChanged if isinstance(field, QComboBox) else
-                      field.valueChanged if isinstance(field, QSpinBox) else
-                      field.textChanged if isinstance(field, QLineEdit) else field.toggled)
-            signal.connect(self.customize_dock)
-        runtime = getattr(tray, 'runtime', None)
-        if runtime:
-            runtime.updater.changed.connect(self.update_changed)
-            runtime.panels.shared_settings_changed.connect(self.refresh_shared_panel_fields)
-
-        from settings_design import DockPreview
-        self.dock_preview=DockPreview(self)
-        appearance.insertRow(4,self.dock_preview)
-        self.initialize_profile_controls()
-        compact_dialog(self)
-        from idle_resources import watch
-        watch(self)
-        self.initialize_size_behavior()
 
     def release_idle_resources(self):
-        if self.isVisible():return False
+        if self.isVisible() or self._suspended:return False
         if getattr(self.tray,'settings_dialog',None) is self:del self.tray.settings_dialog
         self.deleteLater()
         return True
@@ -414,9 +638,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         row.addStretch()
         form.addRow(container)
 
-    def section(self, name):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+    def section(self, index):
+        from settings_catalog import PAGES
+        scroll = self.tabs.pages.widget(index)
         page = QWidget()
         form = QFormLayout(page)
         form.setContentsMargins(2, 8, 12, 12)
@@ -425,9 +649,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        form.addRow(label(name, 'page-title'))
+        form.addRow(label(PAGES[index], 'page-title'))
         scroll.setWidget(page)
-        self.tabs.addTab(scroll, name)
         return form
 
     def field_label(self, title):
@@ -437,7 +660,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         return widget
 
     def combo(self, form, key, title, options, visible=True):
-        field = ModernComboBox(self)
+        field = ModernComboBox(form.parentWidget())
         for name, value in options:
             field.addItem(name, value)
         field.setAccessibleName(title)
@@ -521,62 +744,62 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fields['custom_bottom'].setEnabled(self.fields['position'].currentData() == 'custom')
 
     def refresh_shared_panel_fields(self):
-        if self.import_candidate is not None:return
+        if self.import_candidate is not None:
+            return
         from panel_preferences import CONFIG_KEYS
-        for key in CONFIG_KEYS+('card_design',):
-            field=self.fields[key];value=self.tray.cfg[key];blocked=field.blockSignals(True)
-            try:
-                if key=='panel_material':select_material(field,value)
-                elif isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
-                elif isinstance(field,QSpinBox):field.setValue(value)
-                elif isinstance(field,QLineEdit):field.setText(value)
-                else:field.setChecked(value)
-            finally:field.blockSignals(blocked)
+        self.set_draft_values({key: self.tray.cfg[key] for key in CONFIG_KEYS + ('card_design',)})
         self.refresh_preset_names(self.profile_candidate())
 
-    def fill_fields(self,cfg):
-        self._profile_loading=True
-        self._runtime_switch_baseline={key:cfg[key] for key in self._runtime_switch_keys}
-        self.applying_dock_preset = True
-        for key, field in self.fields.items():
-            if key in ('dock_material','panel_material'):select_material(field,cfg[key])
-            elif isinstance(field, QComboBox):
-                field.setCurrentIndex(max(0, field.findData(cfg[key])))
-            elif isinstance(field, QSpinBox):
-                field.setValue(100-cfg[key] if key == 'transparency' else cfg[key])
-            elif isinstance(field, QLineEdit):
-                field.setText(cfg[key])
-            else:
-                field.setChecked(bool(cfg[key]))
-        self.applying_dock_preset = False
-        matching = next((index for index, (_, values) in enumerate(DOCK_PRESETS, 1)
-                         if all(cfg[key] == value for key, value in values.items())), 0)
-        self.dock_preset.blockSignals(True)
-        self.dock_preset.setCurrentIndex(matching)
-        self.dock_preset.blockSignals(False)
-        self.position_changed()
+    def fill_fields(self, cfg):
+        self._runtime_switch_baseline = {key: cfg[key] for key in self._runtime_switch_keys}
+        self.set_draft_values({key: cfg[key] for key in self.catalog})
+        if 'position' in self.fields:
+            self.position_changed()
         self.refresh_preset_names(cfg)
         self.load_profile(cfg)
 
     def reveal(self):
         link_color = QApplication.palette().color(QPalette.Link).name()
-        self.project.setText('<a style="color:%s" href="%s">BigFishDockpro</a>' % (link_color, PROJECT_URL))
+        if 'project' in self.__dict__:
+            self.project.setText('<a style="color:%s" href="%s">BigFishDockpro</a>' % (link_color, PROJECT_URL))
         cfg = self.tray.cfg
         self.import_candidate=None;self.import_path=None
-        self.transfer_status.setText(self.transfer_help)
+        self.default_candidate = None
+        self.set_transfer_message(self.transfer_help)
         self._manual_dimensions=list(cfg.get('settings_manual_size',[]));self._custom_density=cfg.get('settings_custom_density',100)
         self.fill_fields(cfg);self.adapt_interface()
         runtime = getattr(self.tray, 'runtime', None)
         if runtime:
             runtime.taskbar.reconcile_status()
             self.update_changed(runtime.updater.message)
-        self.check_startup()
+        if 'startup_status' in self.__dict__:
+            self.check_startup()
         self.status.setText('未保存的修改会在关闭时放弃。')
         self.refresh_config_status()
         self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
         self.showNormal() if self.isMinimized() else self.show()
         self.raise_()
         self.activateWindow()
+
+    def stage_defaults(self):
+        from default_settings import apply, load
+        try:
+            preset = load()
+            candidate = apply(self.tray.cfg, preset)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self.api.log('读取默认设置失败：'+str(error))
+            self.status.setText('无法载入默认设置。')
+            return False
+        self.import_candidate = None
+        self.import_path = None
+        self.default_candidate = preset
+        self._manual_dimensions = list(candidate['settings_manual_size'])
+        self._custom_density = candidate['settings_custom_density']
+        self.fill_fields(candidate)
+        self.adapt_interface()
+        self.set_transfer_message(self.transfer_help)
+        self.status.setText('已载入默认设置，点击「保存设置」应用。')
+        return True
 
     def import_configuration(self):
         path,_=QFileDialog.getOpenFileName(self,'导入 BigFishDockpro 配置','','JSON 配置 (*.json);;所有文件 (*)')
@@ -591,8 +814,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.status.setText('导入失败，当前配置未更改：'+str(error)[:80]);return False
         # Runtime-only wake/collapse snapshots belong to this live settings session.
         for key in ('runtime_lite','lite_restore'):cfg[key]=copy.deepcopy(self.tray.cfg[key])
+        self.default_candidate = None
         self.fill_fields(cfg);self.import_candidate=cfg;self.import_path=path
-        self.transfer_status.setText('已载入 %d 个 Dock 入口、%d 个卡片、%d 张便签。保存后替换当前配置，关闭则放弃；文件仅保存路径引用，便签包含正文。'%(len(cfg['items']),len(cfg['desktop_panels']),len(cfg['sticky_notes'])))
+        self.set_transfer_message('已载入 %d 个 Dock 入口、%d 个卡片、%d 张便签。保存后替换当前配置，关闭则放弃；文件仅保存路径引用，便签包含正文。'%(len(cfg['items']),len(cfg['desktop_panels']),len(cfg['sticky_notes'])))
         self.status.setText('配置已预览，尚未应用；点击“保存设置”生效。');return True
 
     def export_configuration(self):
@@ -628,7 +852,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
 
     def reject(self):
         self.import_candidate=None;self.import_path=None
-        self.transfer_status.setText(self.transfer_help)
+        self.default_candidate = None
+        self.set_transfer_message(self.transfer_help)
         super().reject()
 
     def open_data(self):
@@ -649,15 +874,17 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         if flash and not flash.save_draft():
             self.status.setText('闪念草稿尚未保存，请先检查后重试。');return
         imported=self.import_candidate is not None
+        defaults_selected = self.default_candidate is not None
         previous=copy.deepcopy(self.tray.cfg)
         cfg = copy.deepcopy(self.import_candidate) if imported else dict(self.tray.cfg)
-        for key, field in self.fields.items():
-            if not imported and key in self._runtime_switch_baseline and field.isChecked()==self._runtime_switch_baseline[key]:continue
-            cfg[key] = (field.currentData() if isinstance(field, QComboBox) else
-                        field.value() if isinstance(field, QSpinBox) else
-                        field.text().strip() if isinstance(field, QLineEdit) else field.isChecked())
-            if key == 'transparency': cfg[key] = 100-cfg[key]
-        cfg=self.stage_profile(cfg)
+        if defaults_selected:
+            from default_settings import apply
+            cfg = apply(self.tray.cfg, self.default_candidate)
+        for key, value in self.draft_values().items():
+            if not (imported or defaults_selected) and key in self._runtime_switch_baseline and value == self._runtime_switch_baseline[key]:
+                continue
+            cfg[key] = value
+        cfg = self.stage_profile(cfg)
         cfg['settings_manual_size']=list(self._manual_dimensions)
         cfg['settings_custom_density']=self._custom_density
         for key in ('theme_color', 'panel_color'):
@@ -684,6 +911,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                 self.api.log('配置备份失败: '+str(error))
                 self.status.setText('无法备份当前配置，未导入：'+str(error)[:80]);return
         if not imported and cfg==previous:
+            self.default_candidate = None
             self.status.setText('设置未变化，无需重复刷新。');return
         startup_changed = cfg['autostart'] != self.tray.cfg['autostart']
         if startup_changed and not self.api.set_autostart(cfg['autostart']):
@@ -699,33 +927,37 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             return
         self.tray.cfg.update(cfg)
         self._profile_loading=True
-        if imported:
+        if imported or defaults_selected:
+            action = '导入配置' if imported else '默认设置'
             try:self.apply_imported_state()
             except Exception as error:
-                self.api.log('导入配置应用失败: '+str(error))
+                self.api.log(action+'应用失败: '+str(error))
                 self.tray.cfg.clear();self.tray.cfg.update(previous)
                 restored=self.api.save_config(previous)
                 startup_restored=not startup_changed or self.api.set_autostart(previous['autostart'])
                 ui_restored=True
                 try:self.apply_imported_state()
                 except Exception as rollback_error:
-                    ui_restored=False;self.api.log('导入后界面恢复失败: '+str(rollback_error))
-                message='导入应用失败，原配置已恢复，可重新尝试。' if ui_restored else '原配置已恢复，请重启程序以恢复界面。'
+                    ui_restored=False;self.api.log('界面恢复失败: '+str(rollback_error))
+                message=action+'应用失败，原配置已恢复，可重新尝试。' if ui_restored else '原配置已恢复，请重启程序以恢复界面。'
                 if not startup_restored:message='原配置已恢复，但自启动恢复失败，请检测修复启动项。'
-                self.status.setText(message if restored else '恢复配置失败，请从导入前备份恢复。')
+                self.status.setText(message if restored else '恢复配置失败，请检查数据目录。')
                 return
-            service=getattr(getattr(self.tray,'runtime',None),'productivity',None)
-            if service:service.history.entries.clear();service.history.message='配置已导入，整理记录已清空'
-            self.import_candidate=None;self.import_path=None
-            self.transfer_status.setText('导入已保存。导入前备份：'+backup.name+'；可从数据目录重新导入恢复。')
+            if imported:
+                service=getattr(getattr(self.tray,'runtime',None),'productivity',None)
+                if service:service.history.entries.clear();service.history.message='配置已导入，整理记录已清空'
+                self.import_candidate=None;self.import_path=None
+                self.set_transfer_message('导入已保存。导入前备份：'+backup.name+'；可从数据目录重新导入恢复。')
+            self.default_candidate = None
         else:
             from settings_effects import apply_changes
             apply_changes(self.tray,self.api,previous)
-        for key in self._runtime_switch_keys:
-            self.fields[key].setChecked(self.tray.cfg[key]);self._runtime_switch_baseline[key]=self.tray.cfg[key]
+        self._runtime_switch_baseline = {key: self.tray.cfg[key] for key in self._runtime_switch_keys}
+        self.set_draft_values(self._runtime_switch_baseline)
         self.load_profile(self.tray.cfg)
         self.refresh_preset_names(self.tray.cfg)
-        self.check_startup()
+        if 'startup_status' in self.__dict__:
+            self.check_startup()
         self.status.setText('设置已保存并生效，可继续调整。')
         taskbar=getattr(getattr(self.tray,'runtime',None),'taskbar',None)
         error=getattr(taskbar,'error','') or getattr(getattr(taskbar,'text',None),'error','')
@@ -734,6 +966,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     def check_startup(self):
         from startup_service import inspect_startup
         result = inspect_startup(self.api)
+        if 'startup_status' not in self.__dict__:
+            return result
         self.startup_status.setText(result['message'])
         self.startup_path.setText(result['path'] or '未登记')
         self.startup_path.setCursorPosition(0)
@@ -772,6 +1006,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.tray.runtime.updater.check()
 
     def update_changed(self, message):
+        if 'update_status' not in self.__dict__:
+            return
         self.update_status.setText(message)
         self.update_link.setEnabled(bool(self.tray.runtime.updater.release_url))
 
@@ -780,16 +1016,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.tray.dock.launch(self.tray.runtime.updater.release_url)
 
     def search_targets(self):
-        result=[]
-        for key,field in self.fields.items():
-            if key=='card_design':continue  # Decoration now follows the selected theme/material.
-            title=field.accessibleName() or (field.text() if isinstance(field,QCheckBox) else key)
-            page=next((self.tabs.nav.item(i).text() for i in range(self.tabs.count()) if self.tabs.pages.widget(i).isAncestorOf(field)),'设置')
-            options=' '.join(field.itemText(i) for i in range(field.count())) if isinstance(field,QComboBox) else ''
-            result.append({'key':key,'title':title,'page':page,'options':options})
-        for key,title in [('@clock','时钟字体与布局'),('@calendar','日历设计与节假日'),('@notes','便签管理与搜索'),('@groups','卡片分组与合并'),('@layouts','桌面布局方案'),('@references','失效入口检查')]:
-            result.append({'key':key,'title':title,'page':'组件与整理','options':''})
-        return result
+        from settings_catalog import targets
+        return targets(self.catalog)
 
     def search_settings(self):
         dialog=self.tray.runtime.productivity.open_search()
@@ -799,14 +1027,27 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         runtime=self.tray.runtime
         actions={'@clock':runtime.clock.open_settings,'@calendar':runtime.calendar.open_settings,'@notes':runtime.notes.manage,'@groups':runtime.panels.manage_groups,'@layouts':runtime.productivity.open_layouts,'@references':runtime.productivity.open_references}
         if key in actions:actions[key]();return
-        field=self.fields.get(key)
-        if field is None:return
-        for i in range(self.tabs.count()):
-            scroll=self.tabs.pages.widget(i)
-            if scroll.isAncestorOf(field):
-                self.tabs.setCurrentIndex(i);QApplication.processEvents();scroll.ensureWidgetVisible(field,12,36);field.setFocus(Qt.ShortcutFocusReason);break
+        if key not in self.catalog:
+            return
+        page = self.catalog[key][0]
+        if page >= 0:
+            self.tabs.setCurrentIndex(page)
+        field = self.fields[key]
+        if page >= 0:
+            scroll = self.tabs.pages.widget(page)
+            QApplication.processEvents()
+            scroll.ensureWidgetVisible(field, 12, 36)
+        field.setFocus(Qt.ShortcutFocusReason)
+
+    def set_transfer_message(self, message):
+        self._transfer_message = message
+        status = self.__dict__.get('transfer_status')
+        if status is not None:
+            status.setText(message)
 
     def refresh_config_status(self):
+        if 'config_status' not in self.__dict__:
+            return
         status=self.api.config_status()
         self.config_status.setText(status.get('message',''))
         self.config_status.setVisible(bool(status.get('message')))

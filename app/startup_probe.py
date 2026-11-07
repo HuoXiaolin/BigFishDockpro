@@ -53,13 +53,20 @@ class StartupProbe:
             from dpi_support import awareness
             assert awareness()==2 and awareness(int(dock.winId()))==2 and dock.ui_mult==1.0
             if self.fresh:
-                assert dock.isVisible() and dock.cfg['panel_enabled'] and dock.cfg['merged_panels']
-                assert dock.cfg['screen_corners'] and dock.cfg['corner_radius'] == 16
-                assert dock.cfg['panel_collapse_style'] == 'ball' and dock.cfg['merged_collapsed']
-                visible_cards = [card for card in runtime.panels.windows.values() if card.isVisible()]
-                assert len(visible_cards) == 1 and visible_cards[0].collapsed
-                assert visible_cards[0].width() == visible_cards[0].height()
-                assert not runtime.lite and tray.isVisible()
+                from default_settings import load
+                preset = load()
+                for key in ('icon_size','dock_material','panel_enabled','panel_opacity','card_scale','autostart','flash_enabled',
+                            'resource_enabled','resource_weather','resource_ai','resource_music',
+                            'resource_taskbar','resource_ai_tray','resource_face','resource_open_page','screen_corners','corner_radius'):
+                    assert dock.cfg[key] == preset[key], key
+                assert dock.isVisible() == preset['dock_visible'] and tray.isVisible() != preset['hide_tray']
+                assert not dock.cfg['items'] and not dock.cfg['desktop_entries']
+                assert not dock.cfg['sticky_notes'] and not dock.cfg['flash_entries']
+                assert not any(card.isVisible() for card in runtime.panels.windows.values())
+                assert runtime.resources.strip is None and runtime.resources.ai_tray is None
+                assert runtime.flash.edge is None and runtime.flash.panel is None
+                assert runtime.resources.window.isVisible() and runtime.resources.job is None
+                assert runtime.resources.deck.process.state() == 0 and runtime.resources.extras.weather_job is None
                 assert '托盘' not in __import__('sys').modules[dock.__module__].EMPTY_DOCK_HINT
                 dock.grab().save(str(self.output/'fresh-dock.png'))
             else:
@@ -78,15 +85,20 @@ class StartupProbe:
                 assert elapsed >= .9
             runtime.set_lite(True)
             runtime.show_settings()
-            assert not runtime.lite and runtime.settings_open
+            assert runtime.lite and runtime.settings_open
             if self.autostart and not self.fresh: assert panel.collapsed
             assert not runtime.lite_timer.isActive()
+            tray.settings_dialog.reject()
+            assert runtime.lite and not runtime.settings_open and not runtime.lite_timer.isActive()
+            runtime.set_lite(False)
+            runtime.show_settings()
+            assert not runtime.lite and runtime.settings_open and not runtime.lite_timer.isActive()
             tray.settings_dialog.reject()
             assert not runtime.settings_open and runtime.lite_timer.isActive()
             assert runtime.lite_timer.interval() == 60000
             result = {'passed':True, 'checks':['actual application initialization on '+self.desktop,
-                      'fresh profile: visible Dock and tray, merged cards start collapsed as one ball, 16-pixel screen corners enabled' if self.fresh else 'login start restores visible Dock, hidden tray, lite mode and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
-                      'actual settings-open wake and finished-signal starts 60-second timer'],
+                      'fresh profile: bundled default settings load for Dock, cards, tray and resource capsule; personal lists start empty; account and weather probes remain idle in isolated preview' if self.fresh else 'login start restores visible Dock, hidden tray, lite mode and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
+                      'opening settings preserves lite mode; closing settings in normal mode restarts the 60-second idle timer'],
                       'elapsed_seconds':round(elapsed,2)}
             fixture=os.environ.get('FISHDOCK_EXIT_LAUNCH_FIXTURE')
             if fixture:

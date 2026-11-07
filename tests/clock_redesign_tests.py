@@ -56,8 +56,14 @@ def run(api,runtime,root,output,checks):
         assert sum(item.isChecked() for item,value in dialog.style_buttons)==1
         dialog.style_buttons[4][0].click();assert dialog.fields['style'].currentData()=='orbit' and dialog.style_buttons[4][0].isChecked()
         import clock_design
-        with patch.object(clock_design,'draw',wraps=clock_design.draw) as render:
-            dialog.preview.grab();assert render.call_args.args[2:4]==(dialog.fields['width'].value(),dialog.fields['height'].value())
+        draw = clock_design.draw
+        sizes = []
+        def inspect_preview(painter, dock, width, height, *args, **kwargs):
+            sizes.append((width, height))
+            return draw(painter, dock, width, height, *args, **kwargs)
+        with patch.object(clock_design, 'draw', new=inspect_preview):
+            dialog.preview.grab()
+        assert sizes[-1] == (dialog.fields['width'].value(), dialog.fields['height'].value())
         for index in range(4):
             dialog.tabs.setCurrentIndex(index);app.processEvents();dialog.grab().save(str(Path(output)/('clock-redesign-settings-%d.png'%index)))
         dialog.fields['start'].setText('22:00');dialog.fields['end'].setText('06:00');dialog.fields['accent_color'].setText('#4b8eb6')

@@ -97,6 +97,37 @@ def run(api,runtime,root,output,checks):
         app.processEvents();settings.grab().save(str(Path(output)/'configuration-transfer.png'))
         for widget,text in labels:widget.setText(text)
         checks.append('configuration transfer: JSON envelope/raw/BOM roundtrip, wrong app/schema/duplicate/type rejection, atomic export protects existing/live files; staged preview/cancel, pending-batch conflict, import backup, same-id geometry, save/apply-failure rollback and mocked startup rollback; save stays open, no application launch or real registry changes')
+        from default_settings import load
+        preset = load()
+        assert not {'items','desktop_entries','sticky_notes','flash_entries'} & preset.keys()
+        personal = {key:copy.deepcopy(cfg[key]) for key in ('items','desktop_entries','sticky_notes','flash_entries')}
+        settings.tabs.setCurrentIndex(0)
+        app.processEvents()
+        action = next(button for button in settings.findChildren(QPushButton) if button.text() == '使用默认设置')
+        assert action.isVisible()
+        before_recommended = copy.deepcopy(cfg)
+        action.click()
+        assert settings.default_candidate is not None and cfg == before_recommended
+        assert settings.fields['icon_size'].value() == preset['icon_size']
+        settings.reject()
+        assert settings.default_candidate is None and cfg == before_recommended
+        runtime.show_settings()
+        settings = runtime.tray.settings_dialog
+        settings.api = api
+        assert settings.stage_defaults()
+        with patch.object(api, 'save_config', return_value=False):
+            settings.commit()
+        assert cfg == before_recommended and settings.default_candidate is not None
+        settings.commit()
+        app.processEvents()
+        assert settings.default_candidate is None
+        assert all(cfg[key] == preset[key] for key in ('icon_size','resource_enabled','resource_weather','card_scale'))
+        assert not any(cfg[key] for key in ('panel_enabled','resource_taskbar','resource_ai_tray','flash_enabled'))
+        assert all(cfg[key] == value for key,value in personal.items())
+        assert any(row['id'] == 'transfer-demo' for row in cfg['desktop_panels'])
+        assert api.load_config()['icon_size'] == preset['icon_size']
+        settings.grab().save(str(Path(output)/'default-settings.png'))
+        checks.append('Default settings: existing configuration previews, cancels and retries after failed save; applies global and resource preferences while preserving local application references and custom cards.')
     finally:
         api.set_autostart=setter;settings.import_candidate=None;settings.import_path=None;settings.reject()
         cfg.clear();cfg.update(original);api.save_config(cfg);settings.apply_imported_state();settings.api=previous_settings_api

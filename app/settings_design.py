@@ -353,9 +353,10 @@ def prepare_dialog(dialog):
             dialog.winId()
             dialog.windowHandle().setTransientParent(owner_handle)
     # Snapshot before rebuilding, so newly added layouts are never processed twice.
-    for form in list(dialog.findChildren(QFormLayout)):
-        if form.parentWidget() and form.parentWidget().window() is dialog:
-            group_form(form, dialog)
+    if not dialog.property('simpleForms'):
+        for form in list(dialog.findChildren(QFormLayout)):
+            if form.parentWidget() and form.parentWidget().window() is dialog:
+                group_form(form, dialog)
     from ui_style import SettingsHeader
     body = dialog.layout()
     if not isinstance(body, QVBoxLayout):

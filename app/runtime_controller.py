@@ -64,6 +64,8 @@ class RuntimeController:
         self.apply_settings()
         if self.dock.cfg.get('runtime_lite'): self.set_lite(True, persist=False)
         self.arm_lite()
+        from memory_budget import MemoryBudget
+        self.memory_budget=MemoryBudget(self)
         if not dock.preview and not os.environ.get('FISHDOCK_TEST_DESKTOP'):
             status=api.config_status()
             if status.get('message'):
@@ -123,7 +125,9 @@ class RuntimeController:
             from wallpaper_source import image_file
             image_file.cache_clear()
             QPixmapCache.clear()
-            set_priority('low')
+            # Keep the UI responsive; memory mode reduces work and caches.
+            # BackgroundWorker lowers its own thread priority instead.
+            set_priority(self.dock.cfg['startup_priority'])
             # An auto-game session must not leave the Dock hidden after detection stops.
             self.auto_game = False
             self.apply_visibility()
@@ -149,13 +153,11 @@ class RuntimeController:
         return True
 
     def show_settings(self):
-        self.settings_open = True
-        self.lite_timer.stop()
-        self.set_lite(False)
         self.tray.show_settings()
 
     def settings_closed(self):
         self.settings_open = False
+        self.resources.set_main_settings(False)
         self.check_fullscreen()
         self.arm_lite()
 
@@ -228,6 +230,8 @@ class RuntimeController:
 
     def apply_settings(self,changed=None):
         if changed is not None:changed=set(changed)
+        if changed is not None and 'motion_enabled' in changed:
+            for window in self.panels.windows.values():window.face_tracker.sync_face();window.update()
         if self.updater.source_key()!=getattr(self,'_update_source_key',None):
             self.updater.settings_changed();self._update_source_key=self.updater.source_key()
         if changed is not None and 'motion_enabled' in changed and not self.dock.cfg.get('motion_enabled',True):
@@ -235,7 +239,7 @@ class RuntimeController:
                 controller=getattr(window,'_interaction_motion',None)
                 if controller:controller.stop()
         capsule_style={'theme','theme_color','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
-        if changed is None or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'runtime_lite','taskbar_text_mode'}):
+        if changed is None or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'runtime_lite','taskbar_text_mode','motion_enabled','card_snap'}):
             self.resources.sync()
         if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
             self.flash.sync()
@@ -253,7 +257,7 @@ class RuntimeController:
                 self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=self.dock.cfg['card_scale']
             if changed&{'screen_corners','corner_radius'}:self.refresh_corners()
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
-            if 'startup_priority' in changed:set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
+            if 'startup_priority' in changed:set_priority(self.dock.cfg['startup_priority'])
             return
         if self.lite and not self.dock.cfg['lite_enabled']:
             self.set_lite(False)
@@ -268,7 +272,7 @@ class RuntimeController:
         self.configure_fullscreen_timer()
         self.apply_visibility()
         self.refresh_corners()
-        set_priority('low' if self.lite else self.dock.cfg['startup_priority'])
+        set_priority(self.dock.cfg['startup_priority'])
         if not self.settings_open: self.arm_lite()
 
     def open_card_sizing(self,kind=None,identity=None):
@@ -293,6 +297,7 @@ class RuntimeController:
     def close(self):
         if self.closed: return
         self.closed = True
+        if hasattr(self,'memory_budget'):self.memory_budget.close()
         shutdown=self.session_ending or QApplication.instance().isSavingSession()
         importer=getattr(self.tray,'importer',None)
         if importer:importer.close()

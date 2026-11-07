@@ -69,16 +69,13 @@ class SearchDialog(QDialog):
         fit_auxiliary_dialog(self,runtime.dock.cfg)
         self.query.setFocus()
 
-    def settings_window(self):
-        tray=self.runtime.tray
-        if not hasattr(tray,'settings_dialog'):
-            from settings_dialog import SettingsDialog
-            tray.settings_dialog=SettingsDialog(tray,self.runtime.api)
-        return tray.settings_dialog
+    def settings_targets(self):
+        from settings_catalog import field_catalog, targets
+        return targets(field_catalog(self.runtime.api, self.runtime.dock.cfg))
 
     def refresh(self):
         scope=self.scope.currentData()
-        targets=self.settings_window().search_targets() if scope in ('all','settings') else []
+        targets = self.settings_targets() if scope in ('all', 'settings') else []
         self.results,total=matches(self.runtime.dock.cfg,self.runtime.notes.rows(),targets,self.query.text(),self.scope.currentData())
         self.list.clear()
         names={'apps':'应用','files':'文件','notes':'便签','flash':'闪念','settings':'设置'}

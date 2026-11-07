@@ -17,6 +17,15 @@ class BackgroundWorker(QObject):
         self.cancelled.clear();_active.add(self)
         self.thread=threading.Thread(target=self._run,daemon=True,name=type(self).__name__);self.thread.start()
     def _run(self):
+        try:
+            import sys
+            if sys.platform=='win32':
+                import ctypes
+                from ctypes import wintypes
+                kernel=ctypes.windll.kernel32;kernel.GetCurrentThread.restype=wintypes.HANDLE
+                kernel.SetThreadPriority.argtypes=[wintypes.HANDLE,ctypes.c_int]
+                kernel.SetThreadPriority(kernel.GetCurrentThread(),-1)
+        except (OSError,AttributeError):pass
         try:self.run()
         finally:
             try:self.finished.emit()

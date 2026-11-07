@@ -151,11 +151,20 @@ class DesktopClock(QWidget):
         self.position_flip()
         if not self.loading: self.geometry_timer.start(); self.refresh_timer.start()
     def mousePressEvent(self,event):
-        if event.button()==Qt.LeftButton and not self.option('locked'): self.drag=event.globalPos()-self.pos(); event.accept()
+        if event.button()==Qt.LeftButton and not self.option('locked'):
+            self.drag_start = self.pos()
+            self.drag = event.globalPos() - self.drag_start
+            event.accept()
     def mouseMoveEvent(self,event):
         if self.drag is not None: self.move(event.globalPos()-self.drag); event.accept()
     def mouseReleaseEvent(self,event):
-        if self.drag is not None: self.drag=None; self.save_geometry(); event.accept()
+        if self.drag is not None:
+            self.drag = None
+            if self.pos() != self.drag_start:
+                from card_snap import finish_drag
+                finish_drag(self, event.globalPos())
+            self.save_geometry()
+            event.accept()
     def open_settings(self):
         from usage_stats import record
         record(self.dock,'clock_settings')

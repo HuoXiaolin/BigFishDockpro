@@ -22,3 +22,39 @@ in the accompanying Fishdock source directory. Original MIT notices remain appli
   as runtime dependencies of the Python / Qt binary wheels.
 
 No GlassDesk or GlassBoard source or proprietary assets are included.
+
+## Resource capsule AI and music adapter
+
+- BrimDeck by MoFeng2223 and contributors: Apache-2.0, pinned at
+  `5cbf5596a4163803d2411b96b37f16d925a11986` from
+  https://github.com/MoFeng2223/BrimDeck . Upstream Core and selected Native
+  source files are linked into BigFishDeckBridge, with a locally adapted bounded
+  LogReader under tools/DeckBridge/Core; BigFishDockpro adds the JSON
+  adapter and its own Qt interface. Full upstream license and third-party
+  notices are retained in BrimDeck-Apache-2.0.txt and BrimDeck-ThirdPartyNotices.txt.
+- Jint 4.16.3, Acornima 1.7.0, ZstdSharp.Port 0.8.8, NAudio.Core/Wasapi 2.2.1,
+  System.Management/System.CodeDom 10.0.0, Windows SDK .NET projection, and
+  the shared .NET 10 Windows Desktop runtime are dependencies of that helper.
+  The .NET runtime is installed separately and is not bundled in this release.
+  Package license files are retained under `deck/`; the upstream notices list
+  each project's original authors and license. Source references are retained
+  in `references/BrimDeck`, while its own UI and theme are not used by this app.
+
+- OpenQuota by deviffyy (MIT), https://github.com/deviffyy/OpenQuota, design
+  reference pinned in `references/OpenQuota-PIN.json`. Usage visualization and
+  the segmented quota icon are implemented in Qt; OpenQuota's runtime/backend
+  is not bundled. Original copyright and license: OpenQuota-MIT.txt.
+
+## Liquid resource capsule
+
+- Wisland by wisland contributors (MIT), https://github.com/AsamiAkito/wisland,
+  pinned at `35478b13897149b6927d932c06013bd5e21a2db3`. The spring, liquid path,
+  vector face and small GDI capture helpers are adapted from its Python source
+  to the existing PyQt5 app; window ownership, bounded capture scheduling and
+  theme integration are local implementations. Notification metadata polling
+  follows its public design. Source is retained under `references/Wisland` and
+  the original copyright/license is in Wisland-MIT.txt. Its PySide6 runtime,
+  ASR models, stock service and application UI are not bundled.
+- Weather data: Open-Meteo (https://open-meteo.com/), credited in the optional
+  weather component's remarks. The app requests only configured city names
+  or coordinates and a three-day forecast; no location permission is used.

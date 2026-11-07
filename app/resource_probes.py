@@ -32,7 +32,7 @@ class SensorRead(QObject):
             raw=bytes(self.process.readAllStandardOutput())
             data=json.loads(raw.decode('utf-8-sig')) if not code and len(raw)<=65536 else {}
             self.values={k:v for k,v in data.items() if k in self.keys and isinstance(v,dict)
-                         and type(v.get('value')) in (int,float) and 0<=v['value']<=10000}
+                         and type(v.get('value')) in (int,float) and 0<=v['value']<=100000}
         except (ValueError,AttributeError):self.values={}
         self.owner.display();self.next.start()
     def failed(self,error):

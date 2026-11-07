@@ -259,10 +259,10 @@ class DockQuickSettings(QDialog):
                 'search':'应用 / 文件 / 便签','undo':'暂无可撤销',
                 'layouts':'保存 / 切换布局','references':'检查 / 重新定位'}
         values['taskbar_monitor']='已开启' if cfg['resource_taskbar'] else '已关闭'
-        values['resources']='查看系统读数' if cfg['resource_enabled'] else '打开资源监控'
-        self.tiles['resources'].setToolTip('打开资源详情，右键可以切换层级、收起形态和采样项目。')
-        values['flash']='记一条闪念' if not cfg['flash_enabled'] else '%d 条未完成'%sum(not r['done'] and not r['deleted'] for r in cfg['flash_entries'])
-        self.tiles['flash'].setToolTip('打开闪念胶囊并输入。可在桌面收纳设置中调整配色或关闭。')
+        values['resources']='已开启' if cfg['resource_enabled'] else '已关闭'
+        self.tiles['resources'].setToolTip('切换桌面资源胶囊')
+        values['flash']='已开启' if cfg['flash_enabled'] else '已关闭'
+        self.tiles['flash'].setToolTip('切换桌面闪念胶囊')
         productivity=getattr(runtime,'productivity',None)
         if productivity:
             history=getattr(productivity,'history',None);steps=len(getattr(history,'entries',[]))
@@ -337,12 +337,15 @@ class DockQuickSettings(QDialog):
             if runtime:runtime.resources.set_options(resource_taskbar=not runtime.dock.cfg['resource_taskbar'])
             self.refresh();return
         if key=='resources':
-            self.close()
-            if runtime:runtime.resources.open()
+            if runtime:
+                runtime.resources.set_options(resource_enabled=not runtime.dock.cfg['resource_enabled'])
+            self.refresh()
             return
         if key=='flash':
-            self.close()
-            if runtime:runtime.flash.open(compose=True)
+            if runtime and runtime.flash.set_enabled(not runtime.dock.cfg['flash_enabled']):
+                self.refresh()
+            else:
+                self.status.setText('闪念胶囊设置保存失败。')
             return
         if key in ('search','undo','layouts','references'):
             service=getattr(runtime,'productivity',None)

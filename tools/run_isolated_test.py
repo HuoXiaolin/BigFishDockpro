@@ -76,6 +76,7 @@ def main():
     parser.add_argument('--target', default='dock.py')
     parser.add_argument('--output', required=True)
     parser.add_argument('--runtime-check',action='store_true')
+    parser.add_argument('--memory-profile',action='store_true')
     parser.add_argument('--clipboard-test',action='store_true')
     parser.add_argument('--startup', action='store_true')
     parser.add_argument('--autostart', action='store_true')
@@ -110,7 +111,7 @@ def main():
     try:
         target = Path(args.target).resolve()
         command = ([str(Path(args.python).resolve()), str(target)] if target.suffix.lower() == '.py' else [str(target)])
-        command += ['--clipboard-test' if args.clipboard_test else '--startup-test' if args.startup else '--runtime-check' if args.runtime_check else '--self-test', str(output)]
+        command += ['--memory-profile' if args.memory_profile else '--clipboard-test' if args.clipboard_test else '--startup-test' if args.startup else '--runtime-check' if args.runtime_check else '--self-test', str(output)]
         if args.autostart:
             command.append('--autostart')
         if args.fresh_profile:

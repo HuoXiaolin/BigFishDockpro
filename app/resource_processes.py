@@ -59,7 +59,7 @@ class ProcessRanking:
     def __init__(self):
         self.read=C.windll.ntdll.NtQuerySystemInformation
         self.read.argtypes=[W.ULONG,C.c_void_p,W.ULONG,C.POINTER(W.ULONG)];self.read.restype=W.LONG
-        self.previous={};self.at=0.;self.capacity=256*1024;self.icons={}
+        self.previous={};self.at=0.;self.capacity=256*1024;self.buffer=None;self.icons={}
         self.main=os.getpid() if getattr(sys,'frozen',False) else 0
         self.launcher=0
         if self.main and os.path.normcase(executable_path(os.getppid()))==os.path.normcase(sys.executable):self.launcher=os.getppid()
@@ -67,14 +67,19 @@ class ProcessRanking:
     def snapshot(self):
         size=self.capacity
         while size<=32*1024*1024:
-            block=C.create_string_buffer(size);used=W.ULONG()
+            if self.buffer is None or len(self.buffer)<size:self.buffer=C.create_string_buffer(size)
+            block=self.buffer;size=len(block);used=W.ULONG()
             status=self.read(5,block,size,C.byref(used)) & 0xffffffff
             if status==0:break
             if status not in (0xc0000004,0xc0000023):return {}
             size=max(size*2,used.value+65536)
         else:return {}
         length=min(used.value,size)
-        self.capacity=max(65536,length+65536)
+        self.capacity=size
+        # Large snapshots are scratch storage, not a second resident copy of
+        # the system's process list between samples.
+        if size > 512 * 1024:
+            self.buffer = None
         start=C.addressof(block);offset=0;rows={};prefix=C.sizeof(ProcessHeader)
         while offset+prefix<=length:
             row=ProcessHeader.from_buffer(block,offset)

@@ -6,23 +6,23 @@ import time
 from PyQt5.QtCore import Qt,QRect,QRectF,QPoint,QPointF,QSize,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
-    QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy,QBoxLayout)
+    QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy)
 from ui_style import AlignedMenu
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import METRICS,background
+from resource_options import METRICS,SENSOR_UNITS,background
 from flash_view import palette_for,icon
 
 
-from resource_charts import MetricDisplay,rate,metric_colors
+from resource_charts import MetricDisplay,SensorColumns,rate,metric_colors
 from capsule_glass import CapsuleGlass
 
 
 def display_values(service):
     cfg=service.cfg;data=service.latest;rows=[]
-    for key in ('cpu','memory','network','gpu','fps','cpu_temp','gpu_temp','cpu_power','gpu_power'):
+    for key in ('cpu','memory','network','gpu','fps',*SENSOR_UNITS):
         if not cfg['resource_'+key]:continue
-        if key=='gpu' and service.compact:continue
+        if service.compact and key not in cfg['resource_compact_metrics']:continue
         value=data.get(key);label=METRICS[key];tip='';display='—'
         if key in ('cpu','gpu') and value is not None:display=f'{value:.0f}%'
         elif key=='memory' and value:
@@ -30,11 +30,13 @@ def display_values(service):
         elif key=='network' and value:display='↓ '+rate(value[0])+'   ↑ '+rate(value[1])
         elif key=='fps' and service.fps:
             display='—' if service.fps.value is None else f'{service.fps.value:.0f}';tip=service.fps.name
-        elif key.endswith(('_temp','_power')):
+        elif key in SENSOR_UNITS:
             reading=service.sensors.values.get(key) if service.sensors else None
             if reading:
-                label=reading['label'];tip=reading['source'];display=('%g °C' if key.endswith('_temp') else '%g W')%reading['value']
-            else:tip='当前传感器未提供读数'
+                label=reading['label'];tip=reading['source'];display=f"{reading['value']:g} {reading.get('unit',SENSOR_UNITS[key])}"
+            else:
+                if cfg['resource_hide_unavailable']:continue
+                tip='当前传感器未提供读数'
         if key=='gpu':tip='所有显卡中最忙引擎的利用率' if value is not None else '等待显卡驱动计数器'
         rows.append((key,label,display,tip))
     return rows
@@ -91,19 +93,56 @@ class ResourceWindow(QWidget):
     def __init__(self,service):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
         self.service=service;self.press=None;self.offset=0;self.rank_by='cpu';self.last_layer=None
+        self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
         self.detail=QWidget(self);lay=QVBoxLayout(self.detail);lay.setContentsMargins(12,0,12,10);lay.setSpacing(2)
         self.scroll=QScrollArea();self.scroll.setWidgetResizable(True);self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);lay.addWidget(self.scroll)
+        self.glass = CapsuleGlass()
+        self.dashboard = None
+        self.rank_labels = []
+        self.rank_icons = {}
+        self._ai_view=self._music_view=None
+        self._traffic_view=self._weather_view=None
+        self._saved_view_state = {}
+        self.nav=QScrollArea(self);self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_content=QWidget();self.nav.setWidget(self.nav_content)
+        self.nav_arrows=[]
+        for title,direction in [('‹',-1),('›',1)]:
+            button=QToolButton(self);button.setText(title);button.setAccessibleName('向左切换栏目' if direction<0 else '向右切换栏目')
+            button.clicked.connect(lambda checked=False,d=direction:self.nav.horizontalScrollBar().setValue(self.nav.horizontalScrollBar().value()+d*100));self.nav_arrows.append(button)
+        self.page_buttons={}
+        for key,title in [('resources','资源'),('ai','AI'),('music','音乐'),('traffic','流量'),('weather','天气')]:
+            btn=QToolButton(self.nav_content);btn.setText(title);btn.setCheckable(True);btn.clicked.connect(lambda checked=False,key=key:self.select_page(key));self.page_buttons[key]=btn
+        self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('资源胶囊设置');self.settings_button.setToolTip('资源胶囊设置');self.settings_button.clicked.connect(service.settings)
+        self.fold_button=QToolButton(self);self.fold_button.setAccessibleName('收起胶囊');self.fold_button.setToolTip('收起胶囊');self.fold_button.clicked.connect(lambda:service.fold(True))
+        self.outside_since = None
+        self.auto_fold_timer = QTimer(self)
+        self.auto_fold_timer.setInterval(250)
+        self.auto_fold_timer.timeout.connect(self.fold_idle)
+        self.enter_timer=QTimer(self);self.enter_timer.setSingleShot(True);self.enter_timer.setInterval(230);self.enter_timer.timeout.connect(self.expand_hover)
+        self.colors={}
+        self.animation=QTimer(self);self.animation.setInterval(33);self.animation.timeout.connect(self.animate)
+        self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.update)
+        self.rotate=QTimer(self);self.rotate.setInterval(6000);self.rotate.timeout.connect(self.next_page)
+        from resource_resize import ResizeEdges
+        self.resize_edges=ResizeEdges(self)
+        from resource_liquid import CapsuleMotion
+        self.liquid=CapsuleMotion(self)
+
+    def build_dashboard(self):
         page=QWidget();self.scroll.setWidget(page);body=QVBoxLayout(page);body.setContentsMargins(2,2,4,1);body.setSpacing(7);body.setSizeConstraint(QLayout.SetMinAndMaxSize);self.body=body;self.page=page
-        self.glass=CapsuleGlass()
-        self.dashboard=QWidget()
-        self.columns=QBoxLayout(QBoxLayout.LeftToRight,self.dashboard)
-        self.columns.setContentsMargins(0,0,0,0);self.columns.setSpacing(18)
+        self.dashboard=QWidget(page)
+        self.columns=QGridLayout(self.dashboard)
+        self.columns.setContentsMargins(0,0,0,0)
+        self.columns.setHorizontalSpacing(18);self.columns.setVerticalSpacing(8)
+        self.columns.setColumnStretch(0,3);self.columns.setColumnStretch(1,2)
+        self.dashboard_layout_key = None
         self.graph=MetricDisplay(self)
-        self.columns.addWidget(self.graph,3,Qt.AlignTop)
-        self.rank_section=QWidget()
+        self.graph.setParent(self.dashboard)
+        self.rank_section=QWidget(self.dashboard)
         rank_body=QVBoxLayout(self.rank_section)
         rank_body.setContentsMargins(0,0,0,0);rank_body.setSpacing(3)
         self.rank_head=QWidget();head=QHBoxLayout(self.rank_head)
@@ -128,75 +167,201 @@ class ResourceWindow(QWidget):
             for col,field in enumerate((mark,name,cpu,ram)):grid.addWidget(field,i,col)
             self.rank_labels.append((mark,name,cpu,ram))
         rank_body.addWidget(self.rank_widget);rank_body.addStretch(1)
-        self.side_section=QWidget()
-        self.side_layout=QVBoxLayout(self.side_section)
-        self.side_layout.setContentsMargins(0,0,0,0);self.side_layout.setSpacing(8)
-        self.side_layout.addWidget(self.rank_section)
-        self.columns.addWidget(self.side_section,2,Qt.AlignTop)
         body.addWidget(self.dashboard)
+        self.sensor_columns=SensorColumns(self);self.sensor_columns.setParent(self.dashboard)
         self.no_readings=QLabel('在「设置」中选择要显示的读数。');self.no_readings.setWordWrap(True);body.addWidget(self.no_readings)
         self.bt_head=QWidget();row=QHBoxLayout(self.bt_head);row.setContentsMargins(0,0,0,0)
         row.setSpacing(5);row.addWidget(QLabel('蓝牙电量'));self.bt_page=QToolButton();self.bt_page.clicked.connect(self.next_devices);row.addWidget(self.bt_page)
         self.bt_refresh=QToolButton();self.bt_refresh.setText('刷新');self.bt_refresh.clicked.connect(self.refresh_bt);row.addWidget(self.bt_refresh)
         row.addStretch()
-        self.battery_section=QWidget();battery_layout=QVBoxLayout(self.battery_section)
+        self.battery_section=QWidget(self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
         battery_layout.setContentsMargins(0,0,0,0);battery_layout.setSpacing(0)
         battery_layout.addWidget(self.bt_head);self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
-        self.side_layout.addWidget(self.battery_section);body.addStretch()
-        self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('资源胶囊设置');self.settings_button.setToolTip('资源胶囊设置');self.settings_button.clicked.connect(service.settings)
-        self.fold_button=QToolButton(self);self.fold_button.setAccessibleName('收起胶囊');self.fold_button.setToolTip('收起胶囊');self.fold_button.clicked.connect(lambda:service.fold(True))
-        self.leave_timer=QTimer(self);self.leave_timer.setSingleShot(True);self.leave_timer.timeout.connect(self.fold_idle)
-        self.enter_timer=QTimer(self);self.enter_timer.setSingleShot(True);self.enter_timer.setInterval(230);self.enter_timer.timeout.connect(self.expand_hover)
-        self.colors={}
+        body.addStretch()
+
+    def layout_dashboard(self):
+        groups = ((self.graph, self.rank_section), (self.sensor_columns, self.battery_section))
+        visible = tuple(tuple(panel for panel in group if not panel.isHidden()) for group in groups)
+        wide = self.width() >= 500
+        key = (wide, visible)
+        if key == self.dashboard_layout_key:
+            return
+        self.dashboard_layout_key = key
+        for group in groups:
+            for panel in group:
+                self.columns.removeWidget(panel)
+        rows = visible if wide else [(panel,) for group in visible for panel in group]
+        for row, panels in enumerate(group for group in rows if group):
+            span = 2 if len(panels) == 1 else 1
+            for column, panel in enumerate(panels):
+                self.columns.addWidget(panel, row, column, 1, span, Qt.AlignTop)
+        self.dashboard.setVisible(any(visible))
+
+    def release_dashboard(self):
+        if self.dashboard is None:
+            return
+        page = self.scroll.takeWidget()
+        self.dashboard = None
+        self.rank_labels = []
+        self.rank_icons.clear()
+        for name in ('columns','graph','rank_section','rank_head','rank_buttons','rank_widget',
+                     'dashboard_layout_key','sensor_columns','no_readings','bt_head','bt_page',
+                     'bt_refresh','battery_section','rings','body','page'):
+            self.__dict__.pop(name, None)
+        if page is not None:
+            page.deleteLater()
+
+    def select_page(self,key):
+        before=self.service.active_keys()
+        self.page_key='ai' if key=='stats' else key if key in self.page_buttons else 'resources';self.refresh();self.reposition()
+        self.nav.ensureWidgetVisible(self.page_buttons[self.page_key],0,0)
+        if before!=self.service.active_keys():self.service.sync()
+        elif self.service.deck:self.service.deck.configure()
+    def page_enabled(self,key):
+        cfg=self.service.cfg
+        return True if key=='resources' else cfg['resource_ai'] or cfg['resource_ai_tray'] if key=='ai' else cfg['resource_'+key]
+    def view(self,key):
+        view=getattr(self,'_'+key+'_view')
+        if view is None:
+            from resource_pages import AiView,MusicView,InfoPage
+            view=(AiView(self) if key=='ai' else MusicView(self) if key=='music' else InfoPage(self,key))
+            setattr(self,'_'+key+'_view',view);view.hide();self.detail.layout().addWidget(view)
+            state = self._saved_view_state.pop(key, None)
+            if state and key == 'ai':
+                period, metric, provider = state
+                view.statistics.period = period
+                view.statistics.metric = metric
+                view.statistics.refresh()
+                view.statistics.provider.setCurrentIndex(max(0, view.statistics.provider.findData(provider)))
+        return view
+
+    def release_inactive_views(self):
+        if self.service.compact:
+            self.release_dashboard()
+        for key in ('ai', 'music', 'traffic', 'weather'):
+            name = '_' + key + '_view'
+            view = getattr(self, name)
+            if view is None or view.isVisible():
+                continue
+            if key == 'ai':
+                statistics = view.statistics
+                self._saved_view_state[key] = (statistics.period, statistics.metric, statistics.provider.currentData())
+            self.detail.layout().removeWidget(view)
+            setattr(self, name, None)
+            view.deleteLater()
+    @property
+    def ai_view(self):return self.view('ai')
+    @property
+    def music_view(self):return self.view('music')
+    @property
+    def stats_view(self):return self.ai_view.statistics
+    @property
+    def traffic(self):return self.view('traffic').content
+    @property
+    def weather_view(self):return self.view('weather').content
+    def animate(self):
+        self.halo_phase=(time.monotonic()%12)/12;self.update()
+    def next_page(self):
+        if self.press is None and not self.underMouse() and self.compact_pages>1:self.offset+=1;self.update()
+    def sync_animation(self):
+        cfg=self.service.cfg;visible=self.isVisible()
+        for timer,active in [(self.animation,visible and cfg['resource_halo'] and cfg.get('motion_enabled',True) and not self.service.runtime.lite),
+                             (self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
+                             (self.rotate,visible and self.service.compact and cfg['resource_compact_rotate'])]:
+            if active and not timer.isActive():timer.start()
+            elif not active:timer.stop()
+
+    def sync_auto_fold(self):
+        if self.isVisible() and not self.service.compact and self.service.cfg['resource_auto_hide']:
+            if not self.auto_fold_timer.isActive():
+                self.auto_fold_timer.start()
+        else:
+            self.auto_fold_timer.stop()
+            self.outside_since = None
 
     def sync_window(self):
+        self.liquid.prepare()
         cfg=self.service.cfg;self.background=background(cfg);colors=palette_for(self.service,self.background)
         if colors!=self.colors:
             self.colors=colors
+            from resource_pages import SCROLL_STYLE
             self.setStyleSheet("""
                 QWidget{background:transparent;color:%(ink)s}
-                QLabel{font-size:12px}
+                QLabel{font-size:10px}
                 QLabel#RankTitle{font-weight:600}
                 QLabel#RankMemory{color:%(muted)s}
-                QToolButton{border:0;border-radius:6px;padding:3px 5px;color:%(muted)s;background:transparent}
+                QLabel#Subtle{color:%(muted)s;font-size:10px}
+                QToolButton{border:0;border-radius:5px;padding:2px 5px;color:%(muted)s;background:transparent;font-size:10px}
                 QToolButton:hover,QToolButton:checked{background:%(hover)s;color:%(ink)s}
                 QToolButton#RankSort{font-size:10px;padding:2px 5px}
                 QScrollArea{border:0}
-            """ % colors)
+                QTableWidget{background:transparent;border:0;selection-background-color:%(hover)s;color:%(ink)s;font-size:12px}
+                QHeaderView::section{background:%(hover)s;color:%(muted)s;border:0;padding:5px;font-size:11px}
+                QTableCornerButton::section{background:%(hover)s;border:0}
+                QDateEdit{background:%(hover)s;color:%(ink)s;border:0;border-radius:5px;padding:4px}
+                QSlider::groove:horizontal{background:%(hover)s;height:4px;border:0;border-radius:2px}
+                QSlider::sub-page:horizontal{background:%(muted)s;border-radius:2px}
+                QSlider::handle:horizontal{background:%(ink)s;width:12px;margin:-4px 0;border-radius:6px}
+            """ % colors+SCROLL_STYLE)
             self.settings_button.setIcon(icon('settings',colors['ink']));self.fold_button.setIcon(icon('collapse',colors['ink']))
             for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
-        compact=self.service.compact;self.detail.setVisible(not compact)
+        compact = self.service.compact
+        opening = False
+        # Temporarily folding the card while settings are open is not a new visit.
+        if not self.service.editing or self.service.preview_detail:
+            opening = not compact and self._displayed_compact is not False
+            self._displayed_compact = compact
+            preferred = cfg['resource_open_page']
+            if opening and preferred != 'last':
+                self.page_key = preferred if self.page_enabled(preferred) else 'resources'
+        self.detail.setVisible(not compact)
         self.settings_button.setVisible(not compact);self.fold_button.setVisible(not compact)
         if compact or not cfg['resource_rank']:
             self.rank_icons.clear();self.rank_frame=self.rank_style=None
             for mark,*_ in self.rank_labels:mark.clear()
-        if not cfg['resource_auto_hide']:self.leave_timer.stop();self.enter_timer.stop()
-        self.reposition();self.refresh()
+        if cfg['resource_expand_mode']!='hover':self.enter_timer.stop()
+        self.reposition();self.refresh();self.sync_animation()
+        self.sync_auto_fold()
+        if opening:
+            self.nav.ensureWidgetVisible(self.page_buttons[self.page_key], 0, 0)
+        self.resize_edges.sync()
+        self.liquid.sync()
 
-    def desktop_rect(self):
-        screens=screen_records()
-        if not screens:return QRect(0,0,680,202)
-        record=valid_record(self.service.cfg['resource_layout'])
-        rect=project(record,screens,minimum=(220,90)) if record else None
-        if rect:return QRect(*rect)
-        x,y,w,h=screens[0]['area']
+    def desktop_rect(self, screens=None, projected=None):
+        screens=screen_records() if screens is None else screens
+        if not screens:return QRect(0,0,560,330)
+        rect=projected if projected is not None else self.projected_layout(screens)
         cfg=self.service.cfg
-        extras=sum(cfg['resource_'+key] for key in ('fps','cpu_temp','gpu_temp','cpu_power','gpu_power'))
-        chart_height=82*bool(cfg['resource_cpu'] or cfg['resource_gpu'])+31*cfg['resource_memory']+27*cfg['resource_network']+25*((extras+1)//2)
-        side_height=112*cfg['resource_rank']+82*cfg['resource_bluetooth']+8*bool(cfg['resource_rank'] and cfg['resource_bluetooth'])
-        width=min(w,680 if chart_height and side_height else 380 if chart_height else 280)
-        content=max(chart_height,side_height) if width>=500 or not (chart_height and side_height) else chart_height+side_height+8
-        height=min(h,max(92,content+55))
-        return QRect(x+(w-width)//2,y+min(18,max(0,h-height)),width,height)
+        target=QRect(*rect) if rect else QRect(*screens[0]['area'])
+        screen=QApplication.screenAt(target.center()) or QApplication.primaryScreen();area=screen.availableGeometry()
+        width=min(area.width(),cfg['resource_expanded_width']);height=min(area.height(),cfg['resource_expanded_height'])
+        if (width,height)==(560,300) and not any(cfg['resource_'+k] for k in METRICS if k!='bluetooth') and not (cfg['resource_ai'] or cfg['resource_music'] or cfg['resource_ai_tray'] or cfg['resource_weather']):width=min(width,280);height=min(height,150)
+        x=max(area.left(),min(round(target.x()+(target.width()-width)/2),area.right()-width+1))
+        y=max(area.top(),min(target.top() if rect else area.top()+18,area.bottom()-height+1))
+        return QRect(x,y,width,height)
+
+    def projected_layout(self, screens):
+        record = valid_record(self.service.cfg['resource_layout'])
+        return project(record, screens, minimum=(1,1)) if record else None
 
     def reposition(self):
-        if self.press is not None:return
-        cfg=self.service.cfg;rect=self.desktop_rect();compact=self.service.compact
+        if self.press is not None or self.liquid.landing:return
+        cfg=self.service.cfg;compact=self.service.compact
+        screens = screen_records()
+        projected = self.projected_layout(screens)
+        rect = QRect(*projected) if compact and projected else self.desktop_rect(screens, projected)
         if compact:
             kind=cfg['resource_fold']
-            rect=QRect(*fold_geometry(list(rect.getRect()),{'style':'capsule' if kind=='pill' else kind,'ratio':80},38))
-            if kind=='pill' and rect.width()>300:
-                center=rect.center();rect.setWidth(300);rect.moveCenter(center)
+            if kind=='ball':rect=QRect(*fold_geometry(list(rect.getRect()),{'style':'ball','ratio':80},38))
+            else:
+                center=rect.x()+rect.width()/2;screen=QApplication.screenAt(rect.center()) or QApplication.primaryScreen();area=screen.availableGeometry()
+                from resource_compact import natural_width
+                rect.setWidth(natural_width(self,min(cfg['resource_compact_width'],area.width())));rect.setHeight(cfg['resource_compact_height'])
+                rect.moveLeft(max(area.left(),min(round(center-rect.width()/2),area.right()-rect.width()+1)))
+        from resource_liquid import attached
+        area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
+        edge = cfg['resource_edge'] if cfg['card_snap'] and cfg['resource_edge_snap'] else 'free'
+        rect=attached(rect,area,edge)
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
     def taskbar_at(self,point):
@@ -268,15 +433,39 @@ class ResourceWindow(QWidget):
     def refresh_bt(self):
         if self.service.bluetooth:self.service.bluetooth.refresh()
     def refresh(self):
+        self._compact_cache=None
         cfg=self.service.cfg;self.values=display_values(self.service)
-        self.setToolTip('\n'.join(label+'  '+value+(' · '+tip if tip else '') for _,label,value,tip in self.values) or '资源胶囊 · 点击展开')
+        tips=[label+'  '+value+(' · '+tip if tip else '') for _,label,value,tip in self.values]
+        if self.service.deck:
+            from resource_quota import quota_text
+            for row in self.service.deck.providers:
+                quotas = [q['label'].replace(' · 已用', '')+' '+quota_text(q) for q in row.get('quotas', [])]
+                tips.append(row['name']+' · '+('; '.join(quotas) or row.get('status','未连接')))
+            track=self.service.deck.media.get('track') or {}
+            if track:tips.append(track.get('title','')+' · '+track.get('artist',''))
+        if cfg['resource_traffic']:
+            from resource_traffic import amount
+            data=self.service.latest.get('traffic') or {}
+            for key,name in [('day','今日'),('month','本月'),('year','本年')]:
+                if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
+        if self.service.compact:tips.append('滚轮切换读数，点击展开')
+        self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '资源胶囊 · 点击展开')
         if not self.service.compact:
-            self.graph.refresh(self.values)
+            if not self.page_enabled(self.page_key):self.page_key='resources'
+            self.scroll.setVisible(self.page_key=='resources')
+            if self.page_key!='resources':self.view(self.page_key).show();self.view(self.page_key).refresh()
+            for key in ('ai','music','traffic','weather'):
+                view=getattr(self,'_'+key+'_view')
+                if view and key!=self.page_key:view.hide()
+        if not self.service.compact and self.page_key=='resources':
+            if self.dashboard is None:
+                self.build_dashboard()
+            basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network')]
+            self.graph.refresh(basics);self.sensor_columns.refresh([row for row in self.values if row not in basics])
             self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth']))
             self.rank_section.setVisible(cfg['resource_rank'])
-            self.side_section.setVisible(cfg['resource_rank'] or cfg['resource_bluetooth'])
             self.battery_section.setVisible(cfg['resource_bluetooth'])
-            self.dashboard.setVisible(bool(self.values) or cfg['resource_rank'] or cfg['resource_bluetooth'])
+            self.layout_dashboard()
             if cfg['resource_rank']:self.show_ranking()
             self.bt_head.setVisible(cfg['resource_bluetooth']);self.rings.setVisible(cfg['resource_bluetooth'])
             bt=self.service.bluetooth;self.bt_page.setVisible(bool(bt and bt.pages()>1))
@@ -285,102 +474,125 @@ class ResourceWindow(QWidget):
             self.body.activate()
             wanted=self.body.minimumSize().height()
             if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)
+        for key,btn in self.page_buttons.items():
+            enabled=self.page_enabled(key)
+            btn.setVisible(not self.service.compact and enabled);btn.setChecked(key==self.page_key)
+        self.layout_page_buttons()
+        if self.service.compact:self.reposition()
         self.update()
 
     def resizeEvent(self,event):
-        h=min(38,self.height());self.detail.setGeometry(0,h,self.width(),max(1,self.height()-h))
-        self.columns.setDirection(QBoxLayout.LeftToRight if self.width()>=500 else QBoxLayout.TopToBottom)
-        self.columns.setSpacing(18 if self.width()>=500 else 8)
+        h=min(34,self.height());self.detail.setGeometry(0,h,self.width(),max(1,self.height()-h))
+        if self.dashboard is not None:
+            self.layout_dashboard()
         self.fold_button.setGeometry(self.width()-35,5,26,26);self.settings_button.setGeometry(self.width()-64,5,26,26)
+        self.layout_page_buttons()
+        if hasattr(self,'resize_edges'):self.resize_edges.sync()
         super().resizeEvent(event)
+    def layout_page_buttons(self):
+        x=0
+        for key,btn in self.page_buttons.items():
+            if not self.page_enabled(key):continue
+            btn.setGeometry(x,0,44,24);x+=46
+        cfg=self.service.cfg;self.header_face_width=round(30*cfg['resource_face_scale']/100) if cfg['resource_face'] else 0
+        left=13+self.header_face_width if self.header_face_width else 35
+        total=max(1,x-2);available=max(1,self.width()-left-69);overflow=total>available
+        width=min(total,max(1,available-(36 if overflow else 0)))
+        self.nav_content.setFixedSize(total,24);self.nav.setGeometry(left,5,width,24)
+        visible=not self.service.compact;self.nav.setVisible(visible)
+        for index,button in enumerate(self.nav_arrows):
+            button.setGeometry(left+width+18*index,5,18,24);button.setVisible(visible and overflow)
+        self.nav_end=left+width+(36 if overflow else 0)
     def paintEvent(self,event):
         if not self.colors:return
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         cfg=self.service.cfg;c=self.colors;compact=self.service.compact;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
-        radius=min(17,rect.height()/2)
-        if compact and cfg['resource_fold']=='bar':radius=min(12,rect.height()/2)
-        self.glass.paint(p,self,self,radius,self.press is not None,self.background)
+        radius=min(17,rect.height()/2) if not compact else min(12,rect.height()/2) if cfg['resource_fold']=='bar' else rect.height()/2
+        self.glass.paint(p,self,self,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
+                         self.liquid.radii(radius),self.liquid.live)
+        from resource_compact import paint_halo,paint_compact
+        paint_halo(self,p)
         ink=QColor(c['ink']);accent=QColor(metric_colors(self.service)['cpu']);font=QFont(self.font());font.setPixelSize(13)
         if compact and (self.width()<70 or (cfg['resource_fold']=='ball')):
+            if cfg['resource_face']:
+                self.liquid.paint_face(p,rect.center(),max(20,self.width()-12));return
             q=rect.center();p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
             for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
             return
         if not compact:
-            p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
-            for n,h in enumerate((6,13,9)):p.drawLine(16+n*4,24,16+n*4,24-h)
+            if cfg['resource_face']:
+                self.liquid.paint_face(p,QPointF(7+self.header_face_width/2,17),self.header_face_width)
+            else:
+                p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
+                for n,h in enumerate((6,13,9)):p.drawLine(16+n*4,24,16+n*4,24-h)
             font.setWeight(QFont.DemiBold);font.setPixelSize(15);p.setFont(font);p.setPen(ink)
-            p.drawText(QRect(34,0,self.width()-124,38),Qt.AlignVCenter,'系统资源')
-            if self.width()>=430 and self.service.history:
+            bridge=self.service.deck
+            header_left=self.nav_end+4;header_width=max(0,self.width()-68-header_left)
+            if bridge and bridge.alert_until>time.monotonic() and cfg['resource_quota_alert'] and header_width>=80:
+                from resource_compact import text
+                text(p,QRectF(header_left,5,header_width,24),bridge.alert,c['ink'],9)
+            elif self.width()>=620 and header_width>=52 and self.service.history:
                 stamp=self.service.history[-1]['time']
                 sampled_at=time.time()-max(0,time.monotonic()-stamp)
                 font.setPixelSize(11);font.setWeight(QFont.Normal);p.setFont(font);p.setPen(QColor(c['muted']))
-                p.drawText(QRect(self.width()//2-30,0,60,38),Qt.AlignCenter,time.strftime('%H:%M',time.localtime(sampled_at)))
+                p.drawText(QRect(header_left,0,header_width,34),Qt.AlignRight|Qt.AlignVCenter,time.strftime('%H:%M',time.localtime(sampled_at)))
             return
-        p.setFont(font);p.setPen(ink)
-        bt=self.service.bluetooth if cfg['resource_bluetooth'] else None
-        right=self.width()-11
-        if bt:
-            from bluetooth_gauge import draw_rings
-            edge=min(26,self.height()-8);draw_rings(p,QRectF(right-edge,(self.height()-edge)/2,edge,edge),bt.group(),not c['light']);right-=edge+6
-        labels=[(v.replace(' KB/s','K').replace(' MB/s','M').replace(' B/s','B') if key=='network' else label+' '+v)
-                for key,label,v,_ in getattr(self,'values',[])]
-        if labels:
-            start=self.offset%len(labels);labels=labels[start:]+labels[:start]
-        available=max(1,right-12);shown=[]
-        for i,label in enumerate(labels):
-            text='   '.join(shown+[label]);remaining=len(labels)-i-1
-            suffix=('  +'+str(remaining)) if remaining else ''
-            if shown and p.fontMetrics().horizontalAdvance(text+suffix)>available:break
-            shown.append(label)
-        text='   '.join(shown)
-        if len(shown)<len(labels):text+='  +'+str(len(labels)-len(shown))
-        if not text:text=str(len(bt.rows))+' 台蓝牙设备' if bt else '资源胶囊'
-        p.setPen(ink);p.setFont(font);p.drawText(QRect(12,0,available,self.height()),Qt.AlignVCenter,p.fontMetrics().elidedText(text,Qt.ElideRight,available))
+        paint_compact(self,p)
+        return
 
     def wheelEvent(self,event):
         if self.service.compact and event.angleDelta().y():
             self.offset+=1 if event.angleDelta().y()<0 else -1;self.update();event.accept()
         else:event.ignore()
     def enterEvent(self,event):
-        self.leave_timer.stop()
-        if self.service.cfg['resource_auto_hide'] and self.service.compact:self.enter_timer.start()
+        self.outside_since = None
+        if self.service.cfg['resource_expand_mode']=='hover' and self.service.compact:self.enter_timer.start()
         super().enterEvent(event)
     def expand_hover(self):
-        if self.press is None and self.isVisible() and self.geometry().contains(QCursor.pos()):self.service.fold(False,automatic=True)
+        if self.service.cfg['resource_expand_mode']=='hover' and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(QCursor.pos()):self.service.fold(False,automatic=True)
     def leaveEvent(self,event):
         self.enter_timer.stop()
-        if self.service.cfg['resource_auto_hide'] and not self.service.compact:
-            self.leave_timer.start(1000*self.service.cfg['resource_delay'])
         super().leaveEvent(event)
     def fold_idle(self):
-        if self.press is None and not self.geometry().contains(QCursor.pos()) and not QApplication.activePopupWidget() and not QApplication.activeModalWidget():
-            self.service.fold(True,automatic=True)
+        # Native leave events can be lost when a popup or mouse grab takes over.
+        if (self.press is not None or self.liquid.landing or self.geometry().contains(QCursor.pos())
+                or QApplication.activePopupWidget() or QApplication.activeModalWidget()):
+            self.outside_since = None
+            return
+        now = time.monotonic()
+        if self.outside_since is None:
+            self.outside_since = now
+        elif now - self.outside_since >= self.service.cfg['resource_delay']:
+            self.service.fold(True, automatic=True)
     def mousePressEvent(self,event):
         if event.button()==Qt.LeftButton and (event.y()<38 or self.service.compact):
-            self.enter_timer.stop();self.leave_timer.stop();self.press=event.globalPos();self.origin=self.pos()
-            self.original=self.desktop_rect();self.moved=False;event.accept()
+            self.enter_timer.stop();self.outside_since=None;self.press=event.globalPos();self.origin=self.pos()
+            self.moved=False;event.accept()
+            self.liquid.begin()
         else:super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
         if self.press is None:return
         delta=event.globalPos()-self.press
         if delta.manhattanLength()>=QApplication.startDragDistance():self.moved=True
-        if self.moved:self.move(self.origin+delta)
+        if self.moved:self.move(self.origin+delta);self.liquid.moved()
     def mouseReleaseEvent(self,event):
         if event.button()!=Qt.LeftButton or self.press is None:return
         self.press=None
+        self.liquid.released()
         if not self.moved:
             if self.service.compact:self.service.fold(False)
             return
         bar=self.taskbar_at(event.globalPos())
         if bar:
             self.reposition();self.service.offer_taskbar(bar,event.globalPos());return
-        rect=QRect(self.original);rect.moveTopLeft(QPoint(self.geometry().center().x()-rect.width()//2,self.y()))
+        if self.liquid.drop(event.globalPos()):return
+        rect=QRect(self.geometry())
         screen=QApplication.screenAt(event.globalPos()) or QApplication.primaryScreen();area=screen.availableGeometry()
         rect.moveLeft(max(area.left(),min(rect.x(),area.right()-rect.width()+1)))
         rect.moveTop(max(area.top(),min(rect.y(),area.bottom()-rect.height()+1)))
-        if not self.service.set_options(resource_layout=capture(list(rect.getRect()),screen_records())):self.reposition()
+        if not self.service.set_options(resource_edge='free',resource_layout=capture(list(rect.getRect()),screen_records())):self.reposition()
     def contextMenuEvent(self,event):
-        self.enter_timer.stop();self.leave_timer.stop();menu=AlignedMenu(self);cfg=self.service.cfg
+        self.enter_timer.stop();self.outside_since=None;menu=AlignedMenu(self);cfg=self.service.cfg
         menu.addAction('展开详情' if self.service.compact else '收起胶囊',lambda:self.service.fold(not self.service.compact))
         for name,layer in [('置顶显示','top'),('置于底层','bottom')]:
             item=menu.addAction(name);item.setCheckable(True);item.setChecked(cfg['resource_layer']==layer)
@@ -395,8 +607,21 @@ class ResourceWindow(QWidget):
         finally:menu.deleteLater()
     def closeEvent(self,event):
         event.ignore();self.service.set_options(resource_enabled=False)
+    def hideEvent(self,event):
+        self.animation.stop();self.clock_tick.stop();self.rotate.stop()
+        self.enter_timer.stop();self.auto_fold_timer.stop();self.outside_since=None
+        if hasattr(self,'liquid'):self.liquid.hide()
+        if self.service.extras:self.service.extras.pause()
+        super().hideEvent(event)
+    def showEvent(self,event):
+        super().showEvent(event)
+        self.sync_auto_fold()
+        if self.colors:self.sync_animation();self.liquid.sync()
+        if self.service.extras:self.service.extras.sync()
     def dispose(self):
-        self.enter_timer.stop();self.leave_timer.stop();self.glass.clear();self.hide();self.deleteLater()
+        self.liquid.close()
+        self.animation.stop();self.clock_tick.stop();self.rotate.stop()
+        self.enter_timer.stop();self.auto_fold_timer.stop();self.glass.clear();self.hide();self.deleteLater()
 
 
 from resource_settings import ResourceOptions

@@ -77,11 +77,11 @@ def run(api,runtime,root,output,checks):
                 dense.size_mode.setCurrentIndex(dense.size_mode.findData(mode));app.processEvents();sizes.append(dense.size());fonts.append(dense.fields['icon_size'].font().pixelSize())
                 assert dense.size_mode.currentData()==mode
                 dense.grab().save(str(Path(output)/('settings-preset-'+mode+'.png')))
-            assert sizes==[QSize(560,448),QSize(800,640)],sizes
+            assert sizes==[QSize(448,350),QSize(640,500)],sizes
             assert fonts[0]<fonts[1],fonts
             dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==1.0
             for _ in range(2):
-                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(800,640) and dense.size_mode.currentData()=='auto'
+                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(640,500) and dense.size_mode.currentData()=='auto'
             dense.reject();assert cfg==saved_cfg,{key:(saved_cfg.get(key),cfg.get(key)) for key in set(saved_cfg)|set(cfg) if saved_cfg.get(key)!=cfg.get(key)}
             dense.reveal();dense.size_mode.setCurrentIndex(dense.size_mode.findData('medium'));dense.resize(910,710);app.processEvents()
             assert dense.size_mode.currentData()=='custom'

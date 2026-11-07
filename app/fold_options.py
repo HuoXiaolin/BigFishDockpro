@@ -33,6 +33,7 @@ class Badge(QToolButton):
         self.setStyleSheet('QToolButton {background:transparent;border:0;padding:0;}');self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.setContextMenuPolicy(Qt.CustomContextMenu);self.customContextMenuRequested.connect(self.menu)
     def paintEvent(self,event):
+        if hasattr(self.owner,'face_tracker') and self.owner.option('face'):return
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.SmoothPixmapTransform)
         size=min(round(22*self.owner.ui_factor),self.height()-12,self.width()-12)
         from glass_panel import category_icon,category_color
@@ -49,6 +50,7 @@ class Badge(QToolButton):
         menu=self.owner.build_panel_menu() if hasattr(self.owner,'model') else self.owner.build_menu()
         menu.exec_(self.mapToGlobal(point));menu.deleteLater()
     def mousePressEvent(self,event):
+        if event.button()==Qt.LeftButton and hasattr(self.owner,'face_tracker'):self.owner.face_tracker.press(True)
         if event.button()==Qt.LeftButton:self.origin=event.globalPos()-self.owner.pos();self.start=event.globalPos();self.moved=False;event.accept()
         else:super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
@@ -56,9 +58,14 @@ class Badge(QToolButton):
             if (event.globalPos()-self.start).manhattanLength()>QApplication.startDragDistance():self.moved=True
             if self.moved:self.owner.move(event.globalPos()-self.origin)
     def mouseReleaseEvent(self,event):
+        if event.button()==Qt.LeftButton and hasattr(self.owner,'face_tracker'):self.owner.face_tracker.press(False)
         if event.button()==Qt.LeftButton and self.origin is not None:
             self.origin=None
-            if self.moved:self.owner.store_geometry() if hasattr(self.owner,'model') else self.owner.save_geometry()
+            if self.moved:
+                from card_snap import finish_drag
+                finish_drag(self.owner, event.globalPos())
+                if hasattr(self.owner,'model'):self.owner.store_geometry()
+                else:self.owner.save_geometry()
             elif hasattr(self.owner,'model'):self.owner.expand()
             else:self.owner.set_collapsed(False)
         else:super().mouseReleaseEvent(event)

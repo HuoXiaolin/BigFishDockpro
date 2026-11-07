@@ -6,7 +6,7 @@ from PyQt5.QtCore import Qt,QRect,QRectF,QSize
 from PyQt5.QtGui import QImage,QImageReader,QPainter,QColor,QPixmap
 
 _metadata={}
-MAX_WALLPAPER_PIXELS=8*1024*1024  # One shared decode, at most about 32 MiB.
+MAX_WALLPAPER_PIXELS=256*1024  # Shared blurred texture, at most 1 MiB; retain original screen coordinates.
 
 
 def desktop_wallpaper(window):

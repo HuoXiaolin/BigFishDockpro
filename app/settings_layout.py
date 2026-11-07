@@ -1,9 +1,11 @@
 """Adaptive settings-window density, based on immutable compact-layout metrics."""
 from PyQt5.QtCore import Qt,QTimer
 from PyQt5.QtWidgets import QApplication,QWidget
-from ui_style import ModernComboBox,label,density_stylesheet
+from ui_style import UI_DENSITY,ModernComboBox,label,density_stylesheet
 
 MODES=[('自动适配','auto'),('小','small'),('中','medium'),('手动调整','custom')]
+SETTINGS_SIZE = (640, 500)
+SETTINGS_MINIMUM = (490, 360)
 
 
 def automatic_mode(area):
@@ -18,6 +20,39 @@ def size_factor(mode, area, custom_density):
     return .7 if mode == 'small' else 1.0
 
 
+def capture_density(root):
+    reference=[]
+    def visit_layout(layout):
+        margins=layout.contentsMargins();row=[layout,[value/.7 for value in (margins.left(),margins.top(),margins.right(),margins.bottom())],layout.spacing()/.7 if layout.spacing()>=0 else None,None,None]
+        if hasattr(layout,'horizontalSpacing'):
+            row[3]=layout.horizontalSpacing()/.7 if layout.horizontalSpacing()>=0 else None;row[4]=layout.verticalSpacing()/.7 if layout.verticalSpacing()>=0 else None
+        reference.append(('layout',row))
+        for index in range(layout.count()):
+            child=layout.itemAt(index).layout()
+            if child is not None:visit_layout(child)
+    for widget in [root]+root.findChildren(QWidget):
+        if widget.window() is not root.window():continue
+        for axis in ('Width','Height'):
+            minimum=getattr(widget,'minimum'+axis)();maximum=getattr(widget,'maximum'+axis)()
+            if minimum==maximum and maximum<16777215:reference.append(('fixed',(widget,axis,minimum/.7)))
+        if widget.layout():visit_layout(widget.layout())
+    return reference
+
+def apply_density(reference, factor):
+    from PyQt5 import sip
+    for kind,record in reference:
+        if kind=='fixed':
+            widget,axis,value=record
+            if not sip.isdeleted(widget):getattr(widget,'setFixed'+axis)(max(1,round(value*factor)))
+        else:
+            layout,margins,spacing,horizontal,vertical=record
+            if sip.isdeleted(layout):continue
+            layout.setContentsMargins(*(round(value*factor) for value in margins))
+            if spacing is not None:layout.setSpacing(round(spacing*factor))
+            if horizontal is not None:layout.setHorizontalSpacing(round(horizontal*factor))
+            if vertical is not None:layout.setVerticalSpacing(round(vertical*factor))
+
+
 class SettingsSizingMixin:
     def create_size_selector(self):
         self._interface_ready=False;self._interface_resizing=False;self._custom_density=100;self._manual_dimensions=[]
@@ -30,22 +65,7 @@ class SettingsSizingMixin:
         self.header.layout().insertWidget(self.header.layout().count()-2,selector)
         self.fields['settings_size']=self.size_mode
     def initialize_size_behavior(self):
-        self._density_reference=[]
-        from PyQt5 import sip
-        def visit_layout(layout):
-            margins=layout.contentsMargins();row=[layout,[value/.7 for value in (margins.left(),margins.top(),margins.right(),margins.bottom())],layout.spacing()/.7 if layout.spacing()>=0 else None,None,None]
-            if hasattr(layout,'horizontalSpacing'):
-                row[3]=layout.horizontalSpacing()/.7 if layout.horizontalSpacing()>=0 else None;row[4]=layout.verticalSpacing()/.7 if layout.verticalSpacing()>=0 else None
-            self._density_reference.append(('layout',row))
-            for index in range(layout.count()):
-                child=layout.itemAt(index).layout()
-                if child is not None:visit_layout(child)
-        for widget in [self]+self.findChildren(QWidget):
-            if widget.window() is not self:continue
-            for axis in ('Width','Height'):
-                minimum=getattr(widget,'minimum'+axis)();maximum=getattr(widget,'maximum'+axis)()
-                if minimum==maximum and maximum<16777215:self._density_reference.append(('fixed',(widget,axis,minimum/.7)))
-            if widget.layout():visit_layout(widget.layout())
+        self._density_reference=capture_density(self)
         self._interface_ready=True;self._custom_density=self.tray.cfg.get('settings_custom_density',100);self._manual_dimensions=list(self.tray.cfg.get('settings_manual_size',[]))
         self.size_mode.setCurrentIndex(max(0,self.size_mode.findData(self.tray.cfg.get('settings_size','medium'))))
         self.size_mode.currentIndexChanged.connect(self.adapt_interface);self.adapt_interface()
@@ -54,24 +74,19 @@ class SettingsSizingMixin:
         return screen.availableGeometry()
     def refresh_interface_style(self):
         if not getattr(self,'_interface_ready',False):return
-        from PyQt5 import sip
         factor=float(self.property('interfaceScale') or .7)
         self._interface_resizing=True
         try:
             base=getattr(QApplication.instance(),'_base_stylesheet','')
-            if base:self.setStyleSheet(density_stylesheet(base,factor))
-            for kind,record in self._density_reference:
-                if kind=='fixed':
-                    widget,axis,value=record
-                    if not sip.isdeleted(widget):getattr(widget,'setFixed'+axis)(max(1,round(value*factor)))
-                else:
-                    layout,margins,spacing,horizontal,vertical=record
-                    if sip.isdeleted(layout):continue
-                    layout.setContentsMargins(*(round(value*factor) for value in margins))
-                    if spacing is not None:layout.setSpacing(round(spacing*factor))
-                    if horizontal is not None:layout.setHorizontalSpacing(round(horizontal*factor))
-                    if vertical is not None:layout.setVerticalSpacing(round(vertical*factor))
-            area=self.available_interface_area();self.setMinimumSize(min(round(640*factor),area.width()-24),min(round(480*factor),area.height()-24))
+            style = density_stylesheet(base, factor) if base and factor != UI_DENSITY else ''
+            if self.styleSheet() != style:
+                self.setStyleSheet(style)
+            apply_density(self._density_reference,factor)
+            for reference in getattr(self,'_page_density',{}).values():
+                apply_density(reference,factor)
+            area=self.available_interface_area()
+            self.setMinimumSize(min(round(SETTINGS_MINIMUM[0]*factor),area.width()-24),
+                                min(round(SETTINGS_MINIMUM[1]*factor),area.height()-24))
         finally:self._interface_resizing=False
     def adapt_interface(self,*args):
         if not getattr(self,'_interface_ready',False):return
@@ -80,7 +95,7 @@ class SettingsSizingMixin:
         self._interface_resizing=True
         self.setProperty('interfaceScale',factor);self.refresh_interface_style();self._interface_resizing=True
         try:
-            target=self._manual_dimensions if mode=='custom' and len(self._manual_dimensions)==2 else [round(800*factor),round(640*factor)]
+            target=self._manual_dimensions if mode=='custom' and len(self._manual_dimensions)==2 else [round(value*factor) for value in SETTINGS_SIZE]
             width=min(target[0],max(300,area.width()-24));height=min(target[1],max(250,area.height()-24));self.resize(width,height)
             self.move(max(area.left(),min(self.x(),area.right()-self.width()+1)),max(area.top(),min(self.y(),area.bottom()-self.height()+1)))
         finally:self._interface_resizing=False
@@ -122,6 +137,7 @@ def fit_auxiliary_dialog(dialog,cfg):
             if low==high and high<16777215:getattr(widget,'setFixed'+axis)(round(low*ratio))
         if widget.layout():layout_scale(widget.layout())
     base=getattr(QApplication.instance(),'_base_stylesheet','')
-    if base:dialog.setStyleSheet(density_stylesheet(base,factor))
+    if base and factor != UI_DENSITY:
+        dialog.setStyleSheet(density_stylesheet(base,factor))
     dialog.setMinimumSize(min(round(minimum.width()*ratio),area.width()-24),min(round(minimum.height()*ratio),area.height()-24))
     dialog.resize(min(round(size.width()*ratio),area.width()-24),min(round(size.height()*ratio),area.height()-24))

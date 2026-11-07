@@ -15,6 +15,9 @@ class DesktopPanels(QObject):
         super().__init__(runtime.dock)
         self.runtime, self.dock = runtime, runtime.dock
         self.windows = {}
+        self.dormant_pages = {}
+        self.default_geometries = {}
+        self.release_hidden_cards = False
         self.shown, self.blocked, self.closed = bool(self.cfg.get('panels_visible', True)), False, False
         self.active_window = None
         self.scanned_rows = []
@@ -220,27 +223,38 @@ class DesktopPanels(QObject):
     def select_page(self, identity):
         if not self.is_merged(identity) or identity not in {model['id'] for model in self.enabled_models()}:return
         current=self.windows.get(self.active_for(identity));target=self.windows.get(identity)
-        if current is target:return
+        if self.active_for(identity) == identity:return
         if current:current.store_geometry()
         if not self.update_group(identity,active=identity):return
         from usage_stats import record
         record(self.runtime,'panel_switch')
-        if current and target and current.isVisible() and not target.isVisible():
-            # Keep the visible native window, desktop ownership and captured glass.
-            # Exchange page identities with its hidden placeholder, never hide/show.
+        if current and current.isVisible() and (target is None or not target.isVisible()):
+            # The displayed group keeps its native window and wallpaper.
             current.page_transition.cancel();front=current.page_transition.capture() if not current.collapsed and not self.runtime.lite else None
             order=[model['id'] for model in self.merged_models(identity)]
             direction=1 if order.index(identity)>order.index(current.identity) else -1
             previous_view=current.model.get('view','small')
-            previous=current.identity;old_state=current.page_state();new_state=target.page_state()
-            current.identity=identity;target.identity=previous
-            current.default_geometry,target.default_geometry=target.default_geometry,current.default_geometry
-            self.windows[identity],self.windows[previous]=current,target
-            current.resize_timer.stop();target.resize_timer.stop()
+            previous = current.identity
+            old_state = current.page_state()
+            current.identity = identity
+            if target is not None:
+                new_state = target.page_state()
+                target.identity = previous
+                current.default_geometry, target.default_geometry = target.default_geometry, current.default_geometry
+                self.windows[previous] = target
+                target.resize_timer.stop()
+                target.restore_page_state(old_state)
+            else:
+                self.dormant_pages[previous] = old_state
+                new_state = self.dormant_pages.pop(identity, ('', set(), 0))
+                current.default_geometry = self.default_geometries[identity]
+                self.windows.pop(previous)
+            self.windows[identity] = current
+            current.resize_timer.stop()
             if previous_view!=current.model.get('view','small'):current.apply_options()
             else:current.update_identity_header()
             current.refresh_timer.stop()
-            target.restore_page_state(old_state);current.restore_page_state(new_state)
+            current.restore_page_state(new_state)
             self.sync_windows();current.list.doItemsLayout();current.list.verticalScrollBar().setValue(new_state[2])
             current.page_transition.begin(front,direction)
             current._interaction_motion.trigger('tab')
@@ -251,10 +265,20 @@ class DesktopPanels(QObject):
         from ui_style import exec_dialog
         exec_dialog(GroupDialog(self))
 
+    def release_hidden_windows(self):
+        self.release_hidden_cards = True
+        for identity, window in tuple(self.windows.items()):
+            if not window.isVisible():
+                self.dormant_pages[identity] = window.page_state()
+                self.windows.pop(identity)
+                window.dispose()
+
     def sync_windows(self):
         if self.closed: return
         from glass_panel import DesktopPanel
         models = {model['id']: model for model in self.cfg['desktop_panels']}
+        self.dormant_pages = {key: state for key, state in self.dormant_pages.items() if key in models}
+        self.default_geometries.clear()
         for identity in set(self.windows)-set(models):
             self.windows.pop(identity).dispose()
         enabled = self.enabled_models()
@@ -265,31 +289,37 @@ class DesktopPanels(QObject):
             active=self.active_for(members[0]['id']);active_by_group[group['id']]=active
             if self.group_value(active,'active')!=active:self.update_group(active,active=active)
         geo = QApplication.primaryScreen().availableGeometry()
-        from screen_layout import initial_card_factor
+        from card_metrics import new_geometry
+        from screen_layout import initial_card_factor, screen_records
         base_factor=initial_card_factor(list(geo.getRect()));cell_width=round(336*base_factor)
         columns = max(1, min(4, (geo.width()-32)//cell_width))
         rows = max(1, (len(models)+columns-1)//columns)
         height = max(round(180*base_factor), min(round(240*base_factor), (geo.height()-48)//rows-round(16*base_factor)))
         enabled_ids = {model['id'] for model in enabled}
+        screens = screen_records() if any(not model.get('geometry') for model in models.values()) else []
         for index, model in enumerate(models.values()):
             identity = model['id']
-            if identity not in self.windows:
-                default = [geo.left()+20+(index % columns)*cell_width,
-                           geo.top()+20+(index//columns)*(height+round(16*base_factor)), round(320*base_factor), height]
-                if not model.get('geometry'):
-                    from card_metrics import new_geometry
-                    from screen_layout import screen_records
-                    default=new_geometry(self.cfg,default,screen_records())
-                self.windows[identity] = DesktopPanel(self, identity, default)
-            window = self.windows[identity]
             merged = self.is_merged(identity)
-            presentation=self.group_id(identity) if merged else None
+            presentation = self.group_id(identity) if merged else None
+            visible = (self.shown and not self.blocked and self.cfg['panel_enabled'] and identity in enabled_ids
+                       and (not merged or identity == active_by_group.get(presentation)))
+            default = [geo.left()+20+(index % columns)*cell_width,
+                       geo.top()+20+(index//columns)*(height+round(16*base_factor)), round(320*base_factor), height]
+            if not model.get('geometry'):
+                default = new_geometry(self.cfg, default, screens)
+            self.default_geometries[identity] = default
+            if identity not in self.windows:
+                if self.release_hidden_cards and not visible:
+                    continue
+                window = self.windows[identity] = DesktopPanel(self, identity, default)
+                state = self.dormant_pages.pop(identity, None)
+                if state is not None:
+                    window.restore_page_state(state)
+            window = self.windows[identity]
             window.update_tabs(self.merged_models(identity))
             if window.merged_view != merged or getattr(window,'merge_presentation',None)!=presentation:
                 window.resize_timer.stop()
                 window.manual_resize = False
-            visible = (self.shown and not self.blocked and self.cfg['panel_enabled'] and identity in enabled_ids
-                       and (not merged or identity==active_by_group.get(self.group_id(identity))))
             if visible and (not window.isVisible() or window.merged_view != merged or getattr(window,'merge_presentation',None)!=presentation):
                 window.merged_view = merged
                 window.merge_presentation=presentation
@@ -298,6 +328,8 @@ class DesktopPanels(QObject):
             if visible:window.render(prepare=True)
             window.setVisible(visible)
             if not visible:window.release_hidden_resources()
+        if self.release_hidden_cards:
+            self.release_hidden_windows()
         self.active_windows=active_by_group
         self.active_window = active_by_group.get('default') or next(iter(active_by_group.values()),None)
         layout=getattr(self.runtime,'layout',None)
@@ -470,7 +502,7 @@ class DesktopPanels(QObject):
             return identity
 
     def delete_panel(self, identity):
-        if QMessageBox.question(self.windows[identity], '移除面板',
+        if QMessageBox.question(self.windows.get(identity), '移除面板',
                 '移除此面板及其中的引用？原文件和其他面板不受影响。默认分组可在分组管理中重新开启。') != QMessageBox.Yes:
             return
         disabled = list(self.cfg['disabled_categories'])
@@ -501,6 +533,7 @@ class DesktopPanels(QObject):
     def set_lite(self, enabled):
         self.reconcile_timer.setInterval(60000 if enabled else 15000)
         for window in self.windows.values():
+            window.face_tracker.sync_face()
             window.refresh_timer.stop()
             if enabled:
                 if not window.isVisible():

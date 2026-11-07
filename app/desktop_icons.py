@@ -31,7 +31,7 @@ class DesktopIcons(QObject):
         self.user.EnumWindows.argtypes = [self.enum_type, wintypes.LPARAM]
         self.event_type = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
                                             wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
-        self.callback = self.event_type(self.event)
+        self.callback = self.event_type(self.shell_event)
         self.user.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE,
                                             self.event_type, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
         self.user.SetWinEventHook.restype = wintypes.HANDLE
@@ -71,7 +71,7 @@ class DesktopIcons(QObject):
         self.user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         return pid.value
 
-    def event(self, hook, event, hwnd, object_id, child, thread, timestamp):
+    def shell_event(self, hook, event, hwnd, object_id, child, thread, timestamp):
         if not self.enabled or not hwnd or object_id != 0: return
         name = ctypes.create_unicode_buffer(128)
         self.user.GetClassNameW(hwnd, name, len(name))

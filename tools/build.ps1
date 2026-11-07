@@ -55,6 +55,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'FPS probe preparation failed' }
     & $taskPython tools/prepare_bluetooth.py
     if ($LASTEXITCODE -ne 0) { throw 'Bluetooth probe preparation failed' }
+    & $taskPython tools/prepare_deck.py
+    if ($LASTEXITCODE -ne 0) { throw 'AI and media bridge preparation failed' }
     $taskVersion = & $taskPython tools/release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
     if ($taskExtended) { Invoke-TaskCheck 'dock.py' 'artifacts/source-test' 'source-runtime' $taskScopeArgs }

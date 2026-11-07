@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <DisableWinExeOutputInference>true</DisableWinExeOutputInference>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>BigFishDeckBridge</AssemblyName>
+    <ApplicationIcon>../../assets/dock.ico</ApplicationIcon>
+    <Product>大肥鱼Dock</Product>
+    <Description>大肥鱼Dock AI 与音乐组件</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <RollForward>LatestPatch</RollForward>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="9" />
+    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="16777216" />
+    <Compile Remove="Core/**/*.cs" />
+    <ProjectReference Include="Core/CoreAdapter.csproj" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="System.Management" Version="10.0.0" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/DesktopSources.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/ClaudeDesktopReader.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/GrokBotDesktopReader.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/ChromiumSecrets.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/TcpListeners.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/ProcessSnapshot.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/MediaSessions.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/IMediaPlayerConnection.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/Netease*.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/QqMediaConnection.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/Kugou*.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/LibcefFile.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/AppleMusicControls.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/AudioLevelMeter.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/ProcessLoopbackCapture.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/MediaAppWindows.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/ProcessWindows.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/Native/AppIdentity.cs" />
+    <Compile Include="../../references/BrimDeck/src/BrimDeck/PromptTimer.cs" />
+  </ItemGroup>
+</Project>

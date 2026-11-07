@@ -75,7 +75,7 @@ class Placement(QObject):
     layout_changed=pyqtSignal()
     def __init__(self,window):
         super().__init__(window);self.window=window;self.slot=None;self.target=None;self.proposal=False
-        self.closed=False;self.process=None;self.waiting=None;self.checked=False;self.retry_at=0.;self.hook=None;self.callback=None
+        self.closed=False;self.process=None;self.waiting=None;self.checked=False;self.retry_at=0.;self.hook=None;self.callback=None;self.deferred=None
         self.debounce=QTimer(self);self.debounce.setSingleShot(True);self.debounce.setInterval(600)
         self.debounce.timeout.connect(self.check);self.layout_changed.connect(self.schedule_check,Qt.QueuedConnection)
         self.shell_timer=QTimer(self);self.shell_timer.setInterval(2500);self.shell_timer.timeout.connect(self.shell_changed)
@@ -83,15 +83,17 @@ class Placement(QObject):
         axis=(point.y()-bar['rect'].y())/bar['rect'].height() if bar['rect'].height()>bar['rect'].width() else (point.x()-bar['rect'].x())/bar['rect'].width()
         if not self.proposal:
             self.previous=(self.target,self.slot,getattr(self,'ratio',.65),self.checked)
-        self.proposal=True;self.target=bar;self.ratio=max(0,min(1,axis))
+        self.proposal=True;self.target=bar;self.ratio=min((0.,.5,1.),key=lambda value:abs(axis-value))
         self.query(bar,self.ratio)
+    def configured_ratio(self):
+        return {'left':0.,'center':.5,'right':1.}[self.window.service.cfg['resource_taskbar_position']]
     def restore(self):
         if self.closed or self.proposal:return
         anchor=self.window.service.cfg['resource_taskbar_anchor']
-        self.ratio=anchor.get('ratio',.65)
+        previous=getattr(self,'ratio',None);self.ratio=self.configured_ratio()
         current=next((r for r in self.bars() if r['screen']==anchor.get('screen')),None)
         if current is None:current=next(iter(self.bars()),None)
-        if current and (not self.target or current!=self.target or not self.checked):
+        if current and (not self.target or current!=self.target or not self.checked or previous!=self.ratio):
             self.target=current;self.query(current,self.ratio)
         if not self.shell_timer.isActive():self.shell_timer.start()
     def bars(self):
@@ -110,8 +112,11 @@ class Placement(QObject):
             return
         if self.target!=bar or not self.checked or (self.slot is None and time.monotonic()>=self.retry_at):
             self.target=bar;self.query(bar,self.ratio)
+        self.window.restore_input_layer()
     def schedule_check(self):
-        if not self.closed and not self.debounce.isActive():self.debounce.start()
+        if not self.closed:
+            self.window.restore_input_layer()
+            if not self.debounce.isActive():self.debounce.start()
     def check(self):
         if self.target:self.query(self.target,self.ratio)
     def query(self,bar,ratio):
@@ -127,7 +132,8 @@ class Placement(QObject):
             try:
                 raw=bytes(process.readAllStandardOutput());data=json.loads(raw.decode('utf-8-sig')) if ok and len(raw)<131072 else {}
                 blocks=[logical(b,bar['map']) for b in data.get('blocks',[]) if len(b)==4]
-                slot=free_slot(bar['rect'],blocks,ratio) if data.get('ok') else None
+                wanted=self.window.preferred_width()
+                slot=free_slot(bar['rect'],blocks,ratio,wanted=wanted,minimum=min(82,wanted)) if data.get('ok') else None
             except (TypeError,ValueError):slot=None
             process.deleteLater()
             if self.closed:return
@@ -139,10 +145,12 @@ class Placement(QObject):
         process.finished.connect(lambda code,status:finish(code==0 and status==QProcess.NormalExit))
         deadline.start();process.start(str(binary('DesktopResourceProbe.exe')),['--taskbar',str(bar['hwnd'])])
     def accept(self,bar,ratio,slot):
+        if self.window.press is not None and not self.proposal:
+            self.deferred=(bar,ratio,slot);return
         proposal=self.proposal;self.proposal=False;self.slot=slot;self.checked=True;self.retry_at=time.monotonic()+20
         if proposal and slot is not None:
             if not self.window.service.set_options(resource_taskbar=True,
-                    resource_taskbar_anchor={'screen':bar['screen'],'ratio':ratio}):
+                    resource_taskbar_position={0.:'left',.5:'center',1.:'right'}[ratio],resource_taskbar_anchor={'screen':bar['screen'],'ratio':ratio}):
                 self.slot=None
         if self.closed:return
         if proposal and self.slot is None and self.window.service.cfg['resource_taskbar']:
@@ -154,6 +162,9 @@ class Placement(QObject):
         self.watch(bar['hwnd'])
         if not self.shell_timer.isActive():self.shell_timer.start()
         self.window.placement_changed()
+    def resume(self):
+        pending,self.deferred=self.deferred,None
+        if pending and not self.closed and pending[0]==self.target:self.accept(*pending)
     def watch(self,hwnd):
         if self.window.service.runtime.dock.preview:return
         if self.hook and self.hooked==hwnd:return

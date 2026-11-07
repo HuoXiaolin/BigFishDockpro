@@ -39,7 +39,19 @@ def run(api,runtime,root,app,output,checks):
         service.sync()
         assert service.edge is None and service.panel is None and service.reminder is None
         popup=DockQuickSettings(runtime.dock.extras);popup.refresh()
-        popup.tiles['flash'].click();app.processEvents()
+        tile = popup.tiles['flash']
+        assert tile.value == '已关闭' and not tile.active
+        tile.click();app.processEvents()
+        assert cfg['flash_enabled'] and service.edge.isVisible() and service.panel is None
+        assert tile.value == '已开启' and tile.active and api.load_config()['flash_enabled']
+        tile.click()
+        assert not cfg['flash_enabled'] and service.edge is None and not api.load_config()['flash_enabled']
+        assert tile.value == '已关闭' and not tile.active
+        with patch.object(api, 'save_config', return_value=False):
+            tile.click()
+        assert not cfg['flash_enabled'] and '失败' in popup.status.text()
+        tile.click()
+        service.open(compose=True)
         panel=service.panel;edge=service.edge
         assert cfg['flash_enabled'] and panel.editing and edge.isVisible()
         service.open(compose=True);assert service.panel is panel
@@ -80,6 +92,9 @@ def run(api,runtime,root,app,output,checks):
         assert not drop(edge,file)
         cfg['flash_drop']=False;assert not drop(edge,note);cfg['flash_drop']=True
         service.open();panel=service.panel
+        for _ in range(3):app.processEvents()
+        assert panel.list.count()==2 and panel.list.verticalScrollBar().maximum()==0,'Two short notes must not create an extra scrollbar'
+        panel.grab().save(str(Path(output)/'flash-two-notes-no-scrollbar.png'))
         assert drop(panel,note) and len(cfg['flash_entries'])==3
         service.modify(cfg['flash_entries'][1]['id'],text='下次散步带上相机')
         red=service.add('周五整理旅行照片','red');green=service.add('给阳台的薄荷浇水','green')
@@ -130,8 +145,33 @@ def run(api,runtime,root,app,output,checks):
         else:raise AssertionError('Invalid flash data was accepted')
         cfg['flash_side']='left';service.reposition()
         assert edge.geometry().left()==edge.work_area.left()+2
+        edge_rows=copy.deepcopy(cfg['flash_entries']);service.collapse();edge.clear_notice();cfg['motion_enabled']=True
+        outside=QPoint(edge.work_area.center().x(),edge.work_area.top()+1)
+        with patch('flash_panel.QCursor.pos',return_value=outside):
+            edge.hide_if_idle();edge.slide.setCurrentTime(edge.slide.duration())
+        assert edge.width()==6 and edge.work_area.contains(edge.geometry())
+        edge.grab().save(str(Path(output)/'flash-edge-hidden.png'))
+        app.sendEvent(edge,QEvent(QEvent.Enter));edge.slide.setCurrentTime(edge.slide.duration())
+        assert edge.width()==29
+        edge.grab().save(str(Path(output)/'flash-edge-revealed.png'))
+        with patch('flash_panel.QCursor.pos',return_value=edge.geometry().center()):edge.open_on_hover()
+        assert service.panel and not service.panel.editing
+        with patch('flash_panel.QCursor.pos',return_value=outside):service.panel.fold_if_idle()
+        assert not service.panel and edge.hide_timer.isActive()
+        edge.toggle_edge_hide(False);edge.slide.setCurrentTime(edge.slide.duration())
+        with patch('flash_panel.QCursor.pos',return_value=outside):edge.hide_if_idle()
+        assert edge.width()==29 and api.load_config()['flash_edge_hide'] is False
+        edge.toggle_edge_hide(True)
+        start=edge.mapToGlobal(QPoint(14,20));finish=QPoint(edge.work_area.right()-8,edge.work_area.center().y())
+        for kind,global_point,held in [(QEvent.MouseButtonPress,start,Qt.LeftButton),(QEvent.MouseMove,finish,Qt.LeftButton),(QEvent.MouseButtonRelease,finish,Qt.NoButton)]:
+            app.sendEvent(edge,QMouseEvent(kind,QPointF(edge.mapFromGlobal(global_point)),QPointF(global_point),Qt.LeftButton,held,Qt.NoModifier))
+        assert cfg['flash_side']=='right' and api.load_config()['flash_side']=='right' and cfg['flash_layout']
+        with patch('flash_panel.QCursor.pos',return_value=outside):edge.hide_if_idle();edge.slide.setCurrentTime(edge.slide.duration())
+        assert edge.width()==6 and edge.work_area.contains(edge.geometry())
+        assert cfg['flash_entries']==edge_rows
+        checks.append('Flash edge hide: 6-pixel target, hover slide-out, panel hover/open/leave collapse, independent persisted off switch, drag across left/right edges, saved anchor, and geometry stays inside the selected screen.')
         runtime.game_active=True;service.sync()
-        assert not service.edge and not service.panel and service.reminder is None
+        assert not service.edge and not service.panel and service.reminder is None and not edge.slide.state() and not edge.hide_timer.isActive()
         runtime.game_active=False;service.sync();assert service.edge and not service.panel
         assert service.set_enabled(False) and not service.edge and not service.panel
         checks.append('Flash capsule: real Quick Settings button, editor/Enter and clipboard-free text drops, inline expansion, filters, draft reopen and failed saves, completion/trash restoration, one reminder, import/export, game suspension and both edges. Exact reference RGB and global/custom roundtrip checked; no physical OLE drag or foreground UI.')

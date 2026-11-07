@@ -307,10 +307,20 @@ def recover_config_defaults(cfg=None):
     return _configuration_store().save(candidate, explicit_recovery=True)
 
 
+def initial_defaults():
+    from default_settings import load
+    try:
+        return load()
+    except (OSError, ValueError) as error:
+        log('读取默认设置失败：'+str(error))
+        return {}
+
+
 def load_config():
     from feature_config import LEGACY_STYLE_DEFAULTS
     from resource_options import migrate_docked
-    cfg = _configuration_store().load(DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS,migrate=migrate_docked)
+    cfg = _configuration_store().load(DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS,
+                                      migrate=migrate_docked,first_run=initial_defaults)
     if not isinstance(cfg.get("items"), list):
         cfg["items"] = []
     if str(cfg.get("theme")) == "fog":
@@ -739,7 +749,10 @@ class IconProvider(object):
                     if img is not None and not img.isNull():pm=QPixmap.fromImage(img)
             except Exception:log('卡片 Shell 状态图标读取失败：'+traceback.format_exc())
         if custom and path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp', '.gif')):
-            pm = QPixmap(path)
+            from PyQt5.QtGui import QImageReader
+            reader=QImageReader(path);reader.setAutoTransform(True);size=reader.size();cap=max(96,int(px*1.6))
+            if size.width()>cap or size.height()>cap:reader.setScaledSize(size.scaled(cap,cap,Qt.KeepAspectRatio))
+            pm=QPixmap.fromImage(reader.read())
         # 1) exe / dll / ico：直接抠出大图标，最清晰
         real = path
         if path.lower().endswith(".lnk"):
@@ -784,7 +797,7 @@ class IconProvider(object):
             # 源图太大就先缩到合适尺寸：外壳给的"超大图标"是 256 像素，
             # 而实际只会画到 60~90 像素，每帧从 256 缩下来很慢
             cap = max(96, int(px * 1.6))
-            if img.width() > cap:
+            if img.width() > cap or img.height() > cap:
                 img = img.scaled(cap, cap, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             pm = QPixmap.fromImage(img)
         cost = pm.width()*pm.height()*pm.depth()//8
@@ -2498,11 +2511,15 @@ class DockTray(QSystemTrayIcon):
     def show_settings(self):
         from usage_stats import record
         record(self.dock,'settings_open')
+        budget = getattr(getattr(self, 'runtime', None), 'memory_budget', None)
+        dialog = getattr(self, 'settings_dialog', None)
+        if hasattr(self, 'runtime'):
+            self.runtime.resources.set_main_settings(True)
+        if budget and (dialog is None or not dialog.isVisible()):
+            budget.prepare_settings()
         if hasattr(self, 'runtime'):
             self.runtime.settings_open = True
             self.runtime.lite_timer.stop()
-            if self.runtime.lite:
-                self.runtime.set_lite(False)
         if not hasattr(self, 'settings_dialog'):
             from settings_dialog import SettingsDialog
             # Use this module's globals even when launched as the frozen __main__.
@@ -2756,6 +2773,9 @@ def run_preview(out_path, hover_index=None, size_px=None):
 # ----------------------------------------------------------------------------
 def main():
     args = sys.argv[1:]
+    if '--memory-profile' in args:
+        from configured_memory_runner import main as profile_memory
+        return profile_memory()
     probe = None
     if '--startup-test' in args:
         from startup_probe import StartupProbe
@@ -2841,7 +2861,7 @@ def main():
     def initialize():
         from platform_services import set_priority
         set_priority(cfg['startup_priority'])
-        dock = Dock(cfg)
+        dock = Dock(cfg, preview=bool(probe and probe.fresh))
         tray = DockTray(dock)
         dock.tray = tray
         from batch_import import BatchImporter

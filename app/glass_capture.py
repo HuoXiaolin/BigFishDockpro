@@ -49,7 +49,7 @@ def backdrop_key(window,*appearance):
 
 
 def smooth_backdrop(pixmap,radius):
-    """One-shot native-pixel blur, without shrinking wallpaper into a coarse grid.
+    """One-shot blur with a bounded texture and unchanged logical coordinates.
 
     The scene/effect and padded working image are released before returning. No
     graphics effect is attached to a live window or run by the paint callback.
@@ -62,8 +62,11 @@ def smooth_backdrop(pixmap,radius):
     ratio=float(pixmap.devicePixelRatio()) or 1.0
     amount=max(0,float(radius))*ratio
     if amount<.1:return pixmap
-    width,height=pixmap.width(),pixmap.height();pad=max(2,math.ceil(amount*2))
     source=QPixmap(pixmap);source.setDevicePixelRatio(1)
+    if amount>=6 and source.width()*source.height()>128*1024:
+        source=source.scaled(max(1,round(source.width()/2)),max(1,round(source.height()/2)),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
+        amount*=.5;ratio*=.5
+    width,height=source.width(),source.height();pad=max(2,math.ceil(amount*2))
     padded=QPixmap(width+pad*2,height+pad*2);padded.fill(Qt.transparent)
     painter=QPainter(padded)
     # Clamp edge pixels so blurring never introduces a transparent/black fringe.
@@ -80,5 +83,7 @@ def smooth_backdrop(pixmap,radius):
     painter=QPainter(result);painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.SmoothPixmapTransform)
     try:scene.render(painter,QRectF(0,0,width,height),QRectF(pad,pad,width,height),Qt.IgnoreAspectRatio)
     finally:painter.end();scene.clear()
+    # Text, outlines and controls are painted separately at native DPI. Keep
+    # only the blurred texture; upscaling it here retained four times the pixels.
     result.setDevicePixelRatio(ratio)
     return result

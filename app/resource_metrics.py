@@ -40,11 +40,12 @@ class CounterItem(C.Structure):
 
 COUNTERS={'cpu_cores':{'cores':r'\Processor Information(*)\% Processor Time'},
           'gpu':{'engines':r'\GPU Engine(*)\Utilization Percentage'}}
+ENGINE_NAME=re.compile(r'(luid_[0-9a-fx]+_[0-9a-fx]+_phys_\d+_eng_\d+)(?:_|$)',re.I)
 
 
 class PerformanceCounters:
     def __init__(self,metrics):
-        self.lib=C.WinDLL('pdh');self.query=W.HANDLE();self.handles={};self.warm=False
+        self.lib=C.WinDLL('pdh');self.query=W.HANDLE();self.handles={};self.warm=False;self.buffers={}
         lib=self.lib
         lib.PdhOpenQueryW.argtypes=[W.LPCWSTR,C.c_size_t,C.POINTER(W.HANDLE)]
         lib.PdhAddEnglishCounterW.argtypes=[W.HANDLE,W.LPCWSTR,C.c_size_t,C.POINTER(W.HANDLE)]
@@ -58,7 +59,7 @@ class PerformanceCounters:
                 if not lib.PdhAddEnglishCounterW(self.query,path,0,C.byref(handle)):
                     self.handles[key]=handle
 
-    def read(self,key):
+    def read(self,key,group_engines=False):
         handle=self.handles.get(key)
         if not handle:return {}
         size=W.DWORD();count=W.DWORD()
@@ -66,12 +67,33 @@ class PerformanceCounters:
         for _ in range(2):
             result=get(handle,0x8200,C.byref(size),C.byref(count),None)&0xffffffff
             if result!=0x800007d2 or not 0<size.value<=16*1024*1024:return {}
-            buf=C.create_string_buffer(size.value)
+            if not hasattr(self,'buffers'):self.buffers={}
+            buf=self.buffers.get(key)
+            if buf is None or len(buf)<size.value:
+                buf = C.create_string_buffer((size.value+16383)//16384*16384)
+                if len(buf) <= 256 * 1024:
+                    self.buffers[key] = buf
+                else:
+                    self.buffers.pop(key, None)
+            size.value=len(buf)
             result=get(handle,0x8200,C.byref(size),C.byref(count),buf)&0xffffffff
             if result==0:
                 if count.value*C.sizeof(CounterItem)>len(buf):return {}
                 items=C.cast(buf,C.POINTER(CounterItem))
-                return {r.name:r.value.number for r in items[:count.value] if r.name and r.value.status in (0,1)}
+                values={}
+                # Walk the native array directly. GPU counters can contain many
+                # per-process instances; retain only totals for physical engines.
+                for index in range(count.value):
+                    row=items[index]
+                    if row.value.status not in (0,1):continue
+                    name=row.name
+                    if not name:continue
+                    if group_engines:
+                        match=ENGINE_NAME.search(name)
+                        if match:
+                            name=match.group(1).lower();values[name]=values.get(name,0)+max(0.,row.value.number)
+                    else:values[name]=row.value.number
+                return values
             if result!=0x800007d2:break
         return {}
 
@@ -83,12 +105,13 @@ class PerformanceCounters:
     def close(self):
         if self.query:self.lib.PdhCloseQuery(self.query);self.query=W.HANDLE()
         self.handles.clear()
+        self.buffers.clear()
 
 
 def busiest_engine(values):
     engines={}
     for name,usage in values.items():
-        match=re.search(r'(luid_[0-9a-fx]+_[0-9a-fx]+_phys_\d+_eng_\d+)(?:_|$)',name,re.I)
+        match=ENGINE_NAME.search(name)
         if match:
             key=match.group(1).lower();engines[key]=engines.get(key,0)+max(0.,usage)
     return min(100.,max(engines.values())) if engines else None
@@ -103,8 +126,9 @@ def network_rates(previous,current,elapsed):
 
 
 class Sampler:
-    def __init__(self,metrics):
+    def __init__(self,metrics,traffic_path=None):
         self.metrics=frozenset();self.last_cpu=None;self.last_net=None;self.net_time=0
+        self.traffic_path=traffic_path;self.traffic=None
         self.kernel=C.WinDLL('kernel32');self.ip=None;self.ranking=None;self.pdh=None
         self.configure(metrics)
 
@@ -119,11 +143,15 @@ class Sampler:
         if 'cpu' in added:self.kernel.GetSystemTimes.argtypes=[C.POINTER(W.FILETIME)]*3
         if 'cpu' not in metrics:self.last_cpu=None
         if 'memory' in added:self.kernel.GlobalMemoryStatusEx.argtypes=[C.POINTER(MemoryStatus)]
-        if 'network' in added:
+        if metrics & {'network','traffic'} and not self.ip:
             self.ip=C.WinDLL('iphlpapi')
             self.ip.GetIfTable2.argtypes=[C.POINTER(C.POINTER(IfTable))]
             self.ip.FreeMibTable.argtypes=[C.c_void_p];self.ip.FreeMibTable.restype=None
-        if 'network' not in metrics:self.ip=self.last_net=None;self.net_time=0
+        if not metrics & {'network','traffic'}:self.ip=self.last_net=None;self.net_time=0
+        if 'traffic' in added:
+            from resource_traffic import TrafficLedger
+            if self.traffic is None:self.traffic=TrafficLedger(self.traffic_path)
+        elif 'traffic' not in metrics and self.traffic:self.traffic.pause()
         sources=metrics & COUNTERS.keys()
         if sources!=self.metrics & COUNTERS.keys():
             if self.pdh:self.pdh.close();self.pdh=None
@@ -147,7 +175,10 @@ class Sampler:
 
     def network(self,now):
         table=C.POINTER(IfTable)()
-        if self.ip.GetIfTable2(C.byref(table)) or not table:return None
+        if self.ip.GetIfTable2(C.byref(table)) or not table:
+            self.last_net=None
+            if self.traffic:self.traffic.observe(None)
+            return None
         try:
             count=table.contents.count
             if count>65536:return None
@@ -158,23 +189,30 @@ class Sampler:
         finally:self.ip.FreeMibTable(table)
         result=network_rates(self.last_net,readings,now-self.net_time)
         self.last_net,self.net_time=readings,now
+        if 'traffic' in self.metrics:self.traffic.observe(readings)
         return result
 
     def sample(self):
         now=time.monotonic();data={'time':now}
         if 'cpu' in self.metrics:data['cpu']=self.cpu()
         if 'memory' in self.metrics:data['memory']=self.memory()
-        if 'network' in self.metrics:data['network']=self.network(now)
+        if self.metrics & {'network','traffic'}:
+            rates=self.network(now)
+            if 'network' in self.metrics:data['network']=rates
+            if 'traffic' in self.metrics:data['traffic']=self.traffic.snapshot()
         ready=self.pdh and self.pdh.collect()
         if 'cpu_cores' in self.metrics:
             instances=self.pdh.read('cores') if ready else {}
             cores={tuple(map(int,name.split(','))):min(100.,max(0.,value))
                    for name,value in instances.items() if re.fullmatch(r'[0-9]+,[0-9]+',name)}
             data['cpu_cores']=[cores[index] for index in sorted(cores)]
-        if 'gpu' in self.metrics:data['gpu']=busiest_engine(self.pdh.read('engines')) if ready else None
+        if 'gpu' in self.metrics:
+            engines=self.pdh.read('engines',group_engines=True) if ready else {}
+            data['gpu']=min(100.,max(engines.values())) if engines else None
         if self.ranking:data['rank']=self.ranking.sample(now)
         return data
 
     def close(self):
         if self.pdh:self.pdh.close()
+        if self.traffic:self.traffic.flush()
         self.ranking=None

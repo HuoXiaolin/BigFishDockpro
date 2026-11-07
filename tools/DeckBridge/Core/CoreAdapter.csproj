@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>BrimDeck.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Keep the pinned reference intact; only its log reader is adapted locally. -->
+    <Compile Include="../../../references/BrimDeck/src/BrimDeck.Core/*.cs" Exclude="../../../references/BrimDeck/src/BrimDeck.Core/LogReader.cs" />
+    <EmbeddedResource Include="../../../references/BrimDeck/src/BrimDeck.Core/Themes/*.json" LogicalName="BrimDeck.Core.Themes.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../references/BrimDeck/src/BrimDeck.Core/Templates/theme-template.json" LogicalName="BrimDeck.Core.Templates.theme-template.json" />
+    <PackageReference Include="Jint" Version="4.16.3" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+  </ItemGroup>
+</Project>

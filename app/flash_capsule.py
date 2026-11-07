@@ -86,6 +86,7 @@ class FlashCapsule(QObject):
     def open(self,compose=False,identity=None,activate=True):
         if self.closed or self.runtime.game_active: return
         if not self.cfg['flash_enabled'] and not self.set_enabled(True): return
+        if self.edge:self.edge.reveal(immediate=True)
         if self.panel is None:
             from flash_panel import FlashPanel
             self.panel=FlashPanel(self)
@@ -103,6 +104,7 @@ class FlashCapsule(QObject):
         if not force and not self.save_draft(): return False
         panel,self.panel=self.panel,None
         panel.dismiss()
+        if self.edge:self.edge.arm_hide()
         return True
 
     def reposition(self):
@@ -121,6 +123,7 @@ class FlashCapsule(QObject):
             self.edge.update_count()
             self.reposition()
             self.edge.show()
+            self.edge.sync_visibility()
             if self.panel is None and not self.cfg['flash_auto_hide']:self.open(activate=False)
             if self.panel is not None:
                 if reload: self.panel.load_saved_draft()

@@ -36,15 +36,18 @@ internal static class HardwareSensors {
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetHandleByIndex_v2(uint i,out IntPtr dev);
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetPowerUsage(IntPtr dev,out uint mw);
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetTemperature(IntPtr dev,uint sensor,out uint deg);
+    [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetClockInfo(IntPtr dev,uint clock,out uint mhz);
+    [StructLayout(LayoutKind.Sequential)] struct NvMemory { public ulong total,free,used; }
+    [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetMemoryInfo(IntPtr dev,out NvMemory memory);
 
     static void Put(Dictionary<string,Value> data,string key,double value,string source,string label) {
-        if (Double.IsNaN(value) || Double.IsInfinity(value) || value<0 || (key.EndsWith("temp") && (value<=0 || value>150)) || value>10000) return;
+        if (Double.IsNaN(value) || Double.IsInfinity(value) || value<0 || (key.EndsWith("temp") && (value<=0 || value>150)) || value>100000) return;
         Value old;
         if (!data.TryGetValue(key,out old) || value>old.value)
             data[key]=new Value{value=Math.Round(value,key.EndsWith("_power")?2:1),source=source,label=label};
     }
 
-    static void DriverTemperature(Dictionary<string,Value> data) {
+    static void DriverTemperature(Dictionary<string,Value> data,HashSet<string> wanted) {
         var args=new EnumAdapters();
         if(D3DKMTEnumAdapters2(ref args)!=0 || args.count<1 || args.count>64) return;
         int stride=Marshal.SizeOf(typeof(Adapter));
@@ -59,14 +62,16 @@ internal static class HardwareSensors {
                     var query=new Info{handle=dev.handle,type=62,buffer=buffer,size=(uint)size};
                     if(D3DKMTQueryAdapterInfo(ref query)==0){
                         var reading=(Perf)Marshal.PtrToStructure(buffer,typeof(Perf));
-                        Put(data,"gpu_temp",reading.tempC10/10.0,"Windows 显卡驱动 · GPU "+i,"GPU 温度");
+                        if(wanted.Contains("gpu_temp"))Put(data,"gpu_temp",reading.tempC10/10.0,"Windows 显卡驱动 · GPU "+i,"GPU 温度");
+                        if(wanted.Contains("gpu_frequency") && reading.frequency>0)Put(data,"gpu_frequency",reading.frequency/1000000.0,"Windows 显卡驱动 · GPU "+i,"GPU 频率");
+                        if(wanted.Contains("gpu_fan") && reading.rpm>0)Put(data,"gpu_fan",reading.rpm,"Windows 显卡驱动 · GPU "+i,"GPU 风扇");
                     }
                 } finally {if(dev.handle!=0)D3DKMTCloseAdapter(ref dev.handle);}
             }
         } finally {Marshal.FreeHGlobal(buffer);Marshal.FreeHGlobal(args.adapters);}
     }
 
-    static void Nvidia(Dictionary<string,Value> data,bool temp,bool watts) {
+    static void Nvidia(Dictionary<string,Value> data,bool temp,bool watts,HashSet<string> wanted) {
         if(nvmlInit_v2()!=0)return;
         try {
             uint count;
@@ -77,6 +82,10 @@ internal static class HardwareSensors {
                 string source="NVIDIA NVML · GPU "+i;
                 if(temp && nvmlDeviceGetTemperature(dev,0,out value)==0)Put(data,"gpu_temp",value,source,"GPU 温度");
                 if(watts && nvmlDeviceGetPowerUsage(dev,out value)==0)Put(data,"gpu_power",value/1000.0,source,"GPU 板卡功率");
+                if(wanted.Contains("gpu_frequency") && nvmlDeviceGetClockInfo(dev,0,out value)==0)Put(data,"gpu_frequency",value,source,"GPU 频率");
+                NvMemory memory;
+                if(wanted.Contains("gpu_memory") && nvmlDeviceGetMemoryInfo(dev,out memory)==0 && memory.total>0)
+                    Put(data,"gpu_memory",100.0*memory.used/memory.total,source+" · "+(memory.used/1073741824.0).ToString("F1")+" / "+(memory.total/1073741824.0).ToString("F1")+" GB","显存占用");
             }
         } finally {nvmlShutdown();}
     }
@@ -90,9 +99,9 @@ internal static class HardwareSensors {
     public static object Read(string options) {
         var wanted=new HashSet<string>(options.Split(','));
         var data=new Dictionary<string,Value>();
-        if(wanted.Contains("gpu_temp"))try{DriverTemperature(data);}catch(Exception){}
+        if(wanted.Contains("gpu_temp") || wanted.Contains("gpu_frequency") || wanted.Contains("gpu_fan"))try{DriverTemperature(data,wanted);}catch(Exception){}
         bool wantGpuTemp=wanted.Contains("gpu_temp") && !data.ContainsKey("gpu_temp");
-        if(wantGpuTemp || wanted.Contains("gpu_power"))try{Nvidia(data,wantGpuTemp,wanted.Contains("gpu_power"));}catch(Exception){}
+        if(wantGpuTemp || wanted.Contains("gpu_power") || wanted.Contains("gpu_frequency") || wanted.Contains("gpu_memory"))try{Nvidia(data,wantGpuTemp,wanted.Contains("gpu_power"),wanted);}catch(Exception){}
         if(wanted.Contains("cpu_temp") || wanted.Contains("cpu_power")){
             try {CpuSensors.Collect(wanted.Contains("cpu_temp"),wanted.Contains("cpu_power"),(key,value,source,label)=>Put(data,key,value,source,label));}
             catch(System.IO.IOException){}catch(UnauthorizedAccessException){}catch(System.Security.SecurityException){}catch(ExternalException){}
@@ -125,6 +134,7 @@ internal static class HardwareSensors {
             try {Query(@"root\wmi","SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature",row=>{
                 if(row["CurrentTemperature"]!=null)Put(data,"cpu_temp",Convert.ToDouble(row["CurrentTemperature"])/10.0-273.15,"ACPI 热区 · CPU 封装温度未提供","系统温区");
             });}catch(Exception){}
+        try{HardwareExtended.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));}catch(Exception){}
         return data;
     }
 }

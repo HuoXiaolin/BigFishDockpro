@@ -50,8 +50,17 @@ def compact_dialog(dialog):
     dialog.setProperty('compactDialog', True)
     size = dialog.size()
     minimum = dialog.minimumSize()
-    for widget in [dialog] + dialog.findChildren(QWidget):
-        if widget is not dialog and widget.window() is not dialog:
+    compact_widget_tree(dialog)
+    dialog.setMinimumSize(compact_px(minimum.width()),compact_px(minimum.height()))
+    dialog.resize(compact_px(size.width()),compact_px(size.height()))
+    from settings_design import finish_dialog
+    finish_dialog(dialog)
+
+
+def compact_widget_tree(root):
+    """Apply density to a newly constructed settings subtree exactly once."""
+    for widget in [root] + root.findChildren(QWidget):
+        if widget is not root and widget.window() is not root.window():
             continue
         for axis in ('Width', 'Height'):
             lower = getattr(widget, 'minimum'+axis)()
@@ -74,10 +83,6 @@ def compact_dialog(dialog):
                 child=current.itemAt(i).layout()
                 if child is not None:compress(child)
         if layout is not None:compress(layout)
-    dialog.setMinimumSize(compact_px(minimum.width()),compact_px(minimum.height()))
-    dialog.resize(compact_px(size.width()),compact_px(size.height()))
-    from settings_design import finish_dialog
-    finish_dialog(dialog)
 
 
 def density_stylesheet(stylesheet,factor=UI_DENSITY):
@@ -85,6 +90,11 @@ def density_stylesheet(stylesheet,factor=UI_DENSITY):
     import re
     rules=[]
     for selectors,body in re.findall(r'([^{}]+)\{([^{}]*)\}',stylesheet):
+        # The base stylesheet already supplies colors and other fixed values.
+        # Keep the DPI overlay limited to declarations that contain pixel metrics.
+        body = ';'.join(part for part in body.split(';') if re.search(r'\d+px', part))
+        if not body:
+            continue
         scoped=[]
         for selector in selectors.split(','):
             selector=selector.strip()
@@ -295,6 +305,12 @@ class ModernComboBox(QComboBox):
         self.setProperty('modern', True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMaxVisibleItems(9)
+        self._popup = None
+        self._popup_view = None
+
+    def view(self):
+        if self._popup_view is not None:
+            return self._popup_view
         self._popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
         self._popup.setObjectName('ComboPopupFrame')
         layout = QVBoxLayout(self._popup)
@@ -307,8 +323,7 @@ class ModernComboBox(QComboBox):
         view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(view)
         view.clicked.connect(self.choose_popup)
-
-    def view(self): return self._popup_view
+        return view
 
     def choose_popup(self, index):
         if index.isValid():
@@ -319,7 +334,7 @@ class ModernComboBox(QComboBox):
 
     def showPopup(self):
         if not self.isEnabled() or not self.count(): return
-        view = self._popup_view
+        view = self.view()
         view.setModel(self.model())
         view.setModelColumn(self.modelColumn())
         view.setFont(self.font())
@@ -342,7 +357,8 @@ class ModernComboBox(QComboBox):
         view.setFocus(Qt.PopupFocusReason)
 
     def hidePopup(self):
-        if hasattr(self,'_popup'): self._popup.hide()
+        if getattr(self, '_popup', None) is not None:
+            self._popup.hide()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -531,7 +547,7 @@ def apply_theme(app, light):
     # styles under live stylesheet widgets leaves native cached style pointers
     # vulnerable during teardown after repeated preset/theme changes.
     if not hasattr(app, '_fish_style'):
-        QPixmapCache.setCacheLimit(4096)
+        QPixmapCache.setCacheLimit(1536)
         app._fish_style = ReadableChecks(QStyleFactory.create('Fusion'))
         app.setStyle(app._fish_style)
     app.setFont(QFont('Microsoft YaHei UI', 10))

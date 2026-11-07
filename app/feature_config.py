@@ -4,9 +4,10 @@ from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
 DEFAULTS = {
     'flash_enabled':False, 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
-    'flash_auto_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
+    'flash_auto_hide':True, 'flash_edge_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
     'taskbar_text_mode':'system', 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
+    'card_snap': True, 'card_snap_distance': 12,
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
@@ -24,6 +25,8 @@ DEFAULTS = {
     'desktop_icon_mode': 'hide_all', 'panel_enabled': True, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
+    'panel_face':False, 'panel_face_interactive':True, 'panel_face_mood':'random',
+    'panel_face_scale':100, 'panel_expand_mode':'hover',
     'panel_collapse_style': 'ball', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
     'panel_theme': 'auto', 'panel_color': '', 'theme_color': '', 'dock_highlight': 45,
     'dock_material': 'liquid',
@@ -53,6 +56,13 @@ DEFAULTS.update(card_design='crystal',note_appearance=dict(DEFAULT_NOTE_APPEARAN
 
 def normalize(cfg):
     result = dict(cfg)
+    if 'resource_taskbar_position' not in result:
+        anchor=result.get('resource_taskbar_anchor')
+        ratio=anchor.get('ratio') if isinstance(anchor,dict) else None
+        if type(ratio) in (int,float):result['resource_taskbar_position']='left' if ratio<.25 else 'right' if ratio>.75 else 'center'
+    # Previous default compact height was designed for two text rows. Preserve
+    # deliberate sizes, while adopting the single-row layout on its first load.
+    if 'resource_compact_pinned' not in result and result.get('resource_compact_height')==54:result['resource_compact_height']=44
     for theme, material in [('theme','dock_material'), ('panel_theme','panel_material')]:
         if result.get(theme) in ('gloss','fog'):
             result[theme], result[material] = 'light', 'gloss'
@@ -68,9 +78,9 @@ def normalize(cfg):
     result.pop('realtime_glass',None)
     # Retired selective hiding is migrated to the safe co-display mode.
     if result.get('desktop_icon_mode')=='collected':result['desktop_icon_mode']='both'
-    for key, lower, upper in [('corner_radius', 0, 120), ('panel_opacity', 0, 100),
+    for key, lower, upper in [('corner_radius', 0, 120), ('card_snap_distance', 2, 64), ('panel_opacity', 0, 100),
                               ('panel_blur', 2, 30), ('panel_highlight', 0, 100), ('dock_highlight', 0, 100),
-                              ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100), ('startup_delay', 0, 300)]:
+                              ('panel_face_scale',60,130), ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100), ('startup_delay', 0, 300)]:
         try:
             result[key] = max(lower, min(upper, int(result[key])))
         except (TypeError, ValueError):
@@ -80,6 +90,8 @@ def normalize(cfg):
                          ('taskbar_text_mode', ('system','light','dark')),
                          ('dock_material', tuple(value for _,value in MATERIALS)),
                          ('panel_collapse_style', ('bar', 'capsule', 'ball')),
+                         ('panel_expand_mode', ('hover','click')),
+                         ('panel_face_mood', ('random','default','happy','wink','love','star','shy','pout','squint')),
                          ('panel_theme', ('auto', 'light', 'dark')),
                          ('desktop_icon_mode', ('both', 'hide_all')),
                          ('note_style', ('glass', 'paper', 'plain')),

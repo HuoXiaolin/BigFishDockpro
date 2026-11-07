@@ -17,6 +17,39 @@ def drag(window,delta):
         QApplication.sendEvent(window,QMouseEvent(kind,QPointF(local),QPointF(global_point),button,held,Qt.NoModifier))
 
 
+def auto_fold_checks(service, window, app, checks):
+    from PyQt5.QtWidgets import QMenu
+    from ui_test_events import Events
+
+    outside = window.geometry().bottomRight() + QPoint(35, 35)
+    with patch('resource_panel.QCursor.pos', return_value=outside) as cursor:
+        assert service.set_options(resource_auto_hide=True, resource_delay=1)
+        assert window.auto_fold_timer.isActive()
+        menu = QMenu(window)
+        menu.addAction('测试菜单')
+        menu.popup(outside)
+        app.processEvents()
+        assert app.activePopupWidget() is menu
+        Events.qWait(1400)
+        assert not service.compact
+        menu.hide()
+        menu.deleteLater()
+        Events.qWait(1800)
+        assert service.compact and not service.cfg['resource_collapsed']
+        assert not window.auto_fold_timer.isActive()
+
+        cursor.return_value = window.desktop_rect().center()
+        assert service.fold(False)
+        Events.qWait(1400)
+        assert not service.compact
+        cursor.return_value = outside
+        Events.qWait(1800)
+        assert service.compact and not window.auto_fold_timer.isActive()
+        assert service.set_options(resource_auto_hide=False)
+        assert not window.auto_fold_timer.isActive()
+    checks.append('Resource auto-fold follows the cursor and configured delay without a leave event, pauses for menus, resumes when they close, and stops polling when folded or disabled.')
+
+
 def run(api,runtime,root,app,output,checks):
     from run_isolated_test import assert_isolated
     assert_isolated()
@@ -31,7 +64,7 @@ def run(api,runtime,root,app,output,checks):
     service=runtime.resources;cfg=runtime.dock.cfg;original=copy.deepcopy(cfg)
     original_game=runtime.game_active;runtime.game_active=False;popup=options=None
     try:
-        cfg.update(copy.deepcopy(DEFAULTS));service.sync()
+        cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_hide_unavailable=False,resource_edge_snap=False,resource_auto_hide=False);service.sync()
         assert service.window is None and service.job is None and service.bluetooth is None
         assert service.fps is None and service.sensors is None and service.history is None
         assert service.set_options(resource_bt_tray=True)
@@ -47,13 +80,23 @@ def run(api,runtime,root,app,output,checks):
         bt.turn(1);assert [r['level'] for r in bt.group()]==[None,0]
         assert '未报告' in bt.tray.toolTip() and '0%' in bt.tray.toolTip()
         bt.turn(-1);assert tray_icon(bt.group(),False).pixmap(32,32).save(str(output/'bluetooth-tray-rings.png'))
+        cfg['resource_collapsed'] = False
         popup=DockQuickSettings(runtime.dock.extras);popup.refresh();popup.tiles['resources'].click();app.processEvents()
+        assert cfg['resource_enabled'] and service.window is not None
+        assert popup.tiles['resources'].value == '已开启' and popup.tiles['resources'].active
+        popup.tiles['resources'].click()
+        assert not cfg['resource_enabled'] and service.window is None and service.bluetooth is bt
+        assert popup.tiles['resources'].value == '已关闭' and not popup.tiles['resources'].active
+        popup.tiles['resources'].click();app.processEvents()
         window=service.window;assert window and window.isVisible() and not cfg['resource_collapsed']
-        assert service.active_keys()=={'cpu','cpu_cores','memory','network','rank','gpu'}
-        assert service.set_options(resource_bluetooth=True,resource_fps=True,resource_gpu_temp=True,resource_cpu_power=True,resource_palette='vivid')
-        assert service.bluetooth is bt and service.fps and service.sensors and service.sensors.keys=={'gpu_temp','cpu_power'}
+        assert service.active_keys()=={'cpu','cpu_cores','memory','network','rank','gpu','traffic'}
+        assert service.set_options(resource_bluetooth=True,resource_fps=True,resource_cpu_temp=True,resource_cpu_power=True,
+                                   resource_gpu_temp=True,resource_gpu_power=True,resource_palette='vivid')
+        assert service.bluetooth is bt and service.fps and service.sensors and service.sensors.keys=={'cpu_temp','cpu_power','gpu_temp','gpu_power'}
         assert not service.job  # No live sampling on the private desktop.
-        service.fps.value=59.8;service.fps.name='渲染示例';service.sensors.values={'gpu_temp':dict(label='GPU 温度',value=47,source='测试驱动')}
+        service.fps.value=59.8;service.fps.name='渲染示例'
+        service.sensors.values={key:dict(label=label,value=value,source='测试驱动') for key,label,value in
+                                [('cpu_temp','CPU 温度',53.2),('gpu_temp','GPU 温度',47),('gpu_power','GPU 板卡功率',1.26)]}
         now=time.monotonic()
         import math
         programs=[('记事本',12,7.1,254*2**20),('文件管理器',13,5.4,162*2**20),('照片',14,4.0,138*2**20),('画图',15,2.8,384*2**20),('终端',16,1.3,95*2**20)]
@@ -68,12 +111,23 @@ def run(api,runtime,root,app,output,checks):
         assert values['cpu_power']=='—' and values['gpu_temp']=='47 °C' and values['fps']=='60'
         assert window.graph.isVisible() and window.rings.isVisible()
         app.processEvents();window.body.activate()
-        assert window.graph.geometry().right()<window.side_section.x() and window.rank_section.geometry().bottom()<window.battery_section.y()
+        assert window.graph.geometry().right() < window.rank_section.x()
+        assert window.rank_section.geometry().bottom() < window.battery_section.y()
+        assert window.sensor_columns.y() == window.battery_section.y()
+        assert window.sensor_columns.geometry().right() < window.battery_section.x()
         assert window.rings.value_x==72+window.rings.name_width+8 and window.rings.value_x<155
         old_value_x=window.rings.value_x
         window.rings.resize(window.rings.width()+120,window.rings.height());window.rings.grab()
         assert window.rings.value_x==old_value_x and '旅行键盘' in window.rings.toolTip()
         assert window.grab().save(str(output/'resource-expanded.png'))
+        regular = window.geometry()
+        window.resize(500, regular.height());app.processEvents();window.body.activate()
+        assert window.sensor_columns.y() == window.battery_section.y()
+        assert window.rank_section.x() == window.battery_section.x()
+        boxes = {key: label_area for key, _, _, label_area, _ in window.sensor_columns.cells}
+        assert boxes['gpu_temp'].top() == boxes['gpu_power'].top()
+        assert window.grab().save(str(output/'resource-expanded-500.png'))
+        window.setGeometry(regular);app.processEvents()
         assert window.graph.rows['cpu'][1] and 'cpu_cores' not in service.history[-1]
         window.rank_buttons['memory'].click()
         assert window.rank_by=='memory' and window.rank_labels[0][1].text()=='画图'
@@ -101,16 +155,23 @@ def run(api,runtime,root,app,output,checks):
                 assert window.colors['light']==(mode=='light')
             assert image.save(str(output/('resource-'+mode+'.png')))
             if mode=='light':
-                cfg.update(resource_bluetooth=False,resource_gpu_temp=False,resource_cpu_power=False,resource_fps=False)
+                cfg.update(resource_bluetooth=False,resource_cpu_temp=False,resource_cpu_power=False,resource_gpu_temp=False,resource_gpu_power=False,resource_fps=False)
                 window.sync_window();app.processEvents();window.glass.clear()
                 with patch.object(runtime.dock,'preview',False),patch('capsule_glass.capture',return_value=wall):
                     assert window.grab().save(str(output/'resource-overview.png'))
-                cfg.update(resource_bluetooth=True,resource_gpu_temp=True,resource_cpu_power=True,resource_fps=True)
+                cfg.update(resource_bluetooth=True,resource_cpu_temp=True,resource_cpu_power=True,resource_gpu_temp=True,resource_gpu_power=True,resource_fps=True)
                 window.sync_window();app.processEvents()
         cfg.update(panel_material='clear');window.sync_window();window.grab();assert window.glass.image is None
         cfg.update(old_style);window.sync_window()
         narrow=window.geometry();window.resize(380,narrow.height());app.processEvents();window.body.activate()
-        assert window.graph.geometry().bottom()<window.side_section.y()
+        assert window.graph.geometry().bottom() < window.rank_section.y()
+        assert window.rank_section.geometry().bottom() < window.sensor_columns.y()
+        assert window.sensor_columns.geometry().bottom() < window.battery_section.y()
+        scroll = window.scroll.verticalScrollBar()
+        assert scroll.maximum() > 0
+        scroll.setValue(scroll.maximum());app.processEvents()
+        assert window.grab().save(str(output/'resource-expanded-380.png'))
+        scroll.setValue(0)
         window.setGeometry(narrow);app.processEvents()
         options=ResourceOptions(service);options.show();app.processEvents()
         options.fields['resource_layer'].setCurrentIndex(options.fields['resource_layer'].findData('top'))
@@ -127,7 +188,7 @@ def run(api,runtime,root,app,output,checks):
         source.setCurrentIndex(source.findData('custom'));assert options.commit() and window.background==stored
         options.reject()
         assert service.set_options(resource_collapsed=True,resource_fold='pill',resource_auto_hide=False)
-        assert service.active_keys()=={'cpu','network','memory'}
+        assert service.active_keys()=={'cpu','network','memory','gpu','traffic'}
         seen=time.monotonic()
         readings={'cpu':19.,'network':(42000,7000),'memory':(54.,8.64*2**30,16*2**30)}
         service.accept_sample(dict(readings,time=seen))
@@ -147,11 +208,11 @@ def run(api,runtime,root,app,output,checks):
         service.fold(False);assert abs(window.geometry().center().x()-center)<=1 and window.y()==top
         service.fold(True);assert cfg['resource_layout']==anchor
         service.set_options(resource_fold='ball')
-        assert window.width()==window.height() and service.signature is None and service.history is None and service.fps is None and service.sensors is None
+        assert window.width()==window.height() and service.active_keys()=={'traffic'} and service.fps is None and service.sensors is None
         assert service.bluetooth is bt  # The independently enabled tray still needs the reader.
         service.set_options(resource_bt_tray=False)
         assert service.bluetooth is None
-        service.set_options(resource_fold='pill')
+        service.set_options(resource_fold='pill',resource_task_font=10)
         bar={'rect':QRect(0,740,1366,28),'screen':'test-monitor','hwnd':1,'map':(0,0,0,0,1,1)}
         blocked=[QRect(0,740,350,28),QRect(1100,740,266,28)]
         def query(place,b,r):place.accept(b,r,free_slot(b['rect'],blocked,r))
@@ -171,10 +232,13 @@ def run(api,runtime,root,app,output,checks):
         service.fps.value=44;service.fps.name='测试前台应用'
         service.accept_sample(dict(time=time.monotonic(),network=(83000,49100),memory=(73.9,8,16)))
         strip.refresh();app.processEvents();pm=strip.grab()
-        assert len(strip.cells)==4 and strip.page_count==1 and '61.6°C' in strip.toolTip()
+        assert len(strip.cells)==4 and strip.page_count>=1 and '61.6°C' in strip.toolTip()
+        assert strip.single_line or strip.page_count==1
         assert pm.save(str(output/'taskbar-monitor-two-lines.png'))
         strip.resize(83,30);strip.grab();assert strip.page_count>1
         with patch.object(strip.placement,'bars',return_value=[]):drag(strip,QPoint(-43,-115))
+        assert service.strip is strip and not service.window and cfg['resource_taskbar'],'Taskbar content must not be repositioned by dragging'
+        service.return_from_taskbar(QPoint(150,180))
         window=service.window
         assert window and not service.strip and not cfg['resource_taskbar'] and cfg['resource_layout']!=anchor and cfg['resource_layer']=='top'
         # Enable from its own Quick tile, with the desktop and tray independently disabled.
@@ -202,6 +266,7 @@ def run(api,runtime,root,app,output,checks):
         service.set_options(resource_cpu=True);runtime.game_active=True;service.sync()
         assert service.window is None and service.signature is None and service.history is None
         runtime.game_active=False;service.sync();assert service.window
+        auto_fold_checks(service, service.window, app, checks)
         service.set_options(resource_enabled=False);assert not service.window and not service.signature
         assert network_rates({1:(100,30)},{1:(150,70),2:(10000000,9900)},2)==(25,20)
         assert network_rates({1:(100,30)},{1:(4,2)},2) is None

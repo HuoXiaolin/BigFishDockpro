@@ -95,6 +95,7 @@
     "3-修复依赖.bat",
     "4-调试启动.bat"
   ],
+  "retired_source_files": ["app/resource_notifications.py"],
   "moved_files": {
     "appearance_presets.py": "app/appearance_presets.py",
     "app_catalog.py": "app/app_catalog.py",

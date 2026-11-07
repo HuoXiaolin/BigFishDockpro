@@ -296,8 +296,13 @@ def run(api,runtime,root,output,checks):
         assert runtime.lite_timer.isActive() and runtime.lite_timer.interval()==60000
         runtime.set_lite(True)
         assert api.load_config()['runtime_lite'] and not runtime.dock.blur_timer.isActive()
-        runtime.show_settings();assert not runtime.lite and not runtime.lite_timer.isActive()
-        settings.reject();assert runtime.lite_timer.isActive()
+        runtime.show_settings()
+        assert runtime.lite and api.load_config()['runtime_lite'] and not runtime.lite_timer.isActive()
+        assert not runtime.dock.blur_timer.isActive() and runtime.tray.settings_dialog.isVisible()
+        runtime.tray.settings_dialog.reject()
+        assert runtime.lite and not runtime.lite_timer.isActive()
+        runtime.set_lite(False)
+        assert runtime.lite_timer.isActive()
         checks.append('panel groups: default switches survive scan/reload, merged tabs share position/size and restore active page; matching formats allow duplicate references, per-panel pin/exclusion, originals preserved')
         checks.append('card views: real menu small/large/list switches preserve entries and reload; menus/popups: uniform tray layout, all settings combo popups opened in both themes, Dock settings/batch shortcuts, tray hide and preferred Dock visibility persist; real settings finished signal arms 60000ms lite timer')
     finally:

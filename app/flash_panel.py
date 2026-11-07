@@ -42,24 +42,70 @@ class EdgeHandle(QWidget):
     def __init__(self,service):
         super().__init__(None,TOOL_FLAGS|Qt.WindowDoesNotAcceptFocus)
         self.service=service;self.press=None;self.moving=False;self.dragging_text=False;self.notice=''
+        self.drag_side=None;self.reveal_level=0. if service.cfg['flash_edge_hide'] else 1.
         self.setObjectName('FlashEdge');self.setWindowTitle('闪念胶囊');self.setAccessibleName('闪念胶囊贴边入口')
-        rounded_window(self);self.setFixedSize(29,68);self.setAcceptDrops(True)
+        rounded_window(self);self.resize(6 if service.cfg['flash_edge_hide'] else 29,68);self.setAcceptDrops(True)
         self.setCursor(Qt.PointingHandCursor)
         self.hover=QTimer(self);self.hover.setSingleShot(True);self.hover.setInterval(200)
         self.hover.timeout.connect(self.open_on_hover)
         self.notice_timer=QTimer(self);self.notice_timer.setSingleShot(True)
         self.notice_timer.timeout.connect(self.clear_notice)
+        self.hide_timer=QTimer(self);self.hide_timer.setSingleShot(True);self.hide_timer.timeout.connect(self.hide_if_idle)
+        self.slide=QVariantAnimation(self);self.slide.setDuration(160);self.slide.setEasingCurve(QEasingCurve.OutCubic)
+        self.slide.valueChanged.connect(self.set_reveal)
+
+    @property
+    def side(self):return self.drag_side or self.service.cfg['flash_side']
+
+    def set_reveal(self,value):
+        self.reveal_level=float(value);width=round(6+23*self.reveal_level)
+        if hasattr(self,'work_area'):
+            area=self.work_area;left=area.left()+2 if self.side=='left' else area.right()-width-1
+            self.setGeometry(left,self.y(),width,68)
+        else:self.resize(width,68)
+        if self.service.panel:self.service.panel.place(self)
+        self.update()
+
+    def animate_reveal(self,value,immediate=False):
+        self.slide.stop()
+        if immediate or not self.service.cfg['motion_enabled'] or self.service.runtime.lite:self.set_reveal(value)
+        elif abs(value-self.reveal_level)>.01:
+            self.slide.setStartValue(self.reveal_level);self.slide.setEndValue(value);self.slide.start()
+
+    def reveal(self,immediate=False):
+        self.hide_timer.stop();self.animate_reveal(1.,immediate)
+
+    def arm_hide(self):
+        if self.service.cfg['flash_edge_hide']:
+            self.hide_timer.start(self.service.cfg['flash_delay']*1000)
+
+    def hide_if_idle(self):
+        if QApplication.activePopupWidget() or QApplication.activeModalWidget():self.arm_hide();return
+        if (self.service.cfg['flash_edge_hide'] and self.press is None and not self.dragging_text and not self.notice
+                and self.service.panel is None
+                and not self.geometry().contains(QCursor.pos())):self.animate_reveal(0.)
+
+    def sync_visibility(self):
+        if not self.service.cfg['flash_edge_hide'] or self.service.panel:self.reveal()
+        else:self.arm_hide()
+
+    def toggle_edge_hide(self,enabled):
+        if self.service.persist(flash_edge_hide=bool(enabled)):self.sync_visibility()
+
+    def anchor_rect(self):
+        area=self.work_area;left=area.left()+2 if self.side=='left' else area.right()-30
+        return QRect(left,self.y(),29,68)
 
     def update_count(self):
         self.count=sum(not r['done'] and not r['deleted'] for r in self.service.cfg['flash_entries'])
-        self.setToolTip('闪念胶囊 · %d 条未完成\n点击速记，沿边缘拖动可调整位置。'%self.count)
+        self.setToolTip('闪念胶囊 · %d 条未完成\n悬停展开，点击速记；拖动可调整位置或切换左右边缘。'%self.count)
         self.update()
 
     def feedback(self,text):
-        self.notice=text;self.setToolTip(text);self.update();self.notice_timer.start(1400)
+        self.notice=text;self.reveal();self.setToolTip(text);self.update();self.notice_timer.start(1400)
 
     def clear_notice(self):
-        self.notice='';self.update_count()
+        self.notice='';self.update_count();self.arm_hide()
 
     def place(self,point=None):
         screens=screen_records()
@@ -71,22 +117,26 @@ class EdgeHandle(QWidget):
             reference=capture([point.x(),point.y(),1,1],screens)
             target=choose_screen(reference,screens)
         x,y,w,h=target['area']
+        if point is not None:self.drag_side='left' if point.x()<x+w/2 else 'right'
         projected=project(record,screens,minimum=(1,1)) if record and point is None else None
         top=point.y()-self.press.y() if point is not None and self.press is not None else (
             projected[1]+projected[3]//2-self.height()//2 if projected else y+(h-self.height())//2)
-        left=x+2 if self.service.cfg['flash_side']=='left' else x+w-self.width()-2
+        left=x+2 if self.side=='left' else x+w-self.width()-2
         self.move(left,max(y,min(top,y+h-self.height())))
         self.work_area=QRect(x,y,w,h)
 
     def paintEvent(self,event):
         colors=palette_for(self.service)
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
+        if self.width()<12:
+            p.setPen(Qt.NoPen);p.setBrush(QColor(colors['muted']));p.drawRoundedRect(QRectF(1,10,max(2,self.width()-2),48),2,2);return
         rect=QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5)
         p.setBrush(QColor(colors['surface']));p.setPen(QPen(QColor(colors['line']),1))
         p.drawRoundedRect(rect,rect.width()/2,rect.width()/2)
         fg=QColor(colors['ink']);p.setPen(fg)
         font=QFont(self.font());font.setPixelSize(12);font.setWeight(QFont.DemiBold);p.setFont(font)
-        x=round(rect.center().x());y=round(rect.top()+13);sign=1 if self.service.cfg['flash_side']=='left' else -1
+        if self.width()<24:return
+        x=round(rect.center().x());y=round(rect.top()+13);sign=1 if self.side=='left' else -1
         p.setPen(QPen(fg,1.5));p.drawLine(x-sign*2,y-4,x+sign*2,y);p.drawLine(x+sign*2,y,x-sign*2,y+4)
         if self.dragging_text or self.notice=='已记下闪念':
             p.drawText(rect.adjusted(0,18,0,-4),Qt.AlignCenter,'＋' if self.dragging_text else '✓')
@@ -99,18 +149,18 @@ class EdgeHandle(QWidget):
             self.service.open(activate=False)
 
     def enterEvent(self,event):
-        self.hover.start()
+        self.reveal();self.hover.start()
         if self.service.panel:self.service.panel.fold.stop()
         super().enterEvent(event)
 
     def leaveEvent(self,event):
-        self.hover.stop()
+        self.hover.stop();self.arm_hide()
         if self.service.panel:self.service.panel.arm_fold()
         super().leaveEvent(event)
 
     def mousePressEvent(self,event):
         if event.button()==Qt.LeftButton:
-            self.hover.stop();self.press=event.pos();self.moving=False;event.accept()
+            point=event.globalPos();self.hover.stop();self.reveal(immediate=True);self.press=self.mapFromGlobal(point);self.moving=False;event.accept()
         else:super().mousePressEvent(event)
 
     def mouseMoveEvent(self,event):
@@ -126,16 +176,19 @@ class EdgeHandle(QWidget):
         self.press=None
         if self.moving:
             self.moving=False
-            if not self.service.persist(flash_layout=capture(list(self.geometry().getRect()),screen_records())):
-                self.service.reposition()
+            record=capture(list(self.anchor_rect().getRect()),screen_records())
+            saved=self.service.persist(flash_layout=record,flash_side=self.side)
+            self.drag_side=None
+            if not saved:self.service.reposition()
+            self.arm_hide()
         else:self.service.open(compose=True)
 
     def dragEnterEvent(self,event):
         if self.service.cfg['flash_drop'] and plain_drop(event.mimeData()) and event.possibleActions()&Qt.CopyAction:
-            self.hover.stop();self.dragging_text=True;self.update();copy_drop(event)
+            self.hover.stop();self.dragging_text=True;self.reveal();self.update();copy_drop(event)
         else:event.ignore()
     def dragLeaveEvent(self,event):
-        self.dragging_text=False;self.update();super().dragLeaveEvent(event)
+        self.dragging_text=False;self.update();self.arm_hide();super().dragLeaveEvent(event)
     def dropEvent(self,event):
         self.dragging_text=False;self.update()
         if self.service.cfg['flash_drop'] and event.possibleActions()&Qt.CopyAction and self.service.add(plain_drop(event.mimeData())):
@@ -145,11 +198,12 @@ class EdgeHandle(QWidget):
         menu=AlignedMenu(self)
         menu.addAction('记一条闪念',lambda:self.service.open(compose=True))
         menu.addAction('查看闪念',lambda:self.service.open())
+        hide=menu.addAction('贴边隐藏入口');hide.setCheckable(True);hide.setChecked(self.service.cfg['flash_edge_hide']);hide.toggled.connect(self.toggle_edge_hide)
         menu.addSeparator();menu.addAction('隐藏贴边胶囊',lambda:self.service.set_enabled(False))
         try:menu.exec_(event.globalPos())
-        finally:menu.deleteLater()
+        finally:menu.deleteLater();self.arm_hide()
     def dismiss(self):
-        self.hover.stop();self.notice_timer.stop();self.hide();self.deleteLater()
+        self.hover.stop();self.hide_timer.stop();self.slide.stop();self.notice_timer.stop();self.hide();self.deleteLater()
 
 
 class FlashPanel(QWidget):
@@ -338,7 +392,7 @@ class FlashPanel(QWidget):
         height=self.layout().sizeHint().height()
         if not self.editing:height+=self.list_extent
         height=max(1,min(height,452,area.height()-6))
-        x=edge.geometry().left()-width if self.service.cfg['flash_side']=='right' else edge.geometry().right()+1
+        x=edge.geometry().left()-width if edge.side=='right' else edge.geometry().right()+1
         y=max(area.top()+3,min(edge.geometry().center().y()-height//2,area.bottom()-height-2))
         rect=QRect(x,y,width,height)
         if rect!=self.geometry():self.setGeometry(rect)
@@ -369,7 +423,7 @@ class FlashPanel(QWidget):
                 if self.expanded==row['id']:
                     detail=self.detail(row)
                     item.setSizeHint(QSize(1,detail.sizeHint().height()+3));self.list.setItemWidget(item,detail)
-                self.list_extent+=item.sizeHint().height()
+                self.list_extent+=item.sizeHint().height()+2*self.list.spacing()
             self.list.verticalScrollBar().setValue(pos)
         finally:self.list.setUpdatesEnabled(True)
         self.list.setVisible(bool(rows));self.empty.setVisible(not rows)

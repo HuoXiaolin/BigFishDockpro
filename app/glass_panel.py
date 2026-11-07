@@ -143,6 +143,8 @@ class DesktopPanel(QDialog):
         self.identity, self.default_geometry = identity, list(geometry)
         self.default_ui_factor=geometry[2]/320 if not self.model.get('geometry') else 1.0
         self.ui_factor = 1.0
+        from widget_face import FaceTracker
+        self.face_tracker=FaceTracker(self,lambda:self.dock.cfg,lambda:self.runtime.lite,'panel')
         self.disposed = False
         self.restoring = True
         self.collapsed = False
@@ -409,11 +411,18 @@ class DesktopPanel(QDialog):
         if view!='list':
             grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*3+metric(12,factor))))
         self.render()
+        self.face_tracker.sync_face()
+        from fold_options import header
+        header(self,self.collapsed)
         self.refresh_timer.start(100)
         self.update()
 
     def update_identity_header(self):
         self.setWindowTitle(self.model['name']+' · 桌面收纳')
+        if self.option('face'):
+            self.header_icon.clear()
+            self.header_icon.setFixedSize(metric(38*self.option('face_scale')/100,self.ui_factor,24),metric(24,self.ui_factor,18))
+            return
         size=metric(17,self.ui_factor,12);self.header_icon.setFixedSize(size,size)
         self.header_icon.setPixmap(category_icon(self.identity,category_color(self.identity,self.colors()['light']),size,self.devicePixelRatioF()))
 
@@ -826,11 +835,12 @@ class DesktopPanel(QDialog):
             self.collapse()
 
     def expand_if_inside(self):
-        if self.isVisible() and self.underMouse(): self.expand()
+        if self.option('expand_mode')=='hover' and self.isVisible() and self.underMouse(): self.expand()
 
     def enterEvent(self, event):
         self.collapse_timer.stop()
-        if self.collapsed: self.expand_timer.start()
+        self.face_tracker.pulse()
+        if self.collapsed and self.option('expand_mode')=='hover': self.expand_timer.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -841,6 +851,7 @@ class DesktopPanel(QDialog):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
+        if event.button()==Qt.LeftButton:self.face_tracker.press(True)
         if event.button() == Qt.LeftButton and event.pos().y() <= 44 and not self.option('locked'):
             self.drag_origin = event.globalPos()-self.pos()
             self.dragged = False
@@ -856,10 +867,15 @@ class DesktopPanel(QDialog):
         else: super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if event.button()==Qt.LeftButton:self.face_tracker.press(False)
         if self.drag_origin is not None:
             self.drag_origin = None
+            if self.dragged:
+                from card_snap import finish_drag
+                finish_drag(self, event.globalPos())
             self.store_geometry()
             if self.collapsed and not self.dragged: self.expand()
+        elif event.button()==Qt.LeftButton and self.collapsed:self.expand()
         super().mouseReleaseEvent(event)
 
     def moveEvent(self, event):
@@ -916,6 +932,7 @@ class DesktopPanel(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.face_tracker.sync_face()
         self.attach_desktop()
         if getattr(self,'_idle_state',None) is not None:self.render(prepare=True)
         self.fit_timer.stop()
@@ -938,6 +955,7 @@ class DesktopPanel(QDialog):
                 user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
 
     def hideEvent(self, event):
+        self.face_tracker.hide_face()
         self.page_transition.cancel()
         if not self.disposed and not self.restoring: self.store_geometry()
         for timer in (self.refresh_timer, self.resize_timer, self.collapse_timer, self.expand_timer, self.fit_timer): timer.stop()
@@ -986,6 +1004,12 @@ class DesktopPanel(QDialog):
         from card_design import paint_design
         paint_design(painter,rect,self.dock.cfg,clear=self.is_clear(),
                      body_top=self.design_body_top(),body_inset=metric(4,self.ui_factor),corner_radius=radius)
+        if self.option('face'):
+            badge=getattr(self,'fold_badge',None)
+            compact=badge is not None and badge.isVisible()
+            center=QRectF(self.rect() if compact else self.header_icon.geometry()).center()
+            slot=min(self.width()-12,metric(42*self.option('face_scale')/100,self.ui_factor,24)) if compact else self.header_icon.width()
+            self.face_tracker.paint_face(painter,center,slot,{'ink':colors['fg'],'light':colors['light']})
 
     def surface_radius(self):
         return (22 if self.collapsed and self.option('collapse_style') in ('capsule','ball') else 18)*self.ui_factor
@@ -1023,6 +1047,7 @@ class DesktopPanel(QDialog):
             self.collapse()
 
     def dispose(self):
+        self.face_tracker.hide_face()
         self.page_transition.cancel()
         self.disposed = True
         for timer in (self.refresh_timer, self.resize_timer, self.collapse_timer, self.expand_timer, self.fit_timer): timer.stop()
@@ -1053,7 +1078,12 @@ class PanelOptions(QDialog):
         number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',2,30)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
+        choice('expand_mode','展开方式',[('鼠标移入','hover'),('点击展开','click')])
         choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar'),('圆球','ball')]);number('capsule_ratio','胶囊宽度比例（%）',1,100)
+        self.face=ModernCheckBox('显示小表情（展开与收起均保留）');form.addRow(self.face)
+        self.face_interactive=ModernCheckBox('表情跟随鼠标与按压互动（精简模式保留）');form.addRow(self.face_interactive)
+        choice('face_mood','表情样式',[('随机变化','random'),('默认','default'),('开心','happy'),('眨眼','wink'),('爱心','love'),('星星眼','star'),('害羞','shy'),('嘟嘴','pout'),('眯眼','squint')])
+        number('face_scale','表情大小（%）',60,130)
         self.status=label('所有桌面卡片共用此设置；保存后同步主设置。位置、大小和内容分别保留。','muted');body.addWidget(self.status)
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
         self.refresh_shared()
@@ -1078,6 +1108,7 @@ class PanelOptions(QDialog):
             elif isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
             else:field.setValue(value)
         self.color.setText(self.panel.option('color'));self.auto.setChecked(self.panel.option('auto_hide'));self.locked.setChecked(self.panel.option('locked'))
+        self.face.setChecked(self.panel.option('face'));self.face_interactive.setChecked(self.panel.option('face_interactive'))
         matching=next((i for i,(_,values) in enumerate(PANEL_PRESETS,1) if all(self.panel.option(key)==value for key,value in values.items())),0)
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
         self.applying_preset=False
@@ -1104,7 +1135,7 @@ class PanelOptions(QDialog):
         color=self.color.text().strip()
         if color and not re.fullmatch(r'#[0-9a-fA-F]{6}',color):self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。');return False
         values={key:field.currentData() if isinstance(field,QComboBox) else field.value() for key,field in self.fields.items()}
-        values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked())
+        values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked(),face=self.face.isChecked(),face_interactive=self.face_interactive.isChecked())
         values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio')}
         if self.panel.manager.update_panel(self.panel.identity,**values):self.status.setText('已保存：外观共用，收起样式仅用于当前卡片或合并组。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

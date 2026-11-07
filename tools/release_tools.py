@@ -7,9 +7,9 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_ROOT_FILES=['dock.py','build.ps1','bootstrap.ps1','version.json','LICENSE','README.md','使用说明.md','CHANGELOG.md','CHANGELOG_HISTORY.md','.gitignore','1-启动.bat','2-关闭.bat','3-修复依赖.bat','4-调试启动.bat']
-SOURCE_DIRECTORIES=['app','tests','tools','assets','docs','licenses']
-SOURCE_FILES=SOURCE_ROOT_FILES+sorted(path.relative_to(ROOT).as_posix() for directory in SOURCE_DIRECTORIES for path in (ROOT/directory).rglob('*') if path.is_file() and '__pycache__' not in path.parts and path.suffix not in ('.pyc','.pyo'))
+SOURCE_ROOT_FILES=['dock.py','build.ps1','bootstrap.ps1','version.json','LICENSE','README.md','使用说明.md','CHANGELOG.md','CHANGELOG_HISTORY.md','.gitignore','1-启动.bat','2-关闭.bat','3-修复依赖.bat','4-调试启动.bat','references/BrimDeck-PIN.json','references/OpenQuota-PIN.json','references/Wisland-PIN.json']
+SOURCE_DIRECTORIES=['app','tests','tools','assets','docs','licenses','references/BrimDeck','references/Wisland']
+SOURCE_FILES=SOURCE_ROOT_FILES+sorted(path.relative_to(ROOT).as_posix() for directory in SOURCE_DIRECTORIES for path in (ROOT/directory).rglob('*') if path.is_file() and not {'__pycache__','bin','obj','.git'}.intersection(path.relative_to(ROOT).parts) and path.suffix not in ('.pyc','.pyo'))
 
 
 
@@ -106,11 +106,11 @@ def deliver(source_dir, release_dir, skip_tests=False):
     for name in SOURCE_FILES:
         destination=source/name;destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(ROOT/name,destination)
-    # Retire only the explicit old layout files; preserve .git and unknown files.
+    # Retire only explicitly listed, obsolete source files.
     layout=json.loads((ROOT/'tools/source_layout.json').read_text(encoding='utf-8'))
-    for name in layout['legacy_flat_files']:
-        path=(source/name).resolve()
-        if name not in SOURCE_ROOT_FILES and path.is_relative_to(source.resolve()) and path.is_file():path.unlink()
+    for name in layout['legacy_flat_files'] + layout.get('retired_source_files', []):
+        path=source/name
+        if name not in SOURCE_FILES and path.resolve().is_relative_to(source) and path.is_file():path.unlink()
     source_hashes = []
     for path in sorted(source.rglob('*')):
         relative = path.relative_to(source)

@@ -76,7 +76,7 @@ def run(api,runtime,main,app,output,checks):
             settings_window=SimpleNamespace(search_targets=lambda:settings,focus_setting=MagicMock())
             with patch.object(runtime.notes,'rows',return_value=notes):
                 dialog=SearchDialog(runtime)
-                with patch.object(dialog,'settings_window',return_value=settings_window):
+                with patch.object(dialog,'settings_targets',return_value=settings):
                     dialog.show();dialog.refresh();app.processEvents()
                     assert len(dialog.results)==6
                     dialog.grab().save(str(Path(output)/'review-unified-search.png'))
@@ -87,7 +87,7 @@ def run(api,runtime,main,app,output,checks):
                     app.processEvents()
                 for scope,query,expected in [('files','会议','file_open'),('notes','本周','review-note'),('settings','大小','icon_size')]:
                     dialog=SearchDialog(runtime)
-                    with patch.object(dialog,'settings_window',return_value=settings_window),patch.object(runtime.tray,'settings_dialog',settings_window,create=True):
+                    with patch.object(dialog,'settings_targets',return_value=settings),patch.object(runtime.tray,'settings_dialog',settings_window,create=True):
                         dialog.scope.setCurrentIndex(dialog.scope.findData(scope));dialog.query.setText(query);dialog.timer.stop();dialog.refresh()
                         with patch.object(runtime.dock,'launch') as launch,patch.object(runtime.notes,'open') as open_note,patch.object(runtime,'show_settings'):
                             dialog.activate()
@@ -96,7 +96,7 @@ def run(api,runtime,main,app,output,checks):
                             else:settings_window.focus_setting.assert_called_once_with(expected)
                         app.processEvents()
                 dialog=SearchDialog(runtime)
-                with patch.object(dialog,'settings_window',return_value=settings_window):
+                with patch.object(dialog,'settings_targets',return_value=settings):
                     dialog.show();dialog.refresh();QTest.keyClick(dialog,Qt.Key_Escape);app.processEvents()
                     assert sip.isdeleted(dialog) or not dialog.isVisible()
             checks.append('productivity runtime and search UI: failed save does not apply; arrange/undo preserve original fixture file, real search render and app/file/note/settings activation routing, Escape closes')

@@ -1,5 +1,6 @@
 """Shared desktop-card appearance options; geometry and contents remain local."""
-KEYS=('material','theme','color','highlight','opacity','blur','locked','auto_hide','collapse_style','capsule_ratio')
+KEYS=('material','theme','color','highlight','opacity','blur','locked','auto_hide','collapse_style','capsule_ratio',
+      'face','face_interactive','face_mood','face_scale','expand_mode')
 CONFIG_KEYS=tuple('panel_'+key for key in KEYS)
 
 

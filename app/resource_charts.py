@@ -3,11 +3,12 @@ import math
 import time
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import QWidget, QSizePolicy
 
 from flash_view import blend
 from resource_options import TINTS
+from resource_status import metric_ink,threshold
 
 
 def rate(value):
@@ -92,15 +93,15 @@ class MetricDisplay(QWidget):
         self.setVisible(bool(rows))
         tips = [label+' · '+tip for _,label,_,tip in rows if tip]
         if 'cpu' in self.rows:
-            tips.insert(0,'蓝青柱按逻辑处理器顺序排列。核心较多时，相邻核心合并取平均值。')
-        self.setToolTip('\n'.join(tips))
+            tips.insert(0,'柱形按逻辑处理器顺序排列。核心较多时，相邻核心合并取平均值。')
+        self.setToolTip('')
         self.setAccessibleName('，'.join(label+' '+value for _,label,value,_ in rows))
         self.update()
 
     def processors(self,p,area,values,history,now,inks,colors,track):
         box = QRectF(area)
         text(p,QRectF(box.x(),box.y(),34,21),'CPU',colors['ink'],12,QFont.DemiBold)
-        text(p,QRectF(box.x()+32,box.y(),53,21),self.rows['cpu'][1],colors['ink'],15,QFont.Bold)
+        text(p,QRectF(box.x()+32,box.y(),53,21),self.rows['cpu'][1],inks['cpu'],15,QFont.Bold)
         trend(p,QRectF(box.x()+86,box.y()+3,box.width()-87,13),series(history,'cpu'),now,inks['cpu'],100)
         plot = box.adjusted(0,25,0,-5)
         if not values:
@@ -119,11 +120,12 @@ class MetricDisplay(QWidget):
                 continue
             height = min(plot.height(),max(1,plot.height()*level/100))
             color = blend(inks['cpu'],inks['network'],min(1,max(0,(i/max(1,count-1)-.45)*2.2)))
+            if self.owner.service.cfg['resource_threshold']:color=QColor(threshold(level,100,colors['light']))
             fill(p,QRectF(x,plot.bottom()-height,width,height),color,min(radius,height/2))
 
     def gpu(self,p,box,colors,inks,track):
         text(p,QRectF(box.x(),box.y(),box.width(),19),'GPU',colors['muted'],10,QFont.DemiBold)
-        text(p,QRectF(box.x(),box.y()+16,box.width(),19),self.rows['gpu'][1],colors['ink'],13,QFont.Bold)
+        text(p,QRectF(box.x(),box.y()+16,box.width(),19),self.rows['gpu'][1],inks['gpu'],13,QFont.Bold)
         gauge = box.adjusted(0,38,0,-5)
         fill(p,gauge,track,4)
         level = self.owner.service.latest.get('gpu')
@@ -139,6 +141,7 @@ class MetricDisplay(QWidget):
         cfg = self.owner.colors
         service = self.owner.service
         inks = metric_colors(service)
+        inks={key:metric_ink(service,key,cfg['light'],ink) for key,ink in inks.items()}
         track = QColor(cfg['ink'])
         track.setAlpha(27 if cfg['light'] else 38)
         w = self.width()
@@ -162,7 +165,7 @@ class MetricDisplay(QWidget):
                 total = f'{record[2]/2**30:.1f}'.removesuffix('.0')
                 value = f'{record[1]/2**30:.1f} / {total} GB'
             text(p,QRectF(0,y,w/2,17),'内存',cfg['ink'],11,QFont.DemiBold)
-            text(p,QRectF(32,y,w-32,17),value,cfg['ink'],11,QFont.DemiBold)
+            text(p,QRectF(32,y,w-32,17),value,inks['memory'],11,QFont.DemiBold)
             track_x=32+p.fontMetrics().horizontalAdvance(value)+9
             gauge = QRectF(track_x,y+7,max(0,w-track_x),4)
             fill(p,gauge,track,2)
@@ -190,4 +193,69 @@ class MetricDisplay(QWidget):
             area = QRectF(x+1,top,w/2-5,22)
             text(p,area,label,cfg['muted'],10)
             label_width=p.fontMetrics().horizontalAdvance(label)+6
-            text(p,area.adjusted(label_width,0,0,0),value,cfg['ink'],11,QFont.DemiBold)
+            text(p,area.adjusted(label_width,0,0,0),value,metric_ink(service,key,cfg['light'],cfg['ink']),11,QFont.DemiBold)
+
+
+class SensorColumns(QWidget):
+    """Keep the hardware group title and several readings on the same row."""
+    group_width = 36
+    row_height = 20
+    column_gap = 10
+    minimum_cell_width = 86
+
+    def __init__(self,window):
+        super().__init__();self.owner=window;self.groups=[];self.headings=[];self.cells=[]
+        self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
+    def refresh(self,rows):
+        self.groups=[]
+        for prefix,title in (('cpu_','CPU'),('gpu_','GPU'),('','主机')):
+            readings=[row for row in rows if row[0].startswith(prefix)] if prefix else [row for row in rows if not row[0].startswith(('cpu_','gpu_'))]
+            if readings:self.groups.append((title,readings))
+        self.setVisible(bool(self.groups));self.fit_height();self.update()
+        self.setAccessibleName('\n'.join(label+' · '+value+(' · '+tip if tip else '') for _,label,value,tip in rows));self.setToolTip('')
+    def fit_height(self):
+        self.headings = []
+        self.cells = []
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        labels = QFontMetrics(font)
+        font.setWeight(QFont.DemiBold)
+        values = QFontMetrics(font)
+        gap = self.column_gap
+        available = max(1, self.width() - self.group_width)
+        columns = max(1, min(6, (available + gap) // (self.minimum_cell_width + gap)))
+        span = (available - (columns - 1) * gap) / columns
+        y = 0
+        for title, readings in self.groups:
+            self.headings.append((QRectF(0, y, self.group_width - 4, self.row_height), title))
+            column = 0
+            for key, label, value, _ in readings:
+                label = label.removeprefix('CPU ').removeprefix('GPU ').replace('帧率 FPS', '实时帧率')
+                value_width = values.horizontalAdvance(value) + 1
+                required = labels.horizontalAdvance(label) + 6 + value_width
+                slots = min(columns, max(1, math.ceil((required + gap) / (span + gap))))
+                if column + slots > columns:
+                    column = 0
+                    y += self.row_height
+                x = self.group_width + column * (span + gap)
+                width = slots * (span + gap) - gap
+                value_width = min(width, value_width)
+                label_width = max(0, width - value_width - 5)
+                self.cells.append((key, labels.elidedText(label, Qt.ElideRight, int(label_width)),
+                                   values.elidedText(value, Qt.ElideRight, int(value_width)),
+                                   QRectF(x, y, label_width, self.row_height),
+                                   QRectF(x + width - value_width, y, value_width, self.row_height)))
+                column += slots
+            y += self.row_height + 3
+        self.setFixedHeight(max(1, y - 3))
+    def resizeEvent(self,event):
+        self.fit_height();super().resizeEvent(event)
+    def paintEvent(self,event):
+        if not self.groups or not self.owner.colors:return
+        p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.owner.colors
+        for area, title in self.headings:
+            text(p,area,title,c['ink'],12,QFont.DemiBold)
+        for key, label, value, label_area, value_area in self.cells:
+            text(p,label_area,label,c['muted'],11)
+            ink = c['muted'] if value == '—' else metric_ink(self.owner.service,key,c['light'],c['ink'])
+            text(p,value_area,value,ink,11,QFont.DemiBold,Qt.AlignRight)

@@ -288,10 +288,20 @@ class NoteWindow(QWidget):
         if widget is self.handle or (widget is getattr(self,'title',None) and self.title.isReadOnly()):
             if widget is getattr(self,'title',None) and event.type()==QEvent.MouseButtonDblClick:
                 self.drag=None;return False
-            if event.type()==QEvent.MouseButtonPress and event.button()==Qt.LeftButton and not self.row()['locked']:self.collapse_timer.stop();self.expand_timer.stop();self.drag=event.globalPos()-self.pos();return True
+            if event.type()==QEvent.MouseButtonPress and event.button()==Qt.LeftButton and not self.row()['locked']:
+                self.collapse_timer.stop()
+                self.expand_timer.stop()
+                self.drag_start = self.pos()
+                self.drag = event.globalPos() - self.drag_start
+                return True
             if event.type()==QEvent.MouseMove and self.drag is not None:self.move(event.globalPos()-self.drag);return True
             if event.type()==QEvent.MouseButtonRelease and self.drag is not None:
-                self.drag=None;self.save_geometry();self.manager.flush()
+                self.drag = None
+                if self.pos() != self.drag_start:
+                    from card_snap import finish_drag
+                    finish_drag(self, event.globalPos())
+                self.save_geometry()
+                self.manager.flush()
                 if self.row()['auto_hide']:self.collapse_timer.start()
                 return True
             if event.type()==QEvent.MouseButtonDblClick:self.toggle_collapse();return True

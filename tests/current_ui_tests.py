@@ -41,7 +41,6 @@ def run(output):
         tray.importer=BatchImporter(dock,tray,api.save_config)
         runtime=tray.runtime=RuntimeController(dock,tray,api)
         if os.environ.get('BIGFISH_TEST_RANK_MEMORY')=='1':
-            import json
             from rank_memory_probe import measure
             (output/'rank-memory.json').write_text(json.dumps(measure(runtime,app),indent=2),encoding='utf-8')
         from corner_stacking_tests import run as run_corner_stacking
@@ -409,6 +408,8 @@ def run(output):
         check_display_transition(api,runtime,root.name,app,output,checks)
         from resource_capsule_tests import run as check_resource_capsule
         check_resource_capsule(api,runtime,root.name,app,output,checks)
+        from resource_upgrade_tests import run as check_resource_upgrade
+        check_resource_upgrade(api,runtime,root.name,app,output,checks)
         from flash_capsule_tests import run as check_flash_capsule
         check_flash_capsule(api,runtime,root.name,app,output,checks)
         from settings_interaction_tests import run as check_settings_interaction
