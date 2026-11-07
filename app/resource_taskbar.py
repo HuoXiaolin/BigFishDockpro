@@ -74,8 +74,9 @@ def logical(bounds,mapping):
 class Placement(QObject):
     layout_changed=pyqtSignal()
     def __init__(self,window):
-        super().__init__(window);self.window=window;self.slot=None;self.target=None;self.proposal=False
+        super().__init__(window);self.window=window;self.slot=None;self.slot_bar=None;self.target=None;self.proposal=False
         self.closed=False;self.process=None;self.waiting=None;self.checked=False;self.retry_at=0.;self.hook=None;self.callback=None;self.deferred=None
+        self.request=None
         self.debounce=QTimer(self);self.debounce.setSingleShot(True);self.debounce.setInterval(600)
         self.debounce.timeout.connect(self.check);self.layout_changed.connect(self.schedule_check,Qt.QueuedConnection)
         self.shell_timer=QTimer(self);self.shell_timer.setInterval(2500);self.shell_timer.timeout.connect(self.shell_changed)
@@ -108,10 +109,12 @@ class Placement(QObject):
             if foreground_fullscreen():bar=None
         if bar is None:
             if self.slot is not None or self.target is not None:
-                self.slot=None;self.target=None;self.checked=False;self.window.placement_changed()
+                self.slot=None;self.slot_bar=None;self.target=None;self.checked=False;self.window.placement_changed()
             return
         if self.target!=bar or not self.checked or (self.slot is None and time.monotonic()>=self.retry_at):
+            changed = self.target != bar
             self.target=bar;self.query(bar,self.ratio)
+            if changed:self.window.reposition()
         self.window.restore_input_layer()
     def schedule_check(self):
         if not self.closed:
@@ -123,38 +126,54 @@ class Placement(QObject):
         if self.closed:return
         request=(bar,ratio)
         if self.process is not None:
-            self.waiting=request;return
+            self.waiting=request if request != self.request else None
+            return
+        self.request=request
         process=QProcess(self);self.process=process
         deadline=QTimer(process);deadline.setSingleShot(True);deadline.setInterval(4000);deadline.timeout.connect(process.kill)
         def finish(ok):
             if process is not self.process:return
             self.process=None;deadline.stop()
             try:
-                raw=bytes(process.readAllStandardOutput());data=json.loads(raw.decode('utf-8-sig')) if ok and len(raw)<131072 else {}
-                blocks=[logical(b,bar['map']) for b in data.get('blocks',[]) if len(b)==4]
-                wanted=self.window.preferred_width()
-                slot=free_slot(bar['rect'],blocks,ratio,wanted=wanted,minimum=min(82,wanted)) if data.get('ok') else None
-            except (TypeError,ValueError):slot=None
+                raw=bytes(process.readAllStandardOutput())
+                data=json.loads(raw.decode('utf-8-sig')) if ok and len(raw)<131072 else None
+            except (TypeError,ValueError):data=None
             process.deleteLater()
             if self.closed:return
             if self.waiting is not None:
                 latest=self.waiting;self.waiting=None;self.query(*latest);return
             if self.target!=bar:return
-            self.accept(bar,ratio,slot)
+            self.accept_probe(bar,ratio,data)
         process.errorOccurred.connect(lambda error:finish(False) if error==QProcess.FailedToStart else None)
         process.finished.connect(lambda code,status:finish(code==0 and status==QProcess.NormalExit))
         deadline.start();process.start(str(binary('DesktopResourceProbe.exe')),['--taskbar',str(bar['hwnd'])])
+    def accept_probe(self, bar, ratio, data):
+        try:
+            if not isinstance(data, dict) or data.get('ok') is not True:
+                raise ValueError('Taskbar controls unavailable')
+            blocks = [logical(bounds, bar['map']) for bounds in data['blocks']]
+        except (KeyError, TypeError, ValueError, OverflowError):
+            if self.proposal:
+                self.accept(bar, ratio, None)
+            else:
+                # A missed UI Automation read does not invalidate a slot on the same taskbar.
+                self.checked = False
+            return
+        wanted = self.window.preferred_width()
+        self.accept(bar, ratio, free_slot(bar['rect'], blocks, ratio, wanted, min(82, wanted)))
     def accept(self,bar,ratio,slot):
         if self.window.press is not None and not self.proposal:
             self.deferred=(bar,ratio,slot);return
-        proposal=self.proposal;self.proposal=False;self.slot=slot;self.checked=True;self.retry_at=time.monotonic()+20
+        proposal=self.proposal;self.proposal=False;self.slot=slot;self.slot_bar=bar if slot is not None else None
+        self.checked=True;self.retry_at=time.monotonic()+20
         if proposal and slot is not None:
             if not self.window.service.set_options(resource_taskbar=True,
                     resource_taskbar_position={0.:'left',.5:'center',1.:'right'}[ratio],resource_taskbar_anchor={'screen':bar['screen'],'ratio':ratio}):
-                self.slot=None
+                self.slot=None;self.slot_bar=None
         if self.closed:return
         if proposal and self.slot is None and self.window.service.cfg['resource_taskbar']:
             self.target,self.slot,self.ratio,self.checked=self.previous
+            self.slot_bar=self.target if self.slot is not None else None
             self.window.placement_changed()
             return
         if proposal and self.slot is None and not self.window.service.cfg['resource_taskbar']:

@@ -64,6 +64,13 @@ def run(api,runtime,app,output,checks):
                 assert service.set_options(resource_taskbar_position=alignment);strip.placement.restore();app.processEvents();positions.append(strip.geometry().x())
                 assert bar['rect'].contains(strip.geometry()) and strip.x()>=250 and strip.geometry().right()<1120
             assert positions[0]<positions[1]<positions[2]
+            place = strip.placement
+            verified = QRect(strip.geometry())
+            for response in (None, {'ok': False}, {'ok': True, 'blocks': [['invalid']]}):
+                place.accept_probe(bar, place.ratio, response)
+                assert not place.checked and strip.isVisible() and strip.geometry() == verified
+            place.shell_changed()
+            assert place.checked and strip.isVisible()
             # Win32 hit testing preserves a first click without activating the app.
             import ctypes
             from ctypes import wintypes
@@ -78,7 +85,7 @@ def run(api,runtime,app,output,checks):
             assert user.WindowFromPoint(hit)==int(strip.winId()),'The native music hit target belongs to another window'
             # Reproduce Explorer becoming topmost over an otherwise visible strip.
             from PyQt5.QtWidgets import QWidget
-            from taskbar_input import restore_input_layer
+            from taskbar_input import place_layer, restore_input_layer
             blocker=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus)
             blocker.setAttribute(Qt.WA_ShowWithoutActivating);blocker.setStyleSheet('background:#182b40');blocker.setGeometry(strip.geometry());blocker.show();app.processEvents()
             user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
@@ -87,17 +94,16 @@ def run(api,runtime,app,output,checks):
             assert not restore_input_layer(int(strip.winId()),1),'Must not raise over unrelated dialogs'
             assert restore_input_layer(int(strip.winId()),int(blocker.winId()))
             assert user.WindowFromPoint(hit)==int(strip.winId())
+            overlay=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus)
+            overlay.setAttribute(Qt.WA_ShowWithoutActivating);overlay.setStyleSheet('background:#334559');overlay.setGeometry(strip.geometry());overlay.show();app.processEvents()
+            overlay_id=int(overlay.winId());strip_id=int(strip.winId());shell_id=int(blocker.winId())
+            user.SetWindowPos(overlay_id,-1,0,0,0,0,0x13)
+            assert place_layer(strip_id,shell_id,'bottom') and strip.isVisible() and user.WindowFromPoint(hit)==overlay_id
+            with patch('taskbar_input.overlapping_topmost',return_value=overlay_id):
+                assert place_layer(strip_id,shell_id,'top') and strip.isVisible() and user.WindowFromPoint(hit)==overlay_id
+            overlay.close();overlay.deleteLater();app.processEvents()
+            assert place_layer(strip_id,shell_id,'top') and user.WindowFromPoint(hit)==strip_id
             blocker.close();blocker.deleteLater();app.processEvents()
-            from itertools import chain, repeat
-            with patch.object(runtime.dock, 'preview', False), patch.object(strip, 'host', strip.placement.target['hwnd']), \
-                 patch('taskbar_input.has_foreign_overlay', side_effect=chain((True,), repeat(False))), \
-                 patch('taskbar_input.restore_input_layer') as restore:
-                strip.restore_input_layer()
-                assert not strip.isVisible() and strip._yielded_to_overlay
-                restore.assert_not_called()
-                strip.restore_input_layer()
-                assert strip.isVisible() and not strip._yielded_to_overlay
-                restore.assert_called()
             for width in (280,170,83):
                 strip.resize(width,40);strip.refresh();app.processEvents();strip.grab().save(str(output/f'taskbar-media-narrow-{width}.png'))
                 assert all(QRectF(strip.rect()).contains(rect) for rect in strip.media_bounds+strip.text_bounds)
@@ -145,13 +151,17 @@ def run(api,runtime,app,output,checks):
             strip.grab().save(str(output/'taskbar-cover-only.png'))
             from resource_settings import ResourceOptions
             options=ResourceOptions(service)
+            options.tabs.setCurrentIndex(1);options.show();app.processEvents()
+            layer=options.fields['resource_taskbar_layer'];assert layer.currentData()=='bottom'
+            assert options.grab().save(str(output/'taskbar-layer-settings.png'))
+            layer.setCurrentIndex(layer.findData('top'))
             options.fields['resource_taskbar_position'].setCurrentIndex(options.fields['resource_taskbar_position'].findData('center'))
             for key,field in options.task_media_fields.items():field.setChecked(key=='wave')
             from resource_options import TASK_COLUMN_NAMES
             options.orders['resource_task_order']=['network', *[key for key in TASK_COLUMN_NAMES if key != 'network']]
             options.tabs.setCurrentIndex(2)
             assert options.commit() and api.load_config()['resource_task_media_parts']==['wave'] and api.load_config()['resource_taskbar_position']=='center';options.reject();options.deleteLater()
-            assert api.load_config()['resource_task_order'][0] == 'network'
+            assert api.load_config()['resource_task_order'][0] == 'network' and api.load_config()['resource_taskbar_layer']=='top'
             cfg['resource_task_metrics']=list(DEFAULTS['resource_task_metrics']);cfg['resource_task_media_parts']=[];service.sync();app.processEvents()
             assert service.deck is None and service.strip
             cfg.update(resource_task_music=False,resource_task_font=11);strip.resize(288,40);service.sync();app.processEvents();strip.grab()
@@ -159,7 +169,11 @@ def run(api,runtime,app,output,checks):
             text=QRectF()
             for rect in strip.text_bounds:text=text.united(rect)
             assert abs(text.center().y()-strip.height()/2)<=1
+            place.accept_probe(bar,place.ratio,{'ok':True,'blocks':[[0,740,1366,784]]})
+            assert not strip.isVisible() and place.checked and place.slot is None
+            place.check();assert strip.isVisible()
             cfg['resource_taskbar']=False;service.sync();assert not service.deck and not service.strip and not service.signature
         checks.append('Taskbar media: independent/persisted cover/title/controls/wave/progress including icon-only and spectrum-only; fixed left/center/right placement avoids blocked regions; press locks source/button and defers placement, first-click native handling and WindowFromPoint hit target; click/seek routing, 8/11/18/24 fonts centered vertically, 40–480 widths with safe paging, disabling media releases the shared helper. Simulated taskbar on a private desktop; no playback commands sent.')
+        checks.append('Taskbar placement: transient or invalid probes keep the last slot, a verified full taskbar hides the readout, layer defaults to bottom and persists top, and overlapping topmost windows stay clickable without hiding the readout.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

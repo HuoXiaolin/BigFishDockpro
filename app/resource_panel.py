@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
 from ui_style import AlignedMenu
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import METRICS,SENSOR_UNITS,background
+from resource_options import HALO_SPEEDS,METRICS,SENSOR_UNITS,background
 from flash_view import palette_for,icon
 
 
@@ -94,6 +94,7 @@ class ResourceWindow(QWidget):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
         self.service=service;self.press=None;self.offset=0;self.rank_by='cpu';self.last_layer=None
         self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
+        self.halo_updated_at = time.monotonic()
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
         self.detail=QWidget(self);lay=QVBoxLayout(self.detail);lay.setContentsMargins(12,0,12,10);lay.setSpacing(2)
@@ -260,7 +261,11 @@ class ResourceWindow(QWidget):
     @property
     def weather_view(self):return self.view('weather').content
     def animate(self):
-        self.halo_phase=(time.monotonic()%12)/12;self.update()
+        now = time.monotonic()
+        _, period = HALO_SPEEDS[self.service.cfg['resource_halo_speed']]
+        self.halo_phase = (self.halo_phase + (now - self.halo_updated_at) / period) % 1
+        self.halo_updated_at = now
+        self.update()
     def next_page(self):
         if self.press is None and not self.underMouse() and self.compact_pages>1:self.offset+=1;self.update()
     def sync_animation(self):
@@ -268,7 +273,9 @@ class ResourceWindow(QWidget):
         for timer,active in [(self.animation,visible and cfg['resource_halo'] and cfg.get('motion_enabled',True) and not self.service.runtime.lite),
                              (self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
                              (self.rotate,visible and self.service.compact and cfg['resource_compact_rotate'])]:
-            if active and not timer.isActive():timer.start()
+            if active and not timer.isActive():
+                if timer is self.animation:self.halo_updated_at = time.monotonic()
+                timer.start()
             elif not active:timer.stop()
 
     def sync_auto_fold(self):

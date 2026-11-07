@@ -4,12 +4,38 @@ import os
 from ctypes import wintypes as W
 
 
+LAYER_FLAGS = 0x0213  # No activation, movement, resize, or change to Explorer's order.
+
+
+def place_layer(hwnd, taskbar, layer, user=None):
+    user = user or C.windll.user32
+    user.SetWindowPos.argtypes = [W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT]
+    if layer == 'top':
+        after = overlapping_topmost(hwnd, taskbar, user) or -1
+    else:
+        user.GetWindow.argtypes = [W.HWND, W.UINT]
+        user.GetWindow.restype = W.HWND
+        user.GetWindowLongPtrW.argtypes = [W.HWND, C.c_int]
+        user.GetWindowLongPtrW.restype = C.c_ssize_t
+        shell_topmost = bool(user.GetWindowLongPtrW(taskbar, -20) & 0x8)
+        if not shell_topmost and user.GetWindowLongPtrW(hwnd, -20) & 0x8:
+            user.SetWindowPos(hwnd, -2, 0, 0, 0, 0, LAYER_FLAGS)
+        # A bottom readout belongs just above its taskbar, otherwise the taskbar itself covers it.
+        after = user.GetWindow(taskbar, 3)
+        if after == hwnd:
+            return True
+        if not shell_topmost and after and user.GetWindowLongPtrW(after, -20) & 0x8:
+            after = 0
+        if not after:
+            after = -1 if shell_topmost else 0
+    return bool(user.SetWindowPos(hwnd, after, 0, 0, 0, 0, LAYER_FLAGS))
+
+
 def restore_input_layer(hwnd,taskbar,user=None):
     user=user or C.windll.user32
     user.GetWindowRect.argtypes=[W.HWND,C.POINTER(W.RECT)]
     user.WindowFromPoint.argtypes=[W.POINT];user.WindowFromPoint.restype=W.HWND
     user.GetAncestor.argtypes=[W.HWND,W.UINT];user.GetAncestor.restype=W.HWND
-    user.SetWindowPos.argtypes=[W.HWND,W.HWND,C.c_int,C.c_int,C.c_int,C.c_int,W.UINT]
     rect=W.RECT()
     if not user.GetWindowRect(hwnd,C.byref(rect)):return False
     hidden=False
@@ -20,12 +46,11 @@ def restore_input_layer(hwnd,taskbar,user=None):
         elif root!=hwnd:return False  # Respect menus, dialogs and other apps.
     if not hidden:return False
     # No activation, geometry or owner changes. Reassert only our own window.
-    return bool(user.SetWindowPos(hwnd,-1,0,0,0,0,0x213))
+    return place_layer(hwnd, taskbar, 'top', user)
 
 
-def has_foreign_overlay(hwnd, taskbar):
-    """Detect a pinned tool window even when the strip sits above it."""
-    user = C.windll.user32
+def overlapping_topmost(hwnd, taskbar, user):
+    """Find the lowest overlapping topmost window so pinned tools stay interactive."""
     dwm = C.windll.dwmapi
     user.GetWindowRect.argtypes = [W.HWND, C.POINTER(W.RECT)]
     user.GetWindowLongPtrW.argtypes = [W.HWND, C.c_int]
@@ -37,11 +62,11 @@ def has_foreign_overlay(hwnd, taskbar):
     dwm.DwmGetWindowAttribute.argtypes = [W.HWND, W.DWORD, C.c_void_p, W.DWORD]
     bounds = W.RECT()
     if not user.GetWindowRect(hwnd, C.byref(bounds)):
-        return False
+        return None
     shell_pid = W.DWORD()
     user.GetWindowThreadProcessId(taskbar, C.byref(shell_pid))
     ignored = {os.getpid(), shell_pid.value}
-    found = False
+    found = None
     callback_type = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 
     @callback_type
@@ -71,8 +96,8 @@ def has_foreign_overlay(hwnd, taskbar):
         # This system canvas can remain visible while no pen input is active.
         if name.value.startswith('ShellHandwritingCanvas'):
             return True
-        found = True
-        return False
+        found = window
+        return True
 
     user.EnumWindows.argtypes = [callback_type, W.LPARAM]
     user.EnumWindows(visit, 0)

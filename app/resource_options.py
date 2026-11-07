@@ -20,15 +20,18 @@ TASK_COLUMN_NAMES = {
 COMPACT_METRICS=tuple(k for k in METRICS if k!='rank')
 PINNABLE={**{k:METRICS[k] for k in COMPACT_METRICS if k!='bluetooth'},'ai':'AI 额度','music':'音乐','weather':'天气'}
 OPEN_PAGES={'last':'上次查看的页面','resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气'}
+TASKBAR_LAYERS={'bottom':'置底','top':'置顶'}
+HALO_SPEEDS={'slow':('慢速',12), 'medium':('中速',8), 'fast':('快速',4)}
 TASK_MEDIA_PARTS={'cover':'封面图标','title':'曲名','controls':'播放按钮','wave':'声音律动 / 频谱','progress':'进度细线'}
 AI_PROVIDERS=('Claude','Codex','Cursor','Antigravity','ZCode','Dsh','Kimi','OpenCode','Pi','GrokBot')
 TINTS={'cpu':'#288bee','memory':'#22bba9','network':'#27b8c4','gpu':'#ec79a6'}
 DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_auto_hide=True,
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
-              resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_anchor={},resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
+              resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_layer='bottom',
+              resource_taskbar_anchor={},resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
 DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank') for key in METRICS})
-DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,
-                resource_liquid=True,resource_edge_snap=True,resource_edge='free',resource_face=False,resource_live_glass=False,
+DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
+                resource_liquid=True,resource_edge_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_scale=100,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
@@ -44,6 +47,8 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
 
 
 def migrate_docked(data):
+    if data.get('resource_layout') and 'resource_edge' not in data:
+        data = dict(data, resource_edge='free')
     if data.get('resource_taskbar') is not True or 'resource_task_metrics' in data:return data
     # In 1.1.5, docking moved the only resource window to the taskbar.
     return dict(data,resource_enabled=False,resource_taskbar=data.get('resource_enabled') is True,
@@ -82,6 +87,7 @@ def normalize(cfg,strict=False):
              'resource_face_mood':('random','default','happy','wink','love','star','shy','pout','squint'),
              'resource_compact_density':('auto','dense'),
              'resource_taskbar_position':('left','center','right'),
+             'resource_taskbar_layer':tuple(TASKBAR_LAYERS), 'resource_halo_speed':tuple(HALO_SPEEDS),
              'resource_edge':('free','top','bottom','left','right')}
     for key,allowed in options.items():
         if cfg.get(key) not in allowed:

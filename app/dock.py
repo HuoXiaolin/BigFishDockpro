@@ -317,10 +317,11 @@ def initial_defaults():
 
 
 def load_config():
-    from feature_config import LEGACY_STYLE_DEFAULTS
+    from default_settings import upgrade_defaults
     from resource_options import migrate_docked
-    cfg = _configuration_store().load(DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS,
-                                      migrate=migrate_docked,first_run=initial_defaults)
+    preset = initial_defaults()
+    cfg = _configuration_store().load(DEFAULT_CONFIG, upgrade_defaults(preset),
+                                      migrate=migrate_docked, first_run=lambda: preset)
     if not isinstance(cfg.get("items"), list):
         cfg["items"] = []
     if str(cfg.get("theme")) == "fog":

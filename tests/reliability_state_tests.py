@@ -282,6 +282,31 @@ def run(api, runtime, main, app, output, checks):
         assert store.load(api.DEFAULT_CONFIG,LEGACY_STYLE_DEFAULTS)['dock_material']=='crystal'
     checks.append('style migration: missing file uses crystal; sparse existing config keeps legacy defaults and saved values without rewriting; explicit crystal remains unchanged')
 
+    from config_transfer import read_configuration
+    with tempfile.TemporaryDirectory(prefix='legacy-feature-defaults-') as folder:
+        path = Path(folder)/'config.json'
+        legacy = dict(items=[{'sep': True}], icon_size=48, position='bottom', theme='dark', autostart=False,
+                      panel_geometry=[20, 30, 480, 280])
+        off_by_default = ('panel_enabled', 'resource_taskbar', 'resource_ai_tray', 'flash_enabled')
+        enabled = ('resource_enabled', 'resource_face', 'resource_face_interactive', 'resource_weather',
+                   'resource_ai', 'resource_music', 'resource_bt_tray', 'clock_enabled', 'notes_enabled',
+                   'panel_face', 'panel_face_interactive')
+        saved = dict(resource_face=False, resource_ai=False, resource_music=False,
+                     resource_weather=False, clock_enabled=False, flash_enabled=True,
+                     panel_face=False, panel_face_interactive=False, resource_face_interactive=False)
+        with patch.object(api, 'CONFIG_PATH', str(path)), patch.object(api, '_config_store', None):
+            for additions in ({}, saved):
+                previous = dict(legacy, **additions)
+                payload = json.dumps(previous).encode('utf-8')
+                path.write_bytes(payload)
+                for config in (api.load_config(), read_configuration(path, api)):
+                    assert all(config[key] == value for key, value in previous.items())
+                    assert all(config[key] is True for key in enabled if key not in additions)
+                    assert all(config[key] is False for key in off_by_default if key not in additions)
+                    assert config['resource_expand_mode'] == 'click' and not config['display_layout'].get('panels')
+                assert path.read_bytes() == payload
+    checks.append('Legacy profiles and imports fill missing features from bundled defaults, including the capsule face, while saved values and legacy layout remain intact.')
+
     check_config_store()
     check_update_generation(app)
     check_taskbar_retries()

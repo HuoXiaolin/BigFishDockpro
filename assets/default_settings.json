@@ -817,6 +817,7 @@
   "resource_interval": 5,
   "resource_taskbar": false,
   "resource_taskbar_position": "right",
+  "resource_taskbar_layer": "bottom",
   "resource_taskbar_anchor": {
     "screen": "",
     "ratio": 0.6106770833333334
@@ -870,6 +871,7 @@
   "resource_task_threshold": true,
   "resource_threshold": true,
   "resource_halo": true,
+  "resource_halo_speed": "medium",
   "resource_liquid": true,
   "resource_edge_snap": true,
   "resource_edge": "top",

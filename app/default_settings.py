@@ -10,6 +10,10 @@ LOCAL_DATA = {
     'flash_entries', 'flash_draft', 'layout_profiles', 'groups', 'lite_restore',
     'runtime_lite', 'dock_page',
 }
+LEGACY_LAYOUT_FIELDS = {
+    'display_layout', 'desktop_panels', 'panel_geometry', 'merge_groups', 'merge_initialized',
+    'merged_panels', 'merged_active', 'merged_geometry', 'merged_collapsed', 'merged_compact',
+}
 
 
 def load():
@@ -18,6 +22,14 @@ def load():
     if not isinstance(data, dict):
         raise ValueError('默认设置格式无效。')
     return {key: value for key, value in data.items() if key not in LOCAL_DATA}
+
+
+def upgrade_defaults(preset):
+    """Fill absent preferences while allowing legacy appearance and layout to migrate."""
+    from feature_config import LEGACY_STYLE_DEFAULTS
+
+    missing = {key: value for key, value in preset.items() if key not in LEGACY_LAYOUT_FIELDS}
+    return dict(missing, **LEGACY_STYLE_DEFAULTS)
 
 
 def apply(current, preset):

@@ -66,6 +66,13 @@ class StartupProbe:
                 assert runtime.resources.strip is None and runtime.resources.ai_tray is None
                 assert runtime.flash.edge is None and runtime.flash.panel is None
                 assert runtime.resources.window.isVisible() and runtime.resources.job is None
+                capsule = runtime.resources.window
+                assert dock.cfg['resource_face'] and dock.cfg['resource_face_interactive']
+                assert dock.cfg['panel_face'] and dock.cfg['panel_face_interactive']
+                assert capsule.liquid.face is not None and capsule.liquid.watch.isActive()
+                capsule.liquid.face_bounds = None
+                assert capsule.grab().save(str(self.output/'fresh-resource.png'))
+                assert capsule.liquid.face_bounds and not capsule.liquid.face_bounds.isEmpty()
                 assert runtime.resources.deck.process.state() == 0 and runtime.resources.extras.weather_job is None
                 assert '托盘' not in __import__('sys').modules[dock.__module__].EMPTY_DOCK_HINT
                 dock.grab().save(str(self.output/'fresh-dock.png'))

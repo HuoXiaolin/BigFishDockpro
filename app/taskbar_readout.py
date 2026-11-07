@@ -6,7 +6,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter
 from PyQt5.QtWidgets import QWidget,QApplication
 from resource_taskbar import Placement
 from ui_style import AlignedMenu
-from resource_options import SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES
+from resource_options import SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES,TASKBAR_LAYERS
 
 
 def transfer(value):
@@ -66,53 +66,46 @@ def columns(service):
 
 class TaskbarReadout(QWidget):
     def __init__(self,service):
-        super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.NoDropShadowWindowHint|Qt.WindowDoesNotAcceptFocus)
+        super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint|Qt.WindowDoesNotAcceptFocus)
         self.service=service;self.placement=Placement(self);self.press=None;self.page=0;self.page_count=1;self.host=0;self.cells=[]
         self.media_actions={};self.media_bounds=[];self.text_bounds=[];self.wanted=288;self.press_media=None
-        self._yielded_to_overlay = False
+        self.native_layer = None
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowTitle('任务栏监控 · 大肥鱼Dock');self.setAccessibleName('任务栏监控')
 
     def reposition(self):
         slot=self.placement.slot
-        if slot is None or not self.placement.target:self.hide();return
+        if slot is None or self.placement.slot_bar != self.placement.target:self.hide();return
         if self.geometry()!=slot:self.setGeometry(slot)
-        if self.yield_to_overlay():
-            return
+        was_visible = self.isVisible()
         self.show()
+        if self.service.runtime.dock.preview:return
         hwnd=self.placement.target['hwnd']
-        if self.host!=hwnd and not self.service.runtime.dock.preview:
-            user=ctypes.windll.user32;win=int(self.winId())
+        win = int(self.winId())
+        changed_host = self.host != hwnd
+        if changed_host:
+            user=ctypes.windll.user32
             user.SetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_ssize_t];user.SetWindowLongPtrW.restype=ctypes.c_ssize_t
-            user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
-            user.SetWindowLongPtrW(win,-8,hwnd);user.SetWindowPos(win,-1,0,0,0,0,0x13);self.host=hwnd
-        self.restore_input_layer(check_overlay=False)
+            user.SetWindowLongPtrW(win,-8,hwnd);self.host=hwnd
+        layer = self.service.cfg['resource_taskbar_layer']
+        if changed_host or not was_visible or self.native_layer != layer:
+            from taskbar_input import place_layer
+            self.native_layer = layer
+            place_layer(win, hwnd, layer)
+        else:
+            self.restore_input_layer()
 
-    def yield_to_overlay(self):
-        if not self.placement.target or self.service.runtime.dock.preview:
-            return False
-        from taskbar_input import has_foreign_overlay
-        self._yielded_to_overlay = has_foreign_overlay(int(self.winId()), self.placement.target['hwnd'])
-        if self._yielded_to_overlay and self.isVisible():
-            self.hide()
-            if self.service.deck:
-                self.service.deck.configure()
-        return self._yielded_to_overlay
-
-    def restore_input_layer(self, check_overlay=True):
-        if not self.placement.slot or not self.placement.target or self.service.runtime.dock.preview:return
-        was_yielded = self._yielded_to_overlay
-        if check_overlay and self.yield_to_overlay():
+    def restore_input_layer(self):
+        if (not self.isVisible() or self.placement.slot_bar != self.placement.target
+                or not self.placement.target or self.service.runtime.dock.preview):
             return
-        if was_yielded and not self.isVisible():
-            self.reposition()
-            self.refresh()
-            return
-        if not self.isVisible():
-            return
-        from taskbar_input import restore_input_layer
-        restore_input_layer(int(self.winId()),self.placement.target['hwnd'])
+        from taskbar_input import place_layer, restore_input_layer
+        win, hwnd = int(self.winId()), self.placement.target['hwnd']
+        if self.native_layer == 'bottom':
+            place_layer(win, hwnd, 'bottom')
+        else:
+            restore_input_layer(win, hwnd)
 
     def placement_changed(self):
         self.reposition();self.service.sync()
@@ -273,6 +266,10 @@ class TaskbarReadout(QWidget):
         for key,title in [('left','靠左'),('center','居中'),('right','靠右')]:
             action=alignment.addAction(title);action.setCheckable(True);action.setChecked(self.service.cfg['resource_taskbar_position']==key)
             action.triggered.connect(lambda checked,key=key:self.service.set_options(resource_taskbar_position=key))
+        layers=menu.addMenu('显示层级')
+        for key,title in TASKBAR_LAYERS.items():
+            action=layers.addAction(title);action.setCheckable(True);action.setChecked(self.service.cfg['resource_taskbar_layer']==key)
+            action.triggered.connect(lambda checked,key=key:self.service.set_options(resource_taskbar_layer=key))
         colors=menu.addAction('文字阈值变色');colors.setCheckable(True);colors.setChecked(self.service.cfg.get('resource_task_threshold',False))
         colors.triggered.connect(lambda on:self.service.set_options(resource_task_threshold=on))
         music=menu.addAction('显示任务栏音乐');music.setCheckable(True);music.setChecked(self.service.cfg['resource_task_music'])

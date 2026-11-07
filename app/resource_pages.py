@@ -289,11 +289,14 @@ class MusicView(QScrollArea):
         self.title.fit_text(11 if small else 13)
         self.meter.setVisible(not small)
     def send(self,**data):
+        if data.get('op') == 'PlayPause' and self.track_id:
+            data.setdefault('id', self.track_id)
         if self.owner.service.deck:self.owner.service.deck.send(**data)
     def seek(self):
         self.seeking=False;self.send(op='seek',fraction=self.slider.value()/1000)
     def refresh(self):
         bridge=self.owner.service.deck;data=bridge.media if bridge else {};track=data.get('track') or {};tracks=data.get('tracks') or []
+        self.track_id = track.get('id', '')
         ids=tuple((r['id'],r['title']) for r in tracks)
         if ids!=self.route_ids:
             self.sources.clear()
@@ -304,14 +307,20 @@ class MusicView(QScrollArea):
         self.sources.setCurrentIndex(max(0,self.sources.findData(track.get('id'))));self.pin.setChecked(data.get('pinned',False))
         self.title.setText(track.get('title') or '没有正在播放的媒体');self.artist.setText(track.get('artist',''))
         self.lyric.setText(track.get('lyric') or ('暂无歌词' if track else '播放音乐后自动显示'))
-        self.status.setText(bridge.status if bridge else '在设置中开启音乐');self.status.setVisible(bool(self.status.text()))
+        status = bridge.status if bridge else '在设置中开启音乐'
+        if not status and track.get('liveAudio') and track.get('state') == 'Paused':
+            status = '直播声音已暂停'
+        self.status.setText(status);self.status.setVisible(bool(status))
         self.cover.update();self.title.setAccessibleName(track.get('title',''));self.artist.setAccessibleName(track.get('artist',''))
         duration=track.get('duration',0);position=track.get('position',0)
         if not self.seeking:self.slider.setValue(round(min(1,position/max(1,duration))*1000))
         self.slider.setEnabled(bool(track.get('canSeek')))
         self.time.setText(f'{int(position)//60}:{int(position)%60:02}');self.duration.setText(f'{int(duration)//60}:{int(duration)%60:02}')
         for op,flag in [('Previous','canPrevious'),('PlayPause','canToggle'),('Next','canNext'),('Shuffle','canShuffle'),('Repeat','canRepeat')]:self.buttons[op].setEnabled(bool(track.get(flag)))
-        self.buttons['PlayPause'].playing=track.get('state')=='Playing';self.buttons['PlayPause'].setToolTip('暂停' if self.buttons['PlayPause'].playing else '播放')
+        playback = self.buttons['PlayPause']
+        playback.playing = track.get('state') == 'Playing'
+        title = ('暂停直播声音' if playback.playing else '恢复直播声音') if track.get('liveAudio') else ('暂停' if playback.playing else '播放')
+        playback.setToolTip(title);playback.setAccessibleName(title)
         self.buttons['Shuffle'].active=bool(track.get('shuffle'));self.buttons['Shuffle'].setToolTip('随机：开' if track.get('shuffle') else '随机：关')
         self.buttons['Repeat'].active=track.get('repeat') in ('Track','List');self.buttons['Repeat'].setToolTip({'Track':'单曲循环','List':'列表循环'}.get(track.get('repeat'),'循环：关'))
         for btn in self.buttons.values():btn.update()

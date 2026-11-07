@@ -25,7 +25,7 @@ DEFAULTS = {
     'desktop_icon_mode': 'hide_all', 'panel_enabled': True, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
-    'panel_face':False, 'panel_face_interactive':True, 'panel_face_mood':'random',
+    'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random',
     'panel_face_scale':100, 'panel_expand_mode':'hover',
     'panel_collapse_style': 'ball', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
     'panel_theme': 'auto', 'panel_color': '', 'theme_color': '', 'dock_highlight': 45,

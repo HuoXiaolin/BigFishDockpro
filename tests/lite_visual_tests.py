@@ -19,7 +19,9 @@ def run(api,runtime,output,checks):
     from PyQt5.QtCore import QCoreApplication,QEvent,QTimer
     from glass_capture import backdrop_key
     app=QApplication.instance();dock=runtime.dock;cfg=dock.cfg
-    cfg.update(lite_enabled=True,panel_enabled=True,panels_visible=True,clock_enabled=True,calendar_enabled=True,notes_enabled=True,notes_visible=True,game_mode=False,fullscreen_detection=False)
+    # Isolate the mode switch from independent blinking and cursor animation in the pixel comparison.
+    face_interactive = cfg['panel_face_interactive']
+    cfg.update(lite_enabled=True,panel_enabled=True,panels_visible=True,clock_enabled=True,calendar_enabled=True,notes_enabled=True,notes_visible=True,game_mode=False,fullscreen_detection=False,panel_face_interactive=False)
     runtime.apply_settings();dock.show()
     with patch.object(dock,'start_backdrop') as prepare:
         dock.hide();dock.show();assert prepare.called
@@ -42,6 +44,8 @@ def run(api,runtime,output,checks):
         assert w.geometry()==geometry and w.backdrop.cacheKey()==key
         assert w.grab().toImage()==image,w.__class__.__name__
     assert not dock.blur_timer.isActive() and not dock.proc_timer.isActive()
+    cfg['panel_face_interactive'] = face_interactive
+    runtime.apply_settings({'panel_face_interactive'})
     checks.append('lite mode preserves exact rendered Dock/card/note/clock/calendar pixels, geometry and backdrop; background polling stops')
     # Wallpaper/key caching is measured with a synthetic capture, not user data.
     calls=[]

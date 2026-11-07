@@ -24,8 +24,9 @@ def normalize(data,api):
     from resource_options import migrate_docked
     data=migrate_docked(data)
     cfg=copy.deepcopy(api.DEFAULT_CONFIG)
-    from feature_config import LEGACY_STYLE_DEFAULTS
-    cfg.update(copy.deepcopy(LEGACY_STYLE_DEFAULTS))
+    from default_settings import upgrade_defaults
+    missing = upgrade_defaults(api.initial_defaults())
+    cfg.update({key: copy.deepcopy(value) for key, value in missing.items() if key in cfg})
     for key,default in api.DEFAULT_CONFIG.items():
         if key not in data:continue
         value=data[key]

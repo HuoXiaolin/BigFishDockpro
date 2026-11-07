@@ -98,11 +98,25 @@ def run(api,runtime,root,app,output,checks):
         w.select_page('music');app.processEvents();w.grab().save(str(output/'upgrade-music.png'))
         assert w.music_view.slider.isEnabled() and w.music_view.title.text()=='午后的海风'
         with patch.object(bridge,'send') as send:
-            w.music_view.buttons['PlayPause'].click();send.assert_called_with(op='PlayPause')
+            w.music_view.buttons['PlayPause'].click();send.assert_called_once_with(op='PlayPause',id='fixture')
             w.music_view.slider.setValue(500);w.music_view.seek();send.assert_called_with(op='seek',fraction=.5)
+        recorded = bridge.media
+        live = dict(recorded['track'], title='直播音频示例', artist='', lyric='', state='Paused', duration=0, position=0,
+                    canSeek=False, canPrevious=False, canNext=False, canShuffle=False, canRepeat=False, liveAudio=True)
+        bridge.accept(dict(recorded,track=live));app.processEvents()
+        assert w.music_view.buttons['PlayPause'].toolTip() == '恢复直播声音'
+        assert w.music_view.status.text() == '直播声音已暂停'
+        assert w.grab().save(str(output/'live-audio-paused.png'))
+        bridge.accept(recorded)
         service.fold(True);app.processEvents();assert 'gpu' in service.active_keys()
         assert not w.detail.isVisible() and w.clock_tick.isActive() and w.rotate.isActive()
         w.animation.stop();w.halo_phase=.1;first=w.grab().toImage();w.halo_phase=.5;second=w.grab().toImage();assert first!=second
+        assert cfg['resource_halo_speed']=='medium'
+        for speed, seconds in [('slow',12),('medium',8),('fast',4)]:
+            cfg['resource_halo_speed']=speed;w.halo_phase=.1;w.halo_updated_at=100
+            with patch('resource_panel.time.monotonic',return_value=101):w.animate()
+            assert abs(w.halo_phase-(.1+1/seconds))<1e-9
+        cfg['resource_halo_speed']='medium'
         second.save(str(output/'upgrade-compact.png'));assert {'cpu','gpu','memory','network'}<=set(w.compact_shown)
         cfg['resource_halo']=False;w.sync_window();app.processEvents();assert not w.animation.isActive()
         assert w.grab().toImage()!=second and w.clock_tick.isActive() and service.deck
@@ -126,7 +140,11 @@ def run(api,runtime,root,app,output,checks):
         dialog.fields['resource_task_font'].setValue(18);assert dialog.commit() and api.load_config()['resource_task_font']==18
         dialog.tabs.setCurrentIndex(2);app.processEvents();dialog.grab().save(str(output/'upgrade-settings-compact.png'))
         dialog.tabs.setCurrentIndex(3);app.processEvents();dialog.grab().save(str(output/'upgrade-settings-media.png'));dialog.reject()
-        dialog.tabs.setCurrentIndex(4);dialog.show();app.processEvents();dialog.grab().save(str(output/'upgrade-settings-halo.png'));dialog.reject()
+        dialog.tabs.setCurrentIndex(4);dialog.show();app.processEvents()
+        speed=dialog.fields['resource_halo_speed'];assert speed.currentData()=='medium'
+        dialog.grab().save(str(output/'upgrade-settings-halo.png'))
+        speed.setCurrentIndex(speed.findData('fast'));dialog.tabs.setCurrentIndex(2)
+        assert dialog.commit() and api.load_config()['resource_halo_speed']=='fast';dialog.reject()
         cfg.update(resource_task_metrics=['cpu','gpu','memory','network','traffic'],resource_taskbar=True)
         bar=dict(rect=QRect(0,740,1366,40),screen='test',hwnd=1,map=(0,0,0,0,1,1))
         with patch.object(Placement,'bars',return_value=[bar]),patch.object(Placement,'query',lambda p,b,r:p.accept(b,r,free_slot(b['rect'],[],r))):service.sync()

@@ -42,13 +42,15 @@ def run(api,runtime,app,output,checks):
         assert w.geometry()==old,'Failed save left an unpersisted window size'
         from resource_settings import ResourceOptions
         options = ResourceOptions(service)
-        options.tabs.setCurrentIndex(6)
+        options.show();app.processEvents()
+        assert options.tabs.currentIndex() == 0 and 'resource_open_page' in options.fields
         preferred = options.fields['resource_open_page']
         preferred.setCurrentIndex(preferred.findData('weather'))
+        assert preferred.isVisible() and options.grab().save(str(output/'open-page-settings.png'))
         options.tabs.setCurrentIndex(7)
         options.fields['resource_weather'].setChecked(True)
         assert options.commit() and api.load_config()['resource_open_page'] == 'weather'
-        options.deleteLater()
+        options.reject();options.deleteLater()
         with patch.object(QCursor, 'pos', return_value=w.geometry().center()):
             w.expand_hover()
         assert not service.compact and w.page_key == 'weather' and w.weather_view.isVisible()

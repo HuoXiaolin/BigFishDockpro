@@ -15,6 +15,7 @@ internal static class Program
     static readonly object OutputGate = new();
     static Dispatcher Ui = null!;
     static MediaSessions? Media;
+    static readonly LiveAudio Live = new();
     static UsageService? Usage;
     static readonly LyricsService LyricsReader = new();
     static Lyrics Lines = Lyrics.Empty;
@@ -59,7 +60,7 @@ internal static class Program
             await Ui.InvokeAsync(() => Ui.InvokeShutdown());
         });
         try { Dispatcher.Run(); }
-        finally { Tick.Stop(); Reading?.Cancel(); LyricReading?.Cancel(); Media?.Dispose(); Usage?.Dispose(); Prices?.Dispose(); LyricsReader.Dispose(); MemoryBudget.Close(); }
+        finally { Tick.Stop(); Reading?.Cancel(); LyricReading?.Cancel(); Live.Dispose(); Media?.Dispose(); Usage?.Dispose(); Prices?.Dispose(); LyricsReader.Dispose(); MemoryBudget.Close(); }
     }
 
     static void Emit(object data)
@@ -96,7 +97,7 @@ internal static class Program
                     await Media.StartAsync();
                 }
                 else if (!Flag(q, "music") && Media is not null)
-                { Media.Dispose(); Media = null; LyricReading?.Cancel(); Song = ""; Lines = Lyrics.Empty; Cover = null; CoverKey = ""; }
+                { Live.Dispose(); Media.Dispose(); Media = null; LyricReading?.Cancel(); Song = ""; Lines = Lyrics.Empty; Cover = null; CoverKey = ""; }
                 Media?.SetPresentationActive(Presentation);
                 Changed(); return;
             }
@@ -107,6 +108,9 @@ internal static class Program
             bool ok = false;
             if (op == "select") { Media.Select(q.Get("id").Text()); ok = true; }
             else if (op == "pin") { Media.Pin(Flag(q, "on") ? track?.Id : null); ok = true; }
+            else if (op == "PlayPause" && track is not null && Live.IsMuted(track.Id)) ok = Live.Resume();
+            else if (op == "PlayPause" && track is not null && track.Id == Media.Current?.Id &&
+                Media.CurrentOwner is { } owner && LiveAudio.CanPause(track, owner) && Live.TryPause(track.Id, owner)) ok = true;
             else if (op == "seek" && track is not null && track.CanSeek) ok = await Media.SeekAsync(track, Math.Clamp(q.Get("fraction").Number() ?? 0, 0, 1));
             else if (track is not null && Enum.TryParse<MediaCommand>(op, out var command)) ok = await Media.CommandAsync(track.Id, command);
             Emit(new { type = "command", ok, message = ok ? "" : "播放器未支持或未执行此操作" }); Changed();
@@ -179,13 +183,15 @@ internal static class Program
     {
         if (Media is null) return;
         var t = Media.Current; var now = DateTimeOffset.Now;
-        if (Presentation && t?.State == MediaState.Playing)
+        bool liveMuted = t is not null && Live.IsMuted(t.Id);
+        if (Presentation && t?.State == MediaState.Playing && !liveMuted)
         {
             var levels = new double[8]; Media.FlowLevels(levels, Spectrum ? EqualizerMode.Spectrum : EqualizerMode.Flow);
             Emit(new { type = "levels", levels });
         }
         if (Environment.TickCount64 - LastMedia < 500) return;
         LastMedia = Environment.TickCount64;
+        bool liveAudio = liveMuted || t is not null && LiveAudio.CanPause(t, Media.CurrentOwner);
         string pictureKey = (t?.SongKey ?? "") + ":" + (Media.Cover?.GetHashCode() ?? 0);
         bool pictureChanged = pictureKey != CoverKey;
         if (pictureChanged)
@@ -206,14 +212,18 @@ internal static class Program
         }
         Emit(new { type = "media", status = Media.Error ?? (t is null ? "没有正在播放的媒体" : ""), pinned = Media.Pinned is not null,
             tracks = Media.Tracks.Select(x => new { id = x.Id, source = x.Source, title = x.Title }),
-            track = t is null ? null : new { id = t.Id, title = t.Title, artist = t.Artist, source = t.Source, state = t.State.ToString(),
-                duration = t.Duration.TotalSeconds, position = t.Position(now).TotalSeconds, t.CanToggle, t.CanPrevious, t.CanNext, t.CanSeek, t.CanShuffle, t.CanRepeat,
+            track = t is null ? null : new { id = t.Id, title = t.Title, artist = t.Artist, source = t.Source, state = liveMuted ? "Paused" : t.State.ToString(),
+                duration = t.Duration.TotalSeconds, position = t.Position(now).TotalSeconds, canToggle = t.CanToggle || liveAudio, liveAudio, t.CanPrevious, t.CanNext, t.CanSeek, t.CanShuffle, t.CanRepeat,
                 shuffle = t.Shuffle, repeat = t.Repeat.ToString(), lyric = t.CurrentLyric ?? Lines.At(t, now).Current, lyricSource = Lines.Source },
             pictureChanged, cover = pictureChanged ? Cover : null });
     }
 
     static void SelfTest()
     {
+        var live = new MediaTrack { Id = "system:fixture", State = MediaState.Playing, PositionKnown = false };
+        var owner = new MediaAppOwner(null, "chrome", "Chrome");
+        if (!LiveAudio.CanPause(live, owner) || LiveAudio.CanPause(live, null) ||
+            LiveAudio.CanPause(live with { PositionKnown = true, End = TimeSpan.FromMinutes(2) }, owner)) throw new Exception("live audio selection");
         var q = new Quota("测试", 80, null); if (q.Remaining != 20) throw new Exception("quota");
         var lines = Lyrics.Parse("[00:01.00]第一行\n[00:03.00]第二行", null, 10, "fixture");
         if (lines.At(2).Current != "第一行") throw new Exception("lyric");

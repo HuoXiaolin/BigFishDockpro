@@ -34,12 +34,12 @@ class ResourceOptions(QDialog):
         5: ('limit_fields',),
     }
     field_pages=[
-        {'resource_'+key for key in METRICS}|{'resource_enabled','resource_auto_hide','resource_bt_tray','resource_hide_unavailable','resource_layer','resource_fold','resource_interval','resource_delay'},
-        {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_task_font'},
+        {'resource_'+key for key in METRICS}|{'resource_enabled','resource_auto_hide','resource_bt_tray','resource_hide_unavailable','resource_layer','resource_fold','resource_interval','resource_delay','resource_open_page'},
+        {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_compact_rotate','resource_ring_letters','resource_quota_alert'},
         {'resource_ai','resource_ai_tray','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
-        {'resource_halo','resource_threshold','resource_background','resource_palette'},set(),
-        {'resource_edge_snap','resource_liquid','resource_face','resource_face_interactive','resource_live_glass','resource_expand_mode','resource_open_page','resource_face_mood','resource_face_scale'},
+        {'resource_halo','resource_halo_speed','resource_threshold','resource_background','resource_palette'},set(),
+        {'resource_edge_snap','resource_liquid','resource_face','resource_face_interactive','resource_live_glass','resource_expand_mode','resource_face_mood','resource_face_scale'},
         {'resource_weather','resource_weather_compact','resource_weather_days'}]
 
     def ensure_page(self,index):
@@ -157,6 +157,7 @@ class ResourceOptions(QDialog):
             for key,title in [('resource_enabled','显示资源胶囊'),('resource_auto_hide','鼠标离开后收起'),('resource_bt_tray','蓝牙电量托盘图标'),('resource_hide_unavailable','隐藏未提供读数的传感器')]:
                 self.fields[key]=check(title,cfg[key]);desktop.addWidget(self.fields[key])
             form=QFormLayout();desktop.addLayout(form)
+            combo(form,'resource_open_page','展开首选页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
             combo(form,'resource_layer','桌面层级',[('置顶','top'),('置底','bottom')],cfg['resource_layer'],self.fields)
             combo(form,'resource_fold','收起形态',[('胶囊','pill'),('圆球','ball'),('方条','bar')],cfg['resource_fold'],self.fields)
             combo(form,'resource_interval','采样间隔',[(str(s)+' 秒',s) for s in (1,2,5)],cfg['resource_interval'],self.fields)
@@ -172,6 +173,10 @@ class ResourceOptions(QDialog):
         def build_1():
             bar=page('任务栏监控')
             self.fields['resource_taskbar']=check('显示任务栏监控',cfg['resource_taskbar']);bar.addWidget(self.fields['resource_taskbar'])
+            placement_form=QFormLayout();bar.addLayout(placement_form)
+            combo(placement_form,'resource_taskbar_position','任务栏位置',[('靠左','left'),('居中','center'),('靠右','right')],cfg['resource_taskbar_position'],self.fields)
+            from resource_options import TASKBAR_LAYERS
+            combo(placement_form,'resource_taskbar_layer','显示层级',[(title,key) for key,title in TASKBAR_LAYERS.items()],cfg['resource_taskbar_layer'],self.fields)
             self.fields['resource_task_threshold']=check('文字阈值变色（关闭时跟随系统字体颜色）',cfg['resource_task_threshold']);bar.addWidget(self.fields['resource_task_threshold'])
             self.fields['resource_task_music']=check('横向任务栏显示音乐（封面、控制与律动）',cfg['resource_task_music']);bar.addWidget(self.fields['resource_task_music'])
             self.fields['resource_task_music_colorful']=check('音乐多彩样式（频谱与进度线）',cfg['resource_task_music_colorful']);bar.addWidget(self.fields['resource_task_music_colorful'])
@@ -180,7 +185,6 @@ class ResourceOptions(QDialog):
                 field=check(title,key in cfg['resource_task_media_parts']);self.task_media_fields[key]=field;media_grid.addWidget(field,i//3,i%3)
             note=QLabel('可只保留频谱或封面图标；关闭的组件让出空间，全部取消则只显示资源读数。');note.setWordWrap(True);bar.addWidget(note)
             font_form=QFormLayout();bar.addLayout(font_form)
-            combo(font_form,'resource_taskbar_position','任务栏位置',[('靠左','left'),('居中','center'),('靠右','right')],cfg['resource_taskbar_position'],self.fields)
             hint=QLabel('固定显示，不通过拖动定位；自动避让开始菜单、应用按钮和系统托盘。');hint.setWordWrap(True);bar.addWidget(hint)
             spin(font_form,'resource_task_font','字体大小（像素）',2,24,cfg['resource_task_font'],self.fields)
             note=QLabel('缩小字号时，文字、间距和音乐组件同步收紧；空间不足时改为单行或分页。');note.setWordWrap(True);bar.addWidget(note)
@@ -233,6 +237,8 @@ class ResourceOptions(QDialog):
 
         def build_4():
             style=page('背景与配色');style_form=QFormLayout();style.addLayout(style_form)
+            from resource_options import HALO_SPEEDS
+            combo(style_form,'resource_halo_speed','光环流动速度',[(title,key) for key,(title,_) in HALO_SPEEDS.items()],cfg['resource_halo_speed'],self.fields)
             for key,title in [('resource_halo','彩色流动光环'),('resource_threshold','胶囊阈值变色：低于 60% 绿，60–80% 黄，80% 起红')]:
                 self.fields[key]=check(title,cfg[key]);style.addWidget(self.fields[key])
             source=combo(style_form,'resource_background','背景',[('跟随整体','global'),('单独设置','custom')],cfg['resource_background'],self.fields)
@@ -273,7 +279,6 @@ class ResourceOptions(QDialog):
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
             face_form=QFormLayout();interaction.addLayout(face_form)
             combo(face_form,'resource_expand_mode','展开方式',[('鼠标移入展开','hover'),('仅点击展开','click')],cfg['resource_expand_mode'],self.fields)
-            combo(face_form,'resource_open_page','展开首选页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
             combo(face_form,'resource_face_mood','表情样式',list(zip(('靠近随机变化','默认','开心','眨眼','爱心','星星眼','害羞','嘟嘴','眯眼'),('random','default','happy','wink','love','star','shy','pout','squint'))),cfg['resource_face_mood'],self.fields)
             spin(face_form,'resource_face_scale','表情大小（%）',60,130,cfg['resource_face_scale'],self.fields)
             hint=QLabel('吸附距离在主设置的「桌面收纳」调整。精简模式保留表情跟随，暂停实时背景采集。')
