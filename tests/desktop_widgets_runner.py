@@ -20,8 +20,8 @@ def run(output,checks):
     assert_isolated()
     import dock as api
     from PyQt5.QtCore import QDate,QEvent,QPoint,QPointF,QRectF,Qt,QProcess
-    from PyQt5.QtGui import QColor,QFont,QImage,QLinearGradient,QMouseEvent,QPainter,QPixmap
-    from PyQt5.QtWidgets import QApplication,QInputDialog
+    from PyQt5.QtGui import QColor,QFont,QImage,QLinearGradient,QMouseEvent,QPainter,QPixmap,QRegion
+    from PyQt5.QtWidgets import QApplication,QInputDialog,QWidget
     from runtime_controller import RuntimeController
     from ui_style import apply_theme,shutdown_ui
     from resource_memory_runner import sample
@@ -41,6 +41,17 @@ def run(output,checks):
     def grab(widget,name):
         pump()
         assert widget.grab().save(str(output/(name+'.png')))
+
+    def layer(widget):
+        image=QImage(widget.size(),QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+        painter=QPainter(image);widget.render(painter,QPoint(),QRegion(),QWidget.DrawChildren);painter.end()
+        return image
+
+    def gradient_pixels(widget,width=None,height=None):
+        image=layer(widget);width=width or image.width();height=height or image.height()
+        start,end=image.pixelColor(5,round(height*.24)),image.pixelColor(width-6,round(height*.78))
+        assert start.alpha()==end.alpha()==204,(type(widget).__name__,start.getRgb(),end.getRgb())
+        assert max(abs(a-b) for a,b in zip(start.getRgb()[:3],end.getRgb()[:3]))>=6,(type(widget).__name__,start.name(),end.name())
 
     with tempfile.TemporaryDirectory(prefix='fishdock-widgets-') as folder:
         api.CONFIG_DIR=folder;api.CONFIG_PATH=str(Path(folder)/'config.json');api.LOG_PATH=str(Path(folder)/'dock.log')
@@ -144,12 +155,13 @@ def run(output,checks):
             checks.append('Native cards import Explorer paths and escaped JSON without altering text line breaks, preserve values on invalid input, and support local/HTTPS bindings and native tools.')
 
             from feature_config import SPECTRUM_STYLES
+            from ui_test_events import Events
             assert runtime.set_spectrum_options(spectrum_enabled=True,theme_color='#54b2de')
             assert cfg['spectrum_color_mode']=='colorful'
             spectrum=runtime.spectrum
             bridge=runtime.resources.deck
             assert bridge.signature[6] and not bridge.signature[2]
-            from math import sin
+            from math import cos, pi, sin
             frame=[.10+.83*abs(sin(i*.47)*sin(i*.12+.45)) for i in range(120)]
             bridge.accept(dict(type='spectrum',levels=frame))
             assert len(spectrum.levels)==120
@@ -158,36 +170,140 @@ def run(output,checks):
             for i,(title,style) in enumerate(SPECTRUM_STYLES):
                 assert runtime.set_spectrum_options(spectrum_style=style)
                 pump()
+                screen=QApplication.screenAt(spectrum.geometry().center()) or QApplication.primaryScreen()
+                area=screen.availableGeometry()
+                width,height=(264,264) if style=='ring' else (576,152)
+                assert (spectrum.width(),spectrum.height())==(min(width,area.width()),min(height,area.height()))
                 image=spectrum.grab().toImage().convertToFormat(QImage.Format_ARGB32)
                 assert image.pixelColor(0,0).alpha()==0 and image.pixelColor(image.width()-1,0).alpha()==0
+                assert image.pixelColor(4,4).alpha()==(0 if style=='ring' else 1)
                 if style=='ring':assert image.pixelColor(image.width()//2,image.height()//2).alpha()==0
                 assert any(image.pixelColor(x,y).alpha()>160 for x in range(4,image.width()-4,2) for y in range(4,image.height()-4,2))
                 x,y=((18,14),(354,14),(18,122),(354,122),(354,240))[i]
                 painter.setPen(QColor('#e4edf4'));font=QFont('Microsoft YaHei UI');font.setPixelSize(15);painter.setFont(font)
                 painter.drawText(QRectF(x,y,300,23),Qt.AlignLeft|Qt.AlignVCenter,title)
-                painter.drawImage(x+max(0,(288-image.width())//2),y+24,image)
+                tile_width,tile_height=spectrum.width()/2,spectrum.height()/2
+                painter.setRenderHint(QPainter.SmoothPixmapTransform)
+                painter.drawImage(QRectF(x+(288-tile_width)/2,y+24,tile_width,tile_height),image)
+                if style!='ring':
+                    before=spectrum.geometry()
+                    Events.drag(spectrum,QPoint(4,before.height()//2),QPoint(-12,0))
+                    assert (spectrum.width(),spectrum.height())==(before.width()+12,before.height())
+                    Events.drag(spectrum,QPoint(spectrum.width()//2,4),QPoint(0,-10))
+                    assert (spectrum.width(),spectrum.height())==(before.width()+12,before.height()+10)
+                    assert runtime.set_spectrum_options(spectrum_manual_size=False,spectrum_layout={})
             painter.end();assert collage.save(str(output/'readme-desktop-spectrum.png'))
+            import ctypes
+            from ctypes import wintypes
+            user=ctypes.windll.user32
+            user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
+            user.WindowFromPoint.argtypes=[wintypes.POINT];user.WindowFromPoint.restype=wintypes.HWND
+            hwnd=int(spectrum.winId());bounds=wintypes.RECT()
+            assert user.GetWindowRect(hwnd,ctypes.byref(bounds))
+            edge=wintypes.POINT(bounds.left+4,bounds.top+4)
+            assert user.WindowFromPoint(edge)==hwnd
+            assert runtime.set_spectrum_options(spectrum_locked=True)
+            pump();assert user.WindowFromPoint(edge)!=hwnd
+            assert runtime.set_spectrum_options(spectrum_locked=False)
             colorful=spectrum.grab().toImage()
             assert runtime.set_spectrum_options(spectrum_color_mode='mono')
             assert colorful!=spectrum.grab().toImage()
-            start=spectrum.pos();center=spectrum.rect().center();glob=spectrum.mapToGlobal(center);shift=QPoint(-72,-41)
-            for kind,button,buttons,point in ((QEvent.MouseButtonPress,Qt.LeftButton,Qt.LeftButton,glob),
-                    (QEvent.MouseMove,Qt.NoButton,Qt.LeftButton,glob+shift),
-                    (QEvent.MouseButtonRelease,Qt.LeftButton,Qt.NoButton,glob+shift)):
-                QApplication.sendEvent(spectrum,QMouseEvent(kind,QPointF(center),QPointF(point),button,buttons,Qt.NoModifier))
+            start=spectrum.pos()
+            Events.drag(spectrum,spectrum.rect().center(),QPoint(-72,-41))
             assert spectrum.pos()!=start and cfg['spectrum_layout']
-            spectrum.move(spectrum.pos()-QPoint(120,80));before=spectrum.size()
-            grip=spectrum.grip_rect().center();origin=spectrum.mapToGlobal(grip);delta=QPoint(58,31)
-            for kind,button,buttons,point in ((QEvent.MouseButtonPress,Qt.LeftButton,Qt.LeftButton,origin),
-                    (QEvent.MouseMove,Qt.NoButton,Qt.LeftButton,origin+delta),
-                    (QEvent.MouseButtonRelease,Qt.LeftButton,Qt.NoButton,origin+delta)):
-                QApplication.sendEvent(spectrum,QMouseEvent(kind,QPointF(grip),QPointF(point),button,buttons,Qt.NoModifier))
+            spectrum.move(spectrum.pos()-QPoint(120,80));before=spectrum.geometry()
+            Events.drag(spectrum,QPoint(4,4),QPoint(-58,-31))
             assert cfg['spectrum_manual_size'] and spectrum.width()==before.width()+58 and spectrum.height()==before.height()+31
+            assert spectrum.geometry().bottomRight()==before.bottomRight()
             size=spectrum.size()
             assert runtime.set_spectrum_options(spectrum_style='line',spectrum_color_mode='mono',spectrum_mono_color='#ffbbaa')
             assert spectrum.size()==size and cfg['spectrum_mono_color']=='#ffbbaa'
+            assert runtime.set_spectrum_options(spectrum_manual_size=False)
+            assert (spectrum.width(),spectrum.height())==(min(576,area.width()),min(152,area.height()))
+            checks.append('Five transparent spectrum styles use double-sized defaults, persist an edge resize, restore default size, and only request audio while enabled.')
+
+            assert runtime.set_spectrum_options(spectrum_style='ring',spectrum_layout={})
+            spectrum.move(area.center()-spectrum.rect().center())
+            spectrum.set_levels([0.]*120)
+            pump()
+
+            def ring_point(factor,horizontal):
+                width,height=spectrum.width(),spectrum.height()
+                offset=round((min(width,height)-18)*.48*factor)
+                return QPoint(width//2+offset,height//2) if horizontal else QPoint(width//2,height//2-offset)
+
+            def native_point(local):
+                assert user.GetWindowRect(hwnd,ctypes.byref(bounds))
+                x=round(local.x()*(bounds.right-bounds.left)/spectrum.width())
+                y=round(local.y()*(bounds.bottom-bounds.top)/spectrum.height())
+                return wintypes.POINT(bounds.left+x,bounds.top+y)
+
+            side=ring_point(.64,True)
+            gap=ring_point(.9,True)
+            assert user.WindowFromPoint(native_point(side))==hwnd
+            assert user.WindowFromPoint(native_point(gap))==hwnd
+            assert user.WindowFromPoint(native_point(spectrum.rect().center()))!=hwnd
+            global_pos=spectrum.mapToGlobal(side)
+            QApplication.sendEvent(spectrum,QMouseEvent(QEvent.MouseMove,QPointF(side),QPointF(global_pos),Qt.NoButton,Qt.NoButton,Qt.NoModifier))
+            assert spectrum.cursor().shape()==Qt.SizeHorCursor
+            assert runtime.set_spectrum_options(spectrum_locked=True)
+            pump();assert user.WindowFromPoint(native_point(gap))!=hwnd
+            assert runtime.set_spectrum_options(spectrum_locked=False)
+
+            def radial_tip(index):
+                image=layer(spectrum)
+                x,y=image.width()/2,image.height()/2
+                angle=2*pi*index/120-pi/2
+                return max((r for r in range(1,int(min(x,y)))
+                    if image.pixelColor(int(x+r*cos(angle)),int(y+r*sin(angle))).alpha()>102),default=0)
+
+            assert radial_tip(114)==0  # The silent treble sector has only its inner guide.
+            quiet=[.42]*96+[.21]*24
+            spectrum.set_levels(quiet)
+            rest,treble_rest=radial_tip(30),radial_tip(114)
+            assert rest>0 and treble_rest>0
+            beat=quiet.copy()
+            beat[30],beat[114]=.60,.36
+            spectrum.set_levels(beat)
+            minimum_jump=round(spectrum.width()*.035)
+            assert radial_tip(30)-rest>=minimum_jump
+            assert radial_tip(114)-treble_rest>=minimum_jump
+            spectrum.set_levels(quiet)
+            spectrum.set_levels(quiet)
+            assert radial_tip(30)==rest and radial_tip(114)==treble_rest
+            image=layer(spectrum)
+            x=round(image.width()/2+(image.width()-18)*.48*.68)
+            alphas=[image.pixelColor(x,image.height()//2+dy).alpha() for dy in range(-10,11)]
+            assert min(alphas)<64 and max(alphas)>130
+            checks.append('Ring bars keep visible gaps, react to midrange and weaker treble changes, settle in two frames, and leave silent bands unlit.')
+
+            def rightmost_peak():
+                image=spectrum.grab().toImage()
+                return max(x for x in range(image.width()) if image.pixelColor(x,image.height()//2).alpha()>180)
+
+            spectrum.set_levels([1.]*120)
+            original_geometry=spectrum.geometry()
+            peak=rightmost_peak()
+            top=ring_point(.64,False)
+            global_pos=spectrum.mapToGlobal(top)
+            QApplication.sendEvent(spectrum,QMouseEvent(QEvent.MouseMove,QPointF(top),QPointF(global_pos),Qt.NoButton,Qt.NoButton,Qt.NoModifier))
+            assert spectrum.cursor().shape()==Qt.SizeVerCursor
+            Events.drag(spectrum,top,QPoint(0,18))
+            assert spectrum.geometry()==original_geometry and cfg['spectrum_ring_height']<100
+            assert rightmost_peak()<peak and api.load_config()['spectrum_ring_height']==cfg['spectrum_ring_height']
+            Events.drag(spectrum,top,QPoint(0,-30))
+            assert spectrum.geometry()==original_geometry and cfg['spectrum_ring_height']>100
+            assert rightmost_peak()>peak
+            height=cfg['spectrum_ring_height']
+            Events.drag(spectrum,ring_point(.64,True),QPoint(15,0))
+            assert spectrum.width()==spectrum.height()>original_geometry.width()
+            assert cfg['spectrum_manual_size'] and cfg['spectrum_ring_height']==height
+            assert api.load_config()['spectrum_layout']['rect'][2:]==[spectrum.width(),spectrum.height()]
+            before=spectrum.geometry()
+            Events.drag(spectrum,ring_point(.51,True),QPoint(-17,12))
+            assert spectrum.pos()!=before.topLeft() and spectrum.size()==before.size()
             assert runtime.set_spectrum_options(spectrum_enabled=False) and runtime.resources.deck is None
-            checks.append('Five native spectrum renderers preserve transparent pixels, save a real drag and only demand the bridge while enabled.')
+            checks.append('Ring arc is a native resize target even during silence; side drag grows a true circle, vertical drag sets the peak height without changing diameter, and inner rim still moves the widget.')
 
             from clock_progress import ClockProgressDialog
             from clock_faces import countdown_date,orbit_items
@@ -240,6 +356,61 @@ def run(output,checks):
                 else:
                     assert '国庆节' in words and any('发薪日' in value for value in words)
             checks.append('Clock faces: second readout and 24-hour ruler, holiday/lunar week and countdown, manual text entry switches off auto color.')
+
+            from appearance_presets import LIGHT_GLASS_INK,LIQUID_TINT,PANEL_PRESETS,PRESET_IDS,THEME_GRADIENTS
+            from clock_legibility import contrast
+            from liquid_glass import material_palette,tint_palette
+            packaged=api.initial_defaults()
+            assert packaged['theme_color']==packaged['panel_color']==LIQUID_TINT
+            assert THEME_GRADIENTS['liquid']==('#64e8de','#8a64eb')
+            for kind in ('clock','calendar'):
+                appearance=packaged[kind+'_appearance']
+                assert appearance['auto_contrast'] and appearance['color']==LIQUID_TINT
+                assert appearance['material']==packaged['panel_material']=='liquid'
+            for key,(_,preset) in zip(PRESET_IDS,PANEL_PRESETS):
+                for theme,ink in (('light',LIGHT_GLASS_INK),('dark','#ffffff')):
+                    palette=material_palette(tint_palette(dock.base_theme_colors(theme),preset['color']),preset['material'])
+                    if key=='transparent':assert not palette.get('wash')
+                    else:assert palette['wash']==THEME_GRADIENTS[key] and palette['fg'].name()==ink
+            for theme,background,ink in (('light','#edf3fb',LIGHT_GLASS_INK),('dark','#15263d','#ffffff')):
+                backdrop=QPixmap(440,240);backdrop.fill(QColor(background))
+                for style,headline in (('digital','12:10'),('calendar_card','2026年10月')):
+                    image=QImage(440,240,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+                    painter=QPainter(image);audit=[]
+                    options=dict(clock.option('appearance'),theme='auto',material='clear',opacity=55,highlight=45,
+                                 auto_contrast=True,text_color='#ce4125',accent_color='',_now=dt.datetime(2026,10,1,12,10),
+                                 _text_audit=audit)
+                    muted=draw_clock(painter,QRectF(0,0,440,240),dock,options,style,backdrop);painter.end()
+                    assert image.pixelColor(4,120).alpha()==0
+                    assert next(row[2] for row in audit if row[0]==headline)==ink
+                    assert muted!=ink and contrast(QColor(muted),QColor(background))>=4.5
+                    if style=='digital':
+                        accents=[image.pixelColor(x,169) for x in range(32,408)]
+                        assert any(color.alpha()>100 and color.hsvSaturationF()>.3 for color in accents)
+                    assert image.save(str(output/f'clock-material-{style}-{theme}.png'))
+            image.fill(Qt.transparent);painter=QPainter(image);audit=[]
+            solid=dict(options,material='solid',design='minimal',theme='dark',color='#162438',_text_audit=audit)
+            draw_clock(painter,QRectF(0,0,440,240),dock,solid,'calendar_card');painter.end()
+            assert image.pixelColor(4,120).lightness()<90 and next(row[2] for row in audit if row[0]=='2026年10月')=='#ffffff'
+            checks.append('Clear clocks and calendars leave desktop pixels unpainted; dark glass uses white ink, light glass uses cool slate, and accents remain colorful.')
+
+            from clock_appearance import ACCENT_VERSION,normalize as normalize_clock
+            for material,old_color in (('liquid',''),('crystal','#ff755e'),('flowing','#ff68a1')):
+                legacy=dict(clock.option('appearance'),**PANEL_PRESETS[PRESET_IDS.index(material)][1])
+                legacy.update(design='aurora' if material=='liquid' else material,accent_color=old_color,
+                              layout='wide',padding=7,ring_mode='day',_now=dt.datetime(2026,10,1,12,10))
+                legacy.pop('accent_version')
+                assert normalize_clock(legacy)['accent_color']==''
+                image=QImage(620,280,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+                backdrop=QPixmap(620,280);backdrop.fill(QColor('#d5e1f2'))
+                painter=QPainter(image)
+                draw_clock(painter,QRectF(0,0,620,280),dock,legacy,'orbit',backdrop);painter.end()
+                ring,week=image.pixelColor(176,98),image.pixelColor(36,254)
+                assert all(color.blue()-color.red()>20 for color in (ring,week)),(material,ring.name(),week.name())
+                assert image.save(str(output/f'clock-accent-{material}.png'))
+                assert normalize_clock(dict(legacy,accent_version=ACCENT_VERSION))['accent_color']==old_color
+            assert normalize_clock(dict(legacy,accent_color='#be4462'))['accent_color']=='#be4462'
+            checks.append('Legacy preset red accents follow the new cool palettes in the rendered ring and weekly bar; explicit custom colors remain selectable.')
 
             from resource_weather import air_quality,forecast,moon_phase,weather_time
             from urllib.parse import urlsplit,parse_qs
@@ -301,6 +472,10 @@ def run(output,checks):
             assert all(len(set(row))==4 for row in tones),tones
             assert len({row[:3] for row in tones})==1 and len({row[3] for row in tones})==4,tones
             assert card_colors(16,50)[3]!=card_colors(17,9)[3]
+            assert layer(cards).pixelColor(5,32).alpha()==204
+            assert service.set_options(resource_card_transparency=40)
+            assert layer(cards).pixelColor(5,32).alpha()==153
+            assert service.set_options(resource_card_transparency=20)
             from resource_options import background
             from PyQt5.QtTest import QTest
             from settings_interaction_tests import wheel
@@ -380,6 +555,7 @@ def run(output,checks):
             media=window.music_view
             assert media.cover.geometry().right()<media.title.geometry().left() and media.slider.isEnabled()
             assert media.card.isAncestorOf(media.cover) and media.card.isAncestorOf(media.buttons['PlayPause'])
+            gradient_pixels(media.card)
             grab(window,'readme-media-compact')
             service.set_options(resource_expanded_width=260)
             pump()
@@ -391,6 +567,8 @@ def run(output,checks):
             assert window.traffic.summary.columns==1 and window.view('traffic').verticalScrollBar().maximum()>0
             service.set_options(resource_expanded_width=520,resource_expanded_height=195);pump()
             assert window.traffic.summary.columns==3 and window.view('traffic').verticalScrollBar().maximum()==0
+            summary=window.traffic.summary
+            gradient_pixels(summary,(summary.width()-2*summary.gap)//3)
             grab(window,'readme-traffic-cards')
             checks.append('Media and traffic use native card surfaces, retain controls and period totals, and fit without horizontal scrolling at 260 pixels.')
 
@@ -408,6 +586,7 @@ def run(output,checks):
             window.select_page('news');news=window.view('news').content
             service.set_options(resource_expanded_height=215)
             news.set_headlines(rows+atom);news.status.clear()
+            pump();gradient_pixels(news.rows.itemAt(0).widget())
             with patch('resource_content.QDesktopServices.openUrl') as open_url:
                 news.rows.itemAt(0).widget().click()
                 assert open_url.call_args.args[0].toString()=='https://example.org/library'
@@ -425,6 +604,9 @@ def run(output,checks):
             bridge.accept(dict(type='ai',providers=[sample_provider]))
             window.select_page('ai');pump()
             stats=window.ai_view.statistics
+            gradient_pixels(stats.quotas)
+            gradient_pixels(stats.summary)
+            gradient_pixels(stats.charts)
             painted_labels=set()
             def record_ai_text(painter,rect,value,*args):
                 painted_labels.add(value)
@@ -582,14 +764,54 @@ def run(output,checks):
 
             runtime.set_lite(False,persist=False)
             identity=runtime.notes.new()
-            assert runtime.notes.update_and_save(identity,title='本周安排',text='确认图纸\n检查现场进度',
-                html='<p>确认图纸</p><p>检查现场进度</p>')
+            paragraphs=('确认图纸','检查现场进度','记录变更事项','补充备件清单')
+            note_text='\n'.join(paragraphs)
+            assert runtime.notes.update_and_save(identity,title='本周安排',text=note_text,
+                html=''.join(f'<p>{paragraph}</p>' for paragraph in paragraphs))
             other=runtime.notes.new()
             assert runtime.notes.update_and_save(other,title='待采购',text='补充备件',html='<p>补充备件</p>')
             note=runtime.notes.windows[other]
             note.note_tabs.setCurrentIndex(0);pump()
             assert runtime.notes.windows[identity] is note and note.note_tabs.count()==2
-            assert note.editor.toPlainText()=='确认图纸\n检查现场进度'
+            assert note.editor.toPlainText()==note_text
+            note.resize(max(280,note.width()),max(265,note.height()))
+            note_appearance=note.appearance()
+
+            def paragraph_pixels(editor):
+                viewport=editor.viewport()
+                scrollbar=editor.verticalScrollBar()
+                original=scrollbar.value()
+                document=editor.document()
+                layout=document.documentLayout()
+                block=document.begin()
+                colors=[]
+                try:
+                    for _ in paragraphs:
+                        center=layout.blockBoundingRect(block).center().y()
+                        if not 2<center-scrollbar.value()<viewport.height()-2:
+                            scrollbar.setValue(round(center-viewport.height()/2))
+                        screenshot=viewport.grab()
+                        scale=screenshot.devicePixelRatioF()
+                        y=round((center-scrollbar.value())*scale)
+                        colors.append(screenshot.toImage().pixelColor(round((viewport.width()-9)*scale),y))
+                        block=block.next()
+                finally:scrollbar.setValue(original)
+                assert len({color.name() for color in colors})==len(paragraphs),[color.name() for color in colors]
+                return colors
+
+            for theme,material,opacity in (('light','liquid',55),('dark','clear',0),('dark','solid',100)):
+                appearance=dict(note_appearance,theme=theme,material=material,opacity=opacity)
+                if material=='clear':appearance['highlight']=0
+                assert runtime.notes.update_and_save(identity,style='glass',appearance=appearance)
+                pump()
+                note.editor.verticalScrollBar().setValue(0)
+                samples=paragraph_pixels(note.editor)
+                assert all((color.lightness()>128)==(theme=='light') for color in samples)
+                if material=='clear':clear_colors=samples
+                if material=='solid':assert samples!=clear_colors
+                if theme=='dark':grab(note,f'note-paragraph-{material}-dark')
+            assert runtime.notes.update_and_save(identity,appearance=dict(note_appearance,theme='light'))
+            pump()
             assert runtime.notes.flush()
             grab(note,'readme-note-tabs')
             component_card=dict(validate_card(draft),id='componentcard',visible=True,locked=False,layout={})
@@ -622,12 +844,28 @@ def run(output,checks):
                         'picture':runtime.daily_picture,'custom':manager.windows.get('componentcard')}[key]
                 assert hosted is not None and hosted.isVisible() and not hosted.isWindow()
                 assert hosted.parentWidget() is window.view(key).host
+                gradient_pixels(hosted.parentWidget() if key in ('clock','calendar') else hosted)
                 if key=='notes':
-                    assert hosted.editor.toPlainText()=='确认图纸\n检查现场进度' and hosted.collapse_button.isHidden()
+                    assert hosted.editor.toPlainText()==note_text and hosted.collapse_button.isHidden()
                     assert hosted.note_tabs.count()==2
+                    paragraph_pixels(hosted.editor)
                 if key=='custom':assert {'cpu','memory'}<=service.active_keys()
             service.set_options(resource_expanded_height=304)
+            for key in ('clock','calendar'):
+                window.select_page(key);pump()
+                hosted=getattr(runtime,key)
+                for theme in ('dark','light'):
+                    appearance=dict(window.background,theme=theme,material='liquid',color='#4f6884',opacity=64)
+                    assert service.set_options(resource_background='custom',resource_appearance=appearance)
+                    pump()
+                    assert hosted._control_ink==window.colors['muted']
+                    assert hosted.draw_options()['_host_palette'] is window.colors
+                    assert layer(hosted).pixelColor(4,hosted.height()//2).alpha()==0
+                    gradient_pixels(hosted.parentWidget())
+                    grab(window,f'capsule-{key}-{theme}')
+            assert service.set_options(resource_background='global',resource_appearance={})
             window.select_page('calendar');grab(window,'readme-capsule-components')
+            checks.append('All mounted components render translucent gradients; the clock and calendar draw one shared card surface and update their control ink in both modes.')
             assert service.fold(True)
             pump()
             assert not runtime.calendar.isVisible()

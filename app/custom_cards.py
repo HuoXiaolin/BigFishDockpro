@@ -8,6 +8,7 @@ from PyQt5.QtGui import QColor, QFont, QFontMetrics, QImage, QImageReader, QPain
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from custom_card_data import SAMPLERS
+from card_design import paint_capsule_card,paint_design
 from resource_compact import text
 from screen_layout import capture, project, screen_records
 
@@ -292,19 +293,22 @@ class CustomCard(QWidget):
         dock=self.runtime.dock;cfg=dock.cfg;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         card=self.card;style=card['style'];colors=dock.base_theme_colors(cfg['panel_theme'])
         custom=card['colors'];factor=cfg['card_scale']/70
+        host=self.window() if self.embedded else None
+        ink=QColor(custom.get('text') or (host.colors['ink'] if host else colors['fg']))
+        if 'text' not in custom and 'surface' in custom:
+            ink=QColor('#f2f7fa' if QColor(custom['surface']).lightness()<128 else '#172b36')
         clear=style=='clear' or style=='follow' and cfg['panel_material']=='clear'
-        if not clear:
+        if host:
+            paint_capsule_card(p,QRectF(self.rect()),dict(host.colors,ink=ink),'lavender',host.background,
+                               radius=12,base=custom.get('surface'))
+        elif not clear:
             path=QPainterPath();path.addRoundedRect(rect,12,12)
             surface=QColor(custom.get('surface') or ('#f5fafc' if colors['light'] else '#1e2b34'))
             if style=='follow':surface.setAlpha(min(250,155+cfg['panel_opacity']))
             p.fillPath(path,surface)
             if style=='follow':
-                from card_design import paint_design
                 design=dict(theme_color=custom.get('accent') or cfg['theme_color'],panel_color=cfg['panel_color'],card_design=cfg['card_design'])
                 paint_design(p,rect,design,corner_radius=12,header_separator=False)
-        ink=QColor(custom.get('text') or colors['fg'])
-        if 'text' not in custom and 'surface' in custom:
-            ink=QColor('#f2f7fa' if QColor(custom['surface']).lightness()<128 else '#172b36')
         muted=QColor(ink);muted.setAlpha(180)
         fonts={key:max(1,round(size*factor)) for key,size in card['fonts'].items()}
         latest=self.runtime.resources.latest;now=datetime.datetime.now()

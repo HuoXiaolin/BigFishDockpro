@@ -2,7 +2,7 @@
 import copy,datetime
 from pathlib import Path
 from unittest.mock import patch
-from PyQt5.QtCore import Qt,QRectF
+from PyQt5.QtCore import Qt,QPoint,QRectF
 from PyQt5.QtGui import QPixmap,QPainter,QColor
 from PyQt5.QtWidgets import QApplication
 
@@ -24,8 +24,13 @@ def run(api,runtime,root,output,checks):
         calendar.view_year,calendar.view_month=2027,1;calendar.shift_month(-1);assert (calendar.view_year,calendar.view_month)==(2026,12)
         calendar.shift_month(1);assert (calendar.view_year,calendar.view_month)==(2027,1)
         calendar.go_today();assert (calendar.view_year,calendar.view_month)==(datetime.date.today().year,datetime.date.today().month)
-        old_size=calendar.size();assert calendar.set_locked(True) and calendar.minimumSize()==calendar.maximumSize() and not calendar.grip.isVisible()
+        old_size=calendar.size();assert calendar.set_locked(True) and calendar.minimumSize()==calendar.maximumSize() and not calendar.can_drag()
         assert calendar.set_locked(False);calendar.resize(old_size)
+        from ui_test_events import Events
+        calendar.move(QApplication.primaryScreen().availableGeometry().topLeft()+QPoint(100,100))
+        original_geometry=calendar.geometry()
+        Events.drag(calendar,QPoint(4,calendar.height()//2),QPoint(-26,0))
+        assert (calendar.x(),calendar.width(),calendar.height())==(original_geometry.x()-26,original_geometry.width()+26,original_geometry.height())
         before_appearance=copy.deepcopy(cfg['clock_appearance'])
         dialog=ClockOptions(calendar);dialog.show();app.processEvents();assert 'style' not in dialog.fields and 'hour_format' not in dialog.fields
         dialog.fields['color'].setText('#9bc9d2');assert dialog.commit() and cfg['clock_appearance']==before_appearance

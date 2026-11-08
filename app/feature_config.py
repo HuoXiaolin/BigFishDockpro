@@ -6,6 +6,7 @@ from quick_actions import DEFAULT_ORDER,normalize_order
 SPECTRUM_STYLES = (
     ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
 )
+RING_HEIGHT_MAX = 140
 
 DEFAULTS = {
     'flash_enabled':False, 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
@@ -22,6 +23,7 @@ DEFAULTS = {
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
     'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
     'spectrum_locked': False, 'spectrum_layout': {}, 'spectrum_manual_size': False,
+    'spectrum_ring_height': 100,
     'daily_picture_enabled': False, 'daily_picture_locked': False, 'daily_picture_layout': {},
     'daily_picture_material': 'follow', 'daily_picture_color': '', 'daily_picture_source': 'bing',
     'daily_picture_local_paths': [], 'daily_picture_interval': 30,
@@ -163,6 +165,8 @@ def normalize(cfg):
         result['spectrum_style'] = 'bars'
     if result['spectrum_color_mode'] not in ('colorful','mono'):
         result['spectrum_color_mode']='colorful'
+    height=result['spectrum_ring_height']
+    result['spectrum_ring_height']=max(0,min(RING_HEIGHT_MAX,height)) if type(height) is int else 100
     for key in ('spectrum_enabled', 'spectrum_locked', 'spectrum_manual_size', 'daily_picture_enabled', 'daily_picture_locked'):
         if type(result[key]) is not bool:
             result[key] = DEFAULTS[key]

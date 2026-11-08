@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (QWidget,QDialog,QTabWidget,QFrame,QLabel,QPushButto
 from appearance_presets import COLOR_MODES,material_choices
 from resource_options import METRICS,TINTS,TASK_METRICS,COMPACT_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
 from resource_options import CAPSULE_PAGES,PLACED_COMPONENTS,component_location
+from settings_design import NumericControl
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
@@ -40,7 +41,7 @@ class ResourceOptions(QDialog):
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_compact_rotate','resource_ring_letters','resource_quota_alert'},
         {'resource_ai','resource_ai_tray','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
-        {'resource_halo','resource_halo_speed','resource_threshold','resource_background','resource_palette'},set(),
+        {'resource_halo','resource_halo_speed','resource_threshold','resource_background','resource_palette','resource_card_transparency'},set(),
         {'resource_edge_snap','resource_liquid','resource_face','resource_face_interactive','resource_live_glass','resource_expand_mode','resource_face_mood','resource_face_scale'},
         {'resource_weather','resource_weather_compact','resource_weather_days','resource_air_source','resource_news'},set()]
 
@@ -59,6 +60,8 @@ class ResourceOptions(QDialog):
                     elif isinstance(widget, ModernSpinBox):
                         widget.setValue(value)
                         widget.sync_steps()
+                        control=widget.parentWidget()
+                        if isinstance(control,NumericControl):control.slider.setValue(value)
                     else:
                         widget.setChecked(value)
                     widget.blockSignals(blocked)
@@ -250,6 +253,11 @@ class ResourceOptions(QDialog):
             for key,title in [('resource_halo','彩色流动光环'),('resource_threshold','胶囊阈值变色：低于 60% 绿，60–80% 黄，80% 起红')]:
                 self.fields[key]=check(title,cfg[key]);style.addWidget(self.fields[key])
             source=combo(style_form,'resource_background','背景',[('跟随整体','global'),('单独设置','custom')],cfg['resource_background'],self.fields)
+            transparency=ModernSpinBox();transparency.setRange(0,100);transparency.setSuffix('%')
+            transparency.setValue(cfg['resource_card_transparency']);transparency.setAccessibleName('卡底透底')
+            control=NumericControl(transparency)
+            control.setToolTip('默认 20%。数值越高，透出的胶囊底色越多。')
+            style_form.addRow('卡底透底',control);self.fields['resource_card_transparency']=transparency
             self.custom_box=QWidget();custom=QFormLayout(self.custom_box);custom.setContentsMargins(0,0,0,0);style.addWidget(self.custom_box)
             saved=cfg['resource_appearance'] or background(cfg)
             combo(custom,'material','材质',material_choices(saved['material']),saved['material'],self.custom_fields)

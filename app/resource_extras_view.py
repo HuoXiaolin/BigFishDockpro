@@ -84,11 +84,11 @@ class WeatherCards(QWidget):
             y=i//self.columns*(self.card_height+self.gap)
             p.save()
             p.translate(x,y)
-            draw(p,span,data,colors)
+            draw(p,span,data,colors,colors['card_alpha'])
             p.restore()
 
-    def draw_current(self,p,width,row,c):
-        paint_weather(p,QRectF(0,0,width,self.card_height),row,c['light'],c['hover'])
+    def draw_current(self,p,width,row,c,opacity):
+        paint_weather(p,QRectF(0,0,width,self.card_height),row,c['light'],c['hover'],opacity)
         text(p,QRectF(10,4,width-20,15),row['name']+'  '+row.get('condition',''),c['ink'],11,True)
         temperature=row.get('temperature')
         text(p,QRectF(10,20,71,35),degrees(temperature),c['ink'],30,True)
@@ -119,9 +119,9 @@ class WeatherCards(QWidget):
         p.setPen(Qt.NoPen);p.setBrush(ink)
         for point in markers:p.drawEllipse(point,2,2)
 
-    def draw_days(self,p,width,days,c):
+    def draw_days(self,p,width,days,c,opacity):
         surface,accent=FORECAST_TONES[0 if c['light'] else 1]
-        paint_card(p,QRectF(0,0,width,self.card_height),surface)
+        paint_card(p,QRectF(0,0,width,self.card_height),surface,opacity)
         text(p,QRectF(10,4,width-20,16),'未来一周' if len(days)==7 else '每日预报',c['ink'],11,True)
         step=(width-12)/len(days)
         temperatures=[v for _,day in days for v in (day['low'],day['high']) if v is not None]
@@ -142,8 +142,8 @@ class WeatherCards(QWidget):
             rain=day.get('rain')
             center(96,'—' if rain is None else f'{rain:.0f}%',9,True)
 
-    def draw_air(self,p,width,row,c):
-        paint_card(p,QRectF(0,0,width,self.card_height),AIR_SURFACES[0 if c['light'] else 1])
+    def draw_air(self,p,width,row,c,opacity):
+        paint_card(p,QRectF(0,0,width,self.card_height),AIR_SURFACES[0 if c['light'] else 1],opacity)
         data=row.get('air',{})
         aqi=data.get('aqi',data.get('us_aqi'))
         scale=data.get('scale','US AQI')
@@ -171,7 +171,7 @@ class WeatherCards(QWidget):
             text(p,QRectF(x,70,step,14),label,c['muted'],10)
             text(p,QRectF(x,85,step,16),'—' if value is None else f'{value:g} {unit}',c['ink'],10,True)
 
-    def draw_sun(self,p,width,data,c):
+    def draw_sun(self,p,width,data,c,opacity):
         now,today=data
         try:
             sunrise=datetime.fromisoformat(today.get('sunrise','')).replace(tzinfo=None)
@@ -180,7 +180,7 @@ class WeatherCards(QWidget):
             sunrise=sunset=None
         local=now.replace(tzinfo=None) if now else None
         stage,surface,accent=solar_tone(local,sunrise,sunset,c['light'])
-        paint_card(p,QRectF(0,0,width,self.card_height),surface)
+        paint_card(p,QRectF(0,0,width,self.card_height),surface,opacity)
         moon,illumination=moon_phase(now.isoformat() if now else '')
         text(p,QRectF(10,4,85,16),'日出日落',c['ink'],11,True)
         clock=' '.join(part for part in (stage,now.strftime('%H:%M') if now else '') if part)

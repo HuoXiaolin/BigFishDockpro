@@ -49,7 +49,8 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_ai=False,resource_ai_tray=False,resource_ai_providers=['Claude','Codex','Cursor','Antigravity'],
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
                 resource_ring_letters=True,resource_quota_alert=True)
-DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={})
+DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={},
+                resource_card_transparency=20)
 
 
 def component_location(cfg,key):
@@ -139,6 +140,11 @@ def normalize(cfg,strict=False):
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
     cfg['resource_appearance']=clean_background(cfg.get('resource_appearance',{}),strict)
+    transparency=cfg.get('resource_card_transparency',DEFAULTS['resource_card_transparency'])
+    if type(transparency) is not int or not 0<=transparency<=100:
+        if strict:raise ValueError('卡底透底须为 0 至 100 的整数。')
+        transparency=DEFAULTS['resource_card_transparency']
+    cfg['resource_card_transparency']=transparency
     limits=cfg.get('resource_limits',{})
     valid=isinstance(limits,dict) and all(k in METRICS and type(v) is int and 0<=v<=100000 for k,v in limits.items())
     if not valid:

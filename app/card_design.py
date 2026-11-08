@@ -1,7 +1,39 @@
 """Light card compositions inspired by Uiverse, colored by this app's accent."""
 from PyQt5.QtCore import Qt,QPointF,QRectF
-from PyQt5.QtGui import QColor,QLinearGradient,QPen,QPainterPath
+from PyQt5.QtGui import QBrush,QColor,QGradient,QLinearGradient,QPen,QPainterPath
+from appearance_presets import THEME_GRADIENTS
 DESIGNS=[('液态玻璃','aurora'),('浅色渐变','gradient'),('经典纸张','paper'),('极简纯色','minimal'),('清透水晶','crystal'),('柔光流彩','flowing'),('活力原色','vivid'),('浅色纸玻璃','paper_glass')]
+
+# Card surfaces, in light and dark order.
+SOFT_SURFACES={
+    'sky':('#dbe9f3','#32465a'),
+    'lavender':('#e7e8f8','#31364f'),
+    'mint':('#dceee5','#233e36'),
+    'peach':('#f9e7dc','#443631'),
+    'rose':('#eac9dd','#503249'),
+}
+
+CAPSULE_GRADIENTS={
+    'sky':THEME_GRADIENTS['liquid'],
+    'lavender':THEME_GRADIENTS['vivid'],
+    'mint':THEME_GRADIENTS['clear'],
+    'peach':('#ffcf1b','#ff8818'),
+    'rose':('#f869d5','#5650de'),
+    'ice':('#6ee2f5','#6454f0'),
+}
+
+# Hue strength and opacity for the surface laid over the parent material.
+SURFACE_MATERIALS={
+    'clear':(.72,239),
+    'solid':(.88,255),
+    'plain':(.84,255),
+    'paper':(.77,255),
+    'paper_glass':(.77,249),
+    'mica':(.76,248),
+    'acrylic':(.82,243),
+    'crystal':(.82,240),
+    'flowing':(.84,242),
+}
 
 
 def accent_color(cfg):return QColor(cfg.get('theme_color') or cfg.get('panel_color') or '#b8d9ef')
@@ -9,6 +41,48 @@ def accent_color(cfg):return QColor(cfg.get('theme_color') or cfg.get('panel_col
 
 def blend(left,right,amount):
     return QColor(*(round(a*(1-amount)+b*amount) for a,b in zip(left.getRgb()[:3],right.getRgb()[:3])))
+
+
+def soft_surface(tone,light,appearance):
+    material=appearance.get('material','liquid')
+    strength,opacity=SURFACE_MATERIALS.get(material,(.86,241))
+    base=QColor('#f5f7fa' if light else '#282d34')
+    accent=QColor(appearance.get('color') or '')
+    if accent.isValid():
+        base=blend(base,accent,.23 if material in ('solid','plain','paper','paper_glass') else .14)
+    color=blend(base,QColor(SOFT_SURFACES[tone][0 if light else 1]),strength)
+    if opacity<255:opacity=min(253,opacity+round(appearance.get('opacity',0)*.05))
+    color.setAlpha(opacity)
+    return color
+
+
+def capsule_card_brush(tone,light,appearance,*,alpha,base=None,active=False):
+    strength,_=SURFACE_MATERIALS.get(appearance['material'],(.86,241))
+    if base is None:
+        base=QColor('#f9fbfd' if light else '#1a212d')
+        tint=QColor(appearance['color'])
+        if tint.isValid():base=blend(base,tint,.10 if light else .07)
+        strength*=.30 if light else .24
+    else:
+        base=QColor(base)
+        strength*=.16
+    if active:base=blend(base,QColor('#c7d4e4' if light else '#52627b'),.24)
+    gradient=QLinearGradient(0,0,1,1)
+    gradient.setCoordinateMode(QGradient.ObjectBoundingMode)
+    for position,value in enumerate(CAPSULE_GRADIENTS[tone]):
+        color=blend(base,QColor(value),strength)
+        color.setAlpha(alpha)
+        gradient.setColorAt(position,color)
+    return QBrush(gradient)
+
+
+def paint_capsule_card(painter,rect,colors,tone,appearance,*,radius=9,base=None,active=False,focused=False):
+    light=colors['light']
+    edge=QColor(colors['muted'] if focused else colors['ink'])
+    if not focused:edge.setAlpha(23 if light else 37)
+    painter.setPen(QPen(edge,1))
+    painter.setBrush(capsule_card_brush(tone,light,appearance,alpha=colors['card_alpha'],base=base,active=active))
+    painter.drawRoundedRect(rect.adjusted(.5,.5,-.5,-.5),radius,radius)
 
 
 def paint_design(painter,rect,cfg,design=None,clear=False,body_top=None,body_inset=4,corner_radius=None,header_separator=True):
@@ -27,10 +101,9 @@ def paint_design(painter,rect,cfg,design=None,clear=False,body_top=None,body_ins
             painter.fillRect(QRectF(rect.left(),rect.top(),rect.width(),max(0,boundary-rect.top())),header)
         painter.restore();painter.restore();return
     if design=='vivid':
-        from appearance_presets import VIVID_BLUE, VIVID_GREEN, VIVID_RED
         wash=QLinearGradient(rect.topLeft(),rect.topRight())
-        for stop,rgb in ((0,VIVID_BLUE),(.63,VIVID_GREEN),(1,VIVID_RED)):
-            tone=QColor(rgb);tone.setAlpha(34);wash.setColorAt(stop,tone)
+        for stop,rgb in enumerate(THEME_GRADIENTS['vivid']):
+            tone=QColor(rgb);tone.setAlpha(26);wash.setColorAt(stop,tone)
         end=body_top if body_top is not None else rect.top()+min(38,rect.height()*.25)
         painter.fillRect(QRectF(rect.left(),rect.top(),rect.width(),max(0,end-rect.top())),wash)
     elif design=='aurora':

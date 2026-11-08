@@ -84,13 +84,17 @@ class DailyPictureCard(QWidget):
         if self.cfg['daily_picture_locked']:self.drag=None
         from flash_view import palette_for
         from appearance_presets import material_design
-        style={key:self.cfg['panel_'+key] for key in ('material','theme','color','opacity','blur','highlight')}
-        if self.cfg['daily_picture_material']!='follow':style['material']=self.cfg['daily_picture_material']
+        if self.embedded:
+            style=dict(self.window().background)
+        else:
+            style={key:self.cfg['panel_'+key] for key in ('material','theme','color','opacity','blur','highlight')}
+            if self.cfg['daily_picture_material']!='follow':style['material']=self.cfg['daily_picture_material']
         if self.cfg['daily_picture_color']:style['color']=self.cfg['daily_picture_color']
         self.appearance=style
         design=self.cfg['card_design'] if self.cfg['daily_picture_material']=='follow' else material_design(style['material'],self.cfg['card_design'])
         self.border=dict(theme_color=self.cfg['daily_picture_color'] or self.cfg['theme_color'],panel_color=style['color'],card_design=design)
         colors=palette_for(self.service,style)
+        if self.embedded:colors['card_alpha']=self.window().colors['card_alpha']
         if self.colors!=colors:
             self.colors=colors;palette=self.palette()
             for role,key in ((QPalette.WindowText,'ink'),(QPalette.ButtonText,'ink'),(QPalette.Text,'ink'),
@@ -180,8 +184,11 @@ class DailyPictureCard(QWidget):
 
     def paintEvent(self,event):
         if not self.appearance:return
-        from card_design import paint_design
+        from card_design import paint_capsule_card,paint_design
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        if self.embedded:
+            paint_capsule_card(p,QRectF(self.rect()),self.colors,'ice',self.appearance,radius=12)
+            return
         rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         self.glass.paint(p,self,self,12,self.drag is not None,self.appearance)
         paint_design(p,rect,self.border,clear=self.appearance['material']=='clear',corner_radius=12,header_separator=False)

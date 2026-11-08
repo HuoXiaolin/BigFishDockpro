@@ -7,7 +7,8 @@ from PyQt5.QtWidgets import (QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel
 from ui_style import ModernComboBox,button
 from resource_traffic import amount,totals
 from resource_compact import text
-from resource_charts import DashboardCard,paint_card_surface,sync_card_controls
+from card_design import paint_capsule_card
+from resource_charts import DashboardCard,sync_card_controls
 from resource_status import threshold
 
 SCROLL_STYLE='''
@@ -100,7 +101,7 @@ class TrafficView(QWidget):
 
 class TrafficReadout(QWidget):
     gap=6
-    periods=(('day','今日','#7fa8cb'),('month','本月','#a195cd'),('year','本年','#78b4ad'))
+    periods=(('day','今日','ice'),('month','本月','lavender'),('year','本年','mint'))
 
     def __init__(self,window):
         super().__init__();self.owner=window;self.columns=3;self.setFixedHeight(83)
@@ -123,7 +124,7 @@ class TrafficReadout(QWidget):
             x=(i%self.columns)*(width+self.gap)
             y=(i//self.columns)*(height+self.gap)
             values=data.get(key)
-            paint_card_surface(p,QRectF(x,y,width,height),c,tint)
+            paint_capsule_card(p,QRectF(x,y,width,height),c,tint,self.owner.background)
             text(p,QRectF(x+10,y+5,width-20,16),label,c['muted'],10)
             total=amount(sum(values)) if values is not None else '—'
             text(p,QRectF(x+10,y+21,width-20 if wide else width/2-12,25),total,c['ink'],18,True)
@@ -340,7 +341,7 @@ class MusicView(CapsuleScrollArea):
     def __init__(self,window):
         super().__init__();self.owner=window;self.track_id='';self.seeking=False;self.route_ids=None
         body=QWidget();self.setWidget(body);outer=QVBoxLayout(body);outer.setContentsMargins(3,2,3,2);outer.setSpacing(0)
-        self.card=DashboardCard(window,'#9c9bd2',body);outer.addWidget(self.card);outer.addStretch(1)
+        self.card=DashboardCard(window,'ice',body);outer.addWidget(self.card);outer.addStretch(1)
         lay=QVBoxLayout(self.card);lay.setContentsMargins(9,7,9,8);lay.setSpacing(5)
         head=QHBoxLayout();title=QLabel('媒体控制');title.setObjectName('RankTitle');head.addWidget(title,1)
         self.sources=ModernComboBox();self.sources.setMaximumWidth(224);self.sources.setMinimumWidth(60);self.sources.setFixedHeight(21);head.addWidget(self.sources)

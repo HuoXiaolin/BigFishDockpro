@@ -1,20 +1,30 @@
 """Independent, validated desktop clock appearance."""
 import re
-from appearance_presets import MATERIALS, PANEL_PRESETS, PRESET_IDS, preset_design, DEFAULT_PRESET_ID, THEME_INKS, THEME_ACCENTS
+from appearance_presets import LIQUID_TINT, MATERIALS, PANEL_PRESETS, PRESET_IDS, preset_design, DEFAULT_PRESET_ID, THEME_INKS, THEME_GRADIENTS
 
-DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':'#b8d9ef','opacity':38,'blur':8,'highlight':45,
-          'typography_version':2,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
+ACCENT_VERSION=2
+LEGACY_ACCENTS={'crystal':'#ff755e','flowing':'#ff68a1','paper_glass':'#ffad37','vivid':'#5b8def'}
+DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':LIQUID_TINT,'opacity':38,'blur':8,'highlight':45,
+          'typography_version':2,'accent_version':ACCENT_VERSION,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
 DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_scale=100,font_weight=63,letter_spacing=100,
                 padding=7,accent_color='',text_opacity=100,shadow='none',auto_contrast=True,bar_width=8,ring_width=9,corner_radius=22,
                 show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={},progress=None)
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
-PRESETS=[(name,dict(values,design=preset_design(key),accent_color=THEME_ACCENTS.get(key,''),text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else THEME_INKS.get(key,'#19384e'),text_effect='clear')) for key,(name,values) in zip(PRESET_IDS,PANEL_PRESETS)]
+PRESETS=[(name,dict(values,design=preset_design(key),accent_color='',text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else THEME_INKS.get(key,'#19384e'),text_effect='clear')) for key,(name,values) in zip(PRESET_IDS,PANEL_PRESETS)]
 DEFAULT_STYLE = dict(DEFAULTS, **PRESETS[PRESET_IDS.index(DEFAULT_PRESET_ID)][1])
+
+
+def theme_family(appearance):
+    material=appearance['material']
+    design=appearance['design']
+    if material=='liquid' and design=='vivid':return 'vivid'
+    return material if material in THEME_GRADIENTS else design
 
 
 def normalize(value, cfg=None):
     result=dict(DEFAULTS)
+    legacy_accent=isinstance(value,dict) and value.get('accent_version')!=ACCENT_VERSION
     if not value and cfg:
         for key in ('material','theme','color','opacity','blur','highlight'):
             result[key]=cfg.get('panel_'+key,result[key])
@@ -34,6 +44,9 @@ def normalize(value, cfg=None):
         value=result[key];result[key]=max(low,min(high,value)) if type(value) is int else DEFAULTS[key]
     for key in ('color','text_color','accent_color'):
         value=result[key];result[key]=value.lower() if isinstance(value,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',value) else ''
+    if legacy_accent and result['accent_color']==LEGACY_ACCENTS.get(theme_family(result)):
+        result['accent_color']=''
+    result['accent_version']=ACCENT_VERSION
     for key in ('font','date_font'):
         if not isinstance(result[key],str) or not result[key].strip() or len(result[key])>100:result[key]=DEFAULTS[key]
     for key in ('show_date','show_work','show_week','show_month','show_year','show_lunar','show_holidays','auto_contrast'):

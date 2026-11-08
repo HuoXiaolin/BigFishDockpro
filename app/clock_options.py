@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt,QRectF,QSize
 from PyQt5.QtGui import QPainter,QColor,QFontDatabase,QLinearGradient,QPixmap
 from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QScrollArea,QLineEdit,QColorDialog,QComboBox,QTabWidget,QGridLayout,QPlainTextEdit,QFileDialog
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ThemeSwatches,button,label,compact_dialog
-from clock_appearance import STYLES,FONTS,PRESETS,DEFAULTS,normalize
+from clock_appearance import ACCENT_VERSION,STYLES,FONTS,PRESETS,DEFAULTS,normalize
 from appearance_presets import material_choices,COLOR_MODES
 import work_schedule
 
@@ -89,10 +89,11 @@ class ClockOptions(QDialog):
             box=QVBoxLayout();row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,box)
         color(typeform,'text_color','主要文字');color(typeform,'accent_color','强调与进度');number(typeform,'text_opacity','文字不透明度（%）',50,100)
         check(typeform,'auto_contrast','文字随背景自动配色（推荐）')
-        self.fields['auto_contrast'].setToolTip('按实际背景为主文字和次文字选择中性色。手动填写主要文字颜色后，改用指定颜色。强调色单独设置。')
+        self.fields['auto_contrast'].setToolTip('深色底用白字，浅色底用蓝灰字。强调与进度跟随主题配色，可单独指定。')
         self.fields['text_color'].textChanged.connect(self.text_color_changed)
         self.fields['auto_contrast'].toggled.connect(self.automatic_color_changed)
         from card_design import DESIGNS
+        if not clock.isWindow():material.addRow(label('收入资源胶囊时使用胶囊材质。下方设置用于独立显示。','muted'))
         choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS,False)
         choice(material,'material','材质',material_choices(clock.option('appearance')['material']));choice(material,'theme','明暗模式',COLOR_MODES)
         color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
@@ -160,7 +161,8 @@ class ClockOptions(QDialog):
             field=self.fields.get(key)
             if field is None:continue
             values[key]=field.currentData() if isinstance(field,QComboBox) else field.text().strip() if isinstance(field,QLineEdit) else field.isChecked() if isinstance(field,ModernCheckBox) else field.value()
-        values.update(show_date=self.show_date.isChecked(),work=self.work_values(),typography_version=2,progress=self.progress)
+        values.update(show_date=self.show_date.isChecked(),work=self.work_values(),typography_version=2,
+                      accent_version=ACCENT_VERSION,progress=self.progress)
         return normalize(values)
     def text_color_changed(self,value):
         if self.loading:return

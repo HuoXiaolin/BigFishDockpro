@@ -65,7 +65,7 @@ def run(api, runtime, main, app, output, checks):
         image=QImage(width,height,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
         p=QPainter(image);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         rect=QRectF(1,1,width-2,height-2);shape=QPainterPath();shape.addRoundedRect(rect,18,18)
-        cfg=dock.cfg;material=cfg['panel_material'];colors=material_palette(tint_palette(dock.base_theme_colors('light'),cfg['panel_color']),material)
+        cfg=dock.cfg;material=cfg['panel_material'];colors=material_palette(tint_palette(dock.base_theme_colors(cfg['panel_theme']),cfg['panel_color']),material)
         strength=cfg['panel_highlight']/45
         stops=[(pos,round(alpha*strength)) for pos,alpha in dock.merged_grad_stops(colors)]
         panel=SimpleNamespace(cfg={'glass':True,'dock_material':material},backdrop=backdrop(width,height),spec_x=width*.5,spec_alpha=0)
@@ -111,6 +111,10 @@ def run(api, runtime, main, app, output, checks):
             face_painter.drawImage(10+(index%3)*348,10+(index//3)*238,tile)
         face_painter.end();assert faces.save(str(output/('visual-clock-'+mode+'.png')))
     p.end();assert len(set(signatures))==3
+    for theme in ('light','dark'):
+        crystal,flowing=(surface(make_dock(dict(cfg,panel_theme=theme)),340,158,'panel').pixelColor(170,140)
+                         for cfg in configs[:2])
+        assert flowing.red()-crystal.red()>=18 and flowing.green()<crystal.green(),(theme,crystal.name(),flowing.name())
     assert sheet.save(str(output/'visual-themes.png'))
 
     # Small progress cards keep each period label separate from its percentage.

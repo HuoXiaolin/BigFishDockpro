@@ -989,6 +989,9 @@ class Dock(QWidget):
             if runtime:
                 for panel in runtime.panels.windows.values(): panel.apply_options()
                 if runtime.resources.window:runtime.resources.window.sync_window()
+                for component in (runtime.clock,runtime.calendar):
+                    if component.isVisible() and component.isWindow() and component.option('appearance')['theme']=='auto':
+                        component.sync()
                 if runtime.flash.edge:runtime.flash.sync()
                 if runtime.spectrum:runtime.spectrum.update()
                 if runtime.daily_picture:runtime.daily_picture.update()

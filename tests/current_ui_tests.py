@@ -148,29 +148,38 @@ def run(output):
         assert api.normalize_features(old)['clock_appearance']['color']=='#123456'
         checks.append('clock appearance: independent live preview, three styles, font/size/text/background settings, persisted restore, legacy migration, failed and invalid saves retained')
         # Use the actual context-menu action and mouse events for lock semantics.
-        app.processEvents();assert clock.grip.isVisible() and clock.grip.size().width()==18
-        clock.grab().save(str(output/'clock-unlocked-grip.png'))
+        from ui_test_events import Events
+        from PyQt5.QtWidgets import QSizeGrip
+        app.processEvents();assert clock.can_drag() and clock.findChild(QSizeGrip) is None
+        clock.grab().save(str(output/'clock-unlocked-edges.png'))
         with patch.object(api,'save_config',return_value=False):assert not clock.set_locked(True)
-        assert not cfg['clock_locked'] and clock.grip.isVisible()
+        assert not cfg['clock_locked'] and clock.can_drag()
         menu=clock.build_menu();action=next(item for item in menu.actions() if item.text()=='锁定位置与大小')
         assert action.isCheckable() and not action.isChecked();action.trigger();menu.deleteLater();app.processEvents()
-        assert cfg['clock_locked'] and api.load_config()['clock_locked'] and not clock.grip.isVisible()
+        assert cfg['clock_locked'] and api.load_config()['clock_locked'] and not clock.can_drag()
         locked_geometry=clock.geometry();point=QPoint(40,40);global_point=clock.mapToGlobal(point)
         for event_type,pos,global_pos,buttons in [(QEvent.MouseButtonPress,point,global_point,Qt.LeftButton),(QEvent.MouseMove,point+QPoint(40,30),global_point+QPoint(40,30),Qt.LeftButton),(QEvent.MouseButtonRelease,point+QPoint(40,30),global_point+QPoint(40,30),Qt.NoButton)]:
             button=Qt.NoButton if event_type==QEvent.MouseMove else Qt.LeftButton
             QApplication.sendEvent(clock,QMouseEvent(event_type,QPointF(pos),QPointF(global_pos),button,buttons,Qt.NoModifier))
         clock.resize(clock.width()+30,clock.height()+30);assert clock.geometry()==locked_geometry
+        Events.drag(clock,QPoint(clock.width()-4,clock.height()-4),QPoint(-25,-18));assert clock.geometry()==locked_geometry
         clock.grab().save(str(output/'clock-locked.png'))
-        cfg['clock_locked']=False;clock.sync();assert clock.grip.isVisible() and clock.maximumWidth()>clock.width()
-        cfg['clock_locked']=True;clock.sync();assert not clock.grip.isVisible() and clock.maximumSize()==clock.minimumSize()
+        cfg['clock_locked']=False;clock.sync();assert clock.can_drag() and clock.maximumWidth()>clock.width()
+        cfg['clock_locked']=True;clock.sync();assert not clock.can_drag() and clock.maximumSize()==clock.minimumSize()
         from screen_layout import screen_records
         screens=screen_records();reduced=[dict(screens[0],area=[screens[0]['area'][0],screens[0]['area'][1],max(500,screens[0]['area'][2]//2),max(350,screens[0]['area'][3]//2)])]
         with patch('desktop_clock.screen_records',return_value=reduced):clock.reposition()
         assert clock.maximumSize()==clock.minimumSize() and cfg['clock_locked']
         menu=clock.build_menu();action=next(item for item in menu.actions() if item.text()=='锁定位置与大小');assert action.isChecked();action.trigger();menu.deleteLater();app.processEvents()
-        assert not cfg['clock_locked'] and not api.load_config()['clock_locked'] and clock.grip.isVisible()
-        width=clock.width();clock.resize(width+20,clock.height());assert clock.width()==width+20
-        checks.append('clock lock: actual context-menu action persists state, blocks mouse drag and resizing; failed save preserves unlocked state; screen projection remains possible while locked; unlocking restores resize')
+        assert not cfg['clock_locked'] and not api.load_config()['clock_locked'] and clock.can_drag()
+        area=QApplication.primaryScreen().availableGeometry();clock.move(area.topLeft()+QPoint(100,100));clock.save_geometry()
+        original=clock.geometry();point=QPoint(4,4)
+        QApplication.sendEvent(clock,QMouseEvent(QEvent.MouseMove,QPointF(point),QPointF(clock.mapToGlobal(point)),Qt.NoButton,Qt.NoButton,Qt.NoModifier))
+        assert clock.cursor().shape()==Qt.SizeFDiagCursor
+        Events.drag(clock,point,QPoint(-22,-17))
+        assert clock.pos()==original.topLeft()-QPoint(22,17) and clock.geometry().bottomRight()==original.bottomRight()
+        assert api.load_config()['clock_layout']==cfg['clock_layout']
+        checks.append('Clock lock blocks movement and resizing; unlocking enables corner resizing with the opposite corner anchored, saved geometry, and no visible grip.')
         with patch.object(api,'save_config',return_value=False):clock.set_enabled(False)
         assert cfg['clock_enabled'] and clock.isVisible()
         clock.set_enabled(False);app.processEvents();assert not clock.isVisible() and not clock.tick.isActive() and not clock.refresh_timer.isActive()

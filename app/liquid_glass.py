@@ -1,25 +1,36 @@
 """The original Dock liquid-glass renderer, shared by desktop collection panels."""
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QColor, QLinearGradient, QRadialGradient, QBrush, QPen, QImage
+from appearance_presets import FLOWING_TINT, LIQUID_TINT, THEME_GRADIENTS, THEME_INKS, VIVID_BLUE
 
 
 def material_palette(colors, material):
     colors = dict(colors)
     strength = {'gloss':1.55, 'acrylic':.22, 'mica':.08, 'clear':.12, 'solid':0}.get(material, 1)
     colors['material'] = material
+    tint=colors.get('theme_color','')
+    family='vivid' if material=='liquid' and tint==VIVID_BLUE else material
+    if family in THEME_INKS:
+        colors['fg']=QColor(THEME_INKS[family] if colors.get('light',True) else '#ffffff')
+    if material!='clear' and (material!='liquid' or tint in ('',LIQUID_TINT,'#b8d9ef',VIVID_BLUE)):
+        colors['wash']=THEME_GRADIENTS.get(family)
+    if material=='flowing' and tint not in ('',FLOWING_TINT,'#ffe0e9'):
+        tone=QColor(tint)
+        colors['wash']=(tone.lighter(117).name(),tone.darker(112).name())
     if material in ('crystal','flowing','paper_glass'):
         light=colors.get('light',True)
-        from appearance_presets import THEME_INKS
-        colors['fg']=QColor(THEME_INKS[material] if light else '#ffffff')
-        colors['border']=QColor(244,252,255,118) if light else QColor(225,240,250,70)
+        if material=='crystal':
+            colors['border']=QColor(238,253,255,163) if light else QColor(220,243,255,105)
+        elif material=='flowing':
+            colors['border']=QColor(232,213,250,96) if light else QColor(221,201,245,67)
+        else:
+            colors['border']=QColor(101,135,150,48) if light else QColor(225,240,250,58)
         colors['border_w']=.8
         colors['gloss']=False
         colors['spec']= {'crystal':58,'flowing':40,'paper_glass':12}[material]
         colors['spec_wide']=1.4
         colors['grad']=[(0,62),(0.28,28),(0.72,12),(1,26)] if material!='paper_glass' else [(0,24),(.5,10),(1,14)]
         colors['hl']=[(0,54),(.55,10),(1,0)] if material=='crystal' else [(0,24),(.65,7),(1,0)]
-        if material=='paper_glass':
-            colors['border']=QColor(101,135,150,48) if light else QColor(225,240,250,58)
         return colors
     if material=='mica':
         tint = QColor(colors['tint'])
@@ -75,6 +86,7 @@ def tint_palette(palette, color):
     palette = dict(palette)
     accent = QColor(color)
     if not color or not accent.isValid(): return palette
+    palette['theme_color']=accent.name()
     for key, ratio in [('tint', .38), ('border', .30)]:
         original = palette[key]
         palette[key] = QColor(round(original.red()*(1-ratio)+accent.red()*ratio),
@@ -84,18 +96,20 @@ def tint_palette(palette, color):
 
 
 
-def _material_wash(painter, rect, material, light):
-    if material not in ('crystal','flowing','paper_glass'):
+def _material_wash(painter, rect, material, colors):
+    wash=colors.get('wash')
+    if not wash:
         return
     gradient=QLinearGradient(rect.topLeft(),rect.bottomRight())
-    if material=='crystal':
-        stops=((0,'#fff1d6',26),(.58,'#ffffff',4),(1,'#ffe0eb',18))
-    elif material=='flowing':
-        stops=((0,'#ffe1ec',82),(.42,'#fff3b9',48),(.76,'#c6f5e4',36),(1,'#fff8eb',24))
+    if material=='flowing':
+        stops=((0,wash[0],108),(1,wash[1],98))
+        dark_strength=.76
     else:
-        stops=((0,'#fffdf8',64),(.54,'#fff7e0',30),(1,'#ffedce',38))
+        first,last={'crystal':(20,13),'paper_glass':(45,34)}.get(material,(18,14))
+        stops=((0,wash[0],first),(.56,'#ffffff',4),(1,wash[1],last))
+        dark_strength=.38
     for position,value,alpha in stops:
-        color=QColor(value);color.setAlpha(alpha if light else round(alpha*.38));gradient.setColorAt(position,color)
+        color=QColor(value);color.setAlpha(alpha if colors.get('light',True) else round(alpha*dark_strength));gradient.setColorAt(position,color)
     painter.fillRect(rect,gradient)
 
 
@@ -155,7 +169,7 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
     for pos, a in stops:
         g.setColorAt(pos, QColor(255, 255, 255, a))
     p.fillRect(path_rect, QBrush(g))
-    _material_wash(p,path_rect,material,c.get('light',True))
+    _material_wash(p,path_rect,material,c)
     _interaction_light(p,path_rect,material)
 
     # 跟着鼠标走的柔光（液态感的关键）

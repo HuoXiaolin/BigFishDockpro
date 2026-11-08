@@ -7,6 +7,7 @@ from resource_compact import text
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,reset_text
 from resource_usage import aggregate
 from resource_quota import amount_label, amount_text, quota_color, remaining_percent, used_percent
+from card_design import paint_capsule_card
 
 COLORS=('#13a58b','#428fe2','#b28a49','#897fb6','#d57480','#59a9b5','#8a9d71')
 
@@ -29,7 +30,7 @@ class QuotaOverview(QWidget):
         y=0
         for row in self.rows:
             quotas=row.get('quotas',[]);columns=min(1 if self.width()<340 else 2,max(1,len(quotas)));height=24+45*max(1,(len(quotas)+columns-1)//columns)
-            surface(p,QRectF(0,y,self.width(),height-4),c)
+            surface(p,QRectF(0,y,self.width(),height-4),self.view.owner,'lavender')
             name_width = min(175, self.width() * .62)
             text(p,QRectF(10,y+3,name_width,18),row['name'],c['ink'],11,True)
             text(p,QRectF(14+name_width,y+3,self.width()-24-name_width,18),row.get('plan') or row.get('status',''),c['muted'],9,False,Qt.AlignRight)
@@ -58,7 +59,11 @@ class QuotaOverview(QWidget):
 def number(value):return '—' if value is None else token_text(value)
 
 
-def surface(p,rect,colors):
+def surface(p,rect,owner,tone):
+    colors=owner.colors
+    if hasattr(owner,'background'):
+        paint_capsule_card(p,rect,colors,tone,owner.background)
+        return
     color=QColor(colors['field']);color.setAlpha(170 if colors['light'] else 155)
     p.setBrush(color);p.setPen(Qt.NoPen);p.drawRoundedRect(rect,9,9)
 
@@ -69,15 +74,16 @@ class UsageSummary(QWidget):
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.view.owner.colors
         if not c:return
-        surface(p,QRectF(self.rect()),c);data=self.view.data;total=data['total'];columns=2 if self.width()<360 else 4;w=self.width()/columns
+        surface(p,QRectF(self.rect()),self.view.owner,'sky');data=self.view.data;total=data['total'];columns=2 if self.width()<360 else 4;w=self.width()/columns
         fields=[('Token',number(total['tokens']),f"输入 {number(total['input'])} · 输出 {number(total['output'])}"),
                 ('调用记录',number(total['records']),'按来源计量记录'),
                 ('费用',cost_text(total),cost_note(total)),
                 ('缓存命中',f"{total['cacheRate']:.0f}%" if total['cacheRate'] is not None else '—','占输入 Token')]
+        cost_ink=('#0a6f61' if c['light'] else '#70e2cc') if hasattr(self.view.owner,'background') else COLORS[0]
         for i,(label,value,note) in enumerate(fields):
             x=(i%columns)*w+10;y=(i//columns)*64
             text(p,QRectF(x,y+6,w-15,16),label,c['muted'],9)
-            text(p,QRectF(x,y+23,w-15,24),value if data['available'] else '—',COLORS[0] if i==2 else c['ink'],16,True)
+            text(p,QRectF(x,y+23,w-15,24),value if data['available'] else '—',cost_ink if i==2 else c['ink'],16,True)
             text(p,QRectF(x,y+46,w-15,15),note,c['muted'],9)
 
 
@@ -92,7 +98,7 @@ class UsageCharts(QWidget):
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.view.owner.colors
         if not c:return
-        surface(p,QRectF(self.rect()),c);data=self.view.data;total=data['total'];metric=self.view.metric
+        surface(p,QRectF(self.rect()),self.view.owner,'mint');data=self.view.data;total=data['total'];metric=self.view.metric
         text(p,QRectF(12,7,140,18),'费用分布',c['ink'],10,True)
         narrow=self.width()<360;shift=(self.width()-126)/2 if narrow else 0;offset=134 if narrow else 0
         ring=QRectF(28+shift,31,70,70);p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(c['hover']),9));p.drawEllipse(ring)

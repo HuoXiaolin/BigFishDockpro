@@ -3,14 +3,15 @@ import ctypes
 import datetime
 import os
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, QSize, QVariantAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, QSize, QVariantAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QPixmap, QIcon
 from PyQt5.QtWidgets import (QWidget, QSizeGrip, QApplication, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QScrollArea, QLineEdit, QColorDialog, QComboBox)
 from ui_style import (SettingsHeader, ModernComboBox, ModernSpinBox, ModernCheckBox, ThemeSwatches, button, label, compact_dialog)
-from clock_appearance import STYLES, FONTS, PRESETS, normalize as normalize_appearance
-from appearance_presets import MATERIALS, COLOR_MODES
+from clock_appearance import STYLES, FONTS, PRESETS, theme_family, normalize as normalize_appearance
+from appearance_presets import LIGHT_GLASS_INK, MATERIALS, COLOR_MODES, THEME_ACCENTS, material_design
 from screen_layout import capture, project, screen_records, valid_record
 from liquid_glass import paint_liquid_glass, tint_palette, material_palette, material_blur
+from window_edges import edges_at, paint_edge_targets, resize_cursor, resized_rect
 
 
 class DesktopClock(QWidget):
@@ -23,16 +24,15 @@ class DesktopClock(QWidget):
         self.backdrop = None; self.drag = None; self.loading = True; self.closed = False
         self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground); self.setWindowTitle('桌面'+self.component_name+' · 大肥鱼Dock')
         self.setMinimumSize(*self.minimum)
-        from ui_style import SubtleSizeGrip
-        self.grip = SubtleSizeGrip(self,lambda:self.dock.base_theme_colors(self.option('appearance')['theme']).get('light',True))
-        self.grip.setFixedSize(18,18)
+        self.setAccessibleDescription('拖动卡片移动，拖动边缘或四角调整大小')
         self.tick = QTimer(self); self.tick.setSingleShot(True); self.tick.timeout.connect(self.update_time)
         self.geometry_timer = QTimer(self); self.geometry_timer.setSingleShot(True); self.geometry_timer.setInterval(300); self.geometry_timer.timeout.connect(self.save_geometry)
         self.refresh_timer = QTimer(self); self.refresh_timer.setSingleShot(True); self.refresh_timer.setInterval(200); self.refresh_timer.timeout.connect(self.capture_backdrop)
         self.reposition(); self.loading = False; self.apply_lock()
         if self.kind=='clock':
             self.flipped=self.dock.cfg.get('clock_flipped',False);self.flip_progress=None
-            self.flip_button=button('↔',self.flip);self.flip_button.setParent(self);self.flip_button.setFixedSize(12,12);self.flip_button.setToolTip('点击翻面：时钟 / 月历');self.flip_button.show()
+            self.flip_button=button('',self.flip);self.flip_button.setParent(self);self.flip_button.setFixedSize(12,12);self.flip_button.setIconSize(QSize(12,12));self.flip_button.setToolTip('点击翻面：时钟 / 月历');self.flip_button.show()
+            self.flip_button.setStyleSheet('QPushButton {background:transparent;border:0;padding:0;min-width:0;min-height:0;max-width:12px;max-height:12px;} QPushButton:hover {background:transparent;}')
             self.flip_animation=QVariantAnimation(self);self.flip_animation.setDuration(240);self.flip_animation.setStartValue(0.0);self.flip_animation.setEndValue(1.0);self.flip_animation.setEasingCurve(QEasingCurve.InOutCubic)
             self.flip_animation.valueChanged.connect(self.advance_flip);self.flip_animation.finished.connect(self.finish_flip);self.position_flip()
 
@@ -53,6 +53,7 @@ class DesktopClock(QWidget):
         host=self.runtime.resources.hosted_component(self.kind) if routed else None
         if self.parentWidget() is not host:
             self.geometry_timer.stop();self.refresh_timer.stop()
+            self.drag=None
             self.loading=True
             self.setParent(host,Qt.Widget if host else Qt.Tool|Qt.FramelessWindowHint)
             if host:
@@ -81,14 +82,21 @@ class DesktopClock(QWidget):
 
     def apply_lock(self):
         locked=self.option('locked')
+        movable=self.can_drag()
+        self.setMouseTracking(movable)
+        self.setCursor(Qt.SizeAllCursor if movable else Qt.ArrowCursor)
+        if not movable:self.drag=None
         if self.parentWidget() is not None:
             self.setMinimumSize(1,1);self.setMaximumSize(16777215,16777215)
             self.setFixedHeight(240 if self.kind=='calendar' else 170)
-            self.grip.hide();self._applied_lock=locked
-            return
-        self.setMinimumSize(*self.minimum);self.setMaximumSize(16777215,16777215)
-        if locked:self.setFixedSize(self.size())
-        self.grip.setVisible(not locked);self._applied_lock=locked
+        else:
+            self.setMinimumSize(*self.minimum);self.setMaximumSize(16777215,16777215)
+            if locked:self.setFixedSize(self.size())
+        self._applied_lock=locked
+        self.update()
+
+    def can_drag(self):
+        return self.parentWidget() is None and not self.option('locked')
 
     def set_locked(self, locked):
         if self.parentWidget() is not None:return False
@@ -132,6 +140,7 @@ class DesktopClock(QWidget):
         if value:
             if not persist:self.dock.cfg[self.kind+'_layout']=value
             elif self.save(clock_layout=value):self._applied_geometry=rect
+            else:return False
 
     def capture_backdrop(self):
         if self.parentWidget() is not None:return
@@ -167,31 +176,47 @@ class DesktopClock(QWidget):
         if self.parentWidget() is None:self.layer();self.refresh_timer.start()
     def hideEvent(self,event):
         self.tick.stop(); self.refresh_timer.stop();self.backdrop=None
+        self.drag=None
         from clock_legibility import clear_cache
         clear_cache()
         super().hideEvent(event)
     def moveEvent(self,event):
         super().moveEvent(event)
-        if not self.loading and self.parentWidget() is None: self.geometry_timer.start(); self.refresh_timer.start()
+        if not self.loading and self.parentWidget() is None and self.drag is None: self.geometry_timer.start(); self.refresh_timer.start()
     def resizeEvent(self,event):
-        super().resizeEvent(event); self.grip.move(self.width()-20,self.height()-20)
-        self.position_flip()
-        if not self.loading and self.parentWidget() is None: self.geometry_timer.start(); self.refresh_timer.start()
+        super().resizeEvent(event)
+        self.place_controls()
+        if not self.loading and self.parentWidget() is None and self.drag is None: self.geometry_timer.start(); self.refresh_timer.start()
     def mousePressEvent(self,event):
-        if event.button()==Qt.LeftButton and self.parentWidget() is None and not self.option('locked'):
-            self.drag_start = self.pos()
-            self.drag = event.globalPos() - self.drag_start
+        if event.button()==Qt.LeftButton and self.can_drag():
+            self.geometry_timer.stop();self.refresh_timer.stop()
+            self.drag=QRect(self.geometry()),event.globalPos(),edges_at(self.rect(),event.pos())
             event.accept()
+        else:super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
-        if self.drag is not None: self.move(event.globalPos()-self.drag); event.accept()
+        if self.drag is None:
+            if self.can_drag():self.setCursor(resize_cursor(edges_at(self.rect(),event.pos())))
+            return
+        original,pointer,edges=self.drag
+        delta=event.globalPos()-pointer
+        if edges:self.setGeometry(resized_rect(original,edges,delta,self.minimum))
+        else:self.move(original.topLeft()+delta)
+        event.accept()
     def mouseReleaseEvent(self,event):
-        if self.drag is not None:
-            self.drag = None
-            if self.pos() != self.drag_start:
+        if self.drag is None or event.button()!=Qt.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        self.mouseMoveEvent(event)
+        original,_,edges=self.drag
+        self.drag=None
+        if self.geometry()!=original:
+            if not edges:
                 from card_snap import finish_drag
-                finish_drag(self, event.globalPos())
-            self.save_geometry()
-            event.accept()
+                finish_drag(self,event.globalPos())
+            if self.save_geometry() is False:self.setGeometry(original)
+        self.geometry_timer.stop();self.refresh_timer.start()
+        self.setCursor(resize_cursor(edges_at(self.rect(),self.mapFromGlobal(event.globalPos()))))
+        event.accept()
     def open_settings(self):
         from usage_stats import record
         record(self.dock,'clock_settings')
@@ -228,22 +253,23 @@ class DesktopClock(QWidget):
     def contextMenuEvent(self,event):
         menu=self.build_menu();menu.exec_(event.globalPos());menu.deleteLater()
 
+    def place_controls(self):
+        self.position_flip()
+
     def position_flip(self):
         if hasattr(self,'flip_button'):
-            self.grip.move(self.width()-20,self.height()-20)
-            self.flip_button.setFixedSize(20,20)
-            self.flip_button.setText('');self.flip_button.setIconSize(QSize(12,12))
             ratio=max(2.0,self.devicePixelRatioF())
-            if getattr(self,'_flip_icon_ratio',None)!=ratio:
+            ink=getattr(self,'_control_ink','#506378')
+            key=(ratio,ink)
+            if getattr(self,'_flip_icon_key',None)!=key:
                 pixmap=QPixmap(round(12*ratio),round(12*ratio));pixmap.setDevicePixelRatio(ratio);pixmap.fill(Qt.transparent)
-                painter=QPainter(pixmap);painter.scale(2,2);painter.setRenderHint(QPainter.Antialiasing);painter.setPen(QPen(QColor('#41617a'),.7,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+                painter=QPainter(pixmap);painter.scale(2,2);painter.setRenderHint(QPainter.Antialiasing);painter.setPen(QPen(QColor(ink),.7,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
                 painter.drawLine(QPointF(.6,3),QPointF(5.4,3))
                 for x,direction in ((.6,1),(5.4,-1)):
                     painter.drawLine(QPointF(x+1.4*direction,1.6),QPointF(x,3));painter.drawLine(QPointF(x,3),QPointF(x+1.4*direction,4.4))
-                painter.end();self.flip_button.setIcon(QIcon(pixmap));self._flip_icon_ratio=ratio
+                painter.end();self.flip_button.setIcon(QIcon(pixmap));self._flip_icon_key=key
 
             self.flip_button.move(self.width()-26,14)
-            self.flip_button.setStyleSheet('QPushButton {background:transparent;color:#41617a;border:0;border-radius:6px;padding:0;font-size:15px;min-width:0;min-height:0;max-width:12px;max-height:12px;} QPushButton:hover {background:transparent;}')
 
     def flip(self):
         if self.kind!='clock' or self.flip_progress is not None:return
@@ -254,14 +280,37 @@ class DesktopClock(QWidget):
         self.flipped=self._flip_to if self.save(clock_flipped=self._flip_to) else self._flip_from
         self.flip_progress=None;self.update_time()
 
+    def draw_options(self,**values):
+        options=dict(self.option('appearance'),**values)
+        if self.parentWidget() is not None:
+            host=self.runtime.resources.window
+            if host is not None and self.window() is host:
+                options.update(host.background,_host_palette=host.colors)
+                options['design']=self.dock.cfg['card_design']
+                if self.dock.cfg['resource_background']=='custom':
+                    options['design']=material_design(options['material'],options['design'])
+        return options
+
+    def paint_face(self,painter,style,**values):
+        ink=draw_clock(painter,QRectF(self.rect()).adjusted(1,1,-1,-1),self.dock,
+                       self.draw_options(**values),style,self.backdrop)
+        painter.end()
+        if ink!=getattr(self,'_control_ink',None):
+            self._control_ink=ink
+            self.place_controls()
+
     def paintEvent(self,event):
         import math
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.SmoothPixmapTransform);painter.setRenderHint(QPainter.TextAntialiasing)
+        self.paint_resize_targets(painter)
         face=getattr(self,'flipped',False)
         if getattr(self,'flip_progress',None) is not None:
             face=self._flip_to if self.flip_progress>=.5 else self._flip_from
             painter.translate(self.width()/2,0);painter.scale(max(.015,abs(math.cos(math.pi*self.flip_progress))),1);painter.translate(-self.width()/2,0)
-        draw_clock(painter,QRectF(self.rect()).adjusted(1,1,-1,-1),self.dock,dict(self.option('appearance'),_header_controls=self.kind=='clock'),'calendar_card' if face else self.option('style'),self.backdrop)
+        self.paint_face(painter,'calendar_card' if face else self.option('style'),_header_controls=self.kind=='clock')
+
+    def paint_resize_targets(self,painter):
+        if self.can_drag():paint_edge_targets(painter,self.rect())
 
     def dispose(self,save_geometry=True):
         if self.closed:return
@@ -311,38 +360,54 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     options=dict(options,**normalize_appearance(options))
     painter.save();painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.TextAntialiasing)
     w,h=rect.width(),rect.height();painter.translate(rect.left(),rect.top());rect=QRectF(0,0,w,h)
-    material=options['material'];colors=material_palette(tint_palette(dock.base_theme_colors(options['theme']),options['color']),material)
-    strength=options['highlight']/45
-    colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)));colors['spec']=min(255,round(colors['spec']*strength))
-    stops=[(position,min(255,round(alpha*strength))) for position,alpha in dock.merged_grad_stops(colors)]
-    shape=QPainterPath();shape.addRoundedRect(rect,min(options['corner_radius'],h*.24),min(options['corner_radius'],h*.24))
-    surface=SimpleNamespace(cfg={'glass':material not in ('clear','solid'),'clear_background':material=='clear' and options['opacity']==0 and options['highlight']==0,'dock_material':material},backdrop=backdrop,spec_x=w*.54,spec_alpha=.24)
-    from card_design import paint_design
-    style_cfg=dict(dock.cfg,theme_color=options['color'] or '#b8d9ef')
-    def paint_surface(target):
-        paint_liquid_glass(surface,target,shape,rect,rect,colors,round(options['opacity']*2.55),stops)
-        paint_design(target,rect,style_cfg,options.get('design'),clear=surface.cfg['clear_background'],corner_radius=min(options['corner_radius'],h*.24),body_top=rect.bottom(),header_separator=False)
-    paint_surface(painter)
+    material=options['material'];host=options.get('_host_palette')
+    design=options['design'] if options['design']!='follow' else dock.cfg.get('card_design','aurora')
+    options['design']=design
+    decorate=material!='solid' or design!='minimal'
+    mode='light' if material!='clear' and decorate and design in ('gradient','paper','minimal') else options['theme']
+    colors=material_palette(tint_palette(dock.base_theme_colors(mode),options['color']),material) if not host else host
+    radius=min(options['corner_radius'],h*.24)
+    shape=QPainterPath()
+    if host:shape.addRect(rect)
+    else:shape.addRoundedRect(rect,radius,radius)
+    paint_surface=None
+    if not host and material!='clear':
+        from card_design import paint_design
+        style_cfg=dict(dock.cfg,theme_color=options['color'] or '#b8d9ef')
+        strength=options['highlight']/45
+        colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)))
+        stops=[(position,min(255,round(alpha*strength))) for position,alpha in dock.merged_grad_stops(colors)]
+        surface=SimpleNamespace(cfg={'glass':material!='solid','dock_material':material},backdrop=backdrop,spec_x=0,spec_alpha=0)
+
+        def paint_surface(target):
+            paint_liquid_glass(surface,target,shape,rect,rect,colors,int(options['opacity']*2.55),stops)
+            if decorate:
+                paint_design(target,rect,style_cfg,design,corner_radius=radius,body_top=rect.bottom(),header_separator=False)
+
+        paint_surface(painter)
     painter.setClipPath(shape)
-    light=colors.get('light',True)
-    ink=QColor(options['text_color'] or ('#f5f7fa' if material=='clear' or not light else '#202428'))
+    light=colors['light']
+    ink=QColor(options['text_color'] or (LIGHT_GLASS_INK if light else '#ffffff'))
     muted=QColor(ink)
     from clock_legibility import surface_map,background_at,readable,contrast,neutral_text
     analysis=None
     samples=[]
     if options['auto_contrast']:
-        surface_keys=('material','theme','color','opacity','highlight','corner_radius','design')
-        key=(w,h,backdrop.cacheKey() if backdrop is not None else 0,colors['light'],style_cfg.get('card_design'),tuple(options[k] for k in surface_keys))
-        # When wallpaper is unavailable, retain the selected transparent-clock ink.
-        fallback=QColor('#1c4268') if material=='clear' else QColor(colors['tint'])
-        analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
-        samples=background_at(analysis,rect,w,h)
-        ink,muted=neutral_text(samples)
+        if host:
+            ink,muted=QColor(host['ink']),QColor(host['muted'])
+            samples=[QColor(host['surface'])]
+        else:
+            surface_keys=('material','color','opacity','highlight','corner_radius')
+            key=(w,h,backdrop.cacheKey() if backdrop is not None else 0,light,design,tuple(options[k] for k in surface_keys))
+            fallback=QColor(colors['tint'])
+            analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
+            samples=background_at(analysis,rect,w,h)
+            ink,muted=neutral_text(samples)
     if options['accent_color']:accent=QColor(options['accent_color'])
     else:
-        hue=QColor(options['color'] or '#62acd4').hslHueF()
+        seed=THEME_ACCENTS.get(theme_family(options),options['color'] or '#62acd4')
+        hue=QColor(seed).hslHueF()
         accent=QColor.fromHslF(hue if hue>=0 else .57,.68,.74 if ink.lightness()>150 else .36)
-        if samples:accent=readable(accent,samples,4.5,polarity=ink.lightness()>150)
     accent_text=readable(accent,samples,4.5,polarity=ink.lightness()>150) if samples else accent
     now=options.get('_now') or datetime.datetime.now();time_text,period=format_clock_time(now,options['hour_format'])
     hour=int(time_text[:2])
@@ -397,6 +462,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     from clock_design import draw
     draw(style,painter,w,h,now,options,ink,muted,accent,text,time_text,period)
     painter.restore()
+    return muted.name()
 
 
 from clock_options import ClockOptions,ClockPreview

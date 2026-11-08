@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QAbstractButton,QFileDialog,QHBoxLayout,QToolButton,
 from background_worker import BackgroundWorker
 from content_sources import BING,download_bing_original,fetch,read_bing,read_feed,read_local_pictures
 from ui_style import label
+from card_design import paint_capsule_card
 
 
 class ContentJob(BackgroundWorker):
@@ -118,11 +119,8 @@ class Headline(QAbstractButton):
         from resource_compact import text
         c=self.owner.colors
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        background=QColor(c['hover'])
-        if self.isDown() or self.underMouse():background=background.darker(106) if c['light'] else background.lighter(115)
-        p.setBrush(background)
-        p.setPen(QPen(QColor(c['muted']),1) if self.hasFocus() else Qt.NoPen)
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(1,1,-1,-1),7,7)
+        paint_capsule_card(p,QRectF(self.rect()),c,'lavender',self.owner.background,radius=7,
+                           active=self.isDown() or self.underMouse(),focused=self.hasFocus())
         text(p,QRectF(10,3,self.width()-37,17),self.entry['title'],c['ink'],12,True)
         text(p,QRectF(10,21,self.width()-37,13),self.metadata,c['muted'],10)
         p.setPen(QPen(QColor(c['muted']),1.3,Qt.SolidLine,Qt.RoundCap))

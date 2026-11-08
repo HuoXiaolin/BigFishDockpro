@@ -2,6 +2,7 @@
 from collections import OrderedDict
 from PyQt5.QtCore import Qt,QRectF
 from PyQt5.QtGui import QColor,QImage,QPainter
+from appearance_presets import LIGHT_GLASS_INK
 
 _surfaces=OrderedDict()
 
@@ -25,7 +26,8 @@ def surface_map(key,width,height,backdrop,fallback,paint):
     p.scale(image.width()/max(1,width),image.height()/max(1,height))
     if backdrop is not None and not backdrop.isNull():
         p.drawPixmap(QRectF(0,0,width,height),backdrop,QRectF(0,0,backdrop.width(),backdrop.height()))
-    paint(p);p.end();_surfaces[key]=image
+    if paint is not None:paint(p)
+    p.end();_surfaces[key]=image
     while len(_surfaces)>4:_surfaces.popitem(last=False)
     return image
 
@@ -48,15 +50,18 @@ def monochrome(backgrounds):
 
 
 def neutral_text(backgrounds):
-    """Choose primary and secondary neutral text roles for the actual surface."""
+    """Use white on dark glass and cool slate on light glass."""
     def score(color):
         values=sorted(contrast(color,bg) for bg in backgrounds)
         return values[len(values)//5] if values else 4.5
-    dark,light=QColor('#202428'),QColor('#f5f7fa')
+    dark,light=QColor(LIGHT_GLASS_INK),QColor('#ffffff')
     primary=max((dark,light),key=score)
-    if score(primary)<4.5:primary=monochrome(backgrounds)
-    secondary=QColor('#c3cad2' if primary.lightness()>150 else '#4c5864')
-    return primary,secondary if score(secondary)>=4.5 else QColor(primary)
+    if score(primary)<4.5:primary=max((QColor('#0d1723'),light),key=score)
+    secondary=QColor('#d8e3ed' if primary.lightness()>150 else '#506378')
+    for amount in (0,.35,.65,1):
+        muted=blend(secondary,primary,amount)
+        if score(muted)>=4.5:return primary,muted
+    return primary,QColor(primary)
 
 
 def readable(color,backgrounds,minimum=4.5,opacity=1.0,polarity=None):
@@ -72,12 +77,13 @@ def readable(color,backgrounds,minimum=4.5,opacity=1.0,polarity=None):
     if not backgrounds:return color
     same_polarity=polarity is None or (color.lightness()>150)==polarity
     if same_polarity and score(color)>=minimum:return color
-    # Blue-black and soft white belong to the same family as the glass theme.
-    goals=(QColor('#132b40'),QColor('#ffffff')) if polarity is None else (QColor('#ffffff' if polarity else '#132b40'),)
+    goals=(QColor('#000000'),QColor('#ffffff')) if polarity is None else (QColor('#ffffff' if polarity else '#000000'),)
     goal=max(goals,key=score)
-    # A short interpolation preserves custom accents without a grey mid-tone.
-    for amount in (.35,.65,.85,1.0):
-        candidate=blend(color,goal,amount)
+    # Changing lightness alone keeps a warm accent from turning muddy on glass.
+    hue,saturation,lightness,alpha=color.getHslF()
+    end=goal.lightnessF()
+    for amount in (.18,.36,.58,.78):
+        candidate=QColor.fromHslF(hue,saturation,lightness+(end-lightness)*amount,alpha)
         if (polarity is None or (candidate.lightness()>150)==polarity) and score(candidate)>=minimum:return candidate
     return goal
 

@@ -137,7 +137,12 @@ def run(api,runtime,root,app,output,checks):
         assert window.grab().save(str(output/'resource-devices.png'))
         window.scroll.verticalScrollBar().setValue(0)
         from PyQt5.QtCore import QSize
-        from PyQt5.QtGui import QColor,QPixmap,QPainter,QLinearGradient
+        from PyQt5.QtGui import QColor,QImage,QPixmap,QPainter,QLinearGradient,QRegion
+        from PyQt5.QtWidgets import QWidget
+        def surface_pixels(card):
+            image=QImage(card.size(),QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+            painter=QPainter(image);card.render(painter,QPoint(),QRegion(),QWidget.DrawChildren);painter.end()
+            return image.pixelColor(5,round(card.height()*.26)),image.pixelColor(card.width()-6,round(card.height()*.79))
         old_style={key:cfg[key] for key in ('panel_theme','panel_material','panel_color','panel_opacity')}
         for mode,base,end,tint in [('light','#d2ebe9','#cad9f4','#739fbd'),('dark','#22314d','#31364c','#4b6178')]:
             cfg.update(panel_theme=mode,panel_material='liquid',panel_color=tint,panel_opacity=42)
@@ -153,6 +158,13 @@ def run(api,runtime,root,app,output,checks):
                 service.display();window.grab()
                 assert capture.call_count==1 and previous==window.glass.image.cacheKey()
                 assert window.colors['light']==(mode=='light')
+            surfaces=[]
+            for card in (window.graph,window.rank_section,window.sensor_columns,window.battery_section):
+                start,end=surface_pixels(card)
+                assert start.alpha()==end.alpha()==204,(mode,card.tone,start.getRgb(),end.getRgb())
+                assert max(abs(a-b) for a,b in zip(start.getRgb()[:3],end.getRgb()[:3]))>=10
+                surfaces.append(start.name())
+            assert len(set(surfaces))==4
             assert image.save(str(output/('resource-'+mode+'.png')))
             if mode=='light':
                 cfg.update(resource_bluetooth=False,resource_cpu_temp=False,resource_cpu_power=False,resource_gpu_temp=False,resource_gpu_power=False,resource_fps=False)
@@ -161,7 +173,10 @@ def run(api,runtime,root,app,output,checks):
                     assert window.grab().save(str(output/'resource-overview.png'))
                 cfg.update(resource_bluetooth=True,resource_cpu_temp=True,resource_cpu_power=True,resource_gpu_temp=True,resource_gpu_power=True,resource_fps=True)
                 window.sync_window();app.processEvents()
-        cfg.update(panel_material='clear');window.sync_window();window.grab();assert window.glass.image is None
+        cfg.update(panel_material='clear',panel_opacity=0);window.sync_window()
+        assert window.grab().save(str(output/'resource-clear-dark.png')) and window.glass.image is None
+        clear,_=surface_pixels(window.graph)
+        assert clear.name()!=surfaces[0] and clear.alpha()==204
         cfg.update(old_style);window.sync_window()
         narrow=window.geometry();window.resize(380,narrow.height());app.processEvents();window.body.activate()
         assert window.graph.geometry().bottom() < window.rank_section.y()
@@ -176,17 +191,31 @@ def run(api,runtime,root,app,output,checks):
         options=ResourceOptions(service);options.show();app.processEvents()
         options.fields['resource_layer'].setCurrentIndex(options.fields['resource_layer'].findData('top'))
         assert options.commit() and cfg['resource_layer']=='top'
+        options.tabs.setCurrentIndex(4)
+        transparency=options.fields['resource_card_transparency']
+        assert transparency.value()==20 and transparency.parentWidget().slider.value()==20
+        transparency.parentWidget().slider.setValue(37)
+        options.tabs.setCurrentIndex(0);options.tabs.setCurrentIndex(4)
+        transparency=options.fields['resource_card_transparency']
+        assert transparency.value()==37 and transparency.parentWidget().slider.value()==37
         source=options.fields['resource_background']
         source.setCurrentIndex(source.findData('custom'))
         field=options.custom_fields['material'];field.setCurrentIndex(field.findData('solid'))
         field=options.custom_fields['theme'];field.setCurrentIndex(field.findData('dark'))
         options.custom_fields['opacity'].setValue(82);options.color.setText('#263847')
         assert options.commit() and window.background['material']=='solid' and window.background['color']=='#263847'
+        assert cfg['resource_card_transparency']==37==api.load_config()['resource_card_transparency']
+        assert normalize(cfg,api)['resource_card_transparency']==37
+        assert surface_pixels(window.graph)[0].alpha()==161
         stored=cfg['resource_appearance'].copy();assert normalize(cfg,api)['resource_appearance']==stored
         service.set_options(panel_color='#f18899');assert window.background==stored
         source.setCurrentIndex(source.findData('global'));assert options.commit() and window.background['color']=='#f18899'
         source.setCurrentIndex(source.findData('custom'));assert options.commit() and window.background==stored
         options.reject()
+        for value,alpha in ((100,0),(0,255),(20,204)):
+            assert service.set_options(resource_card_transparency=value)
+            assert surface_pixels(window.graph)[0].alpha()==alpha
+        checks.append('Capsule card transparency defaults to 20%, persists slider changes across tabs and reload, and renders both end values.')
         assert service.set_options(resource_collapsed=True,resource_fold='pill',resource_auto_hide=False)
         assert service.active_keys()=={'cpu','network','memory','gpu','traffic'}
         seen=time.monotonic()

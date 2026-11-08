@@ -2,6 +2,7 @@
 import math,calendar,datetime
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QPen,QFont,QLinearGradient
+from clock_appearance import theme_family
 from clock_faces import next_countdown,orbit_items
 from work_schedule import day_info
 
@@ -11,11 +12,11 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
     wide=o['layout']=='wide' or (o['layout']=='auto' and w>=h*1.4)
     compact=w<230 or h<145
     weekdays='一二三四五六日';date='%d月%d日'% (now.month,now.day);weekday='星期'+weekdays[now.weekday()]
-    from appearance_presets import THEME_RINGS,THEME_ACCENTS,PROGRESS_COLORS,VIVID_BLUE,VIVID_GREEN,VIVID_RED
-    family=o.get('material') if o.get('material') in THEME_RINGS else o.get('design')
-    dopamine=family in THEME_RINGS and o.get('accent_color','') in ('',THEME_ACCENTS.get(family))
-    progress_colors=((VIVID_BLUE,'#416fca'),(VIVID_GREEN,'#35b56a'),(VIVID_RED,'#e35260')) if family=='vivid' else PROGRESS_COLORS
-    ring_colors=tuple(QColor(value) for value in THEME_RINGS[family]) if dopamine else (accent.lighter(120),accent)
+    from appearance_presets import THEME_GRADIENTS,PROGRESS_COLORS,VIVID_BLUE,VIVID_GREEN
+    family=theme_family(o)
+    theme_accent=family in THEME_GRADIENTS and not o['accent_color']
+    progress_colors=((VIVID_BLUE,'#416fca'),(VIVID_GREEN,'#35b56a'),('#a597f2','#8170d9')) if family=='vivid' else PROGRESS_COLORS
+    ring_colors=tuple(QColor(value) for value in THEME_GRADIENTS[family]) if theme_accent else (accent.lighter(120),accent)
     def wash(box,alpha=20,r=12,color=accent):
         c=QColor(color);c.setAlpha(alpha);p.setPen(Qt.NoPen);p.setBrush(c);p.drawRoundedRect(box,r,r)
     def label(box,value,size=12,color=muted,weight=QFont.Medium,align=Qt.AlignLeft|Qt.AlignVCenter):
@@ -27,7 +28,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         size=max(size,12*min(1.35,max(.8,min(w/420,h/260))))
         return text(box,value,size,color,weight,align)
     def bar(box,ratio,period_index=None):
-        pair=tuple(QColor(v) for v in progress_colors[period_index%3]) if dopamine and period_index is not None else ring_colors
+        pair=tuple(QColor(v) for v in progress_colors[period_index%3]) if theme_accent and period_index is not None else ring_colors
         wash(box,48,box.height()/2,pair[1])
         if ratio and ratio>0:
             gradient=QLinearGradient(box.topLeft(),box.topRight());gradient.setColorAt(0,pair[0]);gradient.setColorAt(1,pair[1])
@@ -109,7 +110,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             if lunar:
                 label(QRectF(box.x(),top+height*.54,box.width(),height*.20),lunar[:3],min(12,cell*.29),muted,align=Qt.AlignCenter)
             if holiday:
-                label(QRectF(box.x(),top+height*(.75 if lunar else .57),box.width(),height*.21),holiday[:3],min(12,cell*.29),accent,align=Qt.AlignCenter)
+                label(QRectF(box.x(),top+height*(.75 if lunar else .57),box.width(),height*.21),holiday[:3],min(12,cell*.29),muted if o['auto_contrast'] else accent,align=Qt.AlignCenter)
         if countdown:
             label(QRectF(m,h-m-foot,span,foot),countdown,min(14,foot*.78),muted,QFont.DemiBold)
     elif style=='orbit':
@@ -174,7 +175,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         title_width = w - m - 122 if standalone else w*.60 - m
         title = '%d年%d月' % (year, month)
         label(QRectF(m,title_top,max(1,title_width),title_h),title,min(22,h*.075,w*.064),ink,QFont.DemiBold)
-        if not standalone:label(QRectF(w*.62,title_top,w*.38-m,title_h),(period+' ' if period else '')+time_text,min(24,h*.095)*scale,accent,QFont.Bold,Qt.AlignRight|Qt.AlignVCenter)
+        if not standalone:label(QRectF(w*.62,title_top,w*.38-m,title_h),(period+' ' if period else '')+time_text,min(24,h*.095)*scale,ink if o['auto_contrast'] else accent,QFont.Bold,Qt.AlignRight|Qt.AlignVCenter)
         from calendar_details import info as calendar_info
         weeks=len(calendar.monthcalendar(year,month));weekday_h=min(22,max(15,h*.06));footer=max(14,min(22,h*.06));header_top=title_top+title_h+4
         cw=(w-2*m)/7;ch=(h-footer-m*.25-header_top-weekday_h)/weeks
@@ -183,7 +184,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         detail_row = (o['show_lunar'] or o['show_holidays']) and ch >= 25 and cw >= 26
         detail_height=max(10,min(14,ch*.36))
         marker_space=4 if o['show_holidays'] else 1
-        for i in range(7):label(QRectF(m+i*cw,header_top,cw,weekday_h),weekdays[i],min(13,weekday_h*.65),accent if i>=5 else muted,align=Qt.AlignCenter)
+        for i in range(7):label(QRectF(m+i*cw,header_top,cw,weekday_h),weekdays[i],min(13,weekday_h*.65),muted if o['auto_contrast'] or i<5 else accent,align=Qt.AlignCenter)
         first=datetime.date(year,month,1);first-=datetime.timedelta(days=first.weekday())
         for i in range(weeks*7):
             try:day=first+datetime.timedelta(days=i)
@@ -203,7 +204,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
                   QFont.Bold if current else o['font_weight'],Qt.AlignCenter)
             if detail_row and subtitle:
                 label(QRectF(box.x()+2,box.y()+day_height,cw-4,detail_height),
-                      subtitle,min(12,detail_height*.95),accent if marked else muted,QFont.Medium,Qt.AlignCenter)
+                      subtitle,min(12,detail_height*.95),accent if marked and not o['auto_contrast'] else muted,QFont.Medium,Qt.AlignCenter)
             if marked:
                 mark=QColor(accent);mark.setAlpha(230);p.setPen(Qt.NoPen);p.setBrush(mark);p.drawEllipse(QPointF(box.center().x(),box.bottom()-2),1.35,1.35)
             p.restore()

@@ -141,8 +141,12 @@ class ResourceContentHost(QWidget):
         self.init_style()
 
     def sync_palette(self):
+        previous=getattr(self,'background',None)
         self.background=background(self.service.cfg)
+        if self.dashboard is not None and previous!=self.background:self.dashboard.update()
         colors=palette_for(self.service,self.background)
+        if colors['light']:colors['muted']='#415266'
+        colors['card_alpha']=round(255*(100-self.service.cfg['resource_card_transparency'])/100)
         if colors==self.colors:
             return False
         self.colors=colors
@@ -186,7 +190,7 @@ class ResourceContentHost(QWidget):
         self.dashboard_layout_key = None
         self.graph=MetricDisplay(self)
         self.graph.setParent(self.dashboard)
-        self.rank_section=DashboardCard(self,'#a39acb',self.dashboard)
+        self.rank_section=DashboardCard(self,'lavender',self.dashboard)
         rank_body=QVBoxLayout(self.rank_section)
         rank_body.setContentsMargins(9,6,9,7);rank_body.setSpacing(3)
         self.rank_head=QWidget();head=QHBoxLayout(self.rank_head)
@@ -218,7 +222,7 @@ class ResourceContentHost(QWidget):
         row.setSpacing(5);title=QLabel('蓝牙电量');title.setObjectName('RankTitle');row.addWidget(title,1)
         self.bt_page=QToolButton();self.bt_page.clicked.connect(self.next_devices);row.addWidget(self.bt_page)
         self.bt_refresh=QToolButton();self.bt_refresh.setText('刷新');self.bt_refresh.clicked.connect(self.refresh_bt);row.addWidget(self.bt_refresh)
-        self.battery_section=DashboardCard(self,'#6caaa5',self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
+        self.battery_section=DashboardCard(self,'mint',self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
         battery_layout.setContentsMargins(9,6,9,7);battery_layout.setSpacing(0)
         battery_layout.addWidget(self.bt_head);self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
         battery_layout.addStretch()
@@ -466,7 +470,9 @@ class ResourceWindow(ResourceContentHost):
     def sync_window(self):
         self.liquid.prepare()
         cfg=self.service.cfg
-        if self.sync_palette():
+        previous=getattr(self,'background',None)
+        palette_changed=self.sync_palette()
+        if palette_changed:
             self.settings_button.setIcon(icon('settings',self.colors['ink']));self.fold_button.setIcon(icon('collapse',self.colors['ink']))
             for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
         compact = self.service.compact
@@ -485,6 +491,8 @@ class ResourceWindow(ResourceContentHost):
             for mark,*_ in self.rank_labels:mark.clear()
         if cfg['resource_expand_mode']!='hover' or passthrough_enabled(cfg,'resource'):self.enter_timer.stop()
         self.reposition();self.refresh();self.sync_animation()
+        if (palette_changed or previous!=self.background) and not compact and self.page_key in DESKTOP_COMPONENTS:
+            self.service.runtime.sync_hosted_component(self.page_key)
         self.sync_auto_fold()
         if opening and self.page_key:
             self.nav.ensureWidgetVisible(self.page_buttons[self.page_key], 0, 0)

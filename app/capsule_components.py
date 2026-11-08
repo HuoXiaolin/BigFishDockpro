@@ -1,5 +1,6 @@
 """The active capsule tab mounts the same native component used on the desktop."""
 from PyQt5.QtWidgets import QWidget, QVBoxLayout
+from resource_charts import DashboardCard
 from resource_pages import CapsuleScrollArea
 from ui_style import ModernComboBox
 
@@ -23,7 +24,7 @@ class CapsuleComponentView(CapsuleScrollArea):
             self.picker.setProperty('glassField',True)
             self.picker.currentIndexChanged.connect(self.selection_changed)
             layout.addWidget(self.picker)
-        self.host=QWidget()
+        self.host=DashboardCard(window,'sky' if key=='clock' else 'lavender') if key in ('clock','calendar') else QWidget()
         slot=QVBoxLayout(self.host)
         slot.setContentsMargins(0,0,0,0)
         layout.addWidget(self.host)

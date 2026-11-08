@@ -7,6 +7,7 @@ from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPe
 from PyQt5.QtWidgets import QWidget, QSizePolicy
 
 from flash_view import blend
+from card_design import paint_capsule_card
 from resource_options import TINTS
 from resource_status import metric_ink,threshold
 
@@ -27,6 +28,11 @@ def metric_colors(service):
         return dict(cpu='#5b8def', memory='#41bf76', network='#20b9c4', gpu='#ff6e89')
     accent = cfg['panel_color'] or cfg.get('theme_color') or TINTS['cpu']
     return {key:blend(rgb,accent,.12).name() for key,rgb in TINTS.items()}
+
+
+def reading_ink(service,key,colors,fallback):
+    ink=metric_ink(service,key,colors['light'],fallback)
+    return QColor(ink).darker(121) if colors['light'] and ink!=fallback else ink
 
 
 def text(p, area, label, ink, size=11, weight=QFont.Normal, align=Qt.AlignLeft):
@@ -95,15 +101,6 @@ def trend(p, box, values, now, ink, ceiling):
     p.drawEllipse(points[-1],2,2)
 
 
-def paint_card_surface(p,rect,colors,tint):
-    surface=blend(colors['surface'],tint,.11 if colors['light'] else .16)
-    surface.setAlpha(236)
-    edge=QColor(colors['ink'])
-    edge.setAlpha(25 if colors['light'] else 44)
-    p.setPen(QPen(edge,1));p.setBrush(surface)
-    p.drawRoundedRect(rect.adjusted(.5,.5,-.5,-.5),9,9)
-
-
 def sync_card_controls(widget,colors):
     ink,muted=colors['ink'],colors['muted']
     if widget.property('cardInk')==ink:return
@@ -119,13 +116,13 @@ def sync_card_controls(widget,colors):
 
 
 class DashboardCard(QWidget):
-    def __init__(self,window,tint,parent=None):
+    def __init__(self,window,tone,parent=None):
         super().__init__(parent)
         self.owner=window
-        self.tint=tint
+        self.tone=tone
 
     def paint_surface(self,p):
-        paint_card_surface(p,QRectF(self.rect()),self.owner.colors,self.tint)
+        paint_capsule_card(p,QRectF(self.rect()),self.owner.colors,self.tone,self.owner.background)
 
     def paintEvent(self,event):
         if not self.owner.colors:return
@@ -139,7 +136,7 @@ class MetricDisplay(DashboardCard):
     load_height = 71
 
     def __init__(self, window):
-        super().__init__(window,'#74acd4')
+        super().__init__(window,'sky')
         self.rows = {}
         self.basic = ()
         self.extras = ()
@@ -203,7 +200,7 @@ class MetricDisplay(DashboardCard):
         cfg = self.owner.colors
         service = self.owner.service
         inks = metric_colors(service)
-        inks={key:metric_ink(service,key,cfg['light'],ink) for key,ink in inks.items()}
+        inks={key:reading_ink(service,key,cfg,ink) for key,ink in inks.items()}
         track = QColor(cfg['ink'])
         track.setAlpha(26 if cfg['light'] else 39)
         w = self.width()-2*self.inset
@@ -257,7 +254,7 @@ class MetricDisplay(DashboardCard):
             area = QRectF(x+1,top,w/2-5,22)
             text(p,area,label,cfg['muted'],10)
             label_width=p.fontMetrics().horizontalAdvance(label)+6
-            text(p,area.adjusted(label_width,0,0,0),value,metric_ink(service,key,cfg['light'],cfg['ink']),11,QFont.DemiBold)
+            text(p,area.adjusted(label_width,0,0,0),value,reading_ink(service,key,cfg,cfg['ink']),11,QFont.DemiBold)
 
 
 class SensorColumns(DashboardCard):
@@ -269,7 +266,7 @@ class SensorColumns(DashboardCard):
     inset = 9
 
     def __init__(self,window):
-        super().__init__(window,'#8e9db4');self.groups=[];self.headings=[];self.cells=[]
+        super().__init__(window,'peach');self.groups=[];self.headings=[];self.cells=[]
         self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
     def refresh(self,rows):
         self.groups=[]
@@ -324,5 +321,5 @@ class SensorColumns(DashboardCard):
             text(p,area,title,c['ink'],12,QFont.DemiBold)
         for key, label, value, label_area, value_area in self.cells:
             text(p,label_area,label,c['muted'],11)
-            ink = c['muted'] if value == '—' else metric_ink(self.owner.service,key,c['light'],c['ink'])
+            ink = c['muted'] if value == '—' else reading_ink(self.owner.service,key,c,c['ink'])
             text(p,value_area,value,ink,11,QFont.DemiBold,Qt.AlignRight)

@@ -3,15 +3,15 @@ import math
 from datetime import timedelta
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QLinearGradient,QRadialGradient,QPainterPath,QPen
-from card_design import blend
+from card_design import SOFT_SURFACES,blend
 
 
-FORECAST_TONES=(('#e7e8f8','#4d5695'),('#31364f','#b7c2ff'))
-AIR_SURFACES=('#dceee5','#233e36')
+FORECAST_TONES=tuple(zip(SOFT_SURFACES['lavender'],('#4d5695','#b7c2ff')))
+AIR_SURFACES=SOFT_SURFACES['mint']
 SUN_TONES={
     'dawn':(('#ffd7b8','#8c411b'),('#553628','#ffc69c')),
-    'day':(('#f9e7dc','#844f35'),('#443631','#f1bf9f')),
-    'dusk':(('#eac9dd','#803b67'),('#503249','#fac0e2')),
+    'day':tuple(zip(SOFT_SURFACES['peach'],('#844f35','#f1bf9f'))),
+    'dusk':tuple(zip(SOFT_SURFACES['rose'],('#803b67','#fac0e2'))),
     'night':(('#c3d3f1','#324878'),('#243454','#c0d2ff')),
 }
 
@@ -36,8 +36,13 @@ def solar_tone(now,sunrise,sunset,light):
     return '夜间',*night
 
 
-def paint_card(p,rect,surface):
-    p.setPen(Qt.NoPen);p.setBrush(QColor(surface));p.drawRoundedRect(rect,9,9)
+def paint_card(p,rect,surface,opacity):
+    color=QColor(surface)
+    gradient=QLinearGradient(rect.topLeft(),rect.bottomRight())
+    for stop,tint in ((0,color.lighter(105)),(1,color)):
+        tint.setAlpha(opacity)
+        gradient.setColorAt(stop,tint)
+    p.setPen(Qt.NoPen);p.setBrush(gradient);p.drawRoundedRect(rect,9,9)
 
 
 def weather_kind(row):
@@ -60,7 +65,7 @@ def weather_accent(row,light):
     return QColor('#216d98' if light else '#a1d8f4')
 
 
-def paint_weather(p,rect,row,light,fallback):
+def paint_weather(p,rect,row,light,fallback,opacity=255):
     kind=weather_kind(row)
     palettes={
         'sun':(('#fff5df','#f5dda5'),('#3b3429','#625337')),
@@ -74,8 +79,10 @@ def paint_weather(p,rect,row,light,fallback):
     colors=palettes.get(kind)
     if colors:
         a,b=map(QColor,colors[0 if light else 1])
+        a.setAlpha(opacity);b.setAlpha(opacity)
         gradient=QLinearGradient(rect.topLeft(),rect.bottomRight());gradient.setColorAt(0,a);gradient.setColorAt(1,b);p.fillPath(shape,gradient)
-    else:p.fillPath(shape,QColor(fallback))
+    else:
+        fill=QColor(fallback);fill.setAlpha(opacity);p.fillPath(shape,fill)
     # Decoration occupies the trailing portion, leaving a quiet area for text.
     x=rect.right()-29;y=rect.top()+22;accent=QColor('#fffaf0' if light else '#b8d5e8')
     def cloud(cx,cy):
