@@ -990,6 +990,9 @@ class Dock(QWidget):
                 for panel in runtime.panels.windows.values(): panel.apply_options()
                 if runtime.resources.window:runtime.resources.window.sync_window()
                 if runtime.flash.edge:runtime.flash.sync()
+                if runtime.spectrum:runtime.spectrum.update()
+                if runtime.daily_picture:runtime.daily_picture.update()
+                if runtime.custom_cards:runtime.custom_cards.redraw()
 
     # ---------------- 尺寸与布局 ----------------
     def _ui_mult(self):
@@ -2442,7 +2445,8 @@ class DockTray(QSystemTrayIcon):
         self.dock = dock
         self.cfg = dock.cfg
         set_lang(self.cfg.get("lang", "zh"))     # 按配置设好界面语言
-        self.menu = QMenu()
+        from tray_menu import TrayContextMenu
+        self.menu = TrayContextMenu()
         self.setContextMenu(self.menu)
         self.menu.aboutToShow.connect(self.rebuild)
         self.activated.connect(self._activated)
@@ -2833,7 +2837,7 @@ def main():
             dock.show()
             dock.start_backdrop()
         from runtime_controller import RuntimeController
-        tray.runtime = RuntimeController(dock, tray, sys.modules[__name__])
+        tray.runtime = RuntimeController(dock, tray, sys.modules[__name__], from_logon='--autostart' in args)
         dock.winId()  # A hidden instance still needs its settings-wake HWND.
         state.update(dock=dock, tray=tray, runtime=tray.runtime)
         if not probe and cfg.get('autostart') and '--scheduled-startup' not in args:

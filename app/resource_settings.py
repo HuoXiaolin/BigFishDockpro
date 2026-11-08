@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QWidget,QDialog,QTabWidget,QFrame,QLabel,QPushButto
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,QAbstractItemView)
 from appearance_presets import COLOR_MODES,material_choices
 from resource_options import METRICS,TINTS,TASK_METRICS,COMPACT_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
+from resource_options import CAPSULE_PAGES,PLACED_COMPONENTS,component_location
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
@@ -32,6 +33,7 @@ class ResourceOptions(QDialog):
         3: ('ai_fields',),
         4: ('custom_fields',),
         5: ('limit_fields',),
+        8: ('location_fields',),
     }
     field_pages=[
         {'resource_'+key for key in METRICS}|{'resource_enabled','resource_auto_hide','resource_bt_tray','resource_hide_unavailable','resource_layer','resource_fold','resource_interval','resource_delay','resource_open_page','resource_click_through'},
@@ -40,7 +42,7 @@ class ResourceOptions(QDialog):
         {'resource_ai','resource_ai_tray','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_threshold','resource_background','resource_palette'},set(),
         {'resource_edge_snap','resource_liquid','resource_face','resource_face_interactive','resource_live_glass','resource_expand_mode','resource_face_mood','resource_face_scale'},
-        {'resource_weather','resource_weather_compact','resource_weather_days'}]
+        {'resource_weather','resource_weather_compact','resource_weather_days','resource_air_source','resource_news'},set()]
 
     def ensure_page(self,index):
         if index in self.loaded:return
@@ -64,6 +66,7 @@ class ResourceOptions(QDialog):
                 self.color.setText(draft['text'])
             elif index == 7:
                 self.weather_cities.setText(draft['text'])
+                self.news_feeds.setPlainText(draft['feeds'])
         root = self.tabs.widget(index)
         for form in root.findChildren(QFormLayout):
             form.setRowWrapPolicy(QFormLayout.WrapLongRows)
@@ -90,6 +93,8 @@ class ResourceOptions(QDialog):
         text = self.color.text() if index == 4 else self.weather_cities.text() if index == 7 else ''
         scroll = self.tabs.widget(index).findChild(QScrollArea).verticalScrollBar().value()
         self.drafts[index] = dict(stores=stores, text=text, scroll=scroll)
+        if index == 7:
+            self.drafts[index]['feeds'] = self.news_feeds.toPlainText()
 
     def show_page(self, index):
         for previous in tuple(self.loaded):
@@ -105,6 +110,7 @@ class ResourceOptions(QDialog):
                 self.swatches = {}
             elif previous == 7:
                 self.weather_cities = None
+                self.news_feeds = None
             self.loaded.remove(previous)
             scroll = self.tabs.widget(previous).layout().takeAt(0).widget()
             scroll.hide()
@@ -122,7 +128,7 @@ class ResourceOptions(QDialog):
         self.loaded=set();self.fields=OptionFields(self);self.tints=dict(cfg['resource_tints'])
         self.drafts = {}
         self.orders = {}
-        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('pinned_fields',2),('ai_fields',3),('limit_fields',5)]:
+        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('pinned_fields',2),('ai_fields',3),('limit_fields',5),('location_fields',8)]:
             setattr(self,name,PageFields(self,index))
         from copy import deepcopy
         self.baseline = {key: deepcopy(value) if key.startswith('resource_') else value for key, value in cfg.items()
@@ -130,7 +136,7 @@ class ResourceOptions(QDialog):
         box=QVBoxLayout(self);box.addWidget(SettingsHeader(self,'资源胶囊设置'))
         self.tabs=QTabWidget();box.addWidget(self.tabs,1)
         pages={}
-        for name in ('桌面监控','任务栏监控','收起显示','AI 与音乐','背景与配色','阈值上限','液态与表情','天气'):
+        for name in ('桌面监控','任务栏监控','收起显示','AI 与音乐','背景与配色','阈值上限','液态与表情','天气与内容','组件布局'):
             pages[name]=QWidget();self.tabs.addTab(pages[name],name)
         def page(name):
             scroll=QScrollArea();scroll.setFrameShape(QFrame.NoFrame);scroll.setWidgetResizable(True)
@@ -287,25 +293,45 @@ class ResourceOptions(QDialog):
             hint.setWordWrap(True);interaction.addWidget(hint);interaction.addStretch()
 
         def build_7():
-            daily=page('天气')
+            daily=page('天气与内容')
             for key,title in [('resource_weather','显示天气'),('resource_weather_compact','天气加入收起读数')]:
                 self.fields[key]=check(title,cfg[key]);daily.addWidget(self.fields[key])
             daily.addWidget(QLabel('天气城市（最多 6 个，以逗号分隔）'))
             self.weather_cities=QLineEdit('，'.join(cfg['resource_weather_cities']));self.weather_cities.setAccessibleName('天气城市');daily.addWidget(self.weather_cities)
             weather_form=QFormLayout();daily.addLayout(weather_form)
             combo(weather_form,'resource_weather_days','天气范围',[('昨天、今天、明天',3),('未来一周（今天起 7 天）',7),('仅今天',1),('今天、明天',2),('今天起 4 天',4),('今天起 5 天',5),('今天起 6 天',6)],cfg['resource_weather_days'],self.fields)
+            combo(weather_form,'resource_air_source','空气质量来源',[('Open-Meteo 自动','auto'),('CAMS 全球小时数据','cams'),('和风天气','qweather')],cfg['resource_air_source'],self.fields)
+            from weather_connection import edit_connection
+            daily.addWidget(button('和风天气连接…',lambda:edit_connection(self,self.service)))
             hint=QLabel('默认天津、乌鲁木齐、沈阳。天气联网获取。')
-            hint.setWordWrap(True);daily.addWidget(hint);daily.addStretch()
+            hint.setWordWrap(True);daily.addWidget(hint)
+            self.fields['resource_news']=check('显示新闻订阅',cfg['resource_news']);daily.addWidget(self.fields['resource_news'])
+            daily.addWidget(QLabel('RSS / Atom 订阅链接（每行一个，最多 5 个）'))
+            from PyQt5.QtWidgets import QPlainTextEdit
+            self.news_feeds=QPlainTextEdit('\n'.join(cfg['resource_news_feeds']))
+            self.news_feeds.setAccessibleName('新闻订阅链接')
+            self.news_feeds.setFixedHeight(82)
+            daily.addWidget(self.news_feeds);daily.addStretch()
 
-        self.builders=[build_0,build_1,build_2,build_3,build_4,build_5,build_6,build_7]
+        def build_8():
+            layout=page('组件布局')
+            layout.addWidget(button('调整胶囊栏目顺序…',lambda:self.edit_order('resource_component_order',CAPSULE_PAGES)))
+            hint=QLabel('已开启的组件可选择显示在胶囊或独立桌面卡片中。应用收纳卡片独立管理。')
+            hint.setWordWrap(True);layout.addWidget(hint)
+            form=QFormLayout();layout.addLayout(form)
+            for key,title in PLACED_COMPONENTS.items():
+                combo(form,key,title,[('收入资源胶囊','capsule'),('独立桌面卡片','desktop')],
+                      component_location(cfg,key),self.location_fields)
+            layout.addStretch()
+
+        self.builders=[build_0,build_1,build_2,build_3,build_4,build_5,build_6,build_7,build_8]
         self.tabs.currentChanged.connect(self.show_page)
         self.ensure_page(0)
 
         footer=QHBoxLayout();self.status=QLabel();self.status.setWordWrap(True);footer.addWidget(self.status,1)
         footer.addWidget(button('关闭',self.reject));footer.addWidget(button('保存设置',self.commit,'primary'));box.addLayout(footer)
         from ui_style import compact_dialog
-        from settings_layout import fit_auxiliary_dialog
-        compact_dialog(self);fit_auxiliary_dialog(self,cfg)
+        compact_dialog(self)
 
     def install_driver(self):
         from pawnio_setup import launch
@@ -381,10 +407,18 @@ class ResourceOptions(QDialog):
         changes = dict(self.orders)
         for draft in self.drafts.values():
             changes.update(draft['stores']['fields'])
+        if 8 in self.drafts:
+            locations=dict(self.service.cfg['resource_component_locations'])
+            for key,value in self.drafts[8]['stores']['location_fields'].items():
+                if value!=component_location(self.baseline,key):locations[key]=value
+            changes['resource_component_locations']=locations
         if 7 in self.drafts:
             import re
             from resource_weather import clean_cities
-            try:changes['resource_weather_cities']=clean_cities([s.strip() for s in re.split('[,，;；]',self.drafts[7]['text']) if s.strip()],True)
+            from content_sources import clean_feeds
+            try:
+                changes['resource_weather_cities']=clean_cities([s.strip() for s in re.split('[,，;；]',self.drafts[7]['text']) if s.strip()],True)
+                changes['resource_news_feeds']=clean_feeds(self.drafts[7]['feeds'].split(),True)
             except ValueError as error:self.status.setText(str(error));return False
         for index,key,name in [(1,'resource_task_metrics','task_fields'),(1,'resource_task_media_parts','task_media_fields'),
                                (2,'resource_compact_metrics','compact_fields'),(2,'resource_compact_pinned','pinned_fields'),

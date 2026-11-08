@@ -3,7 +3,7 @@ import copy
 import uuid
 from screen_layout import normalize_layout,valid_record
 from fold_options import normalize as normalize_fold
-TOP=('dock_visible','panels_visible','panel_enabled','notes_enabled','notes_visible','clock_enabled','calendar_enabled','merged_panels',
+TOP=('dock_visible','panels_visible','panel_enabled','notes_enabled','notes_visible','clock_enabled','calendar_enabled','spectrum_enabled','merged_panels',
      'merged_active','merged_geometry','merged_collapsed','merged_compact','position','custom_bottom','bottom_margin','icon_size','dock_page','disabled_categories')
 PANEL=('geometry','enabled','merged','merge_group','collapsed','compact','fold')
 NOTE=('geometry','layout','visible','collapsed','fold')
@@ -24,6 +24,7 @@ def snapshot(cfg):
     return {'values':{k:copy.deepcopy(cfg[k]) for k in TOP if k in cfg},
             'display_layout':copy.deepcopy(cfg.get('display_layout',{})),
             'clock_layout':copy.deepcopy(cfg.get('clock_layout',{})), 'calendar_layout':copy.deepcopy(cfg.get('calendar_layout',{})),
+            'spectrum_layout':copy.deepcopy(cfg.get('spectrum_layout',{})),
             'panels':panels,
             'groups':groups,
             'panel_order':[p['id'] for p in cfg.get('desktop_panels',[])],
@@ -51,7 +52,7 @@ def clean_snapshot(value):
             lo,hi={'custom_bottom':(0,2000),'bottom_margin':(0,200),'icon_size':(20,256),'dock_page':(0,4096)}[k]
             if type(v) is int and lo<=v<=hi:result['values'][k]=v
         elif type(v) is bool:result['values'][k]=v
-    for k in ('clock_layout','calendar_layout'):result[k]=valid_record(value.get(k))
+    for k in ('clock_layout','calendar_layout','spectrum_layout'):result[k]=valid_record(value.get(k))
     result['display_layout']=normalize_layout(value.get('display_layout'))
     for section,fields,limit in (('panels',PANEL,256),('notes',NOTE,64)):
         result[section]={};rows=value.get(section,{})
@@ -92,7 +93,7 @@ def apply(cfg,profile):
     data=clean_snapshot(profile['layout'])
     if data is None:raise ValueError('布局方案无效')
     result=copy.deepcopy(cfg);result.update(data['values'])
-    for k in ('clock_layout','calendar_layout'):
+    for k in ('clock_layout','calendar_layout','spectrum_layout'):
         if data[k]:result[k]=copy.deepcopy(data[k])
     layout=copy.deepcopy(result.get('display_layout',{}));saved=data['display_layout']
     for key in ('dock','merged'):

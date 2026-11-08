@@ -106,7 +106,14 @@ class QuickTile(QPushButton):
         if self.popup.move_action(key,self.key):event.setDropAction(Qt.MoveAction);event.accept()
         else:event.ignore()
     def contextMenuEvent(self,event):
-        if not self.popup.editing:return
+        if not self.popup.editing:
+            if self.key=='clock':
+                runtime=getattr(self.popup.dock.tray,'runtime',None)
+                clock=getattr(runtime,'clock',None)
+                if clock:
+                    self.popup.close()
+                    clock.open_progress()
+            return
         from ui_style import AlignedMenu
         menu=AlignedMenu(self);order=self.popup.order();page=order.index(self.key)//9
         previous=menu.addAction('移到上一页');previous.setEnabled(page>0);previous.triggered.connect(lambda:self.popup.move_to_page(self.key,page-1))
@@ -259,6 +266,7 @@ class DockQuickSettings(QDialog):
                 'search':'应用 / 文件 / 便签','undo':'暂无可撤销',
                 'layouts':'保存 / 切换布局','references':'检查 / 重新定位'}
         values['taskbar_monitor']='已开启' if cfg['resource_taskbar'] else '已关闭'
+        self.tiles['clock'].setToolTip('左键开关时钟，右键设置时光进度与倒计时')
         values['resources']='已开启' if cfg['resource_enabled'] else '已关闭'
         self.tiles['resources'].setToolTip('切换桌面资源胶囊')
         values['flash']='已开启' if cfg['flash_enabled'] else '已关闭'

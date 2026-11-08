@@ -10,13 +10,14 @@ def run(output):
     from run_isolated_test import assert_isolated
     assert_isolated()
     import dock as api
-    from PyQt5.QtWidgets import QApplication,QLabel,QSlider
+    from PyQt5.QtWidgets import QApplication,QLabel,QScrollArea,QSlider
     from PyQt5.QtCore import QCoreApplication,QEvent
     from ui_style import apply_theme,shutdown_ui
     from runtime_controller import RuntimeController
     from batch_import import BatchImporter,BatchDialog
     from settings_dialog import SettingsDialog
     from settings_design import ResponsiveFields,NumericControl
+    from resource_settings import ResourceOptions
     from clock_options import ClockOptions
     from card_sizing import CardSizingDialog
     from panel_management import PanelDefinition
@@ -35,14 +36,31 @@ def run(output):
             runtime=tray.runtime=RuntimeController(dock,tray,api)
             main=SettingsDialog(tray,api);main.reveal();settle(app)
             assert main.property('designPopup') and main.fields['icon_size'].window() is main
-            for name in ('small','medium'):
+            for name,body_size in (('small',10),('medium',11)):
                 main.size_mode.setCurrentIndex(main.size_mode.findData(name));settle(app)
+                for index in range(main.tabs.count()):
+                    main.tabs.setCurrentIndex(index);settle(app)
+                    scroll=main.tabs.pages.currentWidget()
+                    page=scroll.widget()
+                    assert page.width()<=scroll.viewport().width()+2,(name,index)
+                    fields=[w for w in page.findChildren(QLabel) if w.property('role')=='field-label']
+                    assert all(w.font().pixelSize()==body_size for w in fields),(name,index)
                 main.tabs.setCurrentIndex(0);settle(app)
                 main.grab().save(str(output/f'settings-{name}.png'))
                 for grid in main.findChildren(ResponsiveFields):
                     if grid.isVisible():
                         for widget,_ in grid.cells:
                             assert widget.geometry().right()<=grid.width()+2,(name,widget.geometry().getRect(),grid.width())
+                cfg['settings_size']=name
+                capsule_options=ResourceOptions(runtime.resources);capsule_options.show();settle(app)
+                assert capsule_options.property('interfaceScale')==main.property('interfaceScale')
+                assert capsule_options.fields['resource_layer'].font().pixelSize()==body_size
+                capsule_options.grab().save(str(output/f'resource-settings-{name}.png'))
+                for index in range(capsule_options.tabs.count()):
+                    capsule_options.tabs.setCurrentIndex(index);settle(app)
+                    scroll=capsule_options.tabs.currentWidget().findChild(QScrollArea)
+                    assert scroll.widget().width()<=scroll.viewport().width()+2,(name,index,'resource options')
+                capsule_options.reject();capsule_options.deleteLater();settle(app)
             main.size_mode.setCurrentIndex(main.size_mode.findData('medium'));settle(app)
             spin=main.fields['dock_highlight'];control=next(w for w in main.findChildren(NumericControl) if w.findChild(type(spin)) is spin)
             original=spin.value();control.slider.setValue(44);assert spin.value()==44;spin.setValue(original);assert control.slider.value()==original
@@ -88,7 +106,6 @@ def run(output):
             cfg['settings_size']='medium'
             for name,dialog in dialogs:
                 dialog.show();settle(app);assert dialog.property('designPopup')
-                from PyQt5.QtWidgets import QScrollArea
                 for scroll in dialog.findChildren(QScrollArea):
                     if scroll.isVisible():assert scroll.widget().width()<=scroll.viewport().width()+2,(name,scroll.widget().width(),scroll.viewport().width())
                 if name=='note-small':
@@ -98,7 +115,6 @@ def run(output):
                     assert dialog.style.mapTo(dialog,dialog.style.rect().topLeft()).y()>40
                 dialog.grab().save(str(output/f'{name}-light.png'))
                 if name=='calendar':
-                    from PyQt5.QtWidgets import QScrollArea
                     diagnostic=[dict(scroll=w.width(),viewport=w.viewport().width(),page=w.widget().width(),minimum=w.widget().minimumWidth(),hint=w.widget().minimumSizeHint().width(),horizontal=w.horizontalScrollBar().maximum(),forms=[dict(width=f.width(),hint=f.minimumSizeHint().width(),cells=[(c.width(),c.minimumSizeHint().width()) for c,_ in f.cells]) for f in w.widget().findChildren(ResponsiveFields)]) for w in dialog.findChildren(QScrollArea)]
                     (output/'layout-diagnostic.json').write_text(json.dumps(diagnostic,indent=2),encoding='utf-8')
                 dialog.reject()

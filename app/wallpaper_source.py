@@ -1,5 +1,6 @@
 """Render Windows wallpaper pixels, without capturing any application window."""
 import ctypes,os,time,math
+from contextlib import contextmanager
 from ctypes import wintypes
 from functools import lru_cache
 from PyQt5.QtCore import Qt,QRect,QRectF,QSize
@@ -9,14 +10,31 @@ _metadata={}
 MAX_WALLPAPER_PIXELS=256*1024  # Shared blurred texture, at most 1 MiB; retain original screen coordinates.
 
 
-def desktop_wallpaper(window):
-    from native_file_menu import GUID,method,release
+@contextmanager
+def wallpaper_service():
+    from native_file_menu import GUID,release
     ole=ctypes.WinDLL('ole32');ole.CoInitializeEx.argtypes=[ctypes.c_void_p,wintypes.DWORD];ole.CoInitializeEx.restype=ctypes.c_long
     initialized=ole.CoInitializeEx(None,2)>=0;pointer=ctypes.c_void_p()
     ole.CoTaskMemFree.argtypes=[ctypes.c_void_p];ole.CoCreateInstance.argtypes=[ctypes.POINTER(GUID),ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(GUID),ctypes.POINTER(ctypes.c_void_p)];ole.CoCreateInstance.restype=ctypes.c_long
     try:
         clsid=GUID('C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD');iid=GUID('B92B56A9-8B55-4E14-9A89-0199BBB6F93B')
         if ole.CoCreateInstance(ctypes.byref(clsid),None,23,ctypes.byref(iid),ctypes.byref(pointer))<0:raise OSError('Wallpaper service unavailable')
+        yield pointer,ole
+    finally:
+        release(pointer)
+        if initialized:ole.CoUninitialize()
+
+
+def set_wallpaper(path):
+    from native_file_menu import method
+    with wallpaper_service() as (pointer,_):
+        setter=method(pointer,3,ctypes.c_long,wintypes.LPCWSTR,wintypes.LPCWSTR)
+        if setter(pointer,None,os.path.abspath(path))<0:raise OSError('Windows could not set the wallpaper')
+
+
+def desktop_wallpaper(window):
+    from native_file_menu import method
+    with wallpaper_service() as (pointer,ole):
         count=wintypes.UINT();position=ctypes.c_int(4);color=wintypes.DWORD()
         method(pointer,6,ctypes.c_long,ctypes.POINTER(wintypes.UINT))(pointer,ctypes.byref(count))
         method(pointer,11,ctypes.c_long,ctypes.POINTER(ctypes.c_int))(pointer,ctypes.byref(position));method(pointer,9,ctypes.c_long,ctypes.POINTER(wintypes.DWORD))(pointer,ctypes.byref(color))
@@ -41,9 +59,6 @@ def desktop_wallpaper(window):
                 if path:ole.CoTaskMemFree(path)
         if selected is None:raise OSError('No matching wallpaper monitor')
         return selected[0],position.value,QColor(color.value&255,(color.value>>8)&255,(color.value>>16)&255),selected[1],bounds
-    finally:
-        release(pointer)
-        if initialized:ole.CoUninitialize()
 
 
 @lru_cache(maxsize=1)

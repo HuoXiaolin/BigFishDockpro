@@ -4,13 +4,14 @@ PAGES = ('外观设置', '桌面收纳', '应用管理', '启动与运行', '更
 
 
 def field_catalog(api, cfg):
-    from appearance_presets import COLOR_MODES, material_choices
+    from appearance_presets import COLOR_MODES, MATERIALS, material_choices
     from card_design import DESIGNS
     from flash_data import COLORS, PALETTES
     from settings_layout import MODES as SIZE_MODES
     from sticky_notes_store import STYLES
     from taskbar_appearance import MODES
     from taskbar_text import MODES as TEXT_MODES
+    from feature_config import SPECTRUM_STYLES
 
     return {
         'dock_material': (0, '材质', 'combo', material_choices(cfg['dock_material'])),
@@ -64,6 +65,15 @@ def field_catalog(api, cfg):
         'desktop_middle_toggle': (1, '鼠标中键切换桌面图标', 'check', None),
         'clock_enabled': (1, '桌面时钟', 'check', None),
         'calendar_enabled': (1, '桌面日历', 'check', None),
+        'spectrum_enabled': (1, '桌面音乐频谱', 'check', None),
+        'spectrum_style': (1, '频谱样式', 'combo', SPECTRUM_STYLES),
+        'spectrum_color_mode': (1, '频谱配色', 'combo', [('炫彩','colorful'),('单色','mono')]),
+        'spectrum_mono_color': (1, '频谱单色', 'color', None),
+        'daily_picture_enabled': (1, '桌面每日图片', 'check', None),
+        'daily_picture_material': (1, '每日图片外框材质', 'combo', [('跟随应用','follow'), *MATERIALS]),
+        'daily_picture_color': (1, '每日图片外框颜色', 'color', None),
+        'daily_picture_source': (1, '每日图片来源', 'combo', [('必应每日图片','bing'),('本地图片轮播','local')]),
+        'daily_picture_interval': (1, '本地轮播间隔（秒）', 'number', (5,3600)),
         'notes_enabled': (1, '便签卡片', 'check', None),
         'note_style': (1, '新便签装饰样式', 'combo', STYLES),
         'flash_enabled': (1, '显示贴边胶囊', 'check', None),

@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QWidget,QApplication
 from resource_taskbar import Placement
 from ui_style import AlignedMenu
 from resource_options import SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES,TASKBAR_LAYERS
+from component_passthrough import enabled as passthrough_enabled
 
 
 def transfer(value):
@@ -66,6 +67,7 @@ def columns(service):
 class TaskbarReadout(QWidget):
     def __init__(self,service):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint|Qt.WindowDoesNotAcceptFocus)
+        self.setProperty('clickThroughKey','taskbar')
         self.service=service;self.placement=Placement(self);self.press=None;self.page=0;self.page_count=1;self.cells=[]
         self.media_actions={};self.media_bounds=[];self.text_bounds=[];self.wanted=288;self.press_media=None
         self.native_layer = None
@@ -80,7 +82,7 @@ class TaskbarReadout(QWidget):
         was_visible = self.isVisible()
         self.show()
         from window_layers import click_through
-        click_through(self,self.service.cfg['resource_taskbar_click_through'])
+        click_through(self,passthrough_enabled(self.service.cfg,'taskbar'))
         if self.service.runtime.dock.preview:return
         hwnd=self.placement.target['hwnd']
         win = int(self.winId())
@@ -105,7 +107,7 @@ class TaskbarReadout(QWidget):
         else:
             from platform_services import fullscreen_window
             restore_input_layer(win, hwnd, cover=fullscreen_window() if cover is None else cover,
-                                transparent=self.service.cfg['resource_taskbar_click_through'])
+                                transparent=passthrough_enabled(self.service.cfg,'taskbar'))
 
     def placement_changed(self):
         self.reposition();self.service.sync()
@@ -229,7 +231,7 @@ class TaskbarReadout(QWidget):
         if event_type in (b'windows_generic_MSG',b'windows_dispatcher_MSG'):
             msg=wintypes.MSG.from_address(int(message))
             if msg.message==0x0021:return True,3  # MA_NOACTIVATE: preserve the first click.
-            if msg.message==0x0084:return True,-1 if self.service.cfg['resource_taskbar_click_through'] else 1
+            if msg.message==0x0084:return True,-1 if passthrough_enabled(self.service.cfg,'taskbar') else 1
             if msg.message in (0x001a,0x031a,0x0320):self.sync_style()
         return super().nativeEvent(event_type,message)
 

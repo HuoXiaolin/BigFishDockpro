@@ -19,13 +19,17 @@ TASK_COLUMN_NAMES = {
 }
 COMPACT_METRICS=tuple(k for k in METRICS if k!='rank')
 PINNABLE={**{k:METRICS[k] for k in COMPACT_METRICS if k!='bluetooth'},'ai':'AI 额度','music':'音乐','weather':'天气'}
-OPEN_PAGES={'last':'上次查看的页面','resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气'}
+RESOURCE_PAGES={'resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气'}
+DESKTOP_COMPONENTS={'notes':'便签','picture':'每日图片','custom':'原生卡片','clock':'时钟','calendar':'日历'}
+PLACED_COMPONENTS={**RESOURCE_PAGES,**DESKTOP_COMPONENTS}
+CAPSULE_PAGES={**RESOURCE_PAGES,'news':'新闻',**DESKTOP_COMPONENTS}
+OPEN_PAGES={'last':'上次查看的页面',**CAPSULE_PAGES}
 TASKBAR_LAYERS={'bottom':'置底','top':'置顶'}
 HALO_SPEEDS={'slow':('慢速',12), 'medium':('中速',8), 'fast':('快速',4)}
 TASK_MEDIA_PARTS={'cover':'封面图标','title':'曲名','controls':'播放按钮','wave':'声音律动 / 频谱','progress':'进度细线'}
 AI_PROVIDERS=('Claude','Codex','Cursor','Antigravity','ZCode','Dsh','Kimi','OpenCode','Pi','GrokBot')
 TINTS={'cpu':'#288bee','memory':'#22bba9','network':'#27b8c4','gpu':'#ec79a6'}
-DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,
+DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,resource_air_source='auto',
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
               resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_layer='bottom',
               resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
@@ -34,6 +38,7 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_liquid=True,resource_edge_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_scale=100,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
+                resource_news=False,resource_news_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
                 resource_compact_width=560,resource_compact_height=44,resource_compact_metrics=list(COMPACT_METRICS),
@@ -44,6 +49,23 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_ai=False,resource_ai_tray=False,resource_ai_providers=['Claude','Codex','Cursor','Antigravity'],
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
                 resource_ring_letters=True,resource_quota_alert=True)
+DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={})
+
+
+def component_location(cfg,key):
+    default='desktop' if key in DESKTOP_COMPONENTS else 'capsule'
+    return cfg.get('resource_component_locations',{}).get(key,default)
+
+
+def component_available(cfg,key):
+    if key=='resources':return True
+    if key=='notes':
+        return cfg['notes_enabled'] and cfg['notes_visible'] and any(row['visible'] for row in cfg['sticky_notes'])
+    if key=='custom':return any(row['visible'] for row in cfg['custom_cards'])
+    if key=='picture':return cfg['daily_picture_enabled']
+    if key in ('clock','calendar'):return cfg[key+'_enabled']
+    if key=='ai':return cfg['resource_ai'] or cfg['resource_ai_tray']
+    return cfg['resource_'+key]
 
 
 def migrate_docked(data):
@@ -78,8 +100,31 @@ def clean_background(raw,strict=False):
 
 def normalize(cfg,strict=False):
     from resource_weather import clean_cities
+    from content_sources import clean_feeds
     cfg.pop('resource_notifications', None)
+    locations=cfg.get('resource_component_locations',{})
+    if not isinstance(locations,dict) or any(key not in PLACED_COMPONENTS or value not in ('capsule','desktop') for key,value in locations.items()):
+        if strict:raise ValueError('组件位置设置无效。')
+        locations={}
+    cfg['resource_component_locations']=dict(locations)
+    order=cfg.get('resource_component_order',[])
+    if not isinstance(order,list) or any(not isinstance(key,str) or key not in CAPSULE_PAGES for key in order):
+        if strict:raise ValueError('组件排序设置无效。')
+        order=[]
+    cfg['resource_component_order']=list(dict.fromkeys([*order,*CAPSULE_PAGES]))
+    layouts=cfg.get('resource_card_layouts',{})
+    clean={key:record for key,value in layouts.items() if key in RESOURCE_PAGES and (record:=valid_record(value))} if isinstance(layouts,dict) else {}
+    if strict and clean!=layouts:raise ValueError('桌面资源卡片位置无效。')
+    cfg['resource_card_layouts']=clean
     cfg['resource_weather_cities']=clean_cities(cfg.get('resource_weather_cities',DEFAULTS['resource_weather_cities']),strict)
+    if cfg.get('resource_air_source','auto') not in ('auto','cams','qweather'):
+        if strict:raise ValueError('空气质量来源无效。')
+        cfg['resource_air_source']='auto'
+    else:cfg.setdefault('resource_air_source','auto')
+    cfg['resource_news_feeds']=clean_feeds(cfg.get('resource_news_feeds',[]),strict)
+    if type(cfg.get('resource_news')) is not bool:
+        if strict:raise ValueError('资源胶囊设置无效：resource_news')
+        cfg['resource_news']=False
     options={'resource_background':('global','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),

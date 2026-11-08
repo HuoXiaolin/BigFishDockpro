@@ -56,28 +56,90 @@ def series(history, key, index=None):
 
 
 def trend(p, box, values, now, ink, ceiling):
-    if box.width() < 7 or box.height() < 3 or len(values) < 2:
+    if box.width() < 7 or box.height() < 3:
         return
-    path = QPainterPath()
+    points = []
     for stamp,value in values:
         age = now-stamp
         if age > 60:
             continue
         x = box.right()-max(0,age)*box.width()/60
         y = box.bottom()-min(1,max(0,value)/max(1,ceiling))*box.height()
-        if path.elementCount():
-            path.lineTo(x,y)
-        else:
-            path.moveTo(x,y)
+        points.append(QPointF(x,y))
+    if not points:
+        return
+    ink = QColor(ink)
+    if box.height() >= 24:
+        guide = QColor(ink)
+        guide.setAlpha(45)
+        p.setPen(QPen(guide,1))
+        for y in (box.center().y(),box.bottom()):
+            p.drawLine(QPointF(box.left(),y),QPointF(box.right(),y))
+    path = QPainterPath(points[0])
+    for first,last in zip(points,points[1:]):
+        middle = (first.x()+last.x())/2
+        path.cubicTo(middle,first.y(),middle,last.y(),last.x(),last.y())
+    if len(points)>1:
+        area = QPainterPath(path)
+        area.lineTo(points[-1].x(),box.bottom())
+        area.lineTo(points[0].x(),box.bottom())
+        area.closeSubpath()
+        wash = QColor(ink)
+        wash.setAlpha(32)
+        p.fillPath(area,wash)
     p.setBrush(Qt.NoBrush)
-    p.setPen(QPen(QColor(ink),1.6,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+    p.setPen(QPen(ink,1.6,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
     p.drawPath(path)
+    p.setPen(Qt.NoPen)
+    p.setBrush(ink)
+    p.drawEllipse(points[-1],2,2)
 
 
-class MetricDisplay(QWidget):
+def paint_card_surface(p,rect,colors,tint):
+    surface=blend(colors['surface'],tint,.11 if colors['light'] else .16)
+    surface.setAlpha(236)
+    edge=QColor(colors['ink'])
+    edge.setAlpha(25 if colors['light'] else 44)
+    p.setPen(QPen(edge,1));p.setBrush(surface)
+    p.drawRoundedRect(rect.adjusted(.5,.5,-.5,-.5),9,9)
+
+
+def sync_card_controls(widget,colors):
+    ink,muted=colors['ink'],colors['muted']
+    if widget.property('cardInk')==ink:return
+    widget.setProperty('cardInk',ink)
+    # The application stylesheet gives QLabel its own color. Scope the override
+    # to these cards so an independent capsule theme stays readable.
+    widget.setStyleSheet(f'''
+        QLabel{{color:{ink};}}
+        QLabel#Subtle,QLabel#RankMemory{{color:{muted};}}
+        QToolButton{{color:{muted};}}
+        QToolButton:hover,QToolButton:checked{{color:{ink};}}
+    ''')
+
+
+class DashboardCard(QWidget):
+    def __init__(self,window,tint,parent=None):
+        super().__init__(parent)
+        self.owner=window
+        self.tint=tint
+
+    def paint_surface(self,p):
+        paint_card_surface(p,QRectF(self.rect()),self.owner.colors,self.tint)
+
+    def paintEvent(self,event):
+        if not self.owner.colors:return
+        p=QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        self.paint_surface(p)
+
+
+class MetricDisplay(DashboardCard):
+    inset = 9
+    load_height = 71
+
     def __init__(self, window):
-        super().__init__()
-        self.owner = window
+        super().__init__(window,'#74acd4')
         self.rows = {}
         self.basic = ()
         self.extras = ()
@@ -87,8 +149,8 @@ class MetricDisplay(QWidget):
         self.rows = {key:(label,value,tip) for key,label,value,tip in rows}
         self.basic = tuple(k for k in ('cpu','gpu','memory','network') if k in self.rows)
         self.extras = tuple(k for k in self.rows if k not in self.basic)
-        upper = 82 if 'cpu' in self.rows or 'gpu' in self.rows else 0
-        height = upper + 31*('memory' in self.rows) + 27*('network' in self.rows) + 25*math.ceil(len(self.extras)/2)
+        upper = self.load_height if 'cpu' in self.rows or 'gpu' in self.rows else 0
+        height = 2*self.inset + upper + 25*('memory' in self.rows) + 25*('network' in self.rows) + 25*math.ceil(len(self.extras)/2)
         self.setFixedHeight(max(1,height))
         self.setVisible(bool(rows))
         tips = [label+' · '+tip for _,label,_,tip in rows if tip]
@@ -100,78 +162,80 @@ class MetricDisplay(QWidget):
 
     def processors(self,p,area,values,history,now,inks,colors,track):
         box = QRectF(area)
-        text(p,QRectF(box.x(),box.y(),34,21),'CPU',colors['ink'],12,QFont.DemiBold)
-        text(p,QRectF(box.x()+32,box.y(),53,21),self.rows['cpu'][1],inks['cpu'],15,QFont.Bold)
-        trend(p,QRectF(box.x()+86,box.y()+3,box.width()-87,13),series(history,'cpu'),now,inks['cpu'],100)
+        text(p,QRectF(box.x(),box.y(),30,21),'CPU',colors['ink'],11,QFont.DemiBold)
+        text(p,QRectF(box.x()+29,box.y(),52,21),self.rows['cpu'][1],inks['cpu'],15,QFont.Bold)
+        readings = series(history,'cpu')
         plot = box.adjusted(0,25,0,-5)
         if not values:
-            trend(p,plot,series(history,'cpu'),now,inks['cpu'],100)
+            trend(p,plot.adjusted(2,0,-2,0),readings,now,inks['cpu'],100)
             return
-        count = min(len(values),max(1,min(32,int(plot.width()//7))))
-        gap = 2.5
-        width = (plot.width()-gap*(count-1))/count
+        trend(p,QRectF(box.x()+77,box.y()+4,box.width()-80,13),readings,now,inks['cpu'],100)
+        count = min(len(values),max(1,min(32,int(plot.width()//6))))
+        step = plot.width()/count
+        gap = min(3,step*.33)
+        width = step-gap
+        p.setPen(QPen(track,1))
+        p.drawLine(QPointF(plot.left(),plot.center().y()),QPointF(plot.right(),plot.center().y()))
+        p.drawLine(QPointF(plot.left(),plot.bottom()),QPointF(plot.right(),plot.bottom()))
+        use_threshold = self.owner.service.cfg['resource_threshold']
         for i in range(count):
             first,last = i*len(values)//count,(i+1)*len(values)//count
             level = sum(values[first:last])/(last-first)
-            x = plot.x()+i*(width+gap)
-            radius = min(3,width/2)
-            fill(p,QRectF(x,plot.y(),width,plot.height()),track,radius)
             if level <= 0:
                 continue
+            x = plot.x()+i*step+gap/2
             height = min(plot.height(),max(1,plot.height()*level/100))
-            color = blend(inks['cpu'],inks['network'],min(1,max(0,(i/max(1,count-1)-.45)*2.2)))
-            if self.owner.service.cfg['resource_threshold']:color=QColor(threshold(level,100,colors['light']))
-            fill(p,QRectF(x,plot.bottom()-height,width,height),color,min(radius,height/2))
+            color = threshold(level,100,colors['light']) if use_threshold else inks['cpu']
+            fill(p,QRectF(x,plot.bottom()-height,width,height),QColor(color),min(2.5,width/2,height/2))
 
-    def gpu(self,p,box,colors,inks,track):
-        text(p,QRectF(box.x(),box.y(),box.width(),19),'GPU',colors['muted'],10,QFont.DemiBold)
-        text(p,QRectF(box.x(),box.y()+16,box.width(),19),self.rows['gpu'][1],inks['gpu'],13,QFont.Bold)
-        gauge = box.adjusted(0,38,0,-5)
-        fill(p,gauge,track,4)
-        level = self.owner.service.latest.get('gpu')
-        if level is not None and level > 0:
-            height = max(1,min(gauge.height(),gauge.height()*level/100))
-            fill(p,QRectF(gauge.x(),gauge.bottom()-height,gauge.width(),height),QColor(inks['gpu']),min(4,height/2))
+    def gpu(self,p,box,history,now,colors,inks):
+        text(p,QRectF(box.x(),box.y(),30,21),'GPU',colors['ink'],11,QFont.DemiBold)
+        text(p,QRectF(box.x()+29,box.y(),box.width()-29,21),self.rows['gpu'][1],inks['gpu'],15,QFont.Bold)
+        trend(p,box.adjusted(2,25,-2,-5),series(history,'gpu'),now,inks['gpu'],100)
 
     def paintEvent(self,event):
         if not self.owner.colors:
             return
         p = QPainter(self)
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        self.paint_surface(p)
+        p.translate(self.inset,self.inset)
         cfg = self.owner.colors
         service = self.owner.service
         inks = metric_colors(service)
         inks={key:metric_ink(service,key,cfg['light'],ink) for key,ink in inks.items()}
         track = QColor(cfg['ink'])
-        track.setAlpha(27 if cfg['light'] else 38)
-        w = self.width()
+        track.setAlpha(26 if cfg['light'] else 39)
+        w = self.width()-2*self.inset
         history = service.history or ()
         now = time.monotonic()
         y = 0
         if 'cpu' in self.rows or 'gpu' in self.rows:
+            both = 'cpu' in self.rows and 'gpu' in self.rows
+            cpu_width = w-max(58,w*.30)-12 if both else w
             if 'cpu' in self.rows:
-                reserve = 55 if 'gpu' in self.rows else 0
-                self.processors(p,QRectF(0,0,w-reserve,80),service.latest.get('cpu_cores') or (),history,now,inks,cfg,track)
+                self.processors(p,QRectF(0,0,cpu_width,self.load_height),service.latest.get('cpu_cores') or (),history,now,inks,cfg,track)
             if 'gpu' in self.rows:
-                x = w-43 if 'cpu' in self.rows else 0
-                self.gpu(p,QRectF(x,0,43,80),cfg,inks,track)
-                if 'cpu' not in self.rows:
-                    trend(p,QRectF(56,13,w-60,60),series(history,'gpu'),now,inks['gpu'],100)
-            y = 82
+                x = cpu_width+12 if both else 0
+                if both:
+                    p.setPen(QPen(track,1))
+                    p.drawLine(QPointF(x-6,3),QPointF(x-6,self.load_height-5))
+                self.gpu(p,QRectF(x,0,w-x,self.load_height),history,now,cfg,inks)
+            y = self.load_height
         if 'memory' in self.rows:
             record = service.latest.get('memory')
             value = '—'
             if record:
                 total = f'{record[2]/2**30:.1f}'.removesuffix('.0')
                 value = f'{record[1]/2**30:.1f} / {total} GB'
-            text(p,QRectF(0,y,w/2,17),'内存',cfg['ink'],11,QFont.DemiBold)
-            text(p,QRectF(32,y,w-32,17),value,inks['memory'],11,QFont.DemiBold)
-            track_x=32+p.fontMetrics().horizontalAdvance(value)+9
-            gauge = QRectF(track_x,y+7,max(0,w-track_x),4)
+            text(p,QRectF(0,y,w/2,20),'内存',cfg['ink'],11,QFont.DemiBold)
+            text(p,QRectF(32,y,w-32,20),value,inks['memory'],11,QFont.DemiBold)
+            track_x=32+p.fontMetrics().horizontalAdvance(value)+10
+            gauge = QRectF(track_x,y+8,max(0,w-track_x),4)
             fill(p,gauge,track,2)
             if record and record[0]>0:
                 fill(p,QRectF(gauge.x(),gauge.y(),gauge.width()*min(100,record[0])/100,4),QColor(inks['memory']),2)
-            y += 31
+            y += 25
         if 'network' in self.rows:
             net = service.latest.get('network')
             half = (w-12)/2
@@ -183,7 +247,7 @@ class MetricDisplay(QWidget):
                 occupied = p.fontMetrics().horizontalAdvance(value)+22
                 values = series(history,'network',i)
                 trend(p,QRectF(pos+occupied,y+4,half-occupied-2,14),values,now,color,max((v for _,v in values),default=1))
-            y += 27
+            y += 25
         for i,key in enumerate(self.extras):
             x = (i%2)*(w/2)
             top = y+(i//2)*25
@@ -196,15 +260,16 @@ class MetricDisplay(QWidget):
             text(p,area.adjusted(label_width,0,0,0),value,metric_ink(service,key,cfg['light'],cfg['ink']),11,QFont.DemiBold)
 
 
-class SensorColumns(QWidget):
+class SensorColumns(DashboardCard):
     """Keep the hardware group title and several readings on the same row."""
     group_width = 36
     row_height = 20
-    column_gap = 10
-    minimum_cell_width = 86
+    column_gap = 7
+    minimum_cell_width = 81
+    inset = 9
 
     def __init__(self,window):
-        super().__init__();self.owner=window;self.groups=[];self.headings=[];self.cells=[]
+        super().__init__(window,'#8e9db4');self.groups=[];self.headings=[];self.cells=[]
         self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
     def refresh(self,rows):
         self.groups=[]
@@ -222,12 +287,12 @@ class SensorColumns(QWidget):
         font.setWeight(QFont.DemiBold)
         values = QFontMetrics(font)
         gap = self.column_gap
-        available = max(1, self.width() - self.group_width)
+        available = max(1, self.width() - self.group_width - 2*self.inset)
         columns = max(1, min(6, (available + gap) // (self.minimum_cell_width + gap)))
         span = (available - (columns - 1) * gap) / columns
-        y = 0
+        y = self.inset+20
         for title, readings in self.groups:
-            self.headings.append((QRectF(0, y, self.group_width - 4, self.row_height), title))
+            self.headings.append((QRectF(self.inset, y, self.group_width - 4, self.row_height), title))
             column = 0
             for key, label, value, _ in readings:
                 label = label.removeprefix('CPU ').removeprefix('GPU ').replace('帧率 FPS', '实时帧率')
@@ -237,7 +302,7 @@ class SensorColumns(QWidget):
                 if column + slots > columns:
                     column = 0
                     y += self.row_height
-                x = self.group_width + column * (span + gap)
+                x = self.inset + self.group_width + column * (span + gap)
                 width = slots * (span + gap) - gap
                 value_width = min(width, value_width)
                 label_width = max(0, width - value_width - 5)
@@ -247,12 +312,14 @@ class SensorColumns(QWidget):
                                    QRectF(x + width - value_width, y, value_width, self.row_height)))
                 column += slots
             y += self.row_height + 3
-        self.setFixedHeight(max(1, y - 3))
+        self.setFixedHeight(y+self.inset-3 if self.groups else 1)
     def resizeEvent(self,event):
         self.fit_height();super().resizeEvent(event)
     def paintEvent(self,event):
         if not self.groups or not self.owner.colors:return
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.owner.colors
+        self.paint_surface(p)
+        text(p,QRectF(self.inset,self.inset-1,self.width()-2*self.inset,18),'硬件读数',c['ink'],11,QFont.DemiBold)
         for area, title in self.headings:
             text(p,area,title,c['ink'],12,QFont.DemiBold)
         for key, label, value, label_area, value_area in self.cells:

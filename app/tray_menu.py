@@ -1,5 +1,70 @@
 """Shared, task-grouped commands for tray and Dock context menus."""
-from PyQt5.QtWidgets import QApplication
+import ctypes
+import os
+from ctypes import wintypes
+
+from PyQt5.QtCore import QEvent, QTimer
+from PyQt5.QtGui import QCursor
+from PyQt5.QtWidgets import QApplication, QMenu
+
+
+class TrayContextMenu(QMenu):
+    """Dismiss a Windows tray popup when input goes outside its menu tree."""
+    def __init__(self):
+        super().__init__()
+        self.user=ctypes.windll.user32
+        self.user.GetForegroundWindow.restype=wintypes.HWND
+        self.user.SetForegroundWindow.argtypes=[wintypes.HWND]
+        self.user.GetAsyncKeyState.restype=ctypes.c_short
+        self.watcher=QTimer(self)
+        self.watcher.setInterval(32)
+        self.watcher.timeout.connect(self.poll_outside)
+        self.foreground=None
+        self.buttons=set()
+
+    def surfaces(self):
+        return [menu for menu in (self,*self.findChildren(QMenu)) if menu.isVisible()]
+
+    def outside(self,point):
+        return not any(menu.frameGeometry().contains(point) for menu in self.surfaces())
+
+    def mouse_buttons(self):
+        return {key for key in (1,2,4) if self.user.GetAsyncKeyState(key)&0x8000}
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)
+        self.buttons=self.mouse_buttons()
+        self.foreground=self.user.GetForegroundWindow()
+        QTimer.singleShot(0,self.take_focus)
+        self.watcher.start()
+
+    def take_focus(self):
+        if self.isVisible() and not os.environ.get('FISHDOCK_TEST_DESKTOP'):
+            self.user.SetForegroundWindow(int(self.winId()))
+            self.foreground=self.user.GetForegroundWindow()
+
+    def hideEvent(self,event):
+        self.watcher.stop()
+        QApplication.instance().removeEventFilter(self)
+        super().hideEvent(event)
+
+    def eventFilter(self,watched,event):
+        if self.isVisible() and event.type()==QEvent.MouseButtonPress and self.outside(event.globalPos()):
+            self.close()
+        return super().eventFilter(watched,event)
+
+    def poll_outside(self):
+        foreground=self.user.GetForegroundWindow()
+        buttons=self.mouse_buttons()
+        clicked=bool(buttons-self.buttons)
+        self.buttons=buttons
+        if foreground and foreground!=self.foreground:
+            if foreground not in {int(menu.winId()) for menu in self.surfaces()}:
+                self.close()
+                return
+            self.foreground=foreground
+        if clicked and self.outside(QCursor.pos()):self.close()
 
 
 def separator_actions(menu,tray,insert_at=None):
@@ -60,19 +125,25 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         show.triggered.connect(lambda on:runtime.resources.set_options(resource_enabled=on))
         bt=monitor.addAction('显示蓝牙电量托盘图标');bt.setCheckable(True);bt.setChecked(tray.cfg['resource_bt_tray'])
         bt.triggered.connect(lambda on:runtime.resources.set_options(resource_bt_tray=on))
-        strip=monitor.addAction('任务栏监控');strip.setCheckable(True);strip.setChecked(tray.cfg['resource_taskbar'])
-        strip.triggered.connect(lambda on:runtime.resources.set_options(resource_taskbar=on))
-        for key,title in [('resource_click_through','桌面胶囊鼠标穿透'),('resource_taskbar_click_through','任务栏监控鼠标穿透')]:
-            action=monitor.addAction(title);action.setCheckable(True);action.setChecked(tray.cfg[key])
-            action.triggered.connect(lambda on,key=key:runtime.resources.set_options(**{key:on}))
+        from taskbar_menu import add_menu as taskbar_actions
+        taskbar_actions(menu.addMenu('任务栏'),runtime)
+        from component_passthrough import add_menu as passthrough_actions
+        passthrough_actions(menu.addMenu('鼠标穿透'),runtime)
     clock_menu=menu.addMenu('桌面时钟');clock_menu.menuAction().setEnabled(runtime is not None)
     clock=clock_menu.addAction('显示 / 隐藏时钟');clock.setCheckable(True);clock.setChecked(bool(runtime and tray.cfg['clock_enabled']))
     clock.triggered.connect(lambda checked:runtime.clock.set_enabled(checked) if runtime else None)
     clock_menu.addAction('时钟设置…').triggered.connect(lambda:runtime.clock.open_settings() if runtime else None)
+    clock_menu.addAction('时光进度与倒计时…').triggered.connect(lambda:runtime.clock.open_progress() if runtime else None)
     calendar_menu=menu.addMenu('桌面日历');calendar_menu.menuAction().setEnabled(runtime is not None)
     calendar=calendar_menu.addAction('显示 / 隐藏日历');calendar.setCheckable(True);calendar.setChecked(bool(runtime and tray.cfg['calendar_enabled']))
     calendar.triggered.connect(lambda checked:runtime.calendar.set_enabled(checked) if runtime else None)
     calendar_menu.addAction('日历设置…').triggered.connect(lambda:runtime.calendar.open_settings() if runtime else None)
+    if runtime:
+        from desktop_spectrum import add_menu_actions
+        add_menu_actions(menu.addMenu('桌面音乐频谱'), runtime)
+        from daily_picture_card import add_menu_actions as picture_actions
+        picture_actions(menu.addMenu('每日图片'),runtime)
+        menu.addAction('原生卡片编辑器…').triggered.connect(runtime.open_custom_cards)
     modes=menu.addMenu('运行模式');modes.menuAction().setEnabled(runtime is not None)
     for title,state,callback in [('精简模式',bool(runtime and runtime.lite),lambda checked:runtime.set_lite(checked) if runtime else None),('游戏模式',tray.cfg.get('game_mode',False),lambda checked:runtime.toggle_game(checked) if runtime else None)]:
         action=modes.addAction(title);action.setCheckable(True);action.setChecked(state);action.triggered.connect(callback)

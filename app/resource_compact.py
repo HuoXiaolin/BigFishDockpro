@@ -5,6 +5,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainterPath,QPen,QConicalGrad
 from resource_status import metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import amount_text, quota_color, remaining_percent, used_percent
+from resource_options import component_location
 
 
 def text(p,rect,value,color,size=11,bold=False,align=Qt.AlignLeft):
@@ -37,23 +38,24 @@ def paint_halo(window,p):
 
 
 def compact_values(window):
-    values=list(getattr(window,'values',[]));cfg=window.service.cfg;bridge=window.service.deck
-    if cfg['resource_traffic'] and 'traffic' in cfg['resource_compact_metrics']:
+    cfg=window.service.cfg;bridge=window.service.deck
+    values=list(getattr(window,'values',[])) if component_location(cfg,'resources')=='capsule' else []
+    if cfg['resource_traffic'] and component_location(cfg,'traffic')=='capsule' and 'traffic' in cfg['resource_compact_metrics']:
         data=window.service.latest.get('traffic') or {}
         for key,label in [('day','今日流量'),('month','本月流量'),('year','本年流量')]:
             v=data.get(key);values.append(('traffic',label,amount(sum(v)) if v is not None else '—',''))
-    if bridge and cfg['resource_ai']:
+    if bridge and cfg['resource_ai'] and component_location(cfg,'ai')=='capsule':
         for row in bridge.providers:
             metrics = row.get('quotas', [])
             quotas = [level for q in metrics if (level := used_percent(q)) is not None]
             remaining = remaining_percent(max(quotas, default=None))
-            money = next((value for q in metrics if (value := amount_text(q)) not in (None, '—')), None)
+            money = next((value for q in metrics if q.get('kind')!='spend' and (value := amount_text(q)) not in (None, '—')), None)
             value = money or (f'{remaining:.0f}%' if remaining is not None else '—')
             values.append(('ai',row['name'],value,dict(provider=row,remaining=remaining,money=bool(money))))
-    track=(bridge.media.get('track') or {}) if bridge and cfg['resource_music'] else {}
+    track=(bridge.media.get('track') or {}) if bridge and cfg['resource_music'] and component_location(cfg,'music')=='capsule' else {}
     if track:values.append(('music','音乐',track.get('lyric') or track.get('title','') if cfg['resource_music_text']=='lyrics' else track.get('title',''),track))
     extra=window.service.extras
-    if extra and cfg['resource_weather'] and cfg['resource_weather_compact']:
+    if extra and cfg['resource_weather'] and cfg['resource_weather_compact'] and component_location(cfg,'weather')=='capsule':
         for row in extra.weather:
             if 'temperature' in row:values.append(('weather',row['name'],f"{row['temperature']:.0f}° {row['condition']}",''))
     return values
@@ -134,7 +136,7 @@ def _make_plan(window,limit=None):
     reserve=min(room,max([min(cell_width(r,dense),60) for r in extras]+[0]))
     spare=max(0,room-reserve);clock=False;bt=None;tail=0
     if cfg['resource_clock'] and 38<=spare:clock=True;tail+=38;spare-=38
-    gauge=window.service.bluetooth if cfg['resource_bluetooth'] and 'bluetooth' in cfg['resource_compact_metrics'] else None
+    gauge=window.service.bluetooth if cfg['resource_bluetooth'] and component_location(cfg,'resources')=='capsule' and 'bluetooth' in cfg['resource_compact_metrics'] else None
     if gauge and 28<=spare:bt=gauge;tail+=28;spare-=28
     room=max(0,room-tail)
     pages=[('values',rows) for rows in packed(extras,room,dense)] if extras else [('values',[])]

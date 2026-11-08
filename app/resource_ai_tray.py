@@ -67,7 +67,7 @@ class AiTray(QObject):
         used,name=max(levels,default=(None,''),key=lambda value:value[0]);light=self.service.runtime.dock.is_light();key=(used,light)
         if key!=self.key:self.tray.setIcon(quota_icon(used,light));self.key=key
         balance = next((f" · {row['name']} {value}" for row in rows for q in row.get('quotas',[])
-                        if (value := amount_text(q)) not in (None, '—')), '')
+                        if q.get('kind')!='spend' and (value := amount_text(q)) not in (None, '—')), '')
         remaining = remaining_percent(used)
         self.tray.setToolTip('AI 用量'+(f' · {name} 剩余 {remaining:.0f}%' if remaining is not None else balance or ' · 等待读数'))
         if self.popup and self.popup.isVisible():self.popup.refresh()

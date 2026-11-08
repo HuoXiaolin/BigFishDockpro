@@ -2,19 +2,31 @@
 import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
+
+SPECTRUM_STYLES = (
+    ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
+)
+
 DEFAULTS = {
     'flash_enabled':False, 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
     'flash_auto_hide':True, 'flash_edge_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
     'taskbar_text_mode':'system', 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
     'card_snap': True, 'card_snap_distance': 12,
+    'passthrough_mode':'custom','component_passthrough':{},
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'medium', 'settings_manual_size':[], 'settings_custom_density':100,
     'calendar_enabled':False,'calendar_locked':False,'calendar_layout':{},'calendar_appearance':{},
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
-    'notes_enabled': False, 'notes_visible': True, 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
+    'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
+    'spectrum_locked': False, 'spectrum_layout': {}, 'spectrum_manual_size': False,
+    'daily_picture_enabled': False, 'daily_picture_locked': False, 'daily_picture_layout': {},
+    'daily_picture_material': 'follow', 'daily_picture_color': '', 'daily_picture_source': 'bing',
+    'daily_picture_local_paths': [], 'daily_picture_interval': 30,
+    'custom_cards': [],
+    'notes_enabled': False, 'notes_visible': True, 'notes_active': '', 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
     'dock_visible': True, 'panels_visible': True, 'runtime_lite': False, 'hide_tray': False,
     'merge_groups': [], 'merge_initialized': False,
     'dock_page': 0, 'merged_panels': True, 'merged_active': '', 'merged_geometry': [],
@@ -117,7 +129,7 @@ def normalize(cfg):
     if not isinstance(geometry, list) or len(geometry) != 4 or not all(isinstance(n, int) for n in geometry):
         result['panel_geometry'] = []
     result['update_source'] = str(result.get('update_source') or '').strip() or DEFAULT_SOURCE
-    for key in ('theme_color', 'panel_color'):
+    for key in ('theme_color', 'panel_color', 'daily_picture_color', 'spectrum_mono_color'):
         color = str(result.get(key) or '').strip()
         result[key] = color.lower() if re.fullmatch(r'#[0-9a-fA-F]{6}', color) else ''
     for key,default,low,high in [('card_scale',70,50,150),('settings_custom_density',100,50,150)]:
@@ -134,6 +146,29 @@ def normalize(cfg):
     from screen_layout import valid_record
     result['clock_layout']=valid_record(result.get('clock_layout'))
     result['calendar_layout']=valid_record(result.get('calendar_layout'))
+    result['spectrum_layout']=valid_record(result.get('spectrum_layout'))
+    result['daily_picture_layout']=valid_record(result.get('daily_picture_layout'))
+    from appearance_presets import MATERIALS
+    if result['daily_picture_material'] not in ('follow', *(value for _,value in MATERIALS)):
+        result['daily_picture_material']='follow'
+    if result['daily_picture_source'] not in ('bing','local'):result['daily_picture_source']='bing'
+    paths=result['daily_picture_local_paths']
+    result['daily_picture_local_paths']=list(dict.fromkeys(p for p in paths[:64] if isinstance(p,str) and 0<len(p)<=2048 and '\0' not in p)) if isinstance(paths,list) else []
+    interval=result['daily_picture_interval']
+    result['daily_picture_interval']=max(5,min(3600,interval)) if type(interval) is int else 30
+    if result['passthrough_mode'] not in ('all','none','custom'):result['passthrough_mode']='custom'
+    selection=result['component_passthrough']
+    result['component_passthrough']={k:True for k,v in selection.items() if isinstance(k,str) and 0<len(k)<=104 and v is True} if isinstance(selection,dict) else {}
+    if result['spectrum_style'] not in tuple(value for _, value in SPECTRUM_STYLES):
+        result['spectrum_style'] = 'bars'
+    if result['spectrum_color_mode'] not in ('colorful','mono'):
+        result['spectrum_color_mode']='colorful'
+    for key in ('spectrum_enabled', 'spectrum_locked', 'spectrum_manual_size', 'daily_picture_enabled', 'daily_picture_locked'):
+        if type(result[key]) is not bool:
+            result[key] = DEFAULTS[key]
+    if result['custom_cards']:
+        from custom_card_data import normalize_cards
+        result['custom_cards']=normalize_cards(result['custom_cards'])
     from flash_data import COLORS, PALETTES, normalize_entries, normalize_draft
     from resource_options import normalize as normalize_resources
     normalize_resources(result)
@@ -148,6 +183,7 @@ def normalize(cfg):
     result['card_sizing']=normalize_profile(result.get('card_sizing'))
     from sticky_notes_store import normalize_notes
     result['sticky_notes']=normalize_notes(result.get('sticky_notes',[]))
+    if not any(row['id']==result['notes_active'] for row in result['sticky_notes']):result['notes_active']=''
     result['notes_trash']=normalize_notes(result.get('notes_trash',[]),limit=32)
     from screen_layout import normalize_layout
     result['display_layout']=normalize_layout(result.get('display_layout'))

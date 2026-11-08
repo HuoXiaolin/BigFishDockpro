@@ -86,7 +86,7 @@ def run(api,runtime,app,output,checks):
             return dict(current=dict(temperature_2m=16,weather_code=2,relative_humidity_2m=40,wind_speed_10m=8,time='2026-11-07T14:00'),
                 daily=dict(time=['2026-11-07','2026-11-08','2026-11-09'],temperature_2m_min=[6,7,8],temperature_2m_max=[17,18,19],weather_code=[2,0,61]))
         extra.weather=[forecast(name,lookup) for name in DEFAULT_CITIES]
-        assert len(queries)==3 and all('Asia%2FShanghai' in q for q in queries) and extra.weather[1]['name']=='乌鲁木齐'
+        assert len(queries)==3 and all('timezone=auto' in q for q in queries) and extra.weather[1]['name']=='乌鲁木齐'
         assert all('forecast_days=7' in q and 'past_days=1' in q for q in queries)
         def weekly(url):
             result=lookup(url);result['daily']={key:(values*3)[:7] for key,values in result['daily'].items()};return result

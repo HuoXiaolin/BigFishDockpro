@@ -47,16 +47,16 @@ def monochrome(backgrounds):
     return max((QColor('#000000'),QColor('#ffffff')),key=score)
 
 
-def colorful_ink(color,backgrounds,minimum=4.5):
-    """Darken a saturated hue without blending it into grey; dark surfaces use white."""
-    if monochrome(backgrounds).name()=='#ffffff':return QColor('#ffffff')
-    color=QColor(color)
-    if color.hsvSaturationF()<.4:color=QColor('#ce4125')
-    for percent in (100,110,125,145,170,200,240,300):
-        candidate=color.darker(percent)
-        scores=sorted(contrast(candidate,bg) for bg in backgrounds)
-        if not scores or scores[len(scores)//5]>=minimum:return candidate
-    return color.darker(300)
+def neutral_text(backgrounds):
+    """Choose primary and secondary neutral text roles for the actual surface."""
+    def score(color):
+        values=sorted(contrast(color,bg) for bg in backgrounds)
+        return values[len(values)//5] if values else 4.5
+    dark,light=QColor('#202428'),QColor('#f5f7fa')
+    primary=max((dark,light),key=score)
+    if score(primary)<4.5:primary=monochrome(backgrounds)
+    secondary=QColor('#c3cad2' if primary.lightness()>150 else '#4c5864')
+    return primary,secondary if score(secondary)>=4.5 else QColor(primary)
 
 
 def readable(color,backgrounds,minimum=4.5,opacity=1.0,polarity=None):

@@ -75,7 +75,7 @@ class SettingsPages(QWidget):
 
     def resizeEvent(self, event):
         factor=float(self.window().property('interfaceScale') or .7)
-        self.nav.setFixedWidth(round(132*factor))
+        self.nav.setFixedWidth(max(94,round(132*factor)))
         self.nav.setIconSize(QSize(round(16*factor), round(16*factor)))
         super().resizeEvent(event)
 
@@ -124,7 +124,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
-        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','lite_enabled')
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','lite_enabled')
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = SettingsFields(self)
         self.import_candidate=None;self.import_path=None
@@ -337,7 +337,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(appearance, '默认设置')
         defaults = QHBoxLayout()
         defaults.addWidget(button('使用默认设置', self.stage_defaults))
-        defaults.addWidget(label('载入 Dock、卡片和资源胶囊等组件的默认偏好，保存后生效。', 'muted'), 1)
+        defaults.addWidget(label('载入默认配置，保存后生效。', 'muted'), 1)
         appearance.addRow(defaults)
         self.create_profile_controls(appearance)
         section_marker(appearance,'Dock 材质与配色')
@@ -481,6 +481,22 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(panel,'桌面组件')
         self.component_row(panel, 'clock_enabled', '桌面时钟', button('时钟设置', lambda:self.tray.runtime.clock.open_settings()))
         self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
+        self.add_field(panel, 'spectrum_enabled')
+        self.add_field(panel, 'spectrum_style')
+        self.add_field(panel, 'spectrum_color_mode')
+        self.add_field(panel, 'spectrum_mono_color')
+        self.add_field(panel, 'daily_picture_enabled')
+        self.add_field(panel, 'daily_picture_material')
+        self.add_field(panel, 'daily_picture_color')
+        self.add_field(panel, 'daily_picture_source')
+        self.add_field(panel, 'daily_picture_interval')
+        def choose_picture(folder=False):
+            from daily_picture_card import choose_local
+            choose_local(tray.runtime,folder=folder)
+        self.action_row(panel,'本地图片',button('选择图片…',lambda:choose_picture()),
+                        button('选择文件夹…',lambda:choose_picture(True)))
+        self.fields['spectrum_enabled'].setToolTip('跟随默认播放设备的声音。拖动频谱移动，拖右下角调整大小，右键可切换样式或锁定。')
+        self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
         self.add_field(panel, 'note_style')
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
@@ -577,19 +593,14 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         tray, api = self.tray, self.api
         from settings_design import section_marker
         info.addRow(label('大肥鱼Dock  ' + VERSION, 'section'))
-        info.addRow(label('用液态玻璃 Dock 启动常用应用，用桌面悬浮面板分类收纳文件与快捷方式。', 'muted'))
+        info.addRow(label('Windows 桌面整理与美化工具，集成快捷启动、分类收纳、资源监控和桌面组件。', 'muted'))
         info.addRow('维护作者', label(AUTHOR))
-        info.addRow('原项目版权', label('WWQ / WKaleXD · MIT，保留上游许可'))
         info.addRow('平台', label('Windows 10 / 11 · x64'))
         info.addRow('第三方许可', label('PyQt5 GPLv3；Qt、Python 等许可见发行文件 licenses。'))
         self.project = label('')
         self.project.setOpenExternalLinks(False)
         self.project.linkActivated.connect(lambda url: self.tray.dock.launch(url))
         info.addRow('项目地址', self.project)
-        upstream = label('<a href="https://github.com/WKaleXD/iOS-style-Dock">查看原始基础项目</a>')
-        upstream.setOpenExternalLinks(False)
-        upstream.linkActivated.connect(lambda url: self.tray.dock.launch(url))
-        info.addRow('基础项目', upstream)
         section_marker(info, '整理工具')
         runtime=getattr(tray,'runtime',None)
         if runtime:
@@ -612,6 +623,18 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.config_status=label('','muted');info.addRow(self.config_status)
         self.config_recovery=button('恢复默认配置…',self.recover_configuration)
         info.addRow(self.config_recovery)
+        section_marker(info, '开源致谢')
+        links = (
+            '<a href="https://github.com/WKaleXD/iOS-style-Dock">iOS-style-Dock</a>',
+            '<a href="https://github.com/MoFeng2223/BrimDeck">BrimDeck</a>',
+            '<a href="https://github.com/deviffyy/OpenQuota">OpenQuota</a>',
+            '<a href="https://github.com/AsamiAkito/wisland">Wisland</a>',
+            '<a href="https://github.com/hmgvibe/FullWidget">FullWidget</a>',
+        )
+        credits = label('感谢 ' + '、'.join(links) + ' 等开源项目。完整致谢和许可见 README 与发行包。', 'muted')
+        credits.setOpenExternalLinks(False)
+        credits.linkActivated.connect(lambda url: self.tray.dock.launch(url))
+        info.addRow(credits)
 
     def release_idle_resources(self):
         if self.isVisible() or self._suspended:return False
@@ -887,7 +910,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         cfg = self.stage_profile(cfg)
         cfg['settings_manual_size']=list(self._manual_dimensions)
         cfg['settings_custom_density']=self._custom_density
-        for key in ('theme_color', 'panel_color'):
+        for key in ('theme_color', 'panel_color', 'spectrum_mono_color', 'daily_picture_color'):
             if cfg[key] and not re.fullmatch(r'#[0-9a-fA-F]{6}', cfg[key]):
                 self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。')
                 return

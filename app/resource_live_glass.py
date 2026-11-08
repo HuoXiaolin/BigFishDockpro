@@ -4,7 +4,8 @@ from ctypes import wintypes as W
 import sys
 import threading
 from PyQt5.QtCore import Qt,QObject,QTimer,pyqtSignal
-from PyQt5.QtGui import QImage
+from PyQt5.QtGui import QCursor,QImage
+from PyQt5.QtWidgets import QApplication
 from background_worker import BackgroundWorker
 
 
@@ -36,7 +37,7 @@ class GlassJob(BackgroundWorker):
     def __init__(self,hwnd):
         super().__init__();self.hwnd=hwnd;self.want=None;self.lock=threading.Lock();self.signature=None
     def request(self,rect,size,logical):
-        with self.lock:self.want=(rect,size,logical)
+        with self.lock:self.want=(rect,size,logical) if rect else None
     def run(self):
         while not self.cancelled.is_set():
             with self.lock:want=self.want
@@ -70,6 +71,11 @@ class LiveGlass(QObject):
         w=self.window
         if not w.isVisible():self.sync(False);return
         if not self.job:return
+        if w.geometry().contains(QCursor.pos()) or QApplication.activePopupWidget():
+            # Affinity is changed briefly during capture. Keep the last image
+            # while the capsule or one of its menus is receiving input.
+            self.job.request(None,None,None)
+            return
         rect=native_rect(int(w.winId()))
         if not rect or min(rect[2:])<=0:return
         size=(max(2,min(160,w.width()//10)),max(2,min(100,w.height()//10)))

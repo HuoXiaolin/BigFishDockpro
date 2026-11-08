@@ -56,16 +56,10 @@ class PetFace:
         m = self.forced_mood or self.mood
         self._m = m
         # 视线
-        if not near and abs(look.x()) > 420 * s:
-            tx = math.sin(now * 0.55) * 0.8 + math.sin(now * 1.7) * 0.15
-            ty = math.sin(now * 0.37) * 0.35
-        else:
-            tx = clamp(look.x() / (90.0 * s), -1, 1)
-            ty = clamp(look.y() / (60.0 * s), -1, 1)
-        if m == "shy":
-            tx, ty = tx * 0.3 + 0.5, 0.75          # 害羞：看向斜下方
-        self.ex.to(tx)
-        self.ey.to(ty)
+        tx, ty = look.x() / (90.0 * s), look.y() / (60.0 * s)
+        distance = max(1.,math.hypot(tx,ty))
+        self.ex.to(tx/distance)
+        self.ey.to(ty/distance)
         self.lh.to({"happy": 1, "laugh": 1, "shy": 0.55, "wink": 1}.get(m, 0) if m != "wink" else 0)
         self.rh.to({"happy": 1, "laugh": 1, "shy": 0.55, "wink": 1}.get(m, 0))
         self.tired.to(0.55 if (now - self.last_attention > 60 and m == "default") else 0.0)

@@ -19,9 +19,11 @@ def run(api,runtime,app,output,checks):
             assert tracker.watch.isActive() and tracker.face_bounds is not None
             positions=[]
             for direction in (-1,1):
-                cursor=panel.mapToGlobal(tracker.face_bounds.center()+QPoint(direction*40,direction*20))
+                tracker.face_until=time.monotonic()-1;tracker.face_frame()
+                cursor=panel.mapToGlobal(tracker.face_bounds.center()+QPoint(direction*1250,direction*620))
                 with patch.object(QCursor,'pos',return_value=cursor):
                     tracker.watch_face()
+                    assert tracker.frames.isActive() and not tracker.was_near
                     for _ in range(16):tracker.face._t-=.033;panel.grab()
                     positions.append((tracker.face.ex.x,tracker.face.ey.x))
                     panel.grab().save(str(output/f'desktop-face-{shape}-{direction}.png'))
@@ -52,7 +54,7 @@ def run(api,runtime,app,output,checks):
         panel.hide();assert not tracker.watch.isActive() and not tracker.frames.isActive()
         panel.show();assert tracker.watch.isActive()
         cfg['motion_enabled']=False;runtime.apply_settings({'motion_enabled'});assert not tracker.watch.isActive()
-        checks.append('Desktop collection faces share the resource engine: expanded/capsule/ball gaze in lite mode, press/release and click expansion, hover choice, optional static moods/scale, shared saved preferences, disabled category-icon restoration, hidden/global-motion timer shutdown.')
+        checks.append('Desktop faces follow distant cursor positions in expanded/capsule/ball lite mode, keep click/hover controls and moods, and stop tracking when hidden or motion is disabled.')
     finally:
         if dialog:dialog.reject()
         runtime.lite=was_lite;cfg.clear();cfg.update(before);runtime.apply_settings();api.save_config(cfg)

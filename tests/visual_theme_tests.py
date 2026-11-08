@@ -132,13 +132,15 @@ def run(api, runtime, main, app, output, checks):
     assert monochrome([QColor('#102b57')]).name()=='#ffffff'
     assert monochrome([QColor('#e8f0f6')]).name()=='#000000'
     comparison=QImage(1280,316,QImage.Format_RGB32);comparison.fill(QColor('#f0f5f8'));cp=QPainter(comparison)
-    for index,(background,expected) in enumerate((('#1763c9','#ffffff'),('#e8f0f6',None))):
+    for index,(background,expected) in enumerate((('#1763c9',True),('#e8f0f6',False))):
         tile=QImage(624,280,QImage.Format_ARGB32_Premultiplied);tile.fill(QColor(background));tp=QPainter(tile)
         wallpaper=QPixmap(624,280);wallpaper.fill(QColor(background));audit=[]
         options=normalize(configs[0]['clock_appearance']);options.update(material='clear',opacity=0,highlight=0,design='crystal',layout='auto',accent_color='#ff755e',_now=datetime.datetime(2026,11,5,21,12),_text_audit=audit)
         options['work'].update(start='08:30',end='18:00')
         draw_clock(tp,QRectF(0,0,624,280),make_dock(configs[0]),options,'orbit',wallpaper);tp.end()
-        assert all(alpha==255 and (color==expected if expected else QColor(color).hsvSaturationF()>.6 and QColor(color).name() not in ('#000000','#ffffff')) for _,_,color,alpha,_ in audit)
+        from clock_legibility import contrast
+        assert all(alpha==255 and (QColor(color).lightness()>150)==expected
+                   and contrast(QColor(color),QColor(background))>=4.5 for _,_,color,alpha,_ in audit)
         texts={value:QRectF(*box) for value,_,_,_,box in audit}
         assert texts['21:12'].center().x()<texts['11月5日'].left()
         periods=[texts[name] for name in ('本周','本月','本年')]

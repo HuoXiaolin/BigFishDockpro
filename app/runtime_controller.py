@@ -7,13 +7,18 @@ from update_service import UpdateService
 
 
 class RuntimeController:
-    def __init__(self, dock, tray, api):
+    def __init__(self, dock, tray, api, from_logon=False):
         self.dock, self.tray, self.api = dock, tray, api
+        from component_passthrough import ClickThroughPolicy
+        dock.setProperty('clickThroughKey','dock');self.click_policy=ClickThroughPolicy(self)
         from usage_stats import UsageStore
         self.usage=dock.usage=UsageStore(api.CONFIG_DIR,dock,api.log)
         self.lite = False
         self.closed = False
         self.session_ending=False
+        if from_logon:
+            from time import monotonic
+            self.bridge_start_after = monotonic() + 5
         self.auto_game = False
         self.game_active = False
         self.manual_game = False
@@ -54,8 +59,12 @@ class RuntimeController:
         self.calendar=DesktopCalendar(self)
         from flash_capsule import FlashCapsule
         self.flash=FlashCapsule(self)
+        self.spectrum = None
+        self.daily_picture = None
+        self.custom_cards = None
         from resource_capsule import ResourceCapsule
         self.resources=ResourceCapsule(self)
+        self.notes.changed.connect(self.resources.components_changed)
         self.layout = DisplayLayout(self)
         from productivity import Productivity
         self.productivity=Productivity(self)
@@ -230,7 +239,11 @@ class RuntimeController:
         elif not wanted and self.dock.isVisible():self.dock.hide()
         if changed:
             self.dock.sync_background_polling(refresh=not active)
-            self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync();self.flash.sync();self.resources.sync()
+            self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync();self.flash.sync()
+            self.sync_spectrum()
+            self.sync_daily_picture()
+            self.sync_custom_cards()
+            self.resources.sync()
         elif manual_changed:self.resources.sync()
         self.refresh_corners()
 
@@ -243,7 +256,7 @@ class RuntimeController:
                  self.resources.window if cfg['resource_layer']=='top' else None,
                  self.flash.edge,self.flash.panel,self.flash.toast]
         windows.extend(note for note in self.notes.windows.values() if note.row()['pinned'])
-        visible=[w for w in windows if w is not None and w.isVisible()]
+        visible=[w for w in windows if w is not None and w.isWindow() and w.isVisible()]
         if visible:
             from window_layers import repair_top
             cover=fullscreen_window()
@@ -251,6 +264,9 @@ class RuntimeController:
 
     def apply_settings(self,changed=None):
         if changed is not None:changed=set(changed)
+        placement_changed=changed is None or 'resource_component_locations' in changed
+        policy_keys={'passthrough_mode','component_passthrough','resource_click_through','resource_taskbar_click_through'}
+        policy_changed=changed is None or bool(changed&policy_keys)
         if changed is not None and 'motion_enabled' in changed:
             for window in self.panels.windows.values():window.face_tracker.sync_face();window.update()
         if self.updater.source_key()!=getattr(self,'_update_source_key',None):
@@ -260,7 +276,13 @@ class RuntimeController:
                 controller=getattr(window,'_interaction_motion',None)
                 if controller:controller.stop()
         capsule_style={'theme','theme_color','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
-        if changed is None or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'runtime_lite','taskbar_text_mode','motion_enabled','card_snap'}):
+        if changed is None or any(key.startswith('spectrum_') for key in changed) or changed & {'theme','theme_color','card_scale'}:
+            self.sync_spectrum()
+        if placement_changed or any(key.startswith('daily_picture_') for key in changed) or changed & (capsule_style|{'card_scale'}):
+            self.sync_daily_picture()
+        if placement_changed or changed & (capsule_style|{'card_scale','custom_cards'}):
+            self.sync_custom_cards()
+        if policy_changed or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'runtime_lite','taskbar_text_mode','motion_enabled','card_snap','spectrum_enabled','custom_cards'}):
             self.resources.sync()
         if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
             self.flash.sync()
@@ -268,22 +290,25 @@ class RuntimeController:
             self.taskbar.sync()
         if changed is not None and not set(changed)&{'game_mode','lite_enabled','runtime_lite'}:
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
-            if 'hide_tray' in changed:self.tray.setVisible(not self.dock.cfg['hide_tray'])
+            if 'hide_tray' in changed or policy_changed:self.sync_tray_visibility()
             panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
             if panel_keys or changed&{'card_scale','card_sizing','display_layout','card_design'}:self.panels.apply_settings()
-            if changed&{'note_style','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'}:self.notes.sync()
-            if any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'}:self.clock.sync()
-            if any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'}:self.calendar.sync()
+            if placement_changed or changed&{'note_style','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'}:self.notes.sync()
+            if placement_changed or any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'}:self.clock.sync()
+            if placement_changed or any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'}:self.calendar.sync()
+            if changed&{'clock_enabled','calendar_enabled','daily_picture_enabled','notes_enabled','notes_visible','sticky_notes','custom_cards'}:
+                self.resources.components_changed()
             if 'card_scale' in changed:
                 self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=self.dock.cfg['card_scale']
             if changed&{'screen_corners','corner_radius'}:self.refresh_corners()
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
             if 'startup_priority' in changed:set_priority(self.dock.cfg['startup_priority'])
+            if policy_changed:self.click_policy.refresh()
             return
         if self.lite and not self.dock.cfg['lite_enabled']:
             self.set_lite(False)
         self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
-        self.tray.setVisible(not self.dock.cfg['hide_tray'])
+        self.sync_tray_visibility()
         self.panels.apply_settings()
         self.notes.sync()
         self.clock.sync();self.calendar.sync()
@@ -292,9 +317,70 @@ class RuntimeController:
             self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=density
         self.configure_fullscreen_timer()
         self.apply_visibility()
+        if policy_changed:self.click_policy.refresh()
         self.refresh_corners()
         set_priority(self.dock.cfg['startup_priority'])
         if not self.settings_open: self.arm_lite()
+
+    def sync_tray_visibility(self):
+        from component_passthrough import enabled
+        self.tray.setVisible(not self.dock.cfg['hide_tray'] or enabled(self.dock.cfg,'dock'))
+
+    def sync_spectrum(self):
+        if self.dock.cfg['spectrum_enabled'] and not self.game_active:
+            if self.spectrum is None:
+                from desktop_spectrum import DesktopSpectrum
+                self.spectrum = DesktopSpectrum(self)
+            self.spectrum.sync()
+        elif self.spectrum is not None:
+            self.spectrum.hide()
+            self.spectrum.deleteLater()
+            self.spectrum = None
+
+    def set_spectrum_options(self, **changes):
+        from settings_effects import save_changes
+        return save_changes(self.tray, self.api, changes)
+
+    def sync_daily_picture(self):
+        from resource_options import component_location
+        cfg=self.dock.cfg
+        routed=component_location(cfg,'picture')=='capsule'
+        host=self.resources.hosted_component('picture') if routed else None
+        visible=cfg['daily_picture_enabled'] and not self.game_active and (not routed or host is not None)
+        if self.daily_picture and (not visible or self.daily_picture.parentWidget() is not host):
+            self.daily_picture.hide();self.daily_picture.deleteLater();self.daily_picture=None
+        if visible:
+            if self.daily_picture is None:
+                from daily_picture_card import DailyPictureCard
+                self.daily_picture=DailyPictureCard(self,host)
+                if host:host.layout().addWidget(self.daily_picture)
+            self.daily_picture.sync()
+
+    def sync_hosted_component(self,key):
+        if key=='notes':self.notes.sync()
+        elif key=='picture':self.sync_daily_picture()
+        elif key=='custom':self.sync_custom_cards()
+        else:getattr(self,key).sync()
+
+    def set_daily_picture_options(self, **changes):
+        from settings_effects import save_changes
+        return save_changes(self.tray,self.api,changes)
+
+    def custom_card_manager(self):
+        if self.custom_cards is None:
+            from custom_cards import CustomCards
+            self.custom_cards=CustomCards(self)
+        return self.custom_cards
+
+    def sync_custom_cards(self):
+        if self.custom_cards or self.dock.cfg['custom_cards']:
+            self.custom_card_manager().sync()
+
+    def open_custom_cards(self):
+        from contextlib import nullcontext
+        dialog=getattr(self.tray,'settings_dialog',None)
+        scope=dialog.suspend_page() if dialog and dialog.isVisible() else nullcontext()
+        with scope:self.custom_card_manager().edit()
 
     def open_card_sizing(self,kind=None,identity=None):
         from card_sizing import CardSizingDialog
@@ -317,6 +403,7 @@ class RuntimeController:
 
     def close(self):
         if self.closed: return
+        self.click_policy.close()
         self.closed = True
         if hasattr(self,'memory_budget'):self.memory_budget.close()
         shutdown=self.session_ending or QApplication.instance().isSavingSession()
@@ -327,6 +414,15 @@ class RuntimeController:
         from session_state import save_state
         save_state(self)
         self.resources.close()
+        if self.custom_cards:self.custom_cards.close()
+        if self.daily_picture is not None:
+            self.daily_picture.hide()
+            self.daily_picture.deleteLater()
+            self.daily_picture=None
+        if self.spectrum is not None:
+            self.spectrum.hide()
+            self.spectrum.deleteLater()
+            self.spectrum = None
         self.flash.close()
         self.layout.close()
         for timer in (self.dock.proc_timer,self.dock.geo_timer,self.dock.blur_timer,self.dock.timer,self.dock.folder_timer):timer.stop()

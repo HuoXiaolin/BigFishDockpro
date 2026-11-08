@@ -68,6 +68,21 @@ def icon(name,ink,side=17):
         line([(4,17),(7,17)]);line([(12,17),(20,17)]);painter.drawEllipse(QPointF(9.5,17),2.5,2.5)
     elif name=='collapse':line([(6,14),(12,8),(18,14)])
     elif name=='fold':line([(8,5),(15,12),(8,19)])
+    elif name=='back':line([(15,5),(8,12),(15,19)])
+    elif name=='refresh':
+        painter.drawArc(QRectF(4,4,16,16),25*16,305*16)
+        line([(20,4),(20,9),(15,9)])
+    elif name=='download':
+        line([(12,3),(12,15)]);line([(8,11),(12,15),(16,11)])
+        line([(4,16),(4,21),(20,21),(20,16)])
+    elif name=='story':
+        path=QPainterPath(QPointF(12,6));path.quadTo(8,3,3,5);path.lineTo(3,18)
+        path.quadTo(8,16,12,20);path.quadTo(16,16,21,18);path.lineTo(21,5);path.quadTo(16,3,12,6)
+        painter.drawPath(path);line([(12,6),(12,20)])
+    elif name=='wallpaper':
+        painter.drawRoundedRect(QRectF(3,4,18,13),2,2)
+        line([(5,14),(9,10),(12,13),(16,9),(19,12)])
+        line([(12,17),(12,21)]);line([(8,21),(16,21)])
     elif name=='less':line([(5,15),(12,8),(19,15)])
     elif name=='plus':line([(4,12),(20,12)]);line([(12,4),(12,20)])
     painter.end()

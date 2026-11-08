@@ -18,6 +18,7 @@ class DesktopClock(QWidget):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
         self.runtime, self.dock = runtime, runtime.dock
         self.kind=kind;self.component_name="日历" if kind=="calendar" else "时钟"
+        self.setProperty('clickThroughKey',kind)
         self.minimum=(260,230) if kind=="calendar" else (160,100)
         self.backdrop = None; self.drag = None; self.loading = True; self.closed = False
         self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground); self.setWindowTitle('桌面'+self.component_name+' · 大肥鱼Dock')
@@ -47,17 +48,32 @@ class DesktopClock(QWidget):
 
     def sync(self):
         if self.closed: return
+        from resource_options import component_location
+        routed=component_location(self.dock.cfg,self.kind)=='capsule'
+        host=self.runtime.resources.hosted_component(self.kind) if routed else None
+        if self.parentWidget() is not host:
+            self.geometry_timer.stop();self.refresh_timer.stop()
+            self.loading=True
+            self.setParent(host,Qt.Widget if host else Qt.Tool|Qt.FramelessWindowHint)
+            if host:
+                self.setAttribute(Qt.WA_TransparentForMouseEvents,False)
+                host.layout().addWidget(self)
+            else:self.reposition()
+            self.apply_lock()
+            self.loading=False
         if self.kind=='clock' and hasattr(self,'flipped') and self.flip_progress is None:self.flipped=self.dock.cfg.get('clock_flipped',False)
         if getattr(self,'_applied_lock',None)!=self.option('locked'):self.apply_lock()
-        visible = self.option('enabled') and not self.runtime.game_active
+        visible = self.option('enabled') and not self.runtime.game_active and (not routed or host is not None)
         if visible:
             if not self.isVisible(): self.show()
-            self.update_time(); self.refresh_timer.start()
+            self.update_time()
+            if not host:self.refresh_timer.start()
         else:
             self.tick.stop(); self.refresh_timer.stop(); self.backdrop = None; self.hide()
 
     def set_enabled(self, enabled):
-        if self.save(clock_enabled=bool(enabled)): self.sync()
+        if self.save(clock_enabled=bool(enabled)):
+            self.sync();self.runtime.resources.components_changed()
 
     def set_style(self, style):
         if self.save(clock_style=style,clock_flipped=False):
@@ -65,11 +81,17 @@ class DesktopClock(QWidget):
 
     def apply_lock(self):
         locked=self.option('locked')
+        if self.parentWidget() is not None:
+            self.setMinimumSize(1,1);self.setMaximumSize(16777215,16777215)
+            self.setFixedHeight(240 if self.kind=='calendar' else 170)
+            self.grip.hide();self._applied_lock=locked
+            return
         self.setMinimumSize(*self.minimum);self.setMaximumSize(16777215,16777215)
         if locked:self.setFixedSize(self.size())
         self.grip.setVisible(not locked);self._applied_lock=locked
 
     def set_locked(self, locked):
+        if self.parentWidget() is not None:return False
         locked=bool(locked);values={'clock_locked':locked}
         layout=getattr(self.runtime,'layout',None)
         if locked and not (layout and (layout.pending or layout.applying)):
@@ -82,9 +104,12 @@ class DesktopClock(QWidget):
         if not self.isVisible() or self.closed: return
         self.update()
         now = datetime.datetime.now()
-        self.tick.start(max(50, 60000 - now.second * 1000 - now.microsecond // 1000))
+        seconds=self.kind=='clock' and self.option('style')=='digital' and not getattr(self,'flipped',False)
+        interval=1000 if seconds else 60000-now.second*1000
+        self.tick.start(max(30,interval-now.microsecond//1000))
 
     def reposition(self):
+        if self.parentWidget() is not None:return
         screens = screen_records()
         if not screens: return
         record = valid_record(self.option('layout'))
@@ -100,7 +125,7 @@ class DesktopClock(QWidget):
 
     def save_geometry(self,persist=True):
         layout = getattr(self.runtime,'layout',None)
-        if self.loading or self.closed or (layout and (layout.pending or layout.applying)): return
+        if self.loading or self.closed or self.parentWidget() is not None or (layout and (layout.pending or layout.applying)): return
         rect=self.geometry().getRect()
         if self.option('layout') and rect==getattr(self,'_applied_geometry',None):return
         value = capture(list(rect),screen_records(),density=self.dock.cfg.get('card_scale',70)/100)
@@ -109,6 +134,7 @@ class DesktopClock(QWidget):
             elif self.save(clock_layout=value):self._applied_geometry=rect
 
     def capture_backdrop(self):
+        if self.parentWidget() is not None:return
         cfg=self.option('appearance')
         from glass_capture import backdrop_key
         key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect'],cfg['auto_contrast']) if not self.dock.preview else None
@@ -127,7 +153,7 @@ class DesktopClock(QWidget):
         self.update()
 
     def layer(self):
-        if self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'): return
+        if self.parentWidget() is not None or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'): return
         from ctypes import wintypes
         user=ctypes.windll.user32; user.GetShellWindow.restype=wintypes.HWND; owner=user.GetShellWindow()
         if owner:
@@ -137,7 +163,8 @@ class DesktopClock(QWidget):
             user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
 
     def showEvent(self,event):
-        super().showEvent(event); self.layer(); self.refresh_timer.start()
+        super().showEvent(event)
+        if self.parentWidget() is None:self.layer();self.refresh_timer.start()
     def hideEvent(self,event):
         self.tick.stop(); self.refresh_timer.stop();self.backdrop=None
         from clock_legibility import clear_cache
@@ -145,13 +172,13 @@ class DesktopClock(QWidget):
         super().hideEvent(event)
     def moveEvent(self,event):
         super().moveEvent(event)
-        if not self.loading: self.geometry_timer.start(); self.refresh_timer.start()
+        if not self.loading and self.parentWidget() is None: self.geometry_timer.start(); self.refresh_timer.start()
     def resizeEvent(self,event):
         super().resizeEvent(event); self.grip.move(self.width()-20,self.height()-20)
         self.position_flip()
-        if not self.loading: self.geometry_timer.start(); self.refresh_timer.start()
+        if not self.loading and self.parentWidget() is None: self.geometry_timer.start(); self.refresh_timer.start()
     def mousePressEvent(self,event):
-        if event.button()==Qt.LeftButton and not self.option('locked'):
+        if event.button()==Qt.LeftButton and self.parentWidget() is None and not self.option('locked'):
             self.drag_start = self.pos()
             self.drag = event.globalPos() - self.drag_start
             event.accept()
@@ -169,18 +196,33 @@ class DesktopClock(QWidget):
         from usage_stats import record
         record(self.dock,'clock_settings')
         dialog=ClockOptions(self);dialog.exec_();dialog.deleteLater()
+    def open_progress(self):
+        from clock_progress import ClockProgressDialog
+        from settings_effects import save_changes
+        from ui_style import exec_dialog
+
+        def apply(progress):
+            appearance=dict(self.option('appearance'),progress=progress)
+            return save_changes(self.runtime.tray,self.runtime.api,dict(
+                clock_appearance=appearance,clock_style='calendar' if self.option('style')=='calendar' else 'orbit',
+                clock_enabled=True,clock_flipped=False))
+
+        exec_dialog(ClockProgressDialog(self.dock,self.option('appearance')['progress'],apply))
+
     def build_menu(self):
         from ui_style import AlignedMenu
         menu=AlignedMenu(self)
         menu.addAction('时钟设置…').triggered.connect(self.open_settings)
+        menu.addAction('时光进度与倒计时…').triggered.connect(self.open_progress)
         menu.addAction('翻到时钟' if self.flipped else '翻到月历').triggered.connect(self.flip)
         styles=menu.addMenu('时钟样式')
         for title,style in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.option('style')==style)
             action.triggered.connect(lambda checked=False,s=style:self.set_style(s))
         menu.addSeparator()
-        locked=menu.addAction('锁定位置与大小');locked.setCheckable(True);locked.setChecked(self.option('locked'))
-        locked.triggered.connect(self.set_locked)
+        if self.parentWidget() is None:
+            locked=menu.addAction('锁定位置与大小');locked.setCheckable(True);locked.setChecked(self.option('locked'))
+            locked.triggered.connect(self.set_locked)
         menu.addAction('隐藏时钟').triggered.connect(lambda:self.set_enabled(False))
         return menu
     def contextMenuEvent(self,event):
@@ -210,7 +252,7 @@ class DesktopClock(QWidget):
     def advance_flip(self,value):self.flip_progress=float(value);self.update()
     def finish_flip(self):
         self.flipped=self._flip_to if self.save(clock_flipped=self._flip_to) else self._flip_from
-        self.flip_progress=None;self.update()
+        self.flip_progress=None;self.update_time()
 
     def paintEvent(self,event):
         import math
@@ -282,29 +324,26 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         paint_design(target,rect,style_cfg,options.get('design'),clear=surface.cfg['clear_background'],corner_radius=min(options['corner_radius'],h*.24),body_top=rect.bottom(),header_separator=False)
     paint_surface(painter)
     painter.setClipPath(shape)
-    light=colors.get('light',True);ink=QColor(options['text_color'] or ('#ffffff' if material=='clear' or not light else '#19364d'))
-    from clock_legibility import surface_map,background_at,readable,contrast,monochrome,colorful_ink
+    light=colors.get('light',True)
+    ink=QColor(options['text_color'] or ('#f5f7fa' if material=='clear' or not light else '#202428'))
+    muted=QColor(ink)
+    from clock_legibility import surface_map,background_at,readable,contrast,neutral_text
     analysis=None
+    samples=[]
     if options['auto_contrast']:
         surface_keys=('material','theme','color','opacity','highlight','corner_radius','design')
         key=(w,h,backdrop.cacheKey() if backdrop is not None else 0,colors['light'],style_cfg.get('card_design'),tuple(options[k] for k in surface_keys))
         # When wallpaper is unavailable, retain the selected transparent-clock ink.
         fallback=QColor('#1c4268') if material=='clear' else QColor(colors['tint'])
         analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
-        from appearance_presets import THEME_INKS
-        selected=options['text_color']
-        if selected.lower() in ('','#000000','#ffffff','#18354b','#19384e','#19364d'):
-            selected=THEME_INKS.get(material,'#ce4125')
-        ink=colorful_ink(QColor(selected),background_at(analysis,rect,w,h))
-    muted=QColor(ink)
+        samples=background_at(analysis,rect,w,h)
+        ink,muted=neutral_text(samples)
     if options['accent_color']:accent=QColor(options['accent_color'])
     else:
         hue=QColor(options['color'] or '#62acd4').hslHueF()
-        accent=QColor.fromHslF(hue if hue>=0 else .55,.72,.77 if ink.lightness()>150 else .36)
-    if analysis is not None:
-        if ink.name()=='#ffffff':
-            hue=accent.hslHueF();accent=QColor.fromHslF(hue if hue>=0 else .55,.85,.85)
-        # Progress is graphical emphasis, so keep its lively hue and brightness.
+        accent=QColor.fromHslF(hue if hue>=0 else .57,.68,.74 if ink.lightness()>150 else .36)
+        if samples:accent=readable(accent,samples,4.5,polarity=ink.lightness()>150)
+    accent_text=readable(accent,samples,4.5,polarity=ink.lightness()>150) if samples else accent
     now=options.get('_now') or datetime.datetime.now();time_text,period=format_clock_time(now,options['hour_format'])
     hour=int(time_text[:2])
     date_text='%d月%d日  周%s'%(now.month,now.day,'一二三四五六日'[now.weekday()]);scale=options['font_scale']/100
@@ -315,7 +354,11 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         f.setStyleStrategy(QFont.PreferAntialias);f.setHintingPreference(QFont.PreferVerticalHinting);return f
     def text(box,value,size,color,weight=QFont.Normal,align=Qt.AlignLeft|Qt.AlignVCenter,fit=True):
         f=font(size,weight)
-        if any('\u3400'<=character<='\u9fff' for character in value) or (size<21 and not (style in ('month','calendar_card') and value.isdigit())):
+        digital=style=='digital' and value and all(character in '0123456789:' for character in value)
+        if digital and options['font']=='Segoe UI':
+            f.setFamily('Consolas')
+            if f.pixelSize()<21:f.setWeight(weight)
+        elif any('\u3400'<=character<='\u9fff' for character in value) or (size<21 and not (style in ('month','calendar_card') and value.isdigit())):
             f.setFamily(options['date_font']);f.setPixelSize(max(8,round(f.pixelSize()*options['date_scale']/100)));f.setStretch(100);f.setLetterSpacing(QFont.PercentageSpacing,100);f.setWeight(weight)
         if fit:
             while f.pixelSize()>8 and (QFontMetricsF(f).horizontalAdvance(value)>box.width() or QFontMetricsF(f).tightBoundingRect(value).height()>box.height()):f.setPixelSize(f.pixelSize()-1)
@@ -327,16 +370,12 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         tight=metrics.tightBoundingRect(value)
         baseline=box.y()+(box.height()-tight.height())/2-tight.top()
         shadows=((1.0,25),) if options['shadow']=='soft' and f.pixelSize()>=20 else ()
-        color=QColor(color);color.setAlpha(round(color.alpha()*options['text_opacity']/100))
+        color=QColor(accent_text if QColor(color)==accent else color)
+        color.setAlpha(round(color.alpha()*options['text_opacity']/100))
         text_rect=QRectF(x,baseline+tight.top(),max(1,width),max(1,tight.height()))
         if analysis is not None and color.alpha()>=120:
-            alpha=255
-            samples=background_at(analysis,text_rect,w,h)
-            color=QColor(ink)
-            color.setAlpha(alpha)
-            # A soft downward shadow separates text on busy wallpaper without
-            # outlining glyphs or mixing dark and light text across the face.
-            if min(contrast(color,bg) for bg in samples)<4.0 and color.lightness()>150:
+            local_background=background_at(analysis,text_rect,w,h)
+            if min(contrast(color,bg) for bg in local_background)<4.0 and color.lightness()>150:
                 shadows=((1.0,65),(2.0,24))
         for offset,opacity in shadows:
             shadow=QColor('#10253a');shadow.setAlpha(opacity)
@@ -344,7 +383,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         if '_text_audit' in options:options['_text_audit'].append((value,f.pixelSize(),color.name(),color.alpha(),text_rect.getRect()))
         if options['text_effect']=='clear' or f.pixelSize()<18:
             painter.setPen(color);painter.drawText(QPointF(x,baseline),value)
-            return
+            return text_rect
         # Background sampling and the glass tint remain clipped to the glyph.
         glyph=QPainterPath();glyph.addText(QPointF(x,baseline),f,value)
         painter.save();painter.setClipPath(glyph,Qt.IntersectClip)
@@ -354,6 +393,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         upper=color.lighter(110) if color.lightness()<150 else QColor(color)
         upper.setAlpha(color.alpha());lower=QColor(color);lower.setAlpha(round(color.alpha()*.97))
         wash.setColorAt(0,upper);wash.setColorAt(1,lower);painter.fillRect(bounds,wash);painter.restore()
+        return text_rect
     from clock_design import draw
     draw(style,painter,w,h,now,options,ink,muted,accent,text,time_text,period)
     painter.restore()

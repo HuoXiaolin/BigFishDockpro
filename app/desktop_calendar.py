@@ -55,5 +55,6 @@ class DesktopCalendar(DesktopClock):
 
     def build_menu(self):
         menu=AlignedMenu(self);menu.addAction('回到今天').triggered.connect(self.go_today);menu.addAction('日历设置…').triggered.connect(self.open_settings)
-        lock=menu.addAction('锁定位置与大小');lock.setCheckable(True);lock.setChecked(self.option('locked'));lock.triggered.connect(self.set_locked)
+        if self.parentWidget() is None:
+            lock=menu.addAction('锁定位置与大小');lock.setCheckable(True);lock.setChecked(self.option('locked'));lock.triggered.connect(self.set_locked)
         menu.addSeparator();menu.addAction('隐藏日历').triggered.connect(lambda:self.set_enabled(False));return menu

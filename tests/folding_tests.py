@@ -24,12 +24,14 @@ def run(api,runtime,root,output,checks):
         manager.set_merged('a',True);app.processEvents();assert manager.update_panel('a',fold={'style':'capsule','ratio':20})
         assert settings(manager.windows['a'])==settings(manager.windows['b'])=={'style':'capsule','ratio':20}
         manager.windows[manager.active_for('a')].collapse();app.processEvents();manager.select_page('b');app.processEvents();assert settings(manager.windows['b'])['ratio']==20
-        cfg.update(notes_enabled=True,notes_visible=True,note_style='glass');runtime.notes.reload();identity=runtime.notes.new();other=runtime.notes.new();note=runtime.notes.windows[identity];original=note.geometry().getRect()
+        cfg.update(notes_enabled=True,notes_visible=True,note_style='glass');runtime.notes.reload();identity=runtime.notes.new();other=runtime.notes.new()
+        assert runtime.notes.select(identity)
+        note=runtime.notes.windows[identity];original=note.geometry().getRect()
         assert runtime.notes.update_and_save(identity,fold={'style':'ball','ratio':1});note.set_collapsed(True);app.processEvents()
         assert note.width()==note.height() and note.fold_badge.isVisible() and not note.fold_badge.text();assert abs(note.geometry().center().x()-(original[0]+original[2]/2))<=2 and note.y()==original[1]
         note.grab().save(str(Path(output)/'note-fold-ball.png'));note.move(note.x()+25,note.y()+15);note.save_geometry();note.set_collapsed(False);app.processEvents()
-        assert note.width()==original[2] and note.height()==original[3] and note.x()==original[0]+25 and note.y()==original[1]+15
-        assert settings(runtime.notes.windows[other])['style']=='bar'
+        assert note.width()==original[2] and note.height()==original[3] and note.x()==original[0]+25 and note.y()==original[1]+15, (original,note.geometry().getRect(),note._fold_expanded)
+        assert runtime.notes.select(other) and settings(runtime.notes.windows[other])['style']=='bar'
         loaded=api.load_config();assert next(row for row in loaded['sticky_notes'] if row['id']==identity)['fold']['style']=='ball'
         from config_transfer import normalize
         assert normalize(copy.deepcopy(cfg),api)['merge_groups']==cfg['merge_groups']

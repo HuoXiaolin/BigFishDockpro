@@ -4,12 +4,21 @@ from math import isfinite
 
 def amount_text(metric):
     value = metric.get('value') or ''
-    if metric.get('kind') in ('balance', 'spend'):
+    if metric.get('kind') == 'spend':
+        return value.removeprefix('≥').lstrip() or '—'
+    if metric.get('kind') == 'balance':
         return value or '—'
     # Older local bridges already send the formatted value without a kind.
     if value.lstrip('≥−- ').startswith(('¥', '￥', '$', '€', '£')):
         return value
     return None
+
+
+def amount_label(metric):
+    label = metric['label']
+    if metric.get('kind') == 'spend' and (metric.get('value') or '').startswith('≥'):
+        return label + '（已知金额）'
+    return label
 
 
 def used_percent(metric):

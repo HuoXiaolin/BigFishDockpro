@@ -1,10 +1,10 @@
 """Shared native Qt styling. Dock painting and glass rendering stay unchanged."""
-from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase,QWheelEvent
+from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase,QWheelEvent,QFontMetrics
 from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication, QPoint, QPointF
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
     QProxyStyle, QStyle, QStyleFactory, QSpinBox, QComboBox, QToolButton,
     QAbstractSpinBox, QSlider, QLineEdit, QCheckBox, QStyleOptionButton, QSizePolicy, QWidget, QHBoxLayout, QSizeGrip,
-    QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView, QAbstractScrollArea)
+    QListView, QStyledItemDelegate, QMenu, QFrame, QAbstractItemView, QAbstractScrollArea,QToolTip)
 
 class SubtleSizeGrip(QSizeGrip):
     """Use the standard resize target with a restrained two-stroke mark."""
@@ -223,9 +223,74 @@ class SettingsGrip(QSizeGrip):
 
 
 class PopupDelegate(QStyledItemDelegate):
+    flags = Qt.AlignLeft | Qt.AlignTop | Qt.TextWrapAnywhere
+
+    def icon_width(self,index):
+        return widget_px(self.parent(),24) if index.data(Qt.DecorationRole) is not None else 0
+
+    def text_bounds(self,metrics,text,width):
+        return metrics.boundingRect(QRect(0,0,max(1,width),10000),self.flags,text)
+
+    def measured_height(self,index,metrics):
+        view=self.parent()
+        reserve=widget_px(view,40)+self.icon_width(index)
+        width=max(1,view.row_width-reserve)
+        text=str(index.data(Qt.DisplayRole) or '')
+        height=self.text_bounds(metrics,text,width).height()
+        return max(widget_px(view,31),metrics.height()+6,height+widget_px(view,12))
+
     def sizeHint(self, option, index):
-        size = super().sizeHint(option, index)
-        return QSize(size.width()+compact_px(16), max(compact_px(32), option.fontMetrics.height()+compact_px(14)))
+        view=self.parent()
+        return QSize(view.row_width,self.measured_height(index,QFontMetrics(view.font())))
+
+    def paint(self,painter,option,index):
+        view=self.parent()
+        rect=QRectF(option.rect).adjusted(1,1,-1,-1)
+        palette=view.combo.control_palette()
+        enabled=bool(index.flags()&Qt.ItemIsEnabled)
+        selected=bool(option.state&(QStyle.State_Selected|QStyle.State_MouseOver)) and enabled
+        checked=index.row()==view.combo.currentIndex()
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        if selected or checked:
+            tone=palette.color(QPalette.Highlight)
+            if not selected:tone.setAlpha(115)
+            painter.setPen(Qt.NoPen);painter.setBrush(tone)
+            painter.drawRoundedRect(rect,6,6)
+        ink=palette.color(QPalette.Text if enabled else QPalette.Mid)
+        painter.setPen(ink);painter.setFont(view.font())
+        left=rect.left()+widget_px(view,9)
+        icon=index.data(Qt.DecorationRole)
+        if isinstance(icon,QIcon) and not icon.isNull():
+            side=min(16,round(rect.height()-4))
+            icon.paint(painter,QRect(round(left),round(rect.center().y()-side/2),side,side))
+            left+=self.icon_width(index)
+        width=max(1,rect.right()-left-widget_px(view,23))
+        text=str(index.data(Qt.DisplayRole) or '')
+        need=self.text_bounds(painter.fontMetrics(),text,round(width)).height()
+        height=min(need,rect.height()-4)
+        painter.save()
+        area=QRectF(left,rect.center().y()-height/2,width,height)
+        painter.setClipRect(area)
+        painter.drawText(area,self.flags,text)
+        painter.restore()
+        if checked:
+            x,y=rect.right()-widget_px(view,12),rect.center().y()
+            painter.setPen(QPen(palette.color(QPalette.Link),1.4,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+            mark=QPainterPath(QPointF(x-4,y));mark.lineTo(x-1,y+3);mark.lineTo(x+4,y-3)
+            painter.drawPath(mark)
+        painter.restore()
+
+    def helpEvent(self,event,view,option,index):
+        text=str(index.data(Qt.DisplayRole) or '')
+        extra=index.data(Qt.ToolTipRole)
+        width=max(1,view.row_width-widget_px(view,40)-self.icon_width(index))
+        metrics=QFontMetrics(view.font())
+        if extra or metrics.horizontalAdvance(text)>width:
+            message=text+'\n'+str(extra) if extra and extra!=text else text
+            QToolTip.showText(event.globalPos(),message,view)
+            return True
+        return super().helpEvent(event,view,option,index)
 
 
 class AlignedMenu(QMenu):
@@ -289,6 +354,7 @@ class PopupList(QListView):
     def __init__(self, combo, parent):
         super().__init__(parent)
         self.combo = combo
+        self.row_width = 160
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
@@ -299,25 +365,44 @@ class PopupList(QListView):
         else: super().keyPressEvent(event)
 
 
+class ComboPopupFrame(QFrame):
+    def __init__(self,combo):
+        super().__init__(combo,Qt.Popup|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setObjectName('ComboPopupFrame')
+
+    def paintEvent(self,event):
+        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
+        palette=self.parentWidget().control_palette()
+        edge=palette.color(QPalette.Mid);edge.setAlpha(115)
+        painter.setPen(QPen(edge,.8));painter.setBrush(palette.color(QPalette.Base))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),8,8)
+
+
 class ModernComboBox(QComboBox):
     def __init__(self, *args):
         super().__init__(*args)
         self.setProperty('modern', True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMaxVisibleItems(9)
+        self.setMinimumContentsLength(5)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._popup = None
         self._popup_view = None
 
     def view(self):
         if self._popup_view is not None:
             return self._popup_view
-        self._popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
-        self._popup.setObjectName('ComboPopupFrame')
+        self._popup = ComboPopupFrame(self)
         layout = QVBoxLayout(self._popup)
         layout.setContentsMargins(4,4,4,4)
         view = self._popup_view = PopupList(self, self._popup)
         view.setObjectName('ComboPopup')
-        view.setUniformItemSizes(True)
+        view.setUniformItemSizes(False)
+        view.setMouseTracking(True)
+        view.viewport().setAutoFillBackground(False)
+        view.setResizeMode(QListView.Adjust)
+        view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         view.setItemDelegate(PopupDelegate(view))
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         view.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -326,6 +411,8 @@ class ModernComboBox(QComboBox):
         return view
 
     def choose_popup(self, index):
+        if index.isValid() and not (index.flags()&Qt.ItemIsEnabled and index.flags()&Qt.ItemIsSelectable):
+            return
         if index.isValid():
             self.setCurrentIndex(index.row())
             self.activated[int].emit(index.row())
@@ -337,19 +424,31 @@ class ModernComboBox(QComboBox):
         view = self.view()
         view.setModel(self.model())
         view.setModelColumn(self.modelColumn())
+        view.setRootIndex(self.rootModelIndex())
         view.setFont(self.font())
-        view.setCurrentIndex(self.model().index(self.currentIndex(),self.modelColumn()))
-        row_height = max(compact_px(32),view.sizeHintForRow(0))
-        height = min(self.count(),self.maxVisibleItems())*row_height+compact_px(20)
-        width = max(self.width(),min(compact_px(520),view.sizeHintForColumn(0)+compact_px(32)))
+        view.setCurrentIndex(self.model().index(self.currentIndex(),self.modelColumn(),self.rootModelIndex()))
         point = self.mapToGlobal(QPoint(0,self.height()+3))
         screen = QApplication.screenAt(point) or QApplication.primaryScreen()
-        bounds = screen.availableGeometry()
-        height = min(height,bounds.height()-8)
-        width = min(width,bounds.width()-8)
-        if point.y()+height>bounds.bottom(): point.setY(self.mapToGlobal(QPoint(0,0)).y()-height-3)
-        point.setX(max(bounds.left()+4,min(point.x(),bounds.right()-width-3)))
-        point.setY(max(bounds.top()+4,min(point.y(),bounds.bottom()-height-3)))
+        bounds = screen.availableGeometry().adjusted(5,5,-5,-5)
+        metrics=QFontMetrics(self.font())
+        contents=max(metrics.horizontalAdvance(self.itemText(i))+(widget_px(self,24) if not self.itemIcon(i).isNull() else 0)
+                     for i in range(self.count()))
+        reserves=widget_px(self,40)+view.verticalScrollBar().sizeHint().width()+8
+        width=min(bounds.width(),max(self.width(),min(widget_px(self,780),contents+reserves)))
+        view.row_width=max(1,width-8-view.verticalScrollBar().sizeHint().width())
+        view.scheduleDelayedItemsLayout()
+        visible=min(self.count(),self.maxVisibleItems())
+        first=min(max(0,self.currentIndex()-visible//2),self.count()-visible)
+        height=8+sum(view.sizeHintForRow(i) for i in range(first,first+visible))
+        top=self.mapToGlobal(QPoint(0,0)).y()-3
+        below=max(0,bounds.bottom()-point.y()+1)
+        above=max(0,top-bounds.top())
+        upward=height>below and above>below
+        room=above if upward else below
+        height=min(height,room if room>=view.sizeHintForRow(first)+8 else bounds.height())
+        if upward:point.setY(top-height)
+        point.setX(max(bounds.left(),min(point.x(),bounds.right()-width+1)))
+        point.setY(max(bounds.top(),min(point.y(),bounds.bottom()-height+1)))
         self._popup.setGeometry(point.x(),point.y(),width,height)
         self._popup.show()
         self._popup.raise_()
@@ -359,13 +458,70 @@ class ModernComboBox(QComboBox):
     def hidePopup(self):
         if getattr(self, '_popup', None) is not None:
             self._popup.hide()
+        super().hidePopup()
+
+    def event(self,event):
+        if event.type()==QEvent.ToolTip:
+            value=self.currentText()
+            if QFontMetrics(self.font()).horizontalAdvance(value)>self.text_rect().width():
+                tip=self.toolTip()
+                QToolTip.showText(event.globalPos(),value+('\n'+tip if tip and tip!=value else ''),self)
+                return True
+        return super().event(event)
+
+    def text_rect(self):
+        left=widget_px(self,10)
+        if self.currentIndex()>=0 and not self.itemIcon(self.currentIndex()).isNull():left+=widget_px(self,22)
+        return self.rect().adjusted(left,0,-widget_px(self,30),0)
+
+    def control_palette(self):
+        palette=self.palette()
+        colors=getattr(self.window(),'colors',None) if self.property('glassField') else None
+        if colors:
+            for role,key in ((QPalette.Text,'ink'),(QPalette.Mid,'muted'),(QPalette.Base,'field'),
+                             (QPalette.Window,'surface'),(QPalette.Button,'hover'),(QPalette.Highlight,'hover')):
+                palette.setColor(role,QColor(colors[key]))
+        return palette
 
     def paintEvent(self, event):
-        super().paintEvent(event)
+        if self.isEditable():
+            super().paintEvent(event)
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(self.palette().color(QPalette.Text if self.isEnabled() else QPalette.Mid), 1.5))
-        cx, cy = self.width()-widget_px(self,18), self.height()/2
+        palette=self.control_palette()
+        glass=self.property('glassField')
+        ink=palette.color(QPalette.Text if self.isEnabled() else QPalette.Mid)
+        hovered=self.underMouse() and self.isEnabled()
+        edge=palette.color(QPalette.Mid)
+        if self.hasFocus():
+            edge=palette.color(QPalette.Link)
+        elif glass:
+            edge=QColor(ink);edge.setAlpha(58)
+        else:
+            edge.setAlpha(115)
+        painter.setPen(QPen(edge,1 if self.hasFocus() else .75))
+        if glass:
+            surface=palette.color(QPalette.Button)
+            surface.setAlpha(72 if hovered else 44)
+        else:
+            surface=palette.color(QPalette.Base if self.isEnabled() else QPalette.Window)
+        if hovered and not glass:
+            surface=surface.darker(103) if surface.lightness()>150 else surface.lighter(110)
+        painter.setBrush(surface)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),6,6)
+        rect=self.text_rect()
+        if self.currentIndex()>=0:
+            icon=self.itemIcon(self.currentIndex())
+            if not icon.isNull():
+                side=min(widget_px(self,17),self.height()-4)
+                icon.paint(painter,QRect(widget_px(self,10),(self.height()-side)//2,side,side))
+        painter.setPen(ink);painter.setFont(self.font())
+        value=self.currentText() or self.placeholderText()
+        painter.drawText(rect,Qt.AlignVCenter|Qt.AlignLeft,
+                         painter.fontMetrics().elidedText(value,Qt.ElideRight,max(0,rect.width())))
+        painter.setPen(QPen(ink,1.4,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+        cx, cy = self.width()-widget_px(self,14), self.height()/2
         path = QPainterPath()
         path.moveTo(cx-4, cy-2)
         path.lineTo(cx, cy+2)
@@ -482,16 +638,19 @@ class DialogChrome(QObject):
         # Construction/destruction events can arrive during Python cyclic GC.
         # Never inspect or repolish those partially constructed Qt objects.
         kind=event.type()
-        if kind == QEvent.Wheel:
+        if kind == QEvent.Wheel and isinstance(widget,QWidget):
             is_editor = isinstance(widget, (QLineEdit, QToolButton)) and isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox))
-            if not is_editor and not isinstance(widget, (QAbstractSpinBox, QSlider, QComboBox)):
-                return False
+            value_control=is_editor or isinstance(widget,(QAbstractSpinBox,QSlider,QComboBox))
             # Qt5 may stop propagation at a focused value control on Windows.
             # Route the original wheel gesture into the nearest scrollable page.
             parent = widget
             while not parent.isWindow():
                 parent = parent.parentWidget()
                 if isinstance(parent, QAbstractScrollArea):
+                    if parent.property('scrollThroughContent') and (event.pixelDelta().y() or event.angleDelta().y()):
+                        parent.wheelEvent(event)
+                        return True
+                    if not value_control:break
                     viewport = parent.viewport()
                     local = event.globalPosF() - QPointF(viewport.mapToGlobal(QPoint()))
                     forwarded = QWheelEvent(local, event.globalPosF(), event.pixelDelta(), event.angleDelta(),
@@ -500,8 +659,8 @@ class DialogChrome(QObject):
                     forwarded.setTimestamp(event.timestamp())
                     QApplication.sendEvent(viewport, forwarded)
                     break
-            event.accept()
-            return True
+            if value_control:event.accept()
+            return value_control
         if kind not in (QEvent.FocusIn,QEvent.FocusOut,QEvent.MouseButtonPress,QEvent.KeyPress,QEvent.Show):return False
         from PyQt5 import sip
         if sip.isdeleted(widget) or getattr(self,'_polishing',False):return False
@@ -617,9 +776,7 @@ def apply_theme(app, light):
             border:1px solid %(line)s; outline:0; selection-background-color:%(selection)s;
             selection-color:%(text)s; padding:5px;}
         QComboBox QAbstractItemView::item {min-height:28px; padding:4px 8px; border:0;}
-        QFrame#ComboPopupFrame {background:%(surface)s; border:1px solid %(line)s; border-radius:6px;}
-        QListView#ComboPopup {background:%(surface)s; color:%(text)s; border:0; padding:4px; outline:0;}
-        QListView#ComboPopup::item:selected {background:%(selection)s; color:%(text)s;}
+        QFrame#ComboPopupFrame, QListView#ComboPopup {background:transparent; border:0; padding:0; outline:0;}
         QListWidget {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; border-radius:8px; padding:6px;}
         QListWidget::item {min-height:30px; padding:7px 10px; border-radius:4px;}
         QListWidget::item:selected {background:%(selection)s; color:%(text)s;}

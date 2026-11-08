@@ -77,6 +77,11 @@ def run(api,runtime,root,output,checks):
         note.set_option('locked',False);note.set_option('pinned',True);assert manager.row(identity)['pinned']
         note.set_option('pinned',False)
         note2=manager.new();second=manager.windows[note2];second.editor.setPlainText('另一个演示：采购清单');manager.flush()
+        assert second is note and len(manager.windows)==1 and note.note_tabs.count()==2
+        note.note_tabs.setCurrentIndex(0)
+        assert manager.windows[identity] is note and '确认图纸' in note.editor.toPlainText()
+        note.note_tabs.setCurrentIndex(1)
+        assert manager.windows[note2] is note and note.editor.toPlainText()=='另一个演示：采购清单'
         manager.manage();dialog=manager.dialog;dialog.query.setText('采购');assert dialog.list.count()==1
         dialog.list.setCurrentRow(0);dialog.open_selected();assert second.isVisible()
         assert manager.delete(note2) and len(cfg['notes_trash'])==1 and note2 not in manager.windows
@@ -90,6 +95,7 @@ def run(api,runtime,root,output,checks):
         runtime.lite=True;manager.set_lite()
         assert all(window.backdrop is backgrounds[key] and not window.refresh_timer.isActive() for key,window in manager.windows.items())
         runtime.lite=False
+        assert manager.select(identity)
         from screen_layout import capture
         real=__import__('sticky_notes').screen_records();area=real[0]['area'];reference=copy.deepcopy(real);reference[0]['area']=[area[0],area[1],round(area[2]*1.5),round(area[3]*1.5)]
         geometry=[area[0]+40,area[1]+50,360,270]
@@ -104,7 +110,7 @@ def run(api,runtime,root,output,checks):
         else:raise AssertionError('Bad note style accepted')
         note.set_option('auto_hide',True);note.collapse_timer.stop()
         manager.flush();manager.close();before=copy.deepcopy(cfg['sticky_notes']);manager=runtime.notes=NotesManager(runtime);manager.sync()
-        assert len(manager.windows)==2 and cfg['sticky_notes']==before
+        assert len(manager.windows)==1 and manager.windows[identity].note_tabs.count()==2 and cfg['sticky_notes']==before
         assert manager.row(identity)['auto_hide'];manager.windows[identity].set_option('auto_hide',False)
         assert '确认图纸' in manager.windows[identity].editor.toPlainText()
         # Failed shutdown write is backed up and recovered on the next controller.

@@ -192,7 +192,7 @@ class Sampler:
         if 'traffic' in self.metrics:self.traffic.observe(readings)
         return result
 
-    def sample(self):
+    def sample(self,sample_rank=True):
         now=time.monotonic();data={'time':now}
         if 'cpu' in self.metrics:data['cpu']=self.cpu()
         if 'memory' in self.metrics:data['memory']=self.memory()
@@ -209,7 +209,7 @@ class Sampler:
         if 'gpu' in self.metrics:
             engines=self.pdh.read('engines',group_engines=True) if ready else {}
             data['gpu']=min(100.,max(engines.values())) if engines else None
-        if self.ranking:data['rank']=self.ranking.sample(now)
+        if self.ranking and sample_rank:data['rank']=self.ranking.sample(now)
         return data
 
     def close(self):

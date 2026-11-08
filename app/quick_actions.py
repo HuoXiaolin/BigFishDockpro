@@ -8,10 +8,12 @@ ACTIONS=[('settings','全部设置','grid'),('taskbar','任务栏效果','positi
          ('search','统一搜索','search'),('undo','撤销整理','undo'),
          ('layouts','布局方案','layouts'),('references','入口修复','repair'),('flash','闪念胶囊','flash'),('resources','资源胶囊','monitor'),('taskbar_monitor','任务栏监控','monitor')]
 PREVIOUS_ORDER = [key for key, _, _ in ACTIONS]
-PRIORITY_ORDER = [
+OLD_PRIORITY_ORDER = [
     'flash', 'resources', 'taskbar_monitor', 'notes', 'clock', 'reflections', 'dock_time', 'lite', 'calendar',
     'settings', 'taskbar', 'taskbar_text', 'manage', 'appearance', 'panels',
 ]
+FIRST_PAGE_SETTINGS = ['settings', 'taskbar', 'taskbar_text', 'manage', 'appearance', 'panels']
+PRIORITY_ORDER = FIRST_PAGE_SETTINGS + [key for key in OLD_PRIORITY_ORDER if key not in FIRST_PAGE_SETTINGS]
 DEFAULT_ORDER = PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in PRIORITY_ORDER]
 PRODUCTIVITY_ACTIONS=('search','undo','layouts','references','flash','resources','taskbar_monitor')
 MIME='application/x-bigfishdock-quick-action'
@@ -26,7 +28,8 @@ def normalize_order(value):
     old_default = [key for key in previous_twenty if key != 'taskbar_text']
     previous_default = list(old_default)
     previous_default[1], previous_default[-1] = previous_default[-1], previous_default[1]
-    if not order or order in (PREVIOUS_ORDER, previous_twenty, old_default, previous_default, previous_default[:-1]):
+    old_priority = OLD_PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in OLD_PRIORITY_ORDER]
+    if not order or order in (PREVIOUS_ORDER, previous_twenty, old_default, previous_default, previous_default[:-1], old_priority):
         return list(DEFAULT_ORDER)
     # Insert the new control beside Taskbar without resetting a saved custom order.
     # Once explicitly arranged, its position is owned by the user.

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import uuid
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt,QObject,QTimer,QRectF,QEvent,QPoint,pyqtSignal,QVariant
+from PyQt5.QtCore import Qt,QObject,QTimer,QRectF,QEvent,QPoint,QPointF,pyqtSignal,QVariant
 from PyQt5.QtGui import QPainter,QPainterPath,QColor,QPen,QLinearGradient,QFont,QTextCharFormat,QTextListFormat,QTextCursor,QTextDocument,QPalette,QIcon
 from PyQt5.QtWidgets import QWidget,QDialog,QLayout,QVBoxLayout,QHBoxLayout,QFormLayout,QLineEdit,QTextEdit,QToolButton,QLabel,QSizeGrip,QApplication,QListWidget,QListWidgetItem,QTabBar,QMessageBox,QShortcut
 from PyQt5.QtGui import QKeySequence,QCursor
@@ -34,8 +34,26 @@ class NoteEditor(QTextEdit):
     def __init__(self,parent):
         super().__init__(parent)
         self.setDocument(LocalDocument(self));self.setAcceptRichText(False)
+        self.document().setDocumentMargin(9)
+        self.paragraph_fill=QColor(255,255,255,115)
+        self.paragraph_edge=QColor(55,75,89,24)
         self.setPlaceholderText('写点什么…  选中文字可设置格式')
         self.setTabChangesFocus(False)
+    def paintEvent(self,event):
+        document=self.document();layout=document.documentLayout()
+        scroll=self.verticalScrollBar().value()
+        offset=layout.hitTest(QPointF(document.documentMargin(),scroll),Qt.FuzzyHit)
+        block=document.findBlock(max(0,offset))
+        painter=QPainter(self.viewport());painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(self.paragraph_edge,1));painter.setBrush(self.paragraph_fill)
+        while block.isValid():
+            rect=layout.blockBoundingRect(block).translated(0,-scroll)
+            if rect.top()>event.rect().bottom():break
+            if rect.bottom()>=event.rect().top() and block.text().strip():
+                painter.drawRoundedRect(QRectF(2,rect.top()+.5,self.viewport().width()-4,max(1,rect.height()-1)),4,4)
+            block=block.next()
+        painter.end()
+        super().paintEvent(event)
     def mousePressEvent(self,event):
         self.press_point=event.pos();super().mousePressEvent(event)
     def mouseReleaseEvent(self,event):
@@ -72,12 +90,14 @@ class NoteTitle(QLineEdit):
 
 
 class NoteWindow(QWidget):
-    def __init__(self,manager,identity):
-        super().__init__(None,Qt.Tool|Qt.FramelessWindowHint)
+    def __init__(self,manager,identity,parent=None):
+        super().__init__(parent,Qt.Widget if parent else Qt.Tool|Qt.FramelessWindowHint)
+        self.embedded=parent is not None
         self.manager,self.runtime,self.dock=manager,manager.runtime,manager.runtime.dock
         from interaction_motion import attach
         attach(self,lambda:self.dock.cfg)
         self.identity=identity;self.loading=True;self.disposed=False;self.drag=None;self.backdrop=None;self.ui_factor=1.0;self.expanded_height=260
+        self.setProperty('clickThroughKey','note:'+str(identity))
         self.setObjectName('StickyNote');self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(230,150)
         self.layout_box=QVBoxLayout(self);self.layout_box.setSizeConstraint(QLayout.SetNoConstraint);self.layout_box.setContentsMargins(12,9,12,9);self.layout_box.setSpacing(6)
@@ -89,6 +109,17 @@ class NoteWindow(QWidget):
         self.more=self.tool('⋯','便签菜单',self.show_menu);header.addWidget(self.more)
         self.collapse_button=self.tool('−','收起 / 展开',self.toggle_collapse);header.addWidget(self.collapse_button)
         self.layout_box.addLayout(header)
+        self.navigation=QWidget()
+        navigation=QHBoxLayout(self.navigation);navigation.setContentsMargins(0,0,0,0);navigation.setSpacing(4)
+        self.note_tabs=QTabBar()
+        self.note_tabs.setAccessibleName('切换便签')
+        self.note_tabs.setExpanding(False);self.note_tabs.setUsesScrollButtons(True)
+        self.note_tabs.setElideMode(Qt.ElideRight);self.note_tabs.setDrawBase(False)
+        self.note_tabs.currentChanged.connect(self.select_tab)
+        navigation.addWidget(self.note_tabs,1);navigation.addWidget(self.tool('+','新建便签',manager.new))
+        self.layout_box.addWidget(self.navigation)
+        self.tab_items=()
+        self.todo_drafts={}
         self.tools=QWidget();toolbar=QHBoxLayout(self.tools);toolbar.setContentsMargins(0,0,0,0);toolbar.setSpacing(3)
         self.format_buttons={}
         for text,tip,key in [('B','加粗 Ctrl+B','bold'),('I','斜体 Ctrl+I','italic'),('U','下划线 Ctrl+U','underline'),('S','删除线','strike'),('•','项目符号','bullet'),('☐','切换待办完成状态','todo')]:
@@ -115,18 +146,56 @@ class NoteWindow(QWidget):
         for keys,kind in [('Ctrl+B','bold'),('Ctrl+I','italic'),('Ctrl+U','underline'),('Ctrl+Shift+L','bullet')]:
             shortcut=QShortcut(QKeySequence(keys),self);shortcut.activated.connect(lambda k=kind:self.format_text(k))
         shortcut=QShortcut(QKeySequence('Ctrl+S'),self);shortcut.activated.connect(manager.flush)
-        row=self.row();self.title.setText(row['title']);self.editor.setHtml(clean_editor_html(row['html']));self.pages.setCurrentIndex(1 if row.get('flipped') else 0);self.rebuild_todos()
+        self.load_identity(identity)
         self.resize(300,260);self.reposition();self.apply_style();self.loading=False
         from idle_resources import watch
         watch(self)
+
+    def load_identity(self,identity):
+        loading=self.loading;self.loading=True
+        self.todo_drafts[self.identity]=self.todo_input.text()
+        self.identity=identity
+        self.setProperty('clickThroughKey','note:'+str(identity))
+        row=self.row()
+        self.title.setText(row['title'])
+        self.editor.setHtml(clean_editor_html(row['html']))
+        self.pages.animation.stop();self.pages.frames=None
+        self.pages.setCurrentIndex(1 if row.get('flipped') else 0)
+        self.todo_input.setText(self.todo_drafts.get(identity,''))
+        self.rebuild_todos()
+        self.loading=loading
+
+    def sync_tabs(self,rows):
+        items=tuple((row['id'],row['title']) for row in rows if row['visible'])
+        blocked=self.note_tabs.blockSignals(True)
+        if items!=self.tab_items:
+            while self.note_tabs.count():self.note_tabs.removeTab(0)
+            for identity,title in items:
+                index=self.note_tabs.addTab(title[:13]+('…' if len(title)>13 else ''))
+                self.note_tabs.setTabData(index,identity);self.note_tabs.setTabToolTip(index,title)
+            self.tab_items=items
+        self.note_tabs.setCurrentIndex(next((i for i,(key,_) in enumerate(items) if key==self.identity),-1))
+        self.note_tabs.blockSignals(blocked)
+
+    def select_tab(self,index):
+        if index>=0 and not self.manager.select(self.note_tabs.tabData(index)):
+            self.sync_tabs(self.manager.rows())
 
     def tool(self,text,tip,callback):
         widget=QToolButton(self);widget.setText(text);widget.setToolTip(tip);widget.setAccessibleName(tip);widget.setFixedSize(23,23);widget.clicked.connect(callback);return widget
     def nativeEvent(self,event_type,message):
         from fold_options import native_minimum
-        if native_minimum(self,message):return True,0
+        if not self.embedded and not self.disposed and native_minimum(self,message):return True,0
         return super().nativeEvent(event_type,message)
-    def row(self):return self.manager.row(self.identity)
+    @property
+    def fixed_open(self):
+        return self.embedded or self.dock.cfg.get('resource_component_locations',{}).get('notes')=='desktop'
+
+    def row(self):
+        row=self.manager.row(self.identity)
+        if self.fixed_open:row.update(collapsed=False,auto_hide=False)
+        if self.embedded:row.update(pinned=False,locked=False)
+        return row
     def appearance(self):return normalize_note_appearance(self.row().get('appearance',self.dock.cfg.get('note_appearance')))
     def changed(self):
         if self.loading or self.disposed or self.manager.closed:return
@@ -204,6 +273,7 @@ class NoteWindow(QWidget):
             cursor.mergeCharFormat(fmt);self.editor.mergeCurrentCharFormat(fmt)
         self.editor.setTextCursor(cursor);self.editor.setFocus();self.changed()
     def set_collapsed(self,value):
+        if self.fixed_open:return False
         layout=getattr(self.runtime,'layout',None)
         if layout and layout.pending:return
         if self.disposed or self.row()['collapsed']==value:return
@@ -266,12 +336,15 @@ class NoteWindow(QWidget):
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.row()['style']==key);action.triggered.connect(lambda checked=False,value=key:self.set_option('style',value))
         colors=menu.addMenu('便签颜色')
         for title,color in COLORS:colors.addAction(title).triggered.connect(lambda checked=False,value=color:self.set_option('color',value))
-        for key,title in [('auto_hide','自动收起（鼠标离开后）'),('pinned','置顶显示'),('locked','锁定位置与大小')]:
+        choices=[] if self.embedded else [('pinned','置顶显示'),('locked','锁定位置与大小')]
+        if not self.fixed_open:choices.insert(0,('auto_hide','自动收起（鼠标离开后）'))
+        for key,title in choices:
             action=menu.addAction(title);action.setCheckable(True);action.setChecked(self.row()[key]);action.triggered.connect(lambda checked,k=key:self.set_option(k,checked))
-        from fold_options import FoldOptions
-        from ui_style import exec_dialog
-        menu.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
-        menu.addAction('展开便签' if self.row()['collapsed'] else '收起便签').triggered.connect(self.toggle_collapse)
+        if not self.fixed_open:
+            from fold_options import FoldOptions
+            from ui_style import exec_dialog
+            menu.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
+            menu.addAction('展开便签' if self.row()['collapsed'] else '收起便签').triggered.connect(self.toggle_collapse)
         menu.addAction('隐藏便签（保留内容）').triggered.connect(lambda:self.manager.update_and_save(self.identity,visible=False))
         menu.addAction('便签管理…').triggered.connect(self.manager.manage)
         menu.addSeparator();menu.addAction('删除便签（可恢复）').triggered.connect(lambda:self.manager.delete(self.identity))
@@ -284,7 +357,7 @@ class NoteWindow(QWidget):
         if not self.disposed and self.row()['auto_hide']:self.collapse_timer.start()
     def eventFilter(self,widget,event):
         if widget in (getattr(self,'title',None),getattr(self,'editor',None)) and event.type()==QEvent.FocusOut and hasattr(self,'collapse_timer') and not self.disposed and self.row()['auto_hide']:self.collapse_timer.start()
-        if widget is self.handle or (widget is getattr(self,'title',None) and self.title.isReadOnly()):
+        if not self.embedded and (widget is self.handle or (widget is getattr(self,'title',None) and self.title.isReadOnly())):
             if widget is getattr(self,'title',None) and event.type()==QEvent.MouseButtonDblClick:
                 self.drag=None;return False
             if event.type()==QEvent.MouseButtonPress and event.button()==Qt.LeftButton and not self.row()['locked']:
@@ -306,7 +379,7 @@ class NoteWindow(QWidget):
             if event.type()==QEvent.MouseButtonDblClick:self.toggle_collapse();return True
         return super().eventFilter(widget,event)
     def save_geometry(self):
-        if self.loading or self.disposed:return
+        if self.embedded or self.loading or self.disposed:return
         layout=getattr(self.runtime,'layout',None)
         if layout and (layout.pending or layout.applying):return
         row=self.row()
@@ -319,6 +392,7 @@ class NoteWindow(QWidget):
         self.manager.update(self.identity,geometry=geometry,layout=capture(geometry,screen_records(),self.ui_factor,self.dock.cfg.get('card_scale',70)/100))
         self._saved_geometry=self.geometry().getRect()
     def reposition(self):
+        if self.embedded:return
         self.geometry_timer.stop();row=self.row();screens=screen_records();record=row.get('layout',{})
         if not record:
             geometry=row.get('geometry')
@@ -341,6 +415,7 @@ class NoteWindow(QWidget):
         self.loading=False
     def apply_style(self):
         row=self.row();collapsed=row['collapsed'];self.loading=True
+        self.navigation.setVisible(not collapsed)
         self.tools.setVisible(not collapsed and not row.get('flipped'));self.pages.setVisible(not collapsed);self.footer.setVisible(not collapsed)
         factor=self.ui_factor;bar=max(30,round(42*factor));small_before=self.height()<max(80,bar+2)
         self.setMinimumSize(max(160,round(230*min(1,factor))),bar if collapsed else max(96,round(150*min(1,factor))));self.setMaximumSize(16777215,16777215)
@@ -349,7 +424,7 @@ class NoteWindow(QWidget):
         self.layout_box.setContentsMargins(*(max(5,round(v*factor)) for v in (12,9,12,9)));self.layout_box.setSpacing(max(3,round(6*factor)))
         for widget in [self.flip_button,self.settings_button,self.more,self.collapse_button,self.retry]+list(self.format_buttons.values()):widget.setFixedSize(max(16,round(23*factor)),max(16,round(23*factor)))
         if row['locked']:self.setFixedSize(self.size())
-        self.grip.setVisible(not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
+        self.grip.setVisible(not self.embedded and not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
         color=QColor(row['color']);ink='#20252b' if color.lightness()>110 or self.dock.cfg.get('card_design') in ('gradient','paper','minimal') else '#f5f7fa'
         if row['style']=='glass':
             from appearance_presets import THEME_INKS
@@ -367,6 +442,11 @@ class NoteWindow(QWidget):
         appearance=self.appearance()
         content_light=self.dock.base_theme_colors(appearance['theme']).get('light',True) if row['style']=='glass' else QColor(row['color']).lightness()>110
         content_ink='#000000' if content_light else '#ffffff'
+        self.editor.paragraph_fill=QColor(255,255,255,118 if content_light else 24)
+        self.editor.paragraph_edge=QColor(22,41,56,28) if content_light else QColor(230,241,255,34)
+        self.note_tabs.setStyleSheet('QTabBar::tab{color:%s;border:1px solid transparent;border-radius:5px;padding:3px 7px;}'
+                                    'QTabBar::tab:selected{background:rgba(110,150,185,60);border-color:rgba(115,145,168,100);}'
+                                    'QTabBar::tab:hover{background:rgba(110,150,185,44);}'%content_ink)
         size=self.text_pixels();self.editor.setStyleSheet('font-size:%dpx;color:%s;'%(size,content_ink))
         self.todo_input.setStyleSheet('color:'+content_ink+';')
         self.editor.viewport().setAutoFillBackground(False);self.todos.viewport().setAutoFillBackground(False)
@@ -376,9 +456,13 @@ class NoteWindow(QWidget):
         self.settings_button.setIcon(QIcon(category_icon('settings',ink,max(12,round(16*factor)),self.devicePixelRatioF())));self.settings_button.setIconSize(self.handle.size())
         font=QFont('Microsoft YaHei UI');font.setPixelSize(size);self.editor.document().setDefaultFont(font)
         palette=self.editor.palette();palette.setColor(QPalette.Text,QColor(content_ink));palette.setColor(QPalette.Base,QColor(0,0,0,0));self.editor.setPalette(palette)
-        from fold_options import note_geometry
-        note_geometry(self,collapsed)
-        self.setWindowTitle(row['title']+' · 大肥鱼Dock便签');self.layer();self.loading=False;self.update();self.refresh_timer.start()
+        if self.embedded:self.setFixedHeight(225)
+        else:
+            from fold_options import note_geometry
+            note_geometry(self,collapsed)
+            self.layer();self.refresh_timer.start()
+        if self.fixed_open:self.collapse_button.hide()
+        self.setWindowTitle(row['title']+' · 大肥鱼Dock便签');self.loading=False;self.update()
         if not self.geometry_timer.isActive():self._saved_geometry=self.geometry().getRect()
     def text_pixels(self):
         row=self.row()
@@ -387,14 +471,19 @@ class NoteWindow(QWidget):
         return font_pixels(self.dock.cfg,self.ui_factor)
 
     def layer(self):
+        if self.embedded:return
         from window_layers import desktop_layer,shell_owner
         top=self.row()['pinned']
         owner=0 if top or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP') else shell_owner()
         desktop_layer(int(self.winId()),top,owner)
-    def showEvent(self,event):super().showEvent(event);self.layer();self.refresh_timer.start();self.collapse_timer.start() if self.row()['auto_hide'] else None
+    def showEvent(self,event):
+        super().showEvent(event)
+        if not self.embedded:
+            self.layer();self.refresh_timer.start()
+            if self.row()['auto_hide']:self.collapse_timer.start()
     def moveEvent(self,event):
         super().moveEvent(event)
-        if not self.loading:self.geometry_timer.start();self.refresh_timer.start()
+        if not self.loading and not self.embedded:self.geometry_timer.start();self.refresh_timer.start()
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if not self.loading:
@@ -402,8 +491,10 @@ class NoteWindow(QWidget):
                 target=getattr(self,'_fold_target',None);layout=getattr(self.runtime,'layout',None)
                 if target and (self.width(),self.height())!=target[2:] and layout:layout.changed()
                 return
-            self.geometry_timer.start();self.refresh_timer.start();self.fit_title()
+            if not self.embedded:self.geometry_timer.start();self.refresh_timer.start()
+            self.fit_title()
     def capture_backdrop(self):
+        if self.embedded:return
         appearance=self.appearance()
         if self.row()['style']!='glass' or appearance['material'] in ('clear','solid'):self.backdrop=None;self.update();return
         if self.dock.preview or not self.isVisible():return
@@ -574,7 +665,8 @@ class NotesManager(QObject):
     def update(self,identity,**changes):
         row=self.row(identity);row.update(changes);row['updated']=datetime.datetime.now(datetime.timezone.utc).isoformat();self.pending[identity]=row;self.message='尚未保存';self.timer.start();self.status()
     def status(self):
-        for window in self.windows.values():window.status.setText(self.message)
+        rows=self.runtime.dock.cfg['sticky_notes']
+        for window in self.windows.values():window.status.setText(self.message);window.sync_tabs(rows)
     def persist(self,**changes):
         candidate=dict(self.runtime.dock.cfg,**copy.deepcopy(changes))
         try:
@@ -597,8 +689,8 @@ class NotesManager(QObject):
         row={'id':identity,'title':'新便签','html':'','text':'','pinned':False,'locked':False,'collapsed':False,'auto_hide':False,'visible':True,'updated':'','font_size':12,'font_scale':1.0}
         row.update(default_note_style(cfg))
         self.pending[identity]=row
-        if not self.persist(sticky_notes=self.rows(),notes_enabled=True,notes_visible=True):return None
-        self.pending.clear();self.sync();window=self.windows[identity];window.raise_();window.editor.setFocus();self.changed.emit()
+        if not self.persist(sticky_notes=self.rows(),notes_enabled=True,notes_visible=True,notes_active=identity):return None
+        self.pending.clear();self.sync();self.focus_note(identity);self.changed.emit()
         from usage_stats import record
         record(self.runtime,'note_new');return identity
     def update_and_save(self,identity,**changes):
@@ -627,12 +719,28 @@ class NotesManager(QObject):
     def restore(self,identity):
         if not self.flush() or len(self.rows())>=64:return False
         trash=self.runtime.dock.cfg['notes_trash'];row=copy.deepcopy(next(row for row in trash if row['id']==identity));row['visible']=True
-        if self.persist(sticky_notes=self.rows()+[row],notes_trash=[old for old in trash if old['id']!=identity],notes_enabled=True,notes_visible=True):self.sync();return True
+        if self.persist(sticky_notes=self.rows()+[row],notes_trash=[old for old in trash if old['id']!=identity],notes_enabled=True,notes_visible=True,notes_active=identity):self.sync();return True
         return False
     def open(self,identity):
         if self.persist(notes_enabled=True,notes_visible=True):
-            self.update_and_save(identity,visible=True);window=self.windows.get(identity)
-            if window:window.raise_();window.editor.setFocus()
+            self.update_and_save(identity,visible=True)
+            if self.select(identity):self.focus_note(identity)
+    def select(self,identity):
+        if not any(row['id']==identity and row['visible'] for row in self.rows()):return False
+        window=next(iter(self.windows.values()),None)
+        if window:window.title.finish_edit()
+        if not self.flush():return False
+        if self.runtime.dock.cfg.get('notes_active')!=identity and not self.persist(notes_active=identity):return False
+        self.sync()
+        return True
+    def focus_note(self,identity):
+        from resource_options import component_location
+        if component_location(self.runtime.dock.cfg,'notes')=='capsule':
+            self.runtime.resources.open_component('notes',identity)
+        window=self.windows.get(identity)
+        if window:
+            if window.isWindow():window.raise_()
+            window.editor.setFocus()
     def toggle(self):
         cfg=self.runtime.dock.cfg
         changes={'notes_visible':not cfg['notes_visible']} if cfg['notes_enabled'] else {'notes_enabled':True,'notes_visible':True}
@@ -640,14 +748,30 @@ class NotesManager(QObject):
     def sync(self):
         if self.closed:return
         rows={row['id']:row for row in self.rows()};cfg=self.runtime.dock.cfg
-        for identity in set(self.windows)-set(rows):self.windows.pop(identity).dispose()
-        for identity,row in rows.items():
-            visible=cfg['notes_enabled'] and cfg['notes_visible'] and row['visible'] and not self.runtime.game_active
-            if identity not in self.windows:
-                if not visible:continue
-                self.windows[identity]=NoteWindow(self,identity)
-            window=self.windows[identity];window.apply_style()
-            window.setVisible(visible)
+        from resource_options import component_location
+        routed=component_location(cfg,'notes')=='capsule'
+        eligible=[key for key,row in rows.items() if row['visible']]
+        identity=cfg.get('notes_active','')
+        if identity not in eligible:identity=next(iter(eligible),None)
+        host=self.runtime.resources.hosted_component('notes') if routed else None
+        visible=bool(identity and cfg['notes_enabled'] and cfg['notes_visible'] and not self.runtime.game_active and (not routed or host))
+        window=next(iter(self.windows.values()),None)
+        if window and (window.identity not in rows or routed and not host or window.parentWidget() is not host):
+            self.windows.clear()
+            if window.identity in rows:window.title.finish_edit()
+            window.dispose();window=None
+        if visible and window is None:
+            window=NoteWindow(self,identity,host)
+            self.windows[identity]=window
+            if host:host.layout().addWidget(window)
+        elif visible and window.identity!=identity:
+            window.title.finish_edit()
+            self.windows.clear()
+            window.load_identity(identity)
+            self.windows[identity]=window
+            if window.isWindow():self.runtime.click_policy.apply(window)
+        if window:
+            window.sync_tabs(rows.values());window.apply_style();window.setVisible(visible)
         self.status()
     def reload(self):
         for window in self.windows.values():window.dispose()

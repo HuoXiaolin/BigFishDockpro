@@ -21,6 +21,7 @@ def fixtures():
 
 
 def aggregation(checks):
+    from resource_pages import cost_note,cost_text
     from resource_usage import aggregate,combine
     rows=fixtures()
     result=aggregate(rows)
@@ -33,6 +34,12 @@ def aggregation(checks):
     result=aggregate(rows,'all','Codex');assert result['total']['tokens']==5000*1035 and len(result['series'])<=45
     unknown=combine([dict(tokens=10,cost=None,unpriced=1),dict(tokens=20,cost=.5,unpriced=0)])
     assert unknown['tokens']==30 and unknown['cost']==.5 and unknown['unpriced']==1 and unknown['records'] is None and unknown['cacheRate'] is None
+    estimate=dict(cost=10.37,estimated=True,unpriced=2)
+    assert cost_text(estimate)=='$10.37' and cost_text(estimate,currency=False)=='10.37'
+    assert cost_note(estimate)=='含估算 · 2 条未定价' and cost_note(unknown)=='1 条未定价'
+    assert cost_text(dict(cost=None,unpriced=2))=='未定价' and cost_text(dict(cost=0))=='$0.00'
+    assert cost_text(dict(cost=.000037))=='$0.000037'
+    assert cost_text(dict(cost=.000000037))=='<$0.000001'
     old=dict(rows[0]);old.pop('hours');assert len(aggregate([old])['series'])==1
     many=copy.deepcopy(rows[0]);many['days']=[dict(date=(date.today()-timedelta(days=i)).isoformat(),model='历史测试',summary=rows[0]['days'][0]['summary']) for i in range(500)]
     result=aggregate([many],'all');assert len(result['series'])<=45 and sum(s['tokens'] for _,s in result['series'])==2500000
@@ -45,7 +52,7 @@ def run(api,runtime,app,output,checks):
     from resource_options import DEFAULTS,SENSOR_UNITS
     from resource_compact import plan
     from resource_ai_tray import quota_icon
-    from resource_quota import amount_text, quota_color, quota_text, used_percent
+    from resource_quota import amount_label, amount_text, quota_color, quota_text, used_percent
     from resource_settings import ResourceOptions
     import resource_compact
     import resource_statistics
@@ -91,9 +98,15 @@ def run(api,runtime,app,output,checks):
         assert bridge.history_requested
         stats.provider.setCurrentIndex(stats.provider.findData('Codex'));assert stats.data['total']['tokens']==5175000
         for metric in ('tokens','records','cost'):stats.set_metric(metric);app.processEvents()
+        painted.clear()
+        with patch.object(resource_statistics,'text',record_text):
+            stats.summary.grab();stats.charts.grab();stats.providers.grab()
+        amounts={value for value,_ in painted}
+        assert {'258.75','$258.75','USD','费用趋势 · USD','含估算'}<=amounts and not any('≈$' in value for value in amounts)
         stats.grab().save(str(output/'redesign-statistics-all.png'))
         QTimer.singleShot(25,w.ai_view.detail_dialog.reject);stats.show_details('Codex')
         assert w.ai_view.models.rowCount()==1 and w.ai_view.models.item(0,1).text()=='5,175,000'
+        assert w.ai_view.models.item(0,2).text()=='258.75' and w.ai_view.models.item(0,3).text()=='含估算'
         with patch('resource_statistics.aggregate',wraps=__import__('resource_statistics').aggregate) as calculation:
             stats.refresh();stats.refresh();assert calculation.call_count==0,'Media ticks recalculated unchanged usage history'
         stats.provider.setCurrentIndex(0);stats.set_period('month');w.grab().save(str(output/'redesign-statistics-month.png'))
@@ -145,6 +158,8 @@ def run(api,runtime,app,output,checks):
         balance = dict(kind='balance', label='账户余额', value='¥12.48', percent=87.52)
         assert amount_text(balance) == quota_text(balance) == '¥12.48' and used_percent(balance) is None
         assert amount_text(dict(value='¥12.48', percent=87.52)) == '¥12.48'
+        spend=dict(kind='spend',label='累计消费',value='≥¥3.18')
+        assert amount_text(spend)=='¥3.18' and amount_label(spend)=='累计消费（已知金额）'
         assert quota_color(100) == quota_color(70) != quota_color(69)
         assert quota_color(69) == quota_color(40) != quota_color(39)
         assert quota_color(39) == quota_color(11) != quota_color(10)

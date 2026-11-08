@@ -41,6 +41,7 @@ def ask_time(parent):
 class EdgeHandle(QWidget):
     def __init__(self,service):
         super().__init__(None,TOOL_FLAGS|Qt.WindowDoesNotAcceptFocus)
+        self.setProperty('clickThroughKey','flash')
         self.service=service;self.press=None;self.moving=False;self.dragging_text=False;self.notice=''
         self.drag_side=None;self.reveal_level=0. if service.cfg['flash_edge_hide'] else 1.
         self.setObjectName('FlashEdge');self.setWindowTitle('闪念胶囊');self.setAccessibleName('闪念胶囊贴边入口')
@@ -209,6 +210,7 @@ class EdgeHandle(QWidget):
 class FlashPanel(QWidget):
     def __init__(self,service):
         super().__init__(None,TOOL_FLAGS)
+        self.setProperty('clickThroughKey','flash')
         self.service=service;self.expanded='';self.color_filter='';self.editing=False;self.edit_id=''
         self.edit_color=service.cfg['flash_color'];self.rows={};self.icons={};self.hold=False
         rounded_window(self);self.setAcceptDrops(True);self.setWindowTitle('闪念胶囊 · 大肥鱼Dock')
@@ -627,6 +629,7 @@ class FlashPanel(QWidget):
 class ReminderToast(QFrame):
     def __init__(self,service,row,count):
         super().__init__(None,TOOL_FLAGS|Qt.WindowDoesNotAcceptFocus)
+        self.setProperty('clickThroughKey','flash');self.setAttribute(Qt.WA_TranslucentBackground)
         self.service=service;self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle('闪念提醒');self.setObjectName('FlashReminder')
         c=palette_for(service)

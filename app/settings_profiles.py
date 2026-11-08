@@ -13,7 +13,7 @@ class AppearanceProfileMixin:
         row=QHBoxLayout();row.addWidget(self.overall_style,1)
         self.restore_style=button('全部恢复默认',self.restore_all_styles);row.addWidget(self.restore_style)
         form.addRow(row)
-        form.addRow(label('应用到 Dock、卡片、便签、时钟、日历和闪念胶囊；切换前的自定义外观会保留。','muted'))
+        form.addRow(label('适用于 Dock 和桌面组件，会保留切换前的自定义外观。','muted'))
         self.overall_style.currentIndexChanged.connect(self.choose_overall_style)
 
     def connect_profile_fields(self, keys):

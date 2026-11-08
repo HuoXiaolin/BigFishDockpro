@@ -4,6 +4,7 @@ import time
 import threading
 from PyQt5.QtCore import QObject,pyqtSignal,Qt
 from background_worker import BackgroundWorker
+from resource_options import CAPSULE_PAGES,RESOURCE_PAGES,component_available,component_location
 
 
 class MonitorJob(BackgroundWorker):
@@ -25,13 +26,34 @@ class MonitorJob(BackgroundWorker):
         reader=None
         try:
             reader=Sampler(set(),self.traffic_path)
+            previous_keys=frozenset()
+            previous_signature=None
+            next_full=next_rank=0.
             while not self.cancelled.is_set():
                 with self.lock:
-                    self.wake.clear();keys,interval=self.signature
-                reader.configure(keys)
-                value=reader.sample()
-                if not self.cancelled.is_set():self.sample_ready.emit(value)
-                self.wake.wait(interval)
+                    self.wake.clear()
+                    keys,interval=self.signature
+                now=time.monotonic()
+                if (keys,interval)!=previous_signature:
+                    reader.configure(keys)
+                    next_full=now
+                    if 'rank' in keys-previous_keys:next_rank=now
+                    previous_keys=keys
+                    previous_signature=(keys,interval)
+                rank_due='rank' in keys and now>=next_rank
+                warming=rank_due and not reader.ranking.previous
+                value=None
+                if now>=next_full:
+                    value=reader.sample(sample_rank=rank_due)
+                    next_full=now+interval
+                elif rank_due:
+                    value={'time':now,'rank':reader.ranking.sample(now),'rank_only':True}
+                if rank_due:
+                    next_rank=now+(.30 if warming else 1.0)
+                if value is not None and not self.cancelled.is_set():
+                    self.sample_ready.emit(value)
+                deadline=min(next_full,next_rank) if 'rank' in keys else next_full
+                self.wake.wait(max(0.,deadline-time.monotonic()))
         except (OSError,ValueError,AttributeError):
             if not self.cancelled.is_set():self.sample_ready.emit({'time':time.monotonic(),'error':True})
         finally:
@@ -45,6 +67,8 @@ class ResourceCapsule(QObject):
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
         self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
         self.extras=None
+        self.desktop_cards={}
+        self.dependency_prompts=None
         self.main_settings = False
         self.settings_depth = 0
         self.preview_detail = False
@@ -77,6 +101,8 @@ class ResourceCapsule(QObject):
 
     def set_options(self,**changes):
         from settings_effects import save_changes
+        if 'resource_component_order' in changes:
+            changes['resource_component_order']=list(dict.fromkeys([*changes['resource_component_order'],*CAPSULE_PAGES]))
         old=self.auto_compact
         if 'resource_collapsed' in changes or 'resource_auto_hide' in changes:self.auto_compact=None
         ok=save_changes(self.runtime.tray,self.runtime.api,changes)
@@ -106,7 +132,7 @@ class ResourceCapsule(QObject):
                 self.auto_compact=bool(compact);self.sync()
             return True
         return self.set_options(resource_collapsed=bool(compact))
-    def settings(self):
+    def settings(self,page=None):
         from contextlib import nullcontext
         from resource_panel import ResourceOptions
         from ui_style import exec_dialog
@@ -116,23 +142,63 @@ class ResourceCapsule(QObject):
         self.settings_focus_changed()
         try:
             with scope:
-                exec_dialog(ResourceOptions(self))
+                options=ResourceOptions(self)
+                if type(page) is int and 0<=page<options.tabs.count():options.tabs.setCurrentIndex(page)
+                exec_dialog(options)
         finally:
             self.settings_depth -= 1
             self.settings_focus_changed()
 
+    def detached(self,key):
+        return self.desktop_cards.get(key)
+
+    def feature_visible(self,key):
+        if self.runtime.game_active or not component_available(self.cfg,key):return False
+        if component_location(self.cfg,key)=='desktop':return key in self.desktop_cards
+        return bool(self.window and self.window.isVisible())
+
+    def sync_desktop_cards(self):
+        wanted=[key for key in RESOURCE_PAGES if not self.runtime.game_active and
+                component_location(self.cfg,key)=='desktop' and component_available(self.cfg,key)]
+        for key in self.desktop_cards.keys()-set(wanted):self.desktop_cards.pop(key).dispose()
+        for key in wanted:
+            if key not in self.desktop_cards:
+                from resource_desktop_card import ResourceDesktopCard
+                self.desktop_cards[key]=ResourceDesktopCard(self,key)
+            self.desktop_cards[key].sync_window()
+
+    def hosted_component(self,key,identity=None):
+        window=self.window
+        if not window or self.compact or window.page_key!=key or not window.page_enabled(key):return None
+        view=getattr(window,'_'+key+'_view',None)
+        if view and view.active and (identity is None or view.selected==identity):return view.host
+        return None
+
+    def components_changed(self):
+        if self.window and not self.closed:self.window.refresh()
+
+    def open_component(self,key,identity=None):
+        self.open()
+        if self.window and self.window.page_enabled(key):
+            self.window.select_page(key)
+            if identity:self.window.view(key).select(identity)
+
     def needs(self):
         if self.closed:return set()
         desktop=set()
-        if self.window and self.window.isVisible() and not (self.compact and self.cfg['resource_fold']=='ball'):
+        detailed=self.detached('resources')
+        capsule=(self.window and self.window.isVisible() and component_location(self.cfg,'resources')=='capsule')
+        if detailed or capsule and not (self.compact and self.cfg['resource_fold']=='ball'):
             from resource_options import METRICS
-            desktop={k for k in METRICS if self.cfg['resource_'+k]}
-            if self.compact:desktop.intersection_update(self.cfg['resource_compact_metrics'])
-            elif self.window.page_key=='resources':
+            desktop={k for k in METRICS if k!='traffic' and self.cfg['resource_'+k]}
+            if detailed or not self.compact and self.window.page_key=='resources':
                 if 'cpu' in desktop:desktop.add('cpu_cores')
+            elif self.compact:desktop.intersection_update(self.cfg['resource_compact_metrics'])
             else:desktop.discard('rank')
-        if self.window and self.window.isVisible() and self.cfg['resource_traffic']:desktop.add('traffic')
+        if self.feature_visible('traffic'):desktop.add('traffic')
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
+        custom=getattr(self.runtime,'custom_cards',None)
+        if custom:desktop.update(custom.needs())
         return desktop
 
     def active_keys(self):
@@ -176,7 +242,8 @@ class ResourceCapsule(QObject):
             self.window.sync_window()
         elif self.window is not None:
             window,self.window=self.window,None;window.dispose()
-        if visible and self.cfg['resource_weather']:
+        self.sync_desktop_cards()
+        if self.feature_visible('weather'):
             if self.extras is None:
                 from resource_extras import ResourceExtras
                 self.extras=ResourceExtras(self)
@@ -193,7 +260,8 @@ class ResourceCapsule(QObject):
         demand=self.needs()
         want_tray=self.cfg['resource_ai_tray'] and not self.runtime.game_active
         want_music=bool(self.strip and self.strip.music_requested())
-        want_deck=visible and (self.cfg['resource_ai'] or self.cfg['resource_music']) or want_tray or want_music
+        want_deck=(self.cfg['resource_ai'] and self.feature_visible('ai') or self.feature_visible('music')
+                   or want_tray or want_music or bool(getattr(self.runtime,'spectrum',None)))
         if want_deck:
             if self.deck is None:
                 from resource_deck import DeckBridge
@@ -215,6 +283,7 @@ class ResourceCapsule(QObject):
             bt,self.bluetooth=self.bluetooth,None;bt.close()
         from resource_options import SENSOR_UNITS
         sensors=frozenset(demand & SENSOR_UNITS.keys())
+        self.check_dependencies(want_deck)
         if self.sensors and self.sensors.keys!=sensors:
             self.sensors.close();self.sensors=None
         if sensors and not self.sensors:
@@ -227,7 +296,7 @@ class ResourceCapsule(QObject):
         elif not want_fps and self.fps:
             self.fps.close();self.fps=None
         keys=self.active_keys()
-        interval=max(self.cfg['resource_interval'],5 if self.runtime.lite else 2 if self.compact else 1)
+        interval=max(self.cfg['resource_interval'],5 if self.runtime.lite else 2 if self.compact and not self.detached('resources') else 1)
         signature=(frozenset(keys),interval) if keys else None
         if signature!=self.signature:
             self.signature=signature
@@ -250,6 +319,19 @@ class ResourceCapsule(QObject):
             else:self.start_job()
         self.display()
 
+    def check_dependencies(self,deck_needed):
+        if self.runtime.dock.preview:return
+        cfg=self.cfg
+        cpu_sensors={'cpu_temp','cpu_power'}
+        taskbar=cfg['resource_taskbar'] and self.strip_allowed()
+        dotnet=deck_needed or taskbar and cfg['resource_task_music']
+        pawnio=(self.feature_visible('resources') and any(cfg['resource_'+key] for key in cpu_sensors)
+                or taskbar and bool(cpu_sensors.intersection(cfg['resource_task_metrics'])))
+        if self.dependency_prompts is None and (dotnet or pawnio):
+            from dependency_prompts import DependencyPrompts
+            self.dependency_prompts=DependencyPrompts(self.runtime)
+        if self.dependency_prompts:self.dependency_prompts.request(dotnet,pawnio)
+
     def start_job(self):
         if self.closed or not self.signature or self.runtime.dock.preview:return
         from pathlib import Path
@@ -271,6 +353,15 @@ class ResourceCapsule(QObject):
         if not self.signature or self.history is None:return
         keys,interval=self.signature
         now=data['time']
+        if data.get('rank_only'):
+            if 'rank' in keys and data.get('rank') is not None:
+                self.latest['rank']=data['rank']
+                self.observed['rank']=now
+                if self.window and self.window.dashboard is not None and self.window.page_key=='resources' and not self.compact:
+                    self.window.show_ranking()
+                card=self.detached('resources')
+                if card and card.dashboard is not None:card.show_ranking()
+            return
         for key in keys:
             value=data.get(key)
             if value is not None and (key!='cpu_cores' or value):
@@ -284,19 +375,26 @@ class ResourceCapsule(QObject):
 
     def display(self):
         if self.window:self.window.refresh()
+        for card in self.desktop_cards.values():card.refresh()
         if self.strip:self.strip.refresh()
         if self.ai_tray:self.ai_tray.refresh()
+        custom=getattr(self.runtime,'custom_cards',None)
+        if custom:custom.redraw(metrics_only=True)
     def reposition(self):
         if self.window:self.window.reposition()
+        for card in self.desktop_cards.values():card.reposition()
         if self.strip:self.strip.placement.restore();self.strip.reposition()
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
+        if self.dependency_prompts:self.dependency_prompts.close()
         if self.job:
             self.job.requestInterruption();self.job.deleteLater();self.job=None
         if self.bluetooth:self.bluetooth.close();self.bluetooth=None
         if self.sensors:self.sensors.close();self.sensors=None
         if self.fps:self.fps.close();self.fps=None
         if self.window:self.window.dispose();self.window=None
+        for card in self.desktop_cards.values():card.dispose()
+        self.desktop_cards.clear()
         if self.strip:self.strip.dispose();self.strip=None
         if self.deck:self.deck.close();self.deck=None
         if self.ai_tray:self.ai_tray.close();self.ai_tray=None

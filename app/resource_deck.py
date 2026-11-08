@@ -1,9 +1,25 @@
 """Opt-in JSON pipe to the BrimDeck-derived read-only provider/media helper."""
-import base64,json,sys,time
+import base64,ctypes,json,sys,time
 from pathlib import Path
-from PyQt5.QtCore import QObject,QProcess,QTimer
+from PyQt5.QtCore import QObject,QProcess,QProcessEnvironment,QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QApplication
+
+
+def start_headless(process, executable, data_dir, runtime):
+    env = QProcessEnvironment.systemEnvironment()
+    env.insert('DOTNET_ROOT_X64', str(runtime))
+    env.insert('DOTNET_DISABLE_GUI_ERRORS', '1')
+    process.setProcessEnvironment(env)
+    # The Windows error mode is inherited at CreateProcess, including failures
+    # before managed Main. Restore the parent's mode as soon as QProcess starts.
+    kernel = ctypes.windll.kernel32
+    previous = kernel.GetErrorMode()
+    kernel.SetErrorMode(previous | 0x0001 | 0x0002)  # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
+    try:
+        process.start(str(executable), [str(data_dir)])
+    finally:
+        kernel.SetErrorMode(previous)
 
 
 class DeckBridge(QObject):
@@ -13,20 +29,34 @@ class DeckBridge(QObject):
         self.ai_status='正在读取…';self.alert='';self.alert_until=0.;self.previous_levels={}
         self.history_requested=False
         self.memory_blocked=False
+        self.failures=0
+        self.launched_at=0.
+        self.launch_timed_out=False
         self.process=QProcess(self);self.process.readyReadStandardOutput.connect(self.read)
+        self.process.readyReadStandardError.connect(self.process.readAllStandardError)
         self.process.errorOccurred.connect(self.failed);self.process.finished.connect(self.finished)
-        self.restart=QTimer(self);self.restart.setSingleShot(True);self.restart.setInterval(15000);self.restart.timeout.connect(self.configure)
+        self.restart=QTimer(self);self.restart.setSingleShot(True);self.restart.timeout.connect(self.configure)
+        self.launch_watch=QTimer(self);self.launch_watch.setSingleShot(True)
+        self.launch_watch.timeout.connect(self.startup_timeout)
 
     def configure(self):
-        if self.memory_blocked:return
+        if self.closed or self.memory_blocked or self.restart.isActive():return
         cfg=self.owner.cfg
-        desktop=cfg['resource_enabled'] and not getattr(self.owner.runtime,'game_active',False)
         window=self.owner.window
+        visible=getattr(self.owner,'feature_visible',None)
+        desktop=cfg['resource_enabled'] and not getattr(self.owner.runtime,'game_active',False)
+        ai_visible=visible('ai') if visible else desktop
+        music_visible=visible('music') if visible else desktop
+        detached=getattr(self.owner,'detached',None)
+        music_card=detached('music') if detached else None
         strip=getattr(self.owner,'strip',None);task_music=bool(strip and strip.music_requested())
         compact=getattr(self.owner,'compact',cfg['resource_collapsed'])
-        presentation=bool(desktop and cfg['resource_music'] and window and ((compact and cfg['resource_fold']!='ball' and cfg['resource_music_text']=='wave') or (not compact and window.page_key=='music')))
+        presentation=bool(music_card or music_visible and cfg['resource_music'] and window and
+                          ((compact and cfg['resource_fold']!='ball' and cfg['resource_music_text']=='wave') or
+                           (not compact and window.page_key=='music')))
         presentation=presentation or bool(task_music and strip.shows_wave())
-        signature=(cfg['resource_ai_tray'] or cfg['resource_ai'] and desktop,tuple(cfg['resource_ai_providers']),cfg['resource_music'] and desktop or task_music,cfg['resource_lyrics'] and cfg['resource_music'] and desktop,cfg['resource_equalizer'],presentation)
+        spectrum=bool(getattr(self.owner.runtime,'spectrum',None))
+        signature=(cfg['resource_ai_tray'] or cfg['resource_ai'] and ai_visible,tuple(cfg['resource_ai_providers']),cfg['resource_music'] and music_visible or task_music,cfg['resource_lyrics'] and cfg['resource_music'] and music_visible,cfg['resource_equalizer'],presentation,spectrum)
         if signature==self.signature and (self.process.state()!=QProcess.NotRunning or self.owner.runtime.dock.preview):return
         self.signature=signature
         if not signature[0]:self.providers=[];self.ai_status='已关闭'
@@ -34,14 +64,22 @@ class DeckBridge(QObject):
         if self.owner.runtime.dock.preview:return
         starting=self.process.state()==QProcess.NotRunning
         if starting:
+            wait=getattr(self.owner.runtime,'bridge_start_after',0)-time.monotonic()
+            if wait>0:
+                self.restart.start(max(1, round(wait*1000)))
+                return
             from deck_runtime import installed_runtime
-            if not installed_runtime():
+            runtime=installed_runtime()
+            if not runtime:
                 self.status=self.ai_status='AI / 音乐需要 .NET 10 桌面运行库，可在设置中打开下载页';return
             root=Path(sys._MEIPASS) if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]/'artifacts'
             exe=root/'deck-bridge/BigFishDeckBridge.exe'
             if not exe.is_file():self.status=self.ai_status='未找到 AI / 音乐组件';return
-            self.process.start(str(exe),[str(Path(self.owner.runtime.api.CONFIG_DIR)/'deck-data')])
-        self.send(op='configure',ai=signature[0],providers=signature[1],music=signature[2],lyrics=signature[3],equalizer=signature[4],presentation=signature[5])
+            self.launched_at=time.monotonic()
+            self.launch_timed_out=False
+            self.launch_watch.start(35000)
+            start_headless(self.process, exe, Path(self.owner.runtime.api.CONFIG_DIR)/'deck-data', runtime)
+        self.send(op='configure',ai=signature[0],providers=signature[1],music=signature[2],lyrics=signature[3],equalizer=signature[4],presentation=signature[5],desktopSpectrum=signature[6])
         if starting and self.history_requested:self.send(op='history',range='all')
 
     def request_history(self):
@@ -51,7 +89,9 @@ class DeckBridge(QObject):
     def refresh(self):
         if self.closed:return
         self.memory_blocked=False
-        if self.process.state()==QProcess.NotRunning:self.configure()
+        if self.process.state()==QProcess.NotRunning:
+            self.restart.stop()
+            self.configure()
         self.send(op='refresh')
 
     def send(self,**data):
@@ -68,6 +108,15 @@ class DeckBridge(QObject):
 
     def accept(self,data):
         kind=data.get('type');cfg=self.owner.cfg
+        if kind=='ready':
+            self.launch_watch.stop()
+            return
+        if kind=='spectrum':
+            window=getattr(self.owner.runtime,'spectrum',None)
+            if window:
+                from desktop_spectrum import BANDS
+                window.set_levels([max(0.,min(1.,float(n))) for n in data.get('levels',[])[:BANDS]])
+            return
         if kind=='ai' and (cfg['resource_ai'] or cfg['resource_ai_tray']):
             from resource_quota import remaining_percent, used_percent
             self.providers=data.get('providers',[])[:7];self.ai_status='更新于 '+str(data.get('at',''))[11:19]
@@ -79,7 +128,7 @@ class DeckBridge(QObject):
                 if cfg['resource_quota_alert'] and level>previous:
                     self.alert=f"{row['name']}  额度剩余 {remaining_percent(used):.0f}%";self.alert_until=time.monotonic()+5
         elif kind=='memory_error':
-            self.memory_blocked=True;self.restart.stop();self.status=self.ai_status=data.get('message','无法启用内存限制')
+            self.memory_blocked=True;self.restart.stop();self.launch_watch.stop();self.status=self.ai_status=data.get('message','无法启用内存限制')
         elif kind=='ai_error':
             self.ai_status=data.get('message','读取失败')
             for row in self.providers:row['stale']=True
@@ -94,6 +143,8 @@ class DeckBridge(QObject):
                 self.owner.window.update()
                 view=getattr(self.owner.window,'_music_view',None)
                 if view and view.isVisible():view.meter.update()
+            if hasattr(self.owner,'detached') and (card:=self.owner.detached('music')):
+                card.content.meter.update()
             strip=getattr(self.owner,'strip',None)
             if strip and strip.isVisible() and strip.shows_wave():strip.update()
             return
@@ -102,14 +153,29 @@ class DeckBridge(QObject):
 
     def failed(self,error):
         if error==QProcess.FailedToStart:self.finished()
+
+    def startup_timeout(self):
+        if not self.closed and self.process.state()!=QProcess.NotRunning:
+            self.launch_timed_out=True
+            self.process.kill()
+
     def finished(self,*args):
         if self.closed:return
+        self.launch_watch.stop()
         if self.memory_blocked:self.owner.display();return
+        if time.monotonic()-self.launched_at>=120:self.failures=0
+        self.failures=min(self.failures+1,5)
+        reason = ('启动超时' if self.launch_timed_out else
+                  f'退出码 0x{args[0]&0xffffffff:08X}' if args else '无法启动进程')
+        log=getattr(self.owner.runtime.api,'log',None)
+        if log:log(f'AI / 音乐组件{reason}，稍后重试。')
         self.status=self.ai_status='组件连接中断，正在重试';self.signature=None;self.buffer.clear()
         self.providers=[];self.media={};self.cover=QPixmap();self.levels=[0.]*8
-        self.restart.start();self.owner.display()
+        spectrum=getattr(self.owner.runtime,'spectrum',None)
+        if spectrum:spectrum.set_levels([])
+        self.restart.start(min(60000,5000*2**(self.failures-1)));self.owner.display()
     def close(self):
-        self.closed=True;self.restart.stop();p=self.process
+        self.closed=True;self.restart.stop();self.launch_watch.stop();p=self.process
         if p.state()!=QProcess.NotRunning:
             p.write(b'{"op":"quit"}\n');p.setParent(QApplication.instance())
             timer=QTimer(p);timer.setSingleShot(True);timer.timeout.connect(p.kill);timer.start(1500)

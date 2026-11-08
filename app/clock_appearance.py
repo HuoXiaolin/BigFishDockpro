@@ -6,7 +6,7 @@ DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':'#b8d9ef
           'typography_version':2,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
 DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_scale=100,font_weight=63,letter_spacing=100,
                 padding=7,accent_color='',text_opacity=100,shadow='none',auto_contrast=True,bar_width=8,ring_width=9,corner_radius=22,
-                show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={})
+                show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={},progress=None)
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
 PRESETS=[(name,dict(values,design=preset_design(key),accent_color=THEME_ACCENTS.get(key,''),text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else THEME_INKS.get(key,'#19384e'),text_effect='clear')) for key,(name,values) in zip(PRESET_IDS,PANEL_PRESETS)]
@@ -40,4 +40,6 @@ def normalize(value, cfg=None):
         if type(result[key]) is not bool:result[key]=DEFAULTS[key]
     from work_schedule import normalize as work_options
     result['work']=work_options(result['work'])
+    from clock_faces import normalize_progress
+    result['progress']=normalize_progress(result['progress'],result)
     return result

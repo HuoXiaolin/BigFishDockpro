@@ -1,25 +1,28 @@
 """Movable monitor panel. Compact and expanded states share one header-centre anchor."""
 import time
 from PyQt5.QtCore import Qt,QRect,QRectF,QPoint,QPointF,QSize,QTimer
-from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap
+from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap,QPalette
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
     QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy)
 from ui_style import AlignedMenu
+from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,background
+from resource_options import (DESKTOP_COMPONENTS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
+                              background,component_available,component_location)
 from flash_view import palette_for,icon
 
 
-from resource_charts import MetricDisplay,SensorColumns,rate,metric_colors
+from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
 
 
-def display_values(service):
+def display_values(service,compact=None):
     cfg=service.cfg;data=service.latest;rows=[]
+    compact=service.compact if compact is None else compact
     for key in ('cpu','memory','network','gpu','fps',*SENSOR_UNITS):
         if not cfg['resource_'+key]:continue
-        if service.compact and key not in cfg['resource_compact_metrics']:continue
+        if compact and key not in cfg['resource_compact_metrics']:continue
         value=data.get(key);label=METRICS[key];tip='';display='—'
         if key in ('cpu','gpu') and value is not None:display=f'{value:.0f}%'
         elif key=='memory' and value:
@@ -86,63 +89,106 @@ class BatteryRows(QWidget):
             p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,19),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
 
 
-class ResourceWindow(QWidget):
-    def __init__(self,service):
+class CapsuleTab(QToolButton):
+    def __init__(self,owner,title,parent):
+        super().__init__(parent)
+        self.owner=owner
+        self.setText(title)
+        self.setAccessibleName(title)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setCheckable(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def paintEvent(self,event):
+        colors=self.owner.colors
+        if not colors:return
+        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
+        selected=self.isChecked()
+        if selected or self.underMouse() or self.hasFocus():
+            fill=QColor(colors['hover']);fill.setAlpha(86 if selected else 48)
+            edge=self.palette().color(QPalette.Link) if self.hasFocus() else QColor(colors['ink'])
+            edge.setAlpha(185 if self.hasFocus() else 65)
+            painter.setPen(QPen(edge,1) if selected or self.hasFocus() else Qt.NoPen)
+            painter.setBrush(fill)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5),6,6)
+        font=QFont(self.font());font.setPixelSize(11);font.setWeight(QFont.DemiBold if selected else QFont.Medium)
+        painter.setFont(font)
+        painter.setPen(QColor(colors['ink'] if selected else colors['muted']))
+        painter.drawText(self.rect(),Qt.AlignCenter,self.text())
+
+
+class ResourceContentHost(QWidget):
+    """Shared page surface and hardware dashboard for the capsule and desktop cards."""
+    def __init__(self,service,hardware=True):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
-        self.service=service;self.press=None;self.offset=0;self.rank_by='cpu';self.last_layer=None
-        self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
-        self.halo_updated_at = time.monotonic()
-        self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
-        self.detail=QWidget(self);lay=QVBoxLayout(self.detail);lay.setContentsMargins(12,0,12,10);lay.setSpacing(2)
-        self.scroll=QScrollArea();self.scroll.setWidgetResizable(True);self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);lay.addWidget(self.scroll)
-        self.glass = CapsuleGlass()
-        self.dashboard = None
-        self.rank_labels = []
-        self.rank_icons = {}
-        self._ai_view=self._music_view=None
-        self._traffic_view=self._weather_view=None
-        self._saved_view_state = {}
-        self.nav=QScrollArea(self);self.nav.setFrameShape(QFrame.NoFrame)
-        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav_content=QWidget();self.nav.setWidget(self.nav_content)
-        self.nav_arrows=[]
-        for title,direction in [('‹',-1),('›',1)]:
-            button=QToolButton(self);button.setText(title);button.setAccessibleName('向左切换栏目' if direction<0 else '向右切换栏目')
-            button.clicked.connect(lambda checked=False,d=direction:self.nav.horizontalScrollBar().setValue(self.nav.horizontalScrollBar().value()+d*100));self.nav_arrows.append(button)
-        self.page_buttons={}
-        for key,title in [('resources','资源'),('ai','AI'),('music','音乐'),('traffic','流量'),('weather','天气')]:
-            btn=QToolButton(self.nav_content);btn.setText(title);btn.setCheckable(True);btn.clicked.connect(lambda checked=False,key=key:self.select_page(key));self.page_buttons[key]=btn
-        self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('资源胶囊设置');self.settings_button.setToolTip('资源胶囊设置');self.settings_button.clicked.connect(service.settings)
-        self.fold_button=QToolButton(self);self.fold_button.setAccessibleName('收起胶囊');self.fold_button.setToolTip('收起胶囊');self.fold_button.clicked.connect(lambda:service.fold(True))
-        self.outside_since = None
-        self.auto_fold_timer = QTimer(self)
-        self.auto_fold_timer.setInterval(250)
-        self.auto_fold_timer.timeout.connect(self.fold_idle)
-        self.enter_timer=QTimer(self);self.enter_timer.setSingleShot(True);self.enter_timer.setInterval(230);self.enter_timer.timeout.connect(self.expand_hover)
+        self.service=service
+        self.rank_by='cpu'
+        self.rank_labels=[]
+        self.rank_icons={}
+        self.dashboard=None
         self.colors={}
-        self.animation=QTimer(self);self.animation.setInterval(33);self.animation.timeout.connect(self.animate)
-        self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.update)
-        self.rotate=QTimer(self);self.rotate.setInterval(6000);self.rotate.timeout.connect(self.next_page)
-        from resource_resize import ResizeEdges
-        self.resize_edges=ResizeEdges(self)
-        from resource_liquid import CapsuleMotion
-        self.liquid=CapsuleMotion(self)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.detail=QWidget(self)
+        layout=QVBoxLayout(self.detail)
+        layout.setContentsMargins(12,0,12,10)
+        layout.setSpacing(2)
+        if hardware:
+            from resource_pages import CapsuleScrollArea
+            self.scroll=CapsuleScrollArea()
+            layout.addWidget(self.scroll)
+        self.glass=CapsuleGlass()
+        self.init_style()
+
+    def sync_palette(self):
+        self.background=background(self.service.cfg)
+        colors=palette_for(self.service,self.background)
+        if colors==self.colors:
+            return False
+        self.colors=colors
+        palette=self.palette()
+        for role,key in ((QPalette.WindowText,'ink'),(QPalette.Text,'ink'),(QPalette.ButtonText,'ink'),
+                         (QPalette.Base,'field'),(QPalette.Button,'hover'),(QPalette.Mid,'muted'),
+                         (QPalette.Highlight,'hover'),(QPalette.HighlightedText,'ink')):
+            palette.setColor(role,QColor(colors[key]))
+        self.setPalette(palette)
+        if self.dashboard is not None:sync_card_controls(self.dashboard,colors)
+        return True
+
+    def init_style(self):
+        from resource_pages import SCROLL_STYLE
+        self.setStyleSheet("""
+            QWidget{background:transparent;color:palette(window-text)}
+            QLabel{font-size:10px}
+            QLabel#RankTitle{font-weight:600}
+            QLabel#RankMemory,QLabel#Subtle{color:palette(mid);font-size:10px}
+            QToolButton{border:1px solid transparent;border-radius:6px;padding:2px 5px;color:palette(mid);background:transparent;font-size:10px}
+            QToolButton:hover{background:rgba(123,145,161,46);color:palette(window-text)}
+            QToolButton:checked{background:rgba(123,145,161,69);border-color:rgba(123,145,161,105);color:palette(window-text)}
+            QToolButton#RankSort{font-size:10px;padding:2px 5px}
+            QScrollArea{border:0}
+            QTableWidget{background:transparent;border:0;selection-background-color:palette(button);font-size:12px}
+            QHeaderView::section{background:palette(button);color:palette(mid);border:0;padding:5px;font-size:11px}
+            QTableCornerButton::section{background:palette(button);border:0}
+            QDateEdit{background:palette(button);color:palette(window-text);border:0;border-radius:5px;padding:4px}
+            QSlider::groove:horizontal{background:palette(button);height:4px;border:0;border-radius:2px}
+            QSlider::sub-page:horizontal{background:palette(mid);border-radius:2px}
+            QSlider::handle:horizontal{background:palette(window-text);width:12px;margin:-4px 0;border-radius:6px}
+        """ + SCROLL_STYLE)
 
     def build_dashboard(self):
         page=QWidget();self.scroll.setWidget(page);body=QVBoxLayout(page);body.setContentsMargins(2,2,4,1);body.setSpacing(7);body.setSizeConstraint(QLayout.SetMinAndMaxSize);self.body=body;self.page=page
         self.dashboard=QWidget(page)
         self.columns=QGridLayout(self.dashboard)
         self.columns.setContentsMargins(0,0,0,0)
-        self.columns.setHorizontalSpacing(18);self.columns.setVerticalSpacing(8)
+        self.columns.setHorizontalSpacing(7);self.columns.setVerticalSpacing(7)
         self.columns.setColumnStretch(0,3);self.columns.setColumnStretch(1,2)
         self.dashboard_layout_key = None
         self.graph=MetricDisplay(self)
         self.graph.setParent(self.dashboard)
-        self.rank_section=QWidget(self.dashboard)
+        self.rank_section=DashboardCard(self,'#a39acb',self.dashboard)
         rank_body=QVBoxLayout(self.rank_section)
-        rank_body.setContentsMargins(0,0,0,0);rank_body.setSpacing(3)
+        rank_body.setContentsMargins(9,6,9,7);rank_body.setSpacing(3)
         self.rank_head=QWidget();head=QHBoxLayout(self.rank_head)
         head.setContentsMargins(0,0,0,0);head.setSpacing(3)
         title=QLabel('进程排行');title.setObjectName('RankTitle');head.addWidget(title,1)
@@ -169,13 +215,15 @@ class ResourceWindow(QWidget):
         self.sensor_columns=SensorColumns(self);self.sensor_columns.setParent(self.dashboard)
         self.no_readings=QLabel('在「设置」中选择要显示的读数。');self.no_readings.setWordWrap(True);body.addWidget(self.no_readings)
         self.bt_head=QWidget();row=QHBoxLayout(self.bt_head);row.setContentsMargins(0,0,0,0)
-        row.setSpacing(5);row.addWidget(QLabel('蓝牙电量'));self.bt_page=QToolButton();self.bt_page.clicked.connect(self.next_devices);row.addWidget(self.bt_page)
+        row.setSpacing(5);title=QLabel('蓝牙电量');title.setObjectName('RankTitle');row.addWidget(title,1)
+        self.bt_page=QToolButton();self.bt_page.clicked.connect(self.next_devices);row.addWidget(self.bt_page)
         self.bt_refresh=QToolButton();self.bt_refresh.setText('刷新');self.bt_refresh.clicked.connect(self.refresh_bt);row.addWidget(self.bt_refresh)
-        row.addStretch()
-        self.battery_section=QWidget(self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
-        battery_layout.setContentsMargins(0,0,0,0);battery_layout.setSpacing(0)
+        self.battery_section=DashboardCard(self,'#6caaa5',self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
+        battery_layout.setContentsMargins(9,6,9,7);battery_layout.setSpacing(0)
         battery_layout.addWidget(self.bt_head);self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
+        battery_layout.addStretch()
         body.addStretch()
+        sync_card_controls(self.dashboard,self.colors)
 
     def layout_dashboard(self):
         groups = ((self.graph, self.rank_section), (self.sensor_columns, self.battery_section))
@@ -192,7 +240,8 @@ class ResourceWindow(QWidget):
         for row, panels in enumerate(group for group in rows if group):
             span = 2 if len(panels) == 1 else 1
             for column, panel in enumerate(panels):
-                self.columns.addWidget(panel, row, column, 1, span, Qt.AlignTop)
+                align = Qt.AlignTop if panel in (self.graph,self.sensor_columns) else Qt.Alignment()
+                self.columns.addWidget(panel, row, column, 1, span, align)
         self.dashboard.setVisible(any(visible))
 
     def release_dashboard(self):
@@ -209,20 +258,151 @@ class ResourceWindow(QWidget):
         if page is not None:
             page.deleteLater()
 
+    def select_sort(self,key):
+        self.rank_by=key
+        self.refresh()
+
+    def show_ranking(self):
+        frame=self.service.latest.get('rank');style=(self.rank_by,self.devicePixelRatioF(),self.colors['ink'],self.colors['hover'])
+        if self.rank_style==style and self.rank_frame is frame:return
+        self.rank_frame=frame;self.rank_style=style
+        for key,btn in self.rank_buttons.items():btn.setChecked(key==self.rank_by)
+        data=frame or {}
+        ranked=data.get(self.rank_by,[])
+        paths=data.get('paths',{})
+        icons={}
+        for i,(mark,name,cpu,ram) in enumerate(self.rank_labels):
+            for field in (mark,name,cpu,ram):field.setVisible(i<len(ranked))
+            if i>=len(ranked):
+                mark.clear()
+                if not ranked and i==0:name.show();name.setText('等待读数…');name.setToolTip('')
+                continue
+            app,pid,percent,memory=ranked[i]
+            name.setText(app)
+            detail=data.get('members',{}).get(pid,())
+            description='\\n'.join(f'{n} · PID {p} · {mem/2**20:.1f} MB' for n,p,_,mem in detail)
+            name.setToolTip(description or f'{app} · PID {pid}')
+            ram.setToolTip('专用工作集'+('\\n'+description if description else ''))
+            cpu.setText('—' if percent is None else f'{percent:.1f}%')
+            ram.setText('—' if memory is None else f'{memory/2**30:.1f} GB' if memory>=2**30 else f'{memory/2**20:.1f} MB')
+            path=paths.get(pid,'')
+            # Shell icons are resolved only for local, visible entries and kept only for this ranking.
+            if len(path)>2 and path[1]==':' and path.lower().endswith('.exe'):
+                cache_key=(path,mark.devicePixelRatioF())
+                pixmap=self.rank_icons.get(cache_key)
+                if pixmap is None:
+                    api=self.service.runtime.api;size=max(15,round(15*cache_key[1]))
+                    handle=api.extract_hicon(path,size)
+                    image=api.hicon_to_qimage(handle) if handle else None
+                    pixmap=QPixmap.fromImage(image) if image is not None else QPixmap()
+                    pixmap.setDevicePixelRatio(cache_key[1])
+                icons[cache_key]=pixmap
+                if not pixmap.isNull():
+                    mark.setStyleSheet('');mark.setPixmap(pixmap);continue
+            mark.setText(app[:1].upper())
+            mark.setStyleSheet('border-radius:4px;font-weight:600;font-size:10px;color:%s;background:%s;'%(self.colors['ink'],self.colors['hover']))
+        self.rank_icons=icons
+
+    def next_devices(self):
+        if self.service.bluetooth:self.service.bluetooth.turn(1)
+
+    def refresh_bt(self):
+        if self.service.bluetooth:self.service.bluetooth.refresh()
+
+    def refresh_dashboard(self):
+        cfg=self.service.cfg
+        if self.dashboard is None:
+            self.build_dashboard()
+        basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network')]
+        self.graph.refresh(basics);self.sensor_columns.refresh([row for row in self.values if row not in basics])
+        self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth']))
+        self.rank_section.setVisible(cfg['resource_rank'])
+        self.battery_section.setVisible(cfg['resource_bluetooth'])
+        self.layout_dashboard()
+        if cfg['resource_rank']:self.show_ranking()
+        self.bt_head.setVisible(cfg['resource_bluetooth']);self.rings.setVisible(cfg['resource_bluetooth'])
+        bt=self.service.bluetooth;self.bt_page.setVisible(bool(bt and bt.pages()>1))
+        if bt:self.bt_page.setText(f'{bt.page+1}/{bt.pages()} ›')
+        if cfg['resource_bluetooth']:self.rings.refresh(bt)
+        self.body.activate()
+        wanted=self.body.minimumSize().height()
+        if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)
+
+
+class ResourceWindow(ResourceContentHost):
+    def __init__(self,service):
+        super().__init__(service)
+        self.setProperty('clickThroughKey','resource')
+        self.press=None;self.offset=0;self.last_layer=None
+        self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
+        self.halo_updated_at = time.monotonic()
+        self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
+        self._ai_view=self._music_view=None
+        self._traffic_view=self._weather_view=None
+        self._news_view=None
+        for key in DESKTOP_COMPONENTS:setattr(self,'_'+key+'_view',None)
+        self.empty_page=QLabel('在「组件布局」中选择收入胶囊的栏目。')
+        self.empty_page.setObjectName('Subtle');self.empty_page.setWordWrap(True)
+        self.detail.layout().addWidget(self.empty_page);self.empty_page.hide()
+        self._saved_view_state = {}
+        self.nav=QScrollArea(self);self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_content=QWidget();self.nav.setWidget(self.nav_content)
+        self.nav_arrows=[]
+        for title,direction in [('‹',-1),('›',1)]:
+            button=QToolButton(self);button.setText(title);button.setAccessibleName('向左切换栏目' if direction<0 else '向右切换栏目')
+            button.clicked.connect(lambda checked=False,d=direction:self.nav.horizontalScrollBar().setValue(self.nav.horizontalScrollBar().value()+d*100));self.nav_arrows.append(button)
+        self.page_buttons={}
+        for key,title in tuple(OPEN_PAGES.items())[1:]:
+            btn=CapsuleTab(self,title,self.nav_content)
+            btn.clicked.connect(lambda checked=False,key=key:self.select_page(key));self.page_buttons[key]=btn
+        self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('资源胶囊设置');self.settings_button.setToolTip('资源胶囊设置');self.settings_button.clicked.connect(service.settings)
+        self.fold_button=QToolButton(self);self.fold_button.setAccessibleName('收起胶囊');self.fold_button.setToolTip('收起胶囊');self.fold_button.clicked.connect(lambda:service.fold(True))
+        self.outside_since = None
+        self.auto_fold_timer = QTimer(self)
+        self.auto_fold_timer.setInterval(250)
+        self.auto_fold_timer.timeout.connect(self.fold_idle)
+        self.enter_timer=QTimer(self);self.enter_timer.setSingleShot(True);self.enter_timer.setInterval(230);self.enter_timer.timeout.connect(self.expand_hover)
+        self.animation=QTimer(self);self.animation.setInterval(33);self.animation.timeout.connect(self.animate)
+        self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.update)
+        self.rotate=QTimer(self);self.rotate.setInterval(6000);self.rotate.timeout.connect(self.next_page)
+        from resource_resize import ResizeEdges
+        self.resize_edges=ResizeEdges(self)
+        from resource_liquid import CapsuleMotion
+        self.liquid=CapsuleMotion(self)
+
+
+
+
+
     def select_page(self,key):
         before=self.service.active_keys()
-        self.page_key='ai' if key=='stats' else key if key in self.page_buttons else 'resources';self.refresh();self.reposition()
-        self.nav.ensureWidgetVisible(self.page_buttons[self.page_key],0,0)
+        previous=self.page_key
+        self.page_key='ai' if key=='stats' else key
+        self.refresh();self.reposition()
+        if self.page_key and self.page_key!=previous and not self.service.compact:
+            if self.page_key=='resources':scroll=self.scroll
+            elif self.page_key=='ai':scroll=self.ai_view.statistics.scroll
+            else:scroll=self.view(self.page_key)
+            scroll.verticalScrollBar().setValue(0)
+        if self.page_key:self.nav.ensureWidgetVisible(self.page_buttons[self.page_key],0,0)
         if before!=self.service.active_keys():self.service.sync()
         elif self.service.deck:self.service.deck.configure()
     def page_enabled(self,key):
         cfg=self.service.cfg
-        return True if key=='resources' else cfg['resource_ai'] or cfg['resource_ai_tray'] if key=='ai' else cfg['resource_'+key]
+        return key in self.page_buttons and component_location(cfg,key)=='capsule' and component_available(cfg,key)
+
+    def first_page(self):
+        return next((key for key in self.service.cfg['resource_component_order'] if self.page_enabled(key)),None)
+
     def view(self,key):
         view=getattr(self,'_'+key+'_view')
         if view is None:
             from resource_pages import AiView,MusicView,InfoPage
-            view=(AiView(self) if key=='ai' else MusicView(self) if key=='music' else InfoPage(self,key))
+            if key in DESKTOP_COMPONENTS:
+                from capsule_components import CapsuleComponentView
+                view=CapsuleComponentView(self,key)
+            else:view=AiView(self) if key=='ai' else MusicView(self) if key=='music' else InfoPage(self,key)
             setattr(self,'_'+key+'_view',view);view.hide();self.detail.layout().addWidget(view)
             state = self._saved_view_state.pop(key, None)
             if state and key == 'ai':
@@ -236,7 +416,7 @@ class ResourceWindow(QWidget):
     def release_inactive_views(self):
         if self.service.compact:
             self.release_dashboard()
-        for key in ('ai', 'music', 'traffic', 'weather'):
+        for key in tuple(self.page_buttons)[1:]:
             name = '_' + key + '_view'
             view = getattr(self, name)
             if view is None or view.isVisible():
@@ -285,29 +465,9 @@ class ResourceWindow(QWidget):
 
     def sync_window(self):
         self.liquid.prepare()
-        cfg=self.service.cfg;self.background=background(cfg);colors=palette_for(self.service,self.background)
-        if colors!=self.colors:
-            self.colors=colors
-            from resource_pages import SCROLL_STYLE
-            self.setStyleSheet("""
-                QWidget{background:transparent;color:%(ink)s}
-                QLabel{font-size:10px}
-                QLabel#RankTitle{font-weight:600}
-                QLabel#RankMemory{color:%(muted)s}
-                QLabel#Subtle{color:%(muted)s;font-size:10px}
-                QToolButton{border:0;border-radius:5px;padding:2px 5px;color:%(muted)s;background:transparent;font-size:10px}
-                QToolButton:hover,QToolButton:checked{background:%(hover)s;color:%(ink)s}
-                QToolButton#RankSort{font-size:10px;padding:2px 5px}
-                QScrollArea{border:0}
-                QTableWidget{background:transparent;border:0;selection-background-color:%(hover)s;color:%(ink)s;font-size:12px}
-                QHeaderView::section{background:%(hover)s;color:%(muted)s;border:0;padding:5px;font-size:11px}
-                QTableCornerButton::section{background:%(hover)s;border:0}
-                QDateEdit{background:%(hover)s;color:%(ink)s;border:0;border-radius:5px;padding:4px}
-                QSlider::groove:horizontal{background:%(hover)s;height:4px;border:0;border-radius:2px}
-                QSlider::sub-page:horizontal{background:%(muted)s;border-radius:2px}
-                QSlider::handle:horizontal{background:%(ink)s;width:12px;margin:-4px 0;border-radius:6px}
-            """ % colors+SCROLL_STYLE)
-            self.settings_button.setIcon(icon('settings',colors['ink']));self.fold_button.setIcon(icon('collapse',colors['ink']))
+        cfg=self.service.cfg
+        if self.sync_palette():
+            self.settings_button.setIcon(icon('settings',self.colors['ink']));self.fold_button.setIcon(icon('collapse',self.colors['ink']))
             for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
         compact = self.service.compact
         opening = False
@@ -317,16 +477,16 @@ class ResourceWindow(QWidget):
             self._displayed_compact = compact
             preferred = cfg['resource_open_page']
             if opening and preferred != 'last':
-                self.page_key = preferred if self.page_enabled(preferred) else 'resources'
+                self.page_key = preferred if self.page_enabled(preferred) else self.first_page()
         self.detail.setVisible(not compact)
         self.settings_button.setVisible(not compact);self.fold_button.setVisible(not compact)
         if compact or not cfg['resource_rank']:
             self.rank_icons.clear();self.rank_frame=self.rank_style=None
             for mark,*_ in self.rank_labels:mark.clear()
-        if cfg['resource_expand_mode']!='hover' or cfg['resource_click_through']:self.enter_timer.stop()
+        if cfg['resource_expand_mode']!='hover' or passthrough_enabled(cfg,'resource'):self.enter_timer.stop()
         self.reposition();self.refresh();self.sync_animation()
         self.sync_auto_fold()
-        if opening:
+        if opening and self.page_key:
             self.nav.ensureWidgetVisible(self.page_buttons[self.page_key], 0, 0)
         self.resize_edges.sync()
         self.liquid.sync()
@@ -369,7 +529,7 @@ class ResourceWindow(QWidget):
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
         from window_layers import click_through
-        click_through(self,cfg['resource_click_through'])
+        click_through(self,passthrough_enabled(cfg,'resource'))
     def taskbar_at(self,point):
         if self.service.runtime.dock.preview:return None
         from resource_taskbar import taskbars
@@ -387,63 +547,16 @@ class ResourceWindow(QWidget):
         if self.service.cfg['resource_layer']=='top' and not self.service.runtime.dock.preview:
             from window_layers import restack
             restack(int(self.winId()),-1)
-    def select_sort(self,key):
-        self.rank_by=key
-        self.refresh()
 
-    def show_ranking(self):
-        frame=self.service.latest.get('rank');style=(self.rank_by,self.devicePixelRatioF(),self.colors['ink'],self.colors['hover'])
-        if self.rank_style==style and self.rank_frame is frame:return
-        self.rank_frame=frame;self.rank_style=style
-        for key,btn in self.rank_buttons.items():btn.setChecked(key==self.rank_by)
-        data=frame or {}
-        ranked=data.get(self.rank_by,[])
-        paths=data.get('paths',{})
-        icons={}
-        for i,(mark,name,cpu,ram) in enumerate(self.rank_labels):
-            for field in (mark,name,cpu,ram):field.setVisible(i<len(ranked))
-            if i>=len(ranked):
-                mark.clear()
-                if not ranked and i==0:name.show();name.setText('等待读数…');name.setToolTip('')
-                continue
-            app,pid,percent,memory=ranked[i]
-            name.setText(app)
-            detail=data.get('members',{}).get(pid,())
-            description='\\n'.join(f'{n} · PID {p} · {mem/2**20:.1f} MB' for n,p,_,mem in detail)
-            name.setToolTip(description or f'{app} · PID {pid}')
-            ram.setToolTip('专用工作集'+('\\n'+description if description else ''))
-            cpu.setText('—' if percent is None else f'{percent:.1f}%')
-            ram.setText('—' if memory is None else f'{memory/2**30:.1f} GB' if memory>=2**30 else f'{memory/2**20:.1f} MB')
-            path=paths.get(pid,'')
-            # Shell icons are resolved only for local, visible entries and kept only for this ranking.
-            if len(path)>2 and path[1]==':' and path.lower().endswith('.exe'):
-                cache_key=(path,mark.devicePixelRatioF())
-                pixmap=self.rank_icons.get(cache_key)
-                if pixmap is None:
-                    api=self.service.runtime.api;size=max(15,round(15*cache_key[1]))
-                    handle=api.extract_hicon(path,size)
-                    image=api.hicon_to_qimage(handle) if handle else None
-                    pixmap=QPixmap.fromImage(image) if image is not None else QPixmap()
-                    pixmap.setDevicePixelRatio(cache_key[1])
-                icons[cache_key]=pixmap
-                if not pixmap.isNull():
-                    mark.setStyleSheet('');mark.setPixmap(pixmap);continue
-            mark.setText(app[:1].upper())
-            mark.setStyleSheet('border-radius:4px;font-weight:600;font-size:10px;color:%s;background:%s;'%(self.colors['ink'],self.colors['hover']))
-        self.rank_icons=icons
 
-    def next_devices(self):
-        if self.service.bluetooth:self.service.bluetooth.turn(1)
-    def refresh_bt(self):
-        if self.service.bluetooth:self.service.bluetooth.refresh()
     def refresh(self):
         self._compact_cache=None
         cfg=self.service.cfg;self.values=display_values(self.service)
         tips=[label+'  '+value+(' · '+tip if tip else '') for _,label,value,tip in self.values]
         if self.service.deck:
-            from resource_quota import quota_text
+            from resource_quota import amount_label, quota_text
             for row in self.service.deck.providers:
-                quotas = [q['label'].replace(' · 已用', '')+' '+quota_text(q) for q in row.get('quotas', [])]
+                quotas = [amount_label(q).replace(' · 已用', '')+' '+quota_text(q) for q in row.get('quotas', [])]
                 tips.append(row['name']+' · '+('; '.join(quotas) or row.get('status','未连接')))
             track=self.service.deck.media.get('track') or {}
             if track:tips.append(track.get('title','')+' · '+track.get('artist',''))
@@ -455,29 +568,14 @@ class ResourceWindow(QWidget):
         if self.service.compact:tips.append('滚轮切换读数，点击展开')
         self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '资源胶囊 · 点击展开')
         if not self.service.compact:
-            if not self.page_enabled(self.page_key):self.page_key='resources'
+            if not self.page_enabled(self.page_key):self.page_key=self.first_page()
             self.scroll.setVisible(self.page_key=='resources')
-            if self.page_key!='resources':self.view(self.page_key).show();self.view(self.page_key).refresh()
-            for key in ('ai','music','traffic','weather'):
+            self.empty_page.setVisible(self.page_key is None)
+            if self.page_key and self.page_key!='resources':self.view(self.page_key).show();self.view(self.page_key).refresh()
+            for key in tuple(self.page_buttons)[1:]:
                 view=getattr(self,'_'+key+'_view')
                 if view and key!=self.page_key:view.hide()
-        if not self.service.compact and self.page_key=='resources':
-            if self.dashboard is None:
-                self.build_dashboard()
-            basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network')]
-            self.graph.refresh(basics);self.sensor_columns.refresh([row for row in self.values if row not in basics])
-            self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth']))
-            self.rank_section.setVisible(cfg['resource_rank'])
-            self.battery_section.setVisible(cfg['resource_bluetooth'])
-            self.layout_dashboard()
-            if cfg['resource_rank']:self.show_ranking()
-            self.bt_head.setVisible(cfg['resource_bluetooth']);self.rings.setVisible(cfg['resource_bluetooth'])
-            bt=self.service.bluetooth;self.bt_page.setVisible(bool(bt and bt.pages()>1))
-            if bt:self.bt_page.setText(f'{bt.page+1}/{bt.pages()} ›')
-            if cfg['resource_bluetooth']:self.rings.refresh(bt)
-            self.body.activate()
-            wanted=self.body.minimumSize().height()
-            if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)
+        if not self.service.compact and self.page_key=='resources':self.refresh_dashboard()
         for key,btn in self.page_buttons.items():
             enabled=self.page_enabled(key)
             btn.setVisible(not self.service.compact and enabled);btn.setChecked(key==self.page_key)
@@ -495,9 +593,11 @@ class ResourceWindow(QWidget):
         super().resizeEvent(event)
     def layout_page_buttons(self):
         x=0
-        for key,btn in self.page_buttons.items():
+        for key in self.service.cfg['resource_component_order']:
+            btn=self.page_buttons[key]
             if not self.page_enabled(key):continue
-            btn.setGeometry(x,0,44,24);x+=46
+            width=max(44,len(btn.text())*11+10)
+            btn.setGeometry(x,0,width,24);x+=width+2
         cfg=self.service.cfg;self.header_face_width=round(30*cfg['resource_face_scale']/100) if cfg['resource_face'] else 0
         left=13+self.header_face_width if self.header_face_width else 35
         total=max(1,x-2);available=max(1,self.width()-left-69);overflow=total>available
@@ -524,6 +624,10 @@ class ResourceWindow(QWidget):
             for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
             return
         if not compact:
+            if self.nav.isVisible():
+                fill=QColor(c['hover']);fill.setAlpha(25)
+                p.setPen(Qt.NoPen);p.setBrush(fill)
+                p.drawRoundedRect(QRectF(self.nav.geometry()).adjusted(0,0,1,0),6,6)
             if cfg['resource_face']:
                 self.liquid.paint_face(p,QPointF(7+self.header_face_width/2,17),self.header_face_width)
             else:
@@ -550,10 +654,10 @@ class ResourceWindow(QWidget):
         else:event.ignore()
     def enterEvent(self,event):
         self.outside_since = None
-        if self.service.cfg['resource_expand_mode']=='hover' and not self.service.cfg['resource_click_through'] and self.service.compact:self.enter_timer.start()
+        if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.service.compact:self.enter_timer.start()
         super().enterEvent(event)
     def expand_hover(self):
-        if self.service.cfg['resource_expand_mode']=='hover' and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(QCursor.pos()):self.service.fold(False,automatic=True)
+        if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(QCursor.pos()):self.service.fold(False,automatic=True)
     def leaveEvent(self,event):
         self.enter_timer.stop()
         super().leaveEvent(event)
@@ -622,7 +726,7 @@ class ResourceWindow(QWidget):
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
         self.enter_timer.stop();self.auto_fold_timer.stop();self.outside_since=None
         if hasattr(self,'liquid'):self.liquid.hide()
-        if self.service.extras:self.service.extras.pause()
+        if self.service.extras and not self.service.detached('weather'):self.service.extras.pause()
         super().hideEvent(event)
     def showEvent(self,event):
         super().showEvent(event)

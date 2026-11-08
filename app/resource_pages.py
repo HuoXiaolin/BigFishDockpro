@@ -2,11 +2,12 @@
 from datetime import datetime
 from PyQt5.QtCore import Qt,QDate,QRectF,QPointF,QSize
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics
-from PyQt5.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton,QSlider,
+from PyQt5.QtWidgets import (QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton,QSlider,
     QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QDateEdit,QDialog,QScrollArea,QFrame,QSizePolicy)
 from ui_style import ModernComboBox,button
 from resource_traffic import amount,totals
 from resource_compact import text
+from resource_charts import DashboardCard,paint_card_surface,sync_card_controls
 from resource_status import threshold
 
 SCROLL_STYLE='''
@@ -33,16 +34,40 @@ def set_rows(view,rows):
             view.setItem(i,j,item)
 
 
-class InfoPage(QScrollArea):
+class CapsuleScrollArea(QScrollArea):
+    """Keep the viewport full-width while preserving native scrolling."""
+    def __init__(self):
+        super().__init__()
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setProperty('scrollThroughContent',True)
+
+    def wheelEvent(self,event):
+        bar=self.verticalScrollBar()
+        pixels=event.pixelDelta().y()
+        angle=event.angleDelta().y()
+        if bar.maximum()==0 or not (pixels or angle):
+            super().wheelEvent(event)
+            return
+        delta=pixels or round(angle*bar.singleStep()*QApplication.wheelScrollLines()/120)
+        bar.setValue(bar.value()-delta)
+        event.accept()
+
+
+class InfoPage(CapsuleScrollArea):
     """Lazily created content pages share the capsule's fixed outer geometry."""
     def __init__(self,window,key):
-        super().__init__();self.setWidgetResizable(True);self.setFrameShape(QFrame.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        super().__init__()
         body=QWidget();lay=QVBoxLayout(body);lay.setContentsMargins(3,2,3,1);lay.setSpacing(4)
         if key=='traffic':self.content=TrafficView(window)
-        else:
+        elif key=='weather':
             from resource_extras_view import WeatherView
             self.content=WeatherView(window)
+        else:
+            from resource_content import ContentView
+            self.content=ContentView(window,key)
         lay.addWidget(self.content);lay.addStretch();self.setWidget(body)
     def refresh(self):self.content.refresh()
 
@@ -50,13 +75,15 @@ class InfoPage(QScrollArea):
 class TrafficView(QWidget):
     def __init__(self,window):
         super().__init__();self.owner=window;lay=QVBoxLayout(self);lay.setContentsMargins(0,0,0,0);lay.setSpacing(4)
-        head=QHBoxLayout();head.addWidget(QLabel('流量统计'),1);history=QToolButton();history.setText('历史记录');history.clicked.connect(self.history);head.addWidget(history);lay.addLayout(head)
+        head=QHBoxLayout();title=QLabel('流量统计');title.setObjectName('RankTitle');head.addWidget(title,1)
+        history=QToolButton();history.setText('历史记录');history.clicked.connect(self.history);head.addWidget(history);lay.addLayout(head)
         self.summary=TrafficReadout(window);lay.addWidget(self.summary)
         self.note=QLabel();self.note.setObjectName('Subtle');self.note.setWordWrap(True);lay.addWidget(self.note)
         self.remarks=QToolButton();self.remarks.setText('备注');self.remarks.setCheckable(True);lay.addWidget(self.remarks,0,Qt.AlignLeft)
         self.remarks.toggled.connect(self.note.setVisible);self.note.hide()
     def refresh(self):
         data=self.owner.service.latest.get('traffic') or {}
+        sync_card_controls(self,self.owner.colors)
         self.summary.update();self.note.setText(data.get('error') or '统计开启期间的累计流量');self.note.setToolTip('按本机日历累计下载与上传；暂停监控期间不累计。')
     def history(self):
         from ui_style import exec_dialog
@@ -72,17 +99,42 @@ class TrafficView(QWidget):
 
 
 class TrafficReadout(QWidget):
+    gap=6
+    periods=(('day','今日','#7fa8cb'),('month','本月','#a195cd'),('year','本年','#78b4ad'))
+
     def __init__(self,window):
-        super().__init__();self.owner=window;self.setFixedHeight(66)
+        super().__init__();self.owner=window;self.columns=3;self.setFixedHeight(83)
+
+    def resizeEvent(self,event):
+        self.columns=3 if event.size().width()>=345 else 1
+        height=83 if self.columns==3 else 3*57+2*self.gap
+        if height!=self.height():self.setFixedHeight(height)
+        super().resizeEvent(event)
+
     def paintEvent(self,event):
         c=self.owner.colors
         if not c:return
-        p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);data=self.owner.service.latest.get('traffic') or {};span=self.width()/3
-        for i,(key,label) in enumerate((('day','今日'),('month','本月'),('year','本年'))):
-            x=i*span;values=data.get(key)
-            text(p,QRectF(x,0,span-10,18),label,c['muted'],10)
-            text(p,QRectF(x,19,span-10,25),amount(sum(values)) if values is not None else '—',c['ink'],18,True)
-            text(p,QRectF(x,45,span-10,19),'↓ '+amount(values[0])+'   ↑ '+amount(values[1]) if values is not None else '↓ —   ↑ —',c['muted'],10)
+        p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
+        data=self.owner.service.latest.get('traffic') or {}
+        wide=self.columns==3
+        width=(self.width()-(self.columns-1)*self.gap)/self.columns
+        height=83 if wide else 57
+        for i,(key,label,tint) in enumerate(self.periods):
+            x=(i%self.columns)*(width+self.gap)
+            y=(i//self.columns)*(height+self.gap)
+            values=data.get(key)
+            paint_card_surface(p,QRectF(x,y,width,height),c,tint)
+            text(p,QRectF(x+10,y+5,width-20,16),label,c['muted'],10)
+            total=amount(sum(values)) if values is not None else '—'
+            text(p,QRectF(x+10,y+21,width-20 if wide else width/2-12,25),total,c['ink'],18,True)
+            detail_x=x+10 if wide else x+width/2
+            detail_width=x+width-10-detail_x
+            detail_y=y+48 if wide else y+10
+            for j,title in enumerate(('下载','上传')):
+                top=detail_y+15*j
+                text(p,QRectF(detail_x,top,detail_width,14),title,c['muted'],10)
+                text(p,QRectF(detail_x,top,detail_width,14),amount(values[j]) if values is not None else '—',
+                     c['ink'],10,True,Qt.AlignRight)
 
 
 def reset_text(value):
@@ -97,9 +149,22 @@ def token_text(value):
     return f'{value/1e6:.2f}M' if value>=1e6 else f'{value/1e3:.1f}K' if value>=1e3 else str(value)
 
 
-def cost_text(summary):
-    cost=summary.get('cost');unpriced=summary.get('unpriced',0)
-    return '未定价' if cost is None or (not cost and unpriced) else ('≈' if summary.get('estimated') else '')+f'${cost:.2f}'+(' +' if unpriced else '')
+def cost_text(summary,currency=True):
+    cost=summary.get('cost')
+    if cost is None or (cost==0 and summary.get('unpriced')):
+        return '未定价'
+    prefix='$' if currency else ''
+    if 0<cost<.000001:return '<'+prefix+'0.000001'
+    decimals=2 if not cost or abs(cost)>=.01 else 4 if abs(cost)>=.0001 else 6
+    value=f'{cost:,.{decimals}f}'
+    return prefix+(value.rstrip('0') if decimals>2 else value)
+
+
+def cost_note(summary):
+    notes=['含估算'] if summary.get('estimated') else []
+    if count:=summary.get('unpriced',0):
+        notes.append(f'{count} 条未定价')
+    return ' · '.join(notes)
 
 
 class AiView(QWidget):
@@ -124,9 +189,9 @@ class AiView(QWidget):
         for date in (self.start,self.end):
             date.setCalendarPopup(True);date.setDisplayFormat('yyyy-MM-dd');date.setMinimumDate(QDate(2000,1,1));date.setMaximumDate(QDate.currentDate());date.dateChanged.connect(self.details)
         filters.addWidget(self._provider);filters.addWidget(self.start);filters.addWidget(QLabel('至'));filters.addWidget(self.end);detail_lay.addLayout(filters)
-        self._models=table(['工具 / 模型','Token','费用（USD）']);detail_lay.addWidget(self._models,1)
-        self._models.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
-        note=QLabel('费用为记录金额或模型单价估算；“+”包含未定价记录。订阅实付以账单为准。');note.setWordWrap(True);detail_lay.addWidget(note)
+        self._models=table(['工具 / 模型','Token','费用（USD）','计价情况']);detail_lay.addWidget(self._models,1)
+        for index in (1,2,3):self._models.horizontalHeader().setSectionResizeMode(index,QHeaderView.ResizeToContents)
+        note=QLabel('费用包含已计价记录。估算与未定价记录在「计价情况」中标注。');note.setWordWrap(True);detail_lay.addWidget(note)
         self._provider.currentIndexChanged.connect(self.details)
         self.refresh()
     def show_details(self,provider='',period=None):
@@ -158,8 +223,13 @@ class AiView(QWidget):
             if self.provider.currentData() and p['id']!=self.provider.currentData():continue
             for day in p.get('days',[]):
                 if not start<=day['date']<=end:continue
-                row=group.setdefault(p['name']+' / '+day['model'],[0,0.,0]);s=day['summary'];row[0]+=s['tokens'];row[1]+=s.get('cost') or 0;row[2]+=s.get('unpriced',0)
-        set_rows(self.models,[(k,f'{v[0]:,}',('未定价' if v[1]==0 and v[2] else f'${v[1]:.4f}'+(' + 未定价' if v[2] else ''))) for k,v in sorted(group.items(),key=lambda r:r[1][0],reverse=True)])
+                row=group.setdefault(p['name']+' / '+day['model'],[])
+                row.append(day['summary'])
+        from resource_usage import combine
+        summaries={name:combine(rows) for name,rows in group.items()}
+        set_rows(self.models,[(name,f"{row['tokens']:,}" if row['tokens'] is not None else '—',
+                              cost_text(row,currency=False),cost_note(row) or '—')
+                             for name,row in sorted(summaries.items(),key=lambda item:item[1]['tokens'] or 0,reverse=True)])
 
 
 class TransportButton(QToolButton):
@@ -219,21 +289,28 @@ class CoverArt(QWidget):
 
 class AudioMeter(QWidget):
     def __init__(self,view):
-        super().__init__();self.view=view;self.setFixedSize(46,24)
+        super().__init__();self.view=view;self.setMinimumWidth(24);self.setFixedHeight(16)
     def paintEvent(self,event):
         c=self.view.owner.colors
         if not c:return
         bridge=self.view.owner.service.deck;active=bridge and (bridge.media.get('track') or {}).get('state')=='Playing'
         levels=bridge.levels if active else [0]*8;p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(QColor(c['muted']),3,Qt.SolidLine,Qt.RoundCap))
-        for i,level in enumerate(levels[:8]):
-            height=2+level*17;p.drawLine(QPointF(3+i*5.5,12-height/2),QPointF(3+i*5.5,12+height/2))
+        if not levels:return
+        count=max(8,min(28,self.width()//5));step=self.width()/count
+        for i in range(count):
+            level=levels[min(len(levels)-1,i*len(levels)//count)]
+            color=QColor('#1b8b7e' if c['light'] else '#79d9ca') if level>.02 else QColor(c['muted'])
+            if level<=.02:color.setAlpha(65)
+            p.setPen(QPen(color,2,Qt.SolidLine,Qt.RoundCap))
+            height=2+level*11;x=(i+.5)*step
+            p.drawLine(QPointF(x,8-height/2),QPointF(x,8+height/2))
 
 
 class MediaLabel(QLabel):
     """Bounded text lines: no QLabel word-wrap height squeezing or top clipping."""
-    def __init__(self,lines=1,size=11,bold=False):
+    def __init__(self,lines=1,size=11,bold=False,*,owner=None):
         super().__init__()
+        self.owner=owner
         self.lines = lines
         self.bold = bold
         self.fit_text(size)
@@ -246,7 +323,9 @@ class MediaLabel(QLabel):
         font.setWeight(QFont.DemiBold if self.bold else QFont.Normal)
         self.setFixedHeight(self.lines * QFontMetrics(font).height())
     def paintEvent(self,event):
-        p=QPainter(self);font=self.font();font.setPixelSize(self.pixel_size);font.setWeight(QFont.DemiBold if self.bold else QFont.Normal);p.setFont(font);p.setPen(self.palette().windowText().color())
+        p=QPainter(self);font=self.font();font.setPixelSize(self.pixel_size);font.setWeight(QFont.DemiBold if self.bold else QFont.Normal)
+        color=QColor(self.owner.colors['ink' if self.bold else 'muted']) if self.owner else self.palette().windowText().color()
+        p.setFont(font);p.setPen(color)
         fm=p.fontMetrics();remaining=' '.join(self.text().split());width=max(1,self.width());line_h=self.height()/self.lines
         for line in range(self.lines):
             if line==self.lines-1:value=fm.elidedText(remaining,Qt.ElideRight,width)
@@ -257,37 +336,52 @@ class MediaLabel(QLabel):
             p.drawText(QRectF(0,line*line_h,width,line_h),Qt.AlignLeft|Qt.AlignVCenter,value)
 
 
-class MusicView(QScrollArea):
+class MusicView(CapsuleScrollArea):
     def __init__(self,window):
         super().__init__();self.owner=window;self.track_id='';self.seeking=False;self.route_ids=None
-        self.setWidgetResizable(True);self.setFrameShape(QFrame.NoFrame);self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        body=QWidget();self.setWidget(body);lay=QVBoxLayout(body);lay.setContentsMargins(4,0,4,3);lay.setSpacing(3)
-        head=QHBoxLayout();head.addStretch();self.sources=ModernComboBox();self.sources.setMaximumWidth(260);self.sources.setMinimumWidth(60);self.sources.setFixedHeight(21);head.addWidget(self.sources)
+        body=QWidget();self.setWidget(body);outer=QVBoxLayout(body);outer.setContentsMargins(3,2,3,2);outer.setSpacing(0)
+        self.card=DashboardCard(window,'#9c9bd2',body);outer.addWidget(self.card);outer.addStretch(1)
+        lay=QVBoxLayout(self.card);lay.setContentsMargins(9,7,9,8);lay.setSpacing(5)
+        head=QHBoxLayout();title=QLabel('媒体控制');title.setObjectName('RankTitle');head.addWidget(title,1)
+        self.sources=ModernComboBox();self.sources.setMaximumWidth(224);self.sources.setMinimumWidth(60);self.sources.setFixedHeight(21);head.addWidget(self.sources)
+        self.sources.setProperty('glassField',True)
         self.sources.setStyleSheet('QComboBox{min-height:0;padding:2px 30px 2px 7px;border:0;background:transparent;font-size:11px}')
         self.pin=QToolButton();self.pin.setText('固定');self.pin.setToolTip('固定当前播放器');self.pin.setCheckable(True);head.addWidget(self.pin);lay.addLayout(head)
         self.sources.activated.connect(lambda:self.send(op='select',id=self.sources.currentData() or ''))
         self.pin.clicked.connect(lambda on:self.send(op='pin',on=on))
-        content=self.content_layout=QHBoxLayout();content.setSpacing(16);self.cover=CoverArt(self);content.addWidget(self.cover,0,Qt.AlignTop)
-        texts=QVBoxLayout();self.title=MediaLabel(2,13,True);self.artist=MediaLabel(1,10);self.lyric=MediaLabel(1,11)
-        texts.setSpacing(2);texts.setContentsMargins(0,2,0,3)
+        content=self.content_layout=QHBoxLayout();content.setSpacing(12);self.cover=CoverArt(self);content.addWidget(self.cover,0,Qt.AlignTop)
+        texts=QVBoxLayout();self.title=MediaLabel(2,13,True,owner=window);self.artist=MediaLabel(1,10,owner=window);self.lyric=MediaLabel(1,11,owner=window)
+        texts.setSpacing(1);texts.setContentsMargins(0,1,0,0)
         for label in (self.title,self.artist,self.lyric):label.setTextFormat(Qt.PlainText);label.setWordWrap(True);label.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred)
-        title_row=QHBoxLayout();title_row.addWidget(self.title,1);self.meter=AudioMeter(self);title_row.addWidget(self.meter,0,Qt.AlignTop);texts.addLayout(title_row)
-        texts.addWidget(self.artist);texts.addWidget(self.lyric)
+        texts.addWidget(self.title);texts.addWidget(self.artist)
+        self.meter=AudioMeter(self);texts.addWidget(self.meter)
         self.artist.setObjectName('Subtle')
-        content.addLayout(texts,1);lay.addLayout(content);lay.addSpacing(5)
-        self.slider=QSlider(Qt.Horizontal);self.slider.setRange(0,1000);self.slider.setFixedHeight(17);self.slider.sliderPressed.connect(lambda:setattr(self,'seeking',True));self.slider.sliderReleased.connect(self.seek);lay.addWidget(self.slider)
-        times=QHBoxLayout();self.time=QLabel();self.duration=QLabel();self.time.setObjectName('Subtle');self.duration.setObjectName('Subtle');times.addWidget(self.time);times.addStretch();times.addWidget(self.duration);lay.addLayout(times)
-        controls=self.controls_layout=QHBoxLayout();controls.setSpacing(14);controls.addStretch();self.buttons={}
-        for op,title in [('Shuffle','随机播放'),('Previous','上一首'),('PlayPause','播放 / 暂停'),('Next','下一首'),('Repeat','循环播放')]:
+        progress=QHBoxLayout();progress.setSpacing(3)
+        self.slider=QSlider(Qt.Horizontal);self.slider.setRange(0,1000);self.slider.setFixedHeight(14);self.slider.sliderPressed.connect(lambda:setattr(self,'seeking',True));self.slider.sliderReleased.connect(self.seek);progress.addWidget(self.slider,1)
+        self.time=QLabel();self.duration=QLabel()
+        for label in (self.time,QLabel('/'),self.duration):
+            label.setObjectName('Subtle');progress.addWidget(label)
+        texts.addLayout(progress)
+        controls=self.controls_layout=QHBoxLayout();controls.setSpacing(3);self.buttons={}
+        for op,title in [('Previous','上一首'),('PlayPause','播放 / 暂停'),('Next','下一首'),('Shuffle','随机播放'),('Repeat','循环播放')]:
             btn=TransportButton(self,op,title);controls.addWidget(btn);self.buttons[op]=btn
-        controls.addStretch();lay.addLayout(controls);self.status=QLabel();self.status.setObjectName('Subtle');self.status.setWordWrap(True);lay.addWidget(self.status);lay.addStretch(1)
+        controls.addStretch(1)
+        texts.addLayout(controls)
+        texts.addWidget(self.lyric)
+        content.addLayout(texts,1);lay.addLayout(content)
+        self.status=QLabel();self.status.setObjectName('Subtle');self.status.setWordWrap(True);lay.addWidget(self.status)
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if not hasattr(self,'buttons'):return
-        small=self.width()<340;self.cover.setFixedSize(38 if small else 70,38 if small else 70)
-        self.content_layout.setSpacing(8 if small else 16);self.controls_layout.setSpacing(6 if small else 14)
-        self.title.fit_text(11 if small else 13)
-        self.meter.setVisible(not small)
+        small=self.width()<350;self.cover.setFixedSize(42 if small else 84,42 if small else 84)
+        self.content_layout.setSpacing(7 if small else 12);self.controls_layout.setSpacing(1 if small else 5)
+        self.fit_title()
+    def fit_title(self):
+        size=11 if self.width()<350 else 13
+        font=QFont(self.title.font());font.setPixelSize(size);font.setWeight(QFont.DemiBold)
+        available=max(1,self.viewport().width()-self.cover.width()-self.content_layout.spacing()-24)
+        self.title.lines=1 if QFontMetrics(font).horizontalAdvance(self.title.text())<=available else 2
+        self.title.fit_text(size)
     def send(self,**data):
         if data.get('op') == 'PlayPause' and self.track_id:
             data.setdefault('id', self.track_id)
@@ -295,6 +389,7 @@ class MusicView(QScrollArea):
     def seek(self):
         self.seeking=False;self.send(op='seek',fraction=self.slider.value()/1000)
     def refresh(self):
+        sync_card_controls(self.card,self.owner.colors)
         bridge=self.owner.service.deck;data=bridge.media if bridge else {};track=data.get('track') or {};tracks=data.get('tracks') or []
         self.track_id = track.get('id', '')
         ids=tuple((r['id'],r['title']) for r in tracks)
@@ -306,7 +401,10 @@ class MusicView(QScrollArea):
             self.route_ids=ids
         self.sources.setCurrentIndex(max(0,self.sources.findData(track.get('id'))));self.pin.setChecked(data.get('pinned',False))
         self.title.setText(track.get('title') or '没有正在播放的媒体');self.artist.setText(track.get('artist',''))
+        self.artist.setVisible(bool(track.get('artist')))
+        self.fit_title()
         self.lyric.setText(track.get('lyric') or ('暂无歌词' if track else '播放音乐后自动显示'))
+        self.lyric.setVisible(bool(track.get('lyric')))
         status = bridge.status if bridge else '在设置中开启音乐'
         if not status and track.get('liveAudio') and track.get('state') == 'Paused':
             status = '直播声音已暂停'

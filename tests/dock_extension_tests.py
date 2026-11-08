@@ -195,7 +195,7 @@ def run(api,runtime,root,output,checks):
         external=SimpleNamespace(source=lambda:None,mimeData=lambda:mime)
         assert not popup.valid_drag(external)
         event=SimpleNamespace(source=lambda:popup.tiles['clock'],mimeData=lambda:mime,setDropAction=MagicMock(),accept=MagicMock(),ignore=MagicMock())
-        tile.dropEvent(event);assert event.accept.called and not event.ignore.called
+        popup.tiles[old_order[0]].dropEvent(event);assert event.accept.called and not event.ignore.called
         assert popup.order()[0]=='clock' and api.load_config()['dock_quick_order'][0]=='clock'
         assert popup.tiles['clock'].parentWidget() is popup.pages.widget(0)
         duplicate=DockQuickSettings(dock.extras)

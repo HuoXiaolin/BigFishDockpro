@@ -70,9 +70,11 @@ def run(api,runtime,app,output,checks):
                 assert w.liquid.watch.isActive()
                 center=w.liquid.face_bounds.center();positions=[]
                 for direction in (-1,1):
-                    position=w.mapToGlobal(center+QPoint(direction*45,direction*20))
+                    w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame()
+                    position=w.mapToGlobal(center+QPoint(direction*1250,direction*620))
                     with patch.object(QCursor,'pos',return_value=position):
                         w.liquid.watch_face()
+                        assert w.liquid.frames.isActive() and not w.liquid.was_near
                         for _ in range(16):w.liquid.face._t-=.033;w.grab()
                         positions.append((w.liquid.face.ex.x,w.liquid.face.ey.x))
                         w.grab().save(str(output/f'face-follow-{shape}-{collapsed}-{direction}.png'))
@@ -132,13 +134,14 @@ def run(api,runtime,app,output,checks):
         assert w.weather_view.cards.card_height==112
         w.grab().save(str(output/'companion-weather-cards.png'))
         from resource_extras_view import weather_days
-        assert [label for label,day in weather_days(extra.weather[0],3)]==['昨天','今天','明天']
-        assert weather_days(extra.weather[0],3)[0][1]['low']==2
-        assert len(weather_days(extra.weather[0],7))==7 and weather_days(extra.weather[0],7)[0][0]=='今天'
-        assert weather_days(dict(days=[]),3)[0][1]['low'] is None
+        today=date.fromisoformat(extra.weather[0]['days'][1]['date'])
+        assert [label for label,day in weather_days(extra.weather[0],3,today)]==['昨天','今天','明天']
+        assert weather_days(extra.weather[0],3,today)[0][1]['low']==2
+        assert len(weather_days(extra.weather[0],7,today))==7 and weather_days(extra.weather[0],7,today)[0][0]=='今天'
+        assert weather_days(dict(days=[]),3,today)[0][1]['low'] is None
         cfg['resource_weather_days']=7;w.refresh()
         for _ in range(6):app.processEvents();time.sleep(.01)
-        assert w.weather_view.cards.card_height==184
+        assert w.weather_view.cards.card_height==112
         w.grab().save(str(output/'companion-weather-week.png'))
         options=ResourceOptions(service)
         assert options.loaded=={0}

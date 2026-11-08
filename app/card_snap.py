@@ -54,10 +54,14 @@ def resolve(window, runtime, point=None):
               QApplication.primaryScreen())
     if screen is None:
         return None
+    custom=getattr(runtime,'custom_cards',None)
     cards = (*runtime.panels.windows.values(), *runtime.notes.windows.values(),
-             runtime.clock, runtime.calendar, runtime.resources.window)
+             runtime.clock, runtime.calendar, runtime.resources.window, getattr(runtime, 'spectrum', None),
+             getattr(runtime,'daily_picture',None),
+             *getattr(runtime.resources,'desktop_cards',{}).values(),
+             *(custom.windows.values() if custom else ()))
     peers = (card.geometry() for card in cards
-             if card is not None and card is not window and card.isVisible() and not card.isMinimized())
+             if card is not None and card is not window and card.isWindow() and card.isVisible() and not card.isMinimized())
     return snap_target(rect, screen.availableGeometry(), peers, cfg.get('card_snap_distance', 12))
 
 

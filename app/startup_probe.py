@@ -59,6 +59,8 @@ class StartupProbe:
                             'resource_enabled','resource_weather','resource_ai','resource_music',
                             'resource_taskbar','resource_ai_tray','resource_face','resource_open_page','screen_corners','corner_radius'):
                     assert dock.cfg[key] == preset[key], key
+                assert dock.cfg['taskbar_text_mode']=='system'
+                assert dock.cfg['dock_quick_order'][:6]==['settings','taskbar','taskbar_text','manage','appearance','panels']
                 assert dock.isVisible() == preset['dock_visible'] and tray.isVisible() != preset['hide_tray']
                 assert not dock.cfg['items'] and not dock.cfg['desktop_entries']
                 assert not dock.cfg['sticky_notes'] and not dock.cfg['flash_entries']

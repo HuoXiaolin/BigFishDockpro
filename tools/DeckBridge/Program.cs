@@ -1,6 +1,7 @@
 // BigFishDockpro adapter, 2026. Pinned BrimDeck sources stay in references/BrimDeck
 // under Apache-2.0; Core/ adapts its log reader to bounded metadata parsing.
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Windows.Media;
@@ -15,6 +16,8 @@ internal static class Program
     static readonly object OutputGate = new();
     static Dispatcher Ui = null!;
     static MediaSessions? Media;
+    static DesktopAudio? DesktopSpectrum;
+    static readonly double[] SpectrumFrame = new double[DesktopAudio.Bands], LastSpectrum = new double[DesktopAudio.Bands];
     static readonly LiveAudio Live = new();
     static UsageService? Usage;
     static readonly LyricsService LyricsReader = new();
@@ -25,12 +28,14 @@ internal static class Program
     static bool AiEnabled, LyricsEnabled, Spectrum, Busy, Presentation;
     static string[] Providers = [];
     static DateTimeOffset NextAi;
-    static long LastMedia;
+    static long LastMedia, LastLevels;
     static DeckSettings Settings = new();
     static string Data = "";
     static Pricing? Prices;
     static bool AllHistory;
     static DispatcherTimer Tick = null!;
+    [DllImport("kernel32")]
+    static extern uint GetErrorMode();
 
     [STAThread]
     static void Main(string[] args)
@@ -38,7 +43,7 @@ internal static class Program
         Console.InputEncoding = new UTF8Encoding(false); Console.OutputEncoding = new UTF8Encoding(false);
         Loc.Use("zh-CN");
         try { MemoryBudget.Install(); }
-        catch (Exception) { Emit(new { type = "memory_error", message = "无法启用 50 MB 内存限制，AI / 音乐组件已停止" }); return; }
+        catch (Exception) { Emit(new { type = "memory_error", message = "无法启用工作集上限，AI / 音乐组件已停止" }); return; }
         if (args.Contains("--self-test")) { SelfTest(); return; }
         Data = args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "BigFishDeckBridge");
         // This is a headless adapter. A dispatcher provides the STA message loop
@@ -46,8 +51,14 @@ internal static class Program
         Ui = Dispatcher.CurrentDispatcher;
         Ui.UnhandledException += (_, e) => { Emit(new { type = "error", message = "组件读取失败，请重试" }); e.Handled = true; };
         Tick = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        Tick.Tick += (_, _) => { TickMedia(); if (AiEnabled && !Busy && DateTimeOffset.UtcNow >= NextAi) _ = ReadAi(); };
+        Tick.Tick += (_, _) =>
+        {
+            TickMedia();
+            TickDesktopSpectrum();
+            if (AiEnabled && !Busy && DateTimeOffset.UtcNow >= NextAi) _ = ReadAi();
+        };
         Tick.Start();
+        Emit(new { type = "ready" });
         _ = Task.Run(async () =>
         {
             string? line;
@@ -60,7 +71,7 @@ internal static class Program
             await Ui.InvokeAsync(() => Ui.InvokeShutdown());
         });
         try { Dispatcher.Run(); }
-        finally { Tick.Stop(); Reading?.Cancel(); LyricReading?.Cancel(); Live.Dispose(); Media?.Dispose(); Usage?.Dispose(); Prices?.Dispose(); LyricsReader.Dispose(); MemoryBudget.Close(); }
+        finally { Tick.Stop(); Reading?.Cancel(); LyricReading?.Cancel(); DesktopSpectrum?.Dispose(); Live.Dispose(); Media?.Dispose(); Usage?.Dispose(); Prices?.Dispose(); LyricsReader.Dispose(); }
     }
 
     static void Emit(object data)
@@ -78,14 +89,23 @@ internal static class Program
             if (op == "configure")
             {
                 Presentation = Flag(q, "presentation");
-                Tick.Interval = TimeSpan.FromMilliseconds(Flag(q, "music") && Presentation ? 100 : 1000);
+                bool music = Flag(q, "music"), spectrum = Flag(q, "desktopSpectrum");
+                if (spectrum && DesktopSpectrum is null)
+                    DesktopSpectrum = new DesktopAudio();
+                else if (!spectrum && DesktopSpectrum is not null)
+                {
+                    DesktopSpectrum.Dispose();
+                    DesktopSpectrum = null;
+                    Array.Clear(LastSpectrum);
+                }
+                Tick.Interval = TimeSpan.FromMilliseconds(spectrum ? 34 : music && Presentation ? 100 : 1000);
                 AiEnabled = Flag(q, "ai"); LyricsEnabled = Flag(q, "lyrics"); Spectrum = q.Get("equalizer").Text() == "spectrum";
                 Providers = q.Get("providers").Items().Select(x => x.Text()).Take(7).ToArray();
                 var key = string.Join(",", Providers);
                 if (key != ProviderKey) { ProviderKey = key; Reading?.Cancel(); NextAi = DateTimeOffset.MinValue; }
                 if (!AiEnabled) { Reading?.Cancel(); Usage?.Dispose(); Usage = null; Prices?.Dispose(); Prices = null; }
                 if (!LyricsEnabled) { LyricReading?.Cancel(); Lines = Lyrics.Empty; Song = ""; }
-                if (Flag(q, "music") && Media is null)
+                if (music && Media is null)
                 {
                     Media = new MediaSessions(Ui);
                     // Do not patch or restart third-party players automatically.
@@ -96,7 +116,7 @@ internal static class Program
                     Media.SetPresentationActive(Presentation);
                     await Media.StartAsync();
                 }
-                else if (!Flag(q, "music") && Media is not null)
+                else if (!music && Media is not null)
                 { Live.Dispose(); Media.Dispose(); Media = null; LyricReading?.Cancel(); Song = ""; Lines = Lyrics.Empty; Cover = null; CoverKey = ""; }
                 Media?.SetPresentationActive(Presentation);
                 Changed(); return;
@@ -184,13 +204,15 @@ internal static class Program
         if (Media is null) return;
         var t = Media.Current; var now = DateTimeOffset.Now;
         bool liveMuted = t is not null && Live.IsMuted(t.Id);
-        if (Presentation && t?.State == MediaState.Playing && !liveMuted)
+        long elapsed = Environment.TickCount64;
+        if (Presentation && t?.State == MediaState.Playing && !liveMuted && elapsed - LastLevels >= 90)
         {
+            LastLevels = elapsed;
             var levels = new double[8]; Media.FlowLevels(levels, Spectrum ? EqualizerMode.Spectrum : EqualizerMode.Flow);
             Emit(new { type = "levels", levels });
         }
-        if (Environment.TickCount64 - LastMedia < 500) return;
-        LastMedia = Environment.TickCount64;
+        if (elapsed - LastMedia < 500) return;
+        LastMedia = elapsed;
         bool liveAudio = liveMuted || t is not null && LiveAudio.CanPause(t, Media.CurrentOwner);
         string pictureKey = (t?.SongKey ?? "") + ":" + (Media.Cover?.GetHashCode() ?? 0);
         bool pictureChanged = pictureKey != CoverKey;
@@ -218,6 +240,18 @@ internal static class Program
             pictureChanged, cover = pictureChanged ? Cover : null });
     }
 
+    static void TickDesktopSpectrum()
+    {
+        if (DesktopSpectrum is null) return;
+        Array.Clear(SpectrumFrame);
+        DesktopSpectrum.Fill(SpectrumFrame);
+        for (int i = 0; i < SpectrumFrame.Length; i++)
+            SpectrumFrame[i] = Math.Round(SpectrumFrame[i], 2);
+        if (SpectrumFrame.AsSpan().SequenceEqual(LastSpectrum)) return;
+        SpectrumFrame.CopyTo(LastSpectrum, 0);
+        Emit(new { type = "spectrum", levels = SpectrumFrame });
+    }
+
     static void SelfTest()
     {
         var live = new MediaTrack { Id = "system:fixture", State = MediaState.Playing, PositionKnown = false };
@@ -231,7 +265,7 @@ internal static class Program
         var result = JsonSerializer.Serialize(Provider(new(new AppEntry { QuotaSource = ProviderId.Codex }, sample, sample), DateTime.Today), Json);
         if (!result.Contains("\"tokens\":15") || !result.Contains("\"cacheRead\":2") || !result.Contains("\"records\":1")) throw new Exception("usage");
         if (MemoryBudget.InstalledLimit() != MemoryBudget.Bytes) throw new Exception("memory limit");
-        Emit(new { passed = true, processCommitLimit = MemoryBudget.InstalledLimit(), managedHeapLimit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
-            checks = new[] { "quota", "synchronized lyrics", "usage projection without auth or conversation content", "OS process commit budget 50 MiB" } });
+        Emit(new { passed = true, workingSetLimit = MemoryBudget.InstalledLimit(), managedHeapLimit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, processErrorMode = GetErrorMode(),
+            checks = new[] { "quota", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB" } });
     }
 }

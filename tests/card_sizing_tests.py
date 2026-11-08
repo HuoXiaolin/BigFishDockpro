@@ -67,7 +67,7 @@ def run(api,runtime,root,output,checks):
         # A no-op geometry save must preserve the reference visual scale/density.
         assert runtime.notes.row(identity)['layout']==record and note.text_pixels()==19
         note.grab().save(str(Path(output)/'note-custom-size-font.png'))
-        # Settings modes scale controls and fonts; switching and themes do not accumulate.
+        # Window presets preserve size while keeping their contents compact.
         runtime.layout.timer.stop();note.geometry_timer.stop();runtime.notes.flush()
         dense=SettingsDialog(runtime.tray,api);dense.reveal();app.processEvents();saved_cfg=copy.deepcopy(cfg)
         with patch.object(dense,'available_interface_area',return_value=QRect(0,0,3840,2160)):
@@ -78,8 +78,8 @@ def run(api,runtime,root,output,checks):
                 assert dense.size_mode.currentData()==mode
                 dense.grab().save(str(Path(output)/('settings-preset-'+mode+'.png')))
             assert sizes==[QSize(448,350),QSize(640,500)],sizes
-            assert fonts[0]<fonts[1],fonts
-            dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==1.0
+            assert fonts==[10,11],fonts
+            dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==.78
             for _ in range(2):
                 apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(640,500) and dense.size_mode.currentData()=='auto'
             dense.reject();assert cfg==saved_cfg,{key:(saved_cfg.get(key),cfg.get(key)) for key in set(saved_cfg)|set(cfg) if saved_cfg.get(key)!=cfg.get(key)}

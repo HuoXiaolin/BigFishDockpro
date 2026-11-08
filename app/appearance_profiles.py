@@ -94,6 +94,7 @@ def apply_profile(cfg, mode, defaults):
     result=copy.deepcopy(cfg)
     if mode=='default':
         result['resource_background']='global'
+        progress=copy.deepcopy(result['clock_appearance'].get('progress'))
         for key in TOP_KEYS:result[key]=copy.deepcopy(defaults[key])
         for component in ('clock','calendar'):
             work=result[component+'_appearance']['work']
@@ -104,6 +105,7 @@ def apply_profile(cfg, mode, defaults):
         for component in ('clock','calendar'):
             work=result[component+'_appearance']['work']
             result[component+'_appearance']=normalize_clock(dict(DEFAULT_STYLE,work=work))
+        if progress is not None:result['clock_appearance']['progress']=progress
         result.update(clock_style='digital',clock_flipped=False)
         from card_metrics import DEFAULT_PROFILE
         result['card_sizing'].update(font_size=DEFAULT_PROFILE['font_size'],font_density=result['card_sizing']['density'])

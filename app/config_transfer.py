@@ -55,6 +55,9 @@ def normalize(data,api):
         if len(cfg[key])>limit:raise ValueError('配置条目过多：'+key)
     from resource_options import normalize as normalize_resources
     normalize_resources(cfg,strict=True)
+    if cfg['custom_cards']:
+        from custom_card_data import normalize_cards
+        cfg['custom_cards']=normalize_cards(cfg['custom_cards'],strict=True)
     from flash_data import normalize_entries, normalize_draft, COLORS, PALETTES
     cfg['flash_entries']=normalize_entries(cfg['flash_entries'],strict=True)
     cfg['flash_draft']=normalize_draft(cfg['flash_draft'],strict=True)

@@ -141,6 +141,7 @@ class DesktopPanel(QDialog):
         from interaction_motion import attach
         attach(self,lambda:self.dock.cfg)
         self.identity, self.default_geometry = identity, list(geometry)
+        self.setProperty('clickThroughKey','panel:'+str(identity))
         self.default_ui_factor=geometry[2]/320 if not self.model.get('geometry') else 1.0
         self.ui_factor = 1.0
         from widget_face import FaceTracker

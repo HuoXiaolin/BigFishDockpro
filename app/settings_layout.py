@@ -5,7 +5,7 @@ from ui_style import UI_DENSITY,ModernComboBox,label,density_stylesheet
 
 MODES=[('自动适配','auto'),('小','small'),('中','medium'),('手动调整','custom')]
 SETTINGS_SIZE = (640, 500)
-SETTINGS_MINIMUM = (490, 360)
+SETTINGS_MINIMUM = (575, 360)
 
 
 def automatic_mode(area):
@@ -18,6 +18,11 @@ def size_factor(mode, area, custom_density):
     if mode == 'auto':
         mode = automatic_mode(area)
     return .7 if mode == 'small' else 1.0
+
+
+def content_factor(window_factor):
+    # Keep text and controls close in size so a larger window shows more rows.
+    return round(.25 + .53 * window_factor, 2)
 
 
 def capture_density(root):
@@ -85,15 +90,16 @@ class SettingsSizingMixin:
             for reference in getattr(self,'_page_density',{}).values():
                 apply_density(reference,factor)
             area=self.available_interface_area()
-            self.setMinimumSize(min(round(SETTINGS_MINIMUM[0]*factor),area.width()-24),
-                                min(round(SETTINGS_MINIMUM[1]*factor),area.height()-24))
+            self.setMinimumSize(min(round(SETTINGS_MINIMUM[0]*self._window_factor),area.width()-24),
+                                min(round(SETTINGS_MINIMUM[1]*self._window_factor),area.height()-24))
         finally:self._interface_resizing=False
     def adapt_interface(self,*args):
         if not getattr(self,'_interface_ready',False):return
         mode=self.size_mode.currentData() or 'medium';area=self.available_interface_area()
         factor=size_factor(mode, area, self._custom_density)
+        self._window_factor=factor
         self._interface_resizing=True
-        self.setProperty('interfaceScale',factor);self.refresh_interface_style();self._interface_resizing=True
+        self.setProperty('interfaceScale',content_factor(factor));self.refresh_interface_style();self._interface_resizing=True
         try:
             target=self._manual_dimensions if mode=='custom' and len(self._manual_dimensions)==2 else [round(value*factor) for value in SETTINGS_SIZE]
             width=min(target[0],max(300,area.width()-24));height=min(target[1],max(250,area.height()-24));self.resize(width,height)
@@ -102,7 +108,7 @@ class SettingsSizingMixin:
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if getattr(self,'_interface_ready',False) and not self._interface_resizing and self.isVisible() and event.oldSize().isValid():
-            self._manual_dimensions=[self.width(),self.height()];self._custom_density=round(float(self.property('interfaceScale') or .7)*100)
+            self._manual_dimensions=[self.width(),self.height()];self._custom_density=round(self._window_factor*100)
             blocked=self.size_mode.blockSignals(True);self.size_mode.setCurrentIndex(self.size_mode.findData('custom'));self.size_mode.blockSignals(blocked)
     def showEvent(self,event):
         super().showEvent(event)
@@ -118,24 +124,11 @@ def fit_auxiliary_dialog(dialog,cfg):
     if dialog.property('auxiliaryDensityApplied'):return
     dialog.setProperty('auxiliaryDensityApplied',True)
     screen=QApplication.screenAt(dialog.frameGeometry().center()) or QApplication.primaryScreen();area=screen.availableGeometry()
-    factor=size_factor(cfg.get('settings_size','medium'), area, cfg.get('settings_custom_density',100))
-    ratio=factor/.7;size=dialog.size();minimum=dialog.minimumSize();dialog.setProperty('interfaceScale',factor)
-    def layout_scale(layout):
-        margins=layout.contentsMargins();layout.setContentsMargins(*(round(value*ratio) for value in (margins.left(),margins.top(),margins.right(),margins.bottom())))
-        if layout.spacing()>=0:layout.setSpacing(round(layout.spacing()*ratio))
-        if hasattr(layout,'horizontalSpacing'):
-            for name in ('HorizontalSpacing','VerticalSpacing'):
-                value=getattr(layout,name[0].lower()+name[1:])()
-                if value>=0:getattr(layout,'set'+name)(round(value*ratio))
-        for i in range(layout.count()):
-            child=layout.itemAt(i).layout()
-            if child is not None:layout_scale(child)
-    for widget in [dialog]+dialog.findChildren(QWidget):
-        if widget.window() is not dialog:continue
-        for axis in ('Width','Height'):
-            low=getattr(widget,'minimum'+axis)();high=getattr(widget,'maximum'+axis)()
-            if low==high and high<16777215:getattr(widget,'setFixed'+axis)(round(low*ratio))
-        if widget.layout():layout_scale(widget.layout())
+    window_factor=size_factor(cfg.get('settings_size','medium'),area,cfg.get('settings_custom_density',100))
+    factor=content_factor(window_factor)
+    ratio=window_factor/UI_DENSITY;size=dialog.size();minimum=dialog.minimumSize()
+    dialog.setProperty('interfaceScale',factor)
+    apply_density(capture_density(dialog),factor)
     base=getattr(QApplication.instance(),'_base_stylesheet','')
     if base and factor != UI_DENSITY:
         dialog.setStyleSheet(density_stylesheet(base,factor))

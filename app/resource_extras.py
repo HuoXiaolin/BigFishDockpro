@@ -10,10 +10,13 @@ class ResourceExtras(QObject):
     def sync(self):
         if self.closed:return
         if not self.service.window or not self.service.window.isVisible():self.pause();return
-        cfg=self.service.cfg;cities=tuple(cfg['resource_weather_cities'])
+        cfg=self.service.cfg;cities=tuple(cfg['resource_weather_cities']);source=cfg['resource_air_source']
         if cfg['resource_weather'] and cities:
-            if cities!=self.weather_key:
-                self.cancel();self.weather_key=cities;self.weather=[]
+            from weather_connection import connection
+            credentials=connection(self.service.runtime.api) if source=='qweather' else ('','')
+            key=(cities,source,credentials)
+            if key!=self.weather_key:
+                self.cancel();self.weather_key=key;self.weather=[]
                 self.refresh_weather()
             elif not self.weather_timer.isActive():self.refresh_weather()
             self.weather_timer.start()
@@ -24,12 +27,22 @@ class ResourceExtras(QObject):
     def refresh_weather(self):
         if self.closed or self.weather_job or not self.service.cfg['resource_weather'] or self.service.runtime.dock.preview:return
         from resource_weather import WeatherJob
-        self.weather_job=WeatherJob(self.service.cfg['resource_weather_cities']);job=self.weather_job
+        if not self.weather_key:return
+        self.weather_job=WeatherJob(*self.weather_key);job=self.weather_job
         job.ready.connect(self.receive_weather,Qt.QueuedConnection);job.finished.connect(self.finished,Qt.QueuedConnection);job.start()
     def receive_weather(self,rows):
         if self.closed or self.sender() is not self.weather_job:return
-        old={r['name']:r for r in self.weather}
-        self.weather=[dict(old[r['name']],error=r['error']) if r.get('error') and r['name'] in old else r for r in rows]
+        import time
+        old={r['name']:r for r in self.weather};updated=[]
+        for row in rows:
+            previous=old.get(row['name'],{})
+            if row.get('error') and previous.get('temperature') is not None:
+                row=dict({k:v for k,v in previous.items() if k not in ('air','air_error')},**row)
+            cached=previous.get('air')
+            if 'air' not in row and cached and time.time()-cached.get('received',0)<7200:
+                row['air']=dict(cached,stale=True)
+            updated.append(row)
+        self.weather=updated
         self.service.display()
     def finished(self):
         job=self.sender()

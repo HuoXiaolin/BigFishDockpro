@@ -1,7 +1,43 @@
 """Small vector weather scenes; no image cache, animation timer or downloads."""
 import math
+from datetime import timedelta
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QLinearGradient,QRadialGradient,QPainterPath,QPen
+from card_design import blend
+
+
+FORECAST_TONES=(('#e7e8f8','#4d5695'),('#31364f','#b7c2ff'))
+AIR_SURFACES=('#dceee5','#233e36')
+SUN_TONES={
+    'dawn':(('#ffd7b8','#8c411b'),('#553628','#ffc69c')),
+    'day':(('#f9e7dc','#844f35'),('#443631','#f1bf9f')),
+    'dusk':(('#eac9dd','#803b67'),('#503249','#fac0e2')),
+    'night':(('#c3d3f1','#324878'),('#243454','#c0d2ff')),
+}
+
+
+def solar_tone(now,sunrise,sunset,light):
+    """Interpolate from the horizon's colors over the minutes around each event."""
+    theme=0 if light else 1
+    night=SUN_TONES['night'][theme]
+    if now is None or sunrise is None or sunset is None or sunset<=sunrise:
+        return '',*night
+    edge=min(timedelta(minutes=50),(sunset-sunrise)/3)
+    stages=((sunrise-edge,sunrise,'night','dawn','清晨'),
+            (sunrise,sunrise+edge,'dawn','day','清晨'),
+            (sunrise+edge,sunset-edge,'day','day','白天'),
+            (sunset-edge,sunset,'day','dusk','黄昏'),
+            (sunset,sunset+edge,'dusk','night','黄昏'))
+    for start,end,first,last,label in stages:
+        if start<=now<end:
+            amount=(now-start)/(end-start)
+            surface,ink=(blend(QColor(a),QColor(b),amount) for a,b in zip(SUN_TONES[first][theme],SUN_TONES[last][theme]))
+            return label,surface,ink
+    return '夜间',*night
+
+
+def paint_card(p,rect,surface):
+    p.setPen(Qt.NoPen);p.setBrush(QColor(surface));p.drawRoundedRect(rect,9,9)
 
 
 def weather_kind(row):
@@ -14,6 +50,14 @@ def weather_kind(row):
     if code in (1,2):return 'cloud'
     if code==3:return 'overcast'
     return {'晴':'sun','多云':'cloud','阴':'overcast','雨':'rain','毛毛雨':'rain','雪':'snow','雾':'fog','雷雨':'storm'}.get(row.get('condition'),'unknown')
+
+
+def weather_accent(row,light):
+    kind=weather_kind(row)
+    if kind=='sun':return QColor('#996315' if light else '#ffcf83')
+    if kind=='storm':return QColor('#6554a4' if light else '#c7b4ff')
+    if kind=='fog':return QColor('#39796d' if light else '#a0d9c5')
+    return QColor('#216d98' if light else '#a1d8f4')
 
 
 def paint_weather(p,rect,row,light,fallback):
@@ -29,7 +73,8 @@ def paint_weather(p,rect,row,light,fallback):
     p.save();shape=QPainterPath();shape.addRoundedRect(rect,9,9);p.setClipPath(shape)
     colors=palettes.get(kind)
     if colors:
-        a,b=colors[0 if light else 1];gradient=QLinearGradient(rect.topLeft(),rect.bottomRight());gradient.setColorAt(0,QColor(a));gradient.setColorAt(1,QColor(b));p.fillPath(shape,gradient)
+        a,b=map(QColor,colors[0 if light else 1])
+        gradient=QLinearGradient(rect.topLeft(),rect.bottomRight());gradient.setColorAt(0,a);gradient.setColorAt(1,b);p.fillPath(shape,gradient)
     else:p.fillPath(shape,QColor(fallback))
     # Decoration occupies the trailing portion, leaving a quiet area for text.
     x=rect.right()-29;y=rect.top()+22;accent=QColor('#fffaf0' if light else '#b8d5e8')

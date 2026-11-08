@@ -13,7 +13,9 @@ def run(api,runtime,app,output,checks):
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_ai=True,resource_music=True,resource_auto_hide=False,resource_collapsed=False)
         service.sync();w=service.window;bridge=service.deck
         bridge.accept(dict(type='ai',providers=fixtures()[:1]));w.select_page('ai');app.processEvents();stats=w.stats_view
-        assert set(w.page_buttons)=={'resources','ai','music','traffic','weather'} and w.page_buttons['ai'].text()=='AI'
+        from resource_options import CAPSULE_PAGES
+        assert set(w.page_buttons)==set(CAPSULE_PAGES) and w.page_buttons['ai'].text()=='AI'
+        assert not w.page_enabled('news')
         assert stats.quotas.rows and stats.data['available'] and not stats.provider.isVisible() and not stats.note.isVisible()
         stats.notes_button.click();assert stats.note.isVisible();stats.notes_button.click();assert not stats.note.isVisible()
         w.grab().save(str(output/'tight-ai-single.png'))

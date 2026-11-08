@@ -7,11 +7,11 @@ from PyQt5.QtGui import QMouseEvent, QWheelEvent
 from PyQt5.QtWidgets import QApplication
 
 
-def wheel(widget, delta, modifiers=Qt.NoModifier):
+def wheel(widget, delta, modifiers=Qt.NoModifier, pixels=0):
     # Go through QWidgetWindow so the real widget under the pointer receives the event.
     handle = widget.window().windowHandle()
     point = widget.mapToGlobal(widget.rect().center())
-    event = QWheelEvent(QPointF(handle.mapFromGlobal(point)), QPointF(point), QPoint(), QPoint(0,delta),
+    event = QWheelEvent(QPointF(handle.mapFromGlobal(point)), QPointF(point), QPoint(0,pixels), QPoint(0,delta),
                         Qt.NoButton, modifiers, Qt.NoScrollPhase, False)
     QApplication.sendEvent(handle, event)
     QApplication.processEvents()

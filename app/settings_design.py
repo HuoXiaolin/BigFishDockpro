@@ -134,7 +134,7 @@ class DockPreview(QWidget):
         self.dialog = dialog
         self.setObjectName('SettingsPreview')
         self.setAccessibleName('Dock 外观预览')
-        self.setFixedHeight(58)
+        self.setFixedHeight(48)
         for key in ('theme_color','transparency','dock_highlight'):
             field=dialog.fields[key]
             if isinstance(field, QComboBox):
@@ -148,7 +148,7 @@ class DockPreview(QWidget):
 
     def sizeHint(self):
         from ui_style import widget_px
-        return QSize(widget_px(self, 420), widget_px(self, 58))
+        return QSize(widget_px(self, 420), widget_px(self, 48))
 
     def paintEvent(self, event):
         from PyQt5.QtCore import QRectF
@@ -263,7 +263,7 @@ def group_form(form, dialog):
 def group_main_form(form, rows):
     """Keep each functional group together; labels and fields share two columns."""
     form.setContentsMargins(10, 8, 10, 10)
-    form.setVerticalSpacing(12)
+    form.setVerticalSpacing(10)
     form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     form.setRowWrapPolicy(QFormLayout.DontWrapRows)
     group = fields = None
@@ -284,8 +284,8 @@ def group_main_form(form, rows):
             box.setObjectName('SettingsGroup')
             box.setAttribute(Qt.WA_StyledBackground)
             group = QVBoxLayout(box)
-            group.setContentsMargins(14, 12, 14, 12)
-            group.setSpacing(10)
+            group.setContentsMargins(14, 9, 14, 9)
+            group.setSpacing(8)
             field.setProperty('role', 'group-title')
             group.addWidget(field)
             form.addRow(box)
@@ -423,7 +423,7 @@ def finish_dialog(dialog):
         seen.add(id(obj))
         candidate=getattr(obj,'cfg',None)
         if isinstance(candidate,dict):cfg=candidate;break
-        for name in ('dock','tray','runtime','manager','importer','clock','note','panel','owner'):
+        for name in ('dock','tray','runtime','service','manager','importer','clock','note','panel','owner'):
             child=getattr(obj,name,None)
             if child is not None and not callable(child):queue.append(child)
     from settings_layout import fit_auxiliary_dialog
@@ -443,11 +443,15 @@ def stylesheet(colors):
     QLabel[role="field-label"] {font-weight:400;}
     QDialog[designPopup="true"] QWidget#SettingsGroup {background:%(group)s; border:0; border-radius:10px;}
     QDialog[designPopup="true"] QLabel[role="group-title"] {font-size:14px; font-weight:600; padding:0;}
-    QDialog[designPopup="true"] QLabel[role="field-label"] {font-size:13px; font-weight:400;}
-    QDialog[designPopup="true"] QLabel[role="muted"] {font-size:12px;}
+    QDialog[designPopup="true"] QLabel[role="field-label"] {font-size:14px; font-weight:400;}
+    QDialog[designPopup="true"] QLabel[role="muted"] {font-size:13px;}
+    QDialog[designPopup="true"] QPlainTextEdit, QDialog[designPopup="true"] QTabBar,
+    QDialog[designPopup="true"] QTableWidget, QDialog[designPopup="true"] QTreeWidget,
+    QDialog[designPopup="true"] QListView#ComboPopup {font-size:14px;}
     QDialog[designPopup="true"] QLabel[role="setting-value"] {font-size:14px; font-weight:600;}
     QDialog[designPopup="true"] QLineEdit, QDialog[designPopup="true"] QComboBox,
     QDialog[designPopup="true"] QSpinBox, QDialog[designPopup="true"] QPushButton {min-height:22px; padding-top:4px; padding-bottom:4px;}
+    QDialog[designPopup="true"] QComboBox[modern="true"] {max-height:22px;}
     QDialog[designPopup="true"] QCheckBox {padding:2px 0;}
     QDialog[designPopup="true"] QSpinBox QLineEdit {padding:0; min-height:0;}
     QDialog[designPopup="true"] QScrollBar:vertical {width:7px;}
@@ -457,8 +461,8 @@ def stylesheet(colors):
     QDialog[designPopup="true"] QLabel[role="page-title"] {font-size:18px; font-weight:600; padding-bottom:2px;}
     QDialog[designPopup="true"] QPushButton, QDialog[designPopup="true"] QLineEdit,
     QDialog[designPopup="true"] QComboBox, QDialog[designPopup="true"] QSpinBox {border-radius:6px;}
-    QDialog[designPopup="true"] QTabBar::tab {padding:9px 12px;}
-    QDialog[designPopup="true"] QListWidget#SettingsNav::item {padding:6px 8px; height:26px; min-height:26px; border-radius:8px;}
+    QDialog[designPopup="true"] QTabBar::tab {padding:6px 10px;}
+    QDialog[designPopup="true"] QListWidget#SettingsNav::item {padding:4px 7px; height:23px; min-height:23px; border-radius:8px;}
     QDialog[designPopup="true"] QSlider {background:transparent; border:0; padding:0; min-height:22px;}
     QDialog[designPopup="true"] QSlider::groove:horizontal {height:5px; background:%(hover)s; border-radius:2px;}
     QDialog[designPopup="true"] QSlider::sub-page:horizontal {background:#438aa7; border-radius:2px;}

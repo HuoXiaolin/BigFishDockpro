@@ -9,6 +9,7 @@ LOCAL_DATA = {
     'items', 'desktop_entries', 'desktop_excluded', 'sticky_notes', 'notes_trash',
     'flash_entries', 'flash_draft', 'layout_profiles', 'groups', 'lite_restore',
     'runtime_lite', 'dock_page',
+    'custom_cards', 'resource_news_feeds',
 }
 LEGACY_LAYOUT_FIELDS = {
     'display_layout', 'desktop_panels', 'panel_geometry', 'merge_groups', 'merge_initialized',
@@ -59,4 +60,6 @@ def apply(current, preset):
         work = current[key].get('work', {})
         if work.get('calendars'):
             preset[key]['work']['calendars'] = copy.deepcopy(work['calendars'])
+        if current[key].get('progress'):
+            preset[key]['progress'] = copy.deepcopy(current[key]['progress'])
     return dict(current, **preset)

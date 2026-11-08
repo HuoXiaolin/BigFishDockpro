@@ -38,6 +38,7 @@ class ClockOptions(QDialog):
     def __init__(self,clock):
         super().__init__(clock,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         self.clock=clock;self.fields={};self.loading=True;self.calendar=clock.kind=='calendar';self.imported_calendars=copy.deepcopy(clock.option('appearance')['work']['calendars'])
+        self.progress=copy.deepcopy(clock.option('appearance')['progress'])
         self.setWindowTitle(clock.component_name+'设置 · 大肥鱼Dock');self.resize(740,700 if self.calendar else 820);self.setMinimumSize(500,500 if self.calendar else 540)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,clock.component_name+'设计'))
         body.addWidget(label('调整月历的布局、字体、背景与农历节假日。' if self.calendar else '先选样式，再调整文字、背景与工作时间。','muted'))
@@ -88,7 +89,9 @@ class ClockOptions(QDialog):
             box=QVBoxLayout();row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,box)
         color(typeform,'text_color','主要文字');color(typeform,'accent_color','强调与进度');number(typeform,'text_opacity','文字不透明度（%）',50,100)
         check(typeform,'auto_contrast','文字随背景自动配色（推荐）')
-        self.fields['auto_contrast'].setToolTip('按壁纸与材质叠加后的背景自动选色：深色底白字、浅色底使用清晰的主题色。关闭后使用自定义字色与透明度。')
+        self.fields['auto_contrast'].setToolTip('按实际背景为主文字和次文字选择中性色。手动填写主要文字颜色后，改用指定颜色。强调色单独设置。')
+        self.fields['text_color'].textChanged.connect(self.text_color_changed)
+        self.fields['auto_contrast'].toggled.connect(self.automatic_color_changed)
         from card_design import DESIGNS
         choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS,False)
         choice(material,'material','材质',material_choices(clock.option('appearance')['material']));choice(material,'theme','明暗模式',COLOR_MODES)
@@ -96,9 +99,10 @@ class ClockOptions(QDialog):
         if not self.calendar:
             number(layout,'bar_width','进度条厚度',4,18);number(layout,'ring_width','圆环厚度',4,18)
             choice(layout,'ring_mode','进度圆环',[('今日进度','day'),('下班进度','work')])
-            for key,title in [('show_work','时光进度：显示下班进度'),('show_week','显示本周进度'),('show_month','显示本月进度'),('show_year','显示本年进度')]:check(layout,key,title)
-        check(workform if self.calendar else layout,'show_lunar','月历：显示农历（1900–2099年）')
-        check(workform if self.calendar else layout,'show_holidays','月历：显示节日名称与节假日圆点')
+            self.progress_button=button('主项目、次项目与倒计时…',self.edit_progress)
+            layout.addRow('时光进度',self.progress_button)
+        check(workform if self.calendar else layout,'show_lunar','日历：显示农历（1900–2099年）')
+        check(workform if self.calendar else layout,'show_holidays','日历：显示节假日与调休')
         def inline_label(text):
             field=label(text);field.setWordWrap(False);return field
         def timefield(key,value):
@@ -156,8 +160,27 @@ class ClockOptions(QDialog):
             field=self.fields.get(key)
             if field is None:continue
             values[key]=field.currentData() if isinstance(field,QComboBox) else field.text().strip() if isinstance(field,QLineEdit) else field.isChecked() if isinstance(field,ModernCheckBox) else field.value()
-        values.update(show_date=self.show_date.isChecked(),work=self.work_values(),typography_version=2)
+        values.update(show_date=self.show_date.isChecked(),work=self.work_values(),typography_version=2,progress=self.progress)
         return normalize(values)
+    def text_color_changed(self,value):
+        if self.loading:return
+        value=value.strip()
+        if not value or re.fullmatch(r'#[0-9a-fA-F]{6}',value):
+            self.fields['auto_contrast'].setChecked(not value)
+    def automatic_color_changed(self,enabled):
+        if enabled and not self.loading:
+            self.fields['text_color'].clear()
+    def edit_progress(self):
+        from clock_progress import ClockProgressDialog
+        from ui_style import exec_dialog
+
+        def stage(progress):
+            self.progress=progress
+            self.changed()
+            return True
+
+        exec_dialog(ClockProgressDialog(self,self.progress,stage))
+
     def changed(self,*args):
         if self.loading:return
         current=self.values()
@@ -167,7 +190,8 @@ class ClockOptions(QDialog):
         for item,value in self.style_buttons:item.setChecked(self.fields['style'].currentData()==value)
         if not self.calendar:
             style=self.fields['style'].currentData()
-            for key in ('show_work','show_week','show_month','show_year','bar_width','ring_mode'):self.fields[key].setEnabled(style=='orbit')
+            for key in ('bar_width','ring_mode'):self.fields[key].setEnabled(style=='orbit')
+            self.progress_button.setEnabled(style in ('orbit','calendar'))
             self.fields['ring_width'].setEnabled(style in ('orbit','analog'))
             self.fields['align'].setEnabled(style=='digital');self.fields['layout'].setEnabled(style in ('analog','stacked','calendar','orbit'))
             self.show_date.setEnabled(style in ('digital','analog','stacked'))
