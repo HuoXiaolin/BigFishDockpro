@@ -42,7 +42,7 @@ class ResourceOptions(QDialog):
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_compact_rotate','resource_ring_letters','resource_quota_alert'},
         {'resource_ai','resource_ai_tray','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_threshold','resource_background','resource_palette','resource_card_transparency'},set(),
-        {'resource_edge_snap','resource_liquid','resource_face','resource_face_interactive','resource_live_glass','resource_expand_mode','resource_face_mood','resource_face_scale'},
+        {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_live_glass','resource_expand_mode','resource_face_mood','resource_face_scale'},
         {'resource_weather','resource_weather_compact','resource_weather_days','resource_air_source','resource_news'},set()]
 
     def ensure_page(self,index):
@@ -290,14 +290,15 @@ class ResourceOptions(QDialog):
 
         def build_6():
             interaction=page('液态与表情')
-            for key,title in [('resource_edge_snap','资源胶囊参与卡片吸附'),('resource_liquid','液态拉伸、断开水滴与贴边圆角'),
+            for key,title in [('resource_edge_snap','屏幕边缘吸附'),('resource_peer_snap','相邻卡片吸附'),
+                              ('resource_liquid','液态拉伸、断开水滴与贴边圆角'),
                               ('resource_face','显示表情（收起与展开）'),('resource_face_interactive','表情互动（跟随、眨眼与按压）'),('resource_live_glass','实时毛玻璃背景')]:
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
             face_form=QFormLayout();interaction.addLayout(face_form)
             combo(face_form,'resource_expand_mode','展开方式',[('鼠标移入展开','hover'),('仅点击展开','click')],cfg['resource_expand_mode'],self.fields)
             combo(face_form,'resource_face_mood','表情样式',list(zip(('靠近随机变化','默认','开心','眨眼','爱心','星星眼','害羞','嘟嘴','眯眼'),('random','default','happy','wink','love','star','shy','pout','squint'))),cfg['resource_face_mood'],self.fields)
             spin(face_form,'resource_face_scale','表情大小（%）',60,130,cfg['resource_face_scale'],self.fields)
-            hint=QLabel('吸附距离在主设置的「桌面收纳」调整。精简模式保留表情跟随，暂停实时背景采集。')
+            hint=QLabel('两种吸附共用主设置「桌面收纳」的总开关和距离。精简模式保留拖动液桥和表情跟随，暂停实时背景采集。')
             hint.setWordWrap(True);interaction.addWidget(hint);interaction.addStretch()
 
         def build_7():

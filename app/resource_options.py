@@ -35,7 +35,7 @@ DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_thro
               resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
 DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank') for key in METRICS})
 DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
-                resource_liquid=True,resource_edge_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
+                resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_scale=100,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
                 resource_news=False,resource_news_feeds=[],
@@ -70,6 +70,9 @@ def component_available(cfg,key):
 
 
 def migrate_docked(data):
+    # The previous capsule switch applied to both screen edges and peer cards.
+    if 'resource_peer_snap' not in data and data.get('resource_edge_snap') is False:
+        data = dict(data, resource_peer_snap=False)
     if data.get('resource_layout') and 'resource_edge' not in data:
         data = dict(data, resource_edge='free')
     if data.get('resource_taskbar') is not True or 'resource_task_metrics' in data:return data
@@ -137,6 +140,10 @@ def normalize(cfg,strict=False):
              'resource_edge':('free','top','bottom','left','right')}
     for key,allowed in options.items():
         if cfg.get(key) not in allowed:
+            if strict:raise ValueError('资源胶囊设置无效：'+key)
+            cfg[key]=DEFAULTS[key]
+    for key in ('resource_edge_snap', 'resource_peer_snap'):
+        if type(cfg.get(key)) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
     cfg['resource_appearance']=clean_background(cfg.get('resource_appearance',{}),strict)

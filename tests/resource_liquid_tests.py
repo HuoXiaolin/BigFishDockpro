@@ -5,28 +5,36 @@ import time
 from types import SimpleNamespace
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QPoint,QPointF,QRect,QRectF,QEvent
-from PyQt5.QtGui import QMouseEvent,QImage,QPainter,QColor
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QContextMenuEvent,QMouseEvent,QImage,QPainter,QColor
+from PyQt5.QtWidgets import QApplication,QWidget
 
 
 def run(api,runtime,app,output,checks):
     from run_isolated_test import assert_isolated
     assert_isolated()
-    from resource_options import DEFAULTS
-    from resource_liquid import attached,nearest
+    from resource_options import DEFAULTS,migrate_docked
+    from resource_liquid import attached
+    from resource_settings import ResourceOptions
     from resource_weather import forecast,clean_cities,DEFAULT_CITIES
-    from card_snap import snap_target
+    from card_snap import snap_target,touching_edge
     from resource_face import PetFace
+    from screen_layout import capture,screen_records
+    from ui_style import AlignedMenu
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources
+    was_lite=runtime.lite
     def pump(seconds):
         until=time.monotonic()+seconds
         while time.monotonic()<until:app.processEvents();time.sleep(.005)
     def event(w,kind,pos,global_pos):
         buttons=Qt.NoButton if kind==QEvent.MouseButtonRelease else Qt.LeftButton
         app.sendEvent(w,QMouseEvent(kind,QPointF(pos),QPointF(global_pos),Qt.LeftButton,buttons,Qt.NoModifier))
+    def edge_menu(menu,point):
+        action=next(action for action in menu.actions() if action.text()=='屏幕边缘吸附')
+        assert action.isCheckable() and action.isEnabled() and not action.isChecked()
+        action.trigger()
     try:
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,card_snap=True,card_snap_distance=12,
-            resource_face=True,resource_edge_snap=True,resource_live_glass=True,resource_weather=True,
+            resource_face=True,resource_expand_mode='click',resource_live_glass=True,resource_weather=True,
             resource_background='custom',resource_appearance=dict(material='liquid',theme='light',color='',opacity=48,blur=8,highlight=45))
         service.sync();w=service.window;extra=service.extras;app.processEvents()
         assert extra and extra.weather_job is None
@@ -38,27 +46,75 @@ def run(api,runtime,app,output,checks):
         assert snap_target(middle, demo_area, [QRect(13, 230, 90, 100)], 12) is None
         assert snap_target(middle, demo_area, [QRect(12, 230, 90, 100)], 12) == (middle.translated(12, 0), 'free')
         assert snap_target(middle, demo_area, [QRect(8, 500, 90, 100)], 12) is None
-        assert snap_target(middle.translated(0, -193), demo_area, [], 12)[1] == 'top'
+        near_top=middle.translated(0, -193)
+        assert snap_target(near_top, demo_area, [], 12)[1] == 'top'
+        assert snap_target(near_top, demo_area, [], 12, snap_edges=False) is None
+        assert snap_target(near_top.translated(0,-7), demo_area, [QRect(5,0,90,100)], 12)[1]=='top'
+        assert migrate_docked({'resource_edge_snap':False})['resource_peer_snap'] is False
+        assert migrate_docked({'resource_edge_snap':False,'resource_peer_snap':True})['resource_peer_snap'] is True
         for edge in ('top','bottom','left','right'):
             rect=attached(QRect(area.center().x()-w.width()//2,area.center().y()-22,w.width(),44),area,edge)
-            assert nearest(rect,area)==edge
+            assert touching_edge(rect,area)==edge
             w.press=QPoint();w.setGeometry(rect);w.press=None;w.liquid.drop(rect.center());pump(.3)
             assert not w.liquid.landing and cfg['resource_edge']==edge and w.geometry()==attached(w.geometry(),area,edge)
             service.fold(False);assert w.geometry()==attached(w.geometry(),area,edge)
             expanded=w.geometry();w.select_page('resources');assert w.geometry()==expanded
             service.fold(True);assert w.geometry()==attached(w.geometry(),area,edge)
             if edge=='top':w.grab().save(str(output/'liquid-attached-top.png'))
-        service.set_options(resource_edge='top');pump(.04)
+        dialog=ResourceOptions(service)
+        dialog.fields['resource_edge_snap'].setChecked(False)
+        assert dialog.fields['resource_peer_snap'].isChecked() and dialog.commit()
+        dialog.deleteLater()
+        saved=api.load_config()
+        assert not saved['resource_edge_snap'] and saved['resource_peer_snap']
+        near=attached(w.geometry(),area,'top').translated(0,7)
+        near.moveLeft(area.center().x()-near.width()//2)
+        peer=QWidget(None,Qt.Tool|Qt.FramelessWindowHint)
+        peer.setGeometry(near.right()+5,near.top(),80,100)
+        peer.show()
+        try:
+            with patch.object(runtime,'daily_picture',peer):
+                w.setGeometry(near);assert w.liquid.drop(near.center());pump(.28)
+                assert w.pos()==near.topLeft()+QPoint(4,0) and cfg['resource_edge']=='free'
+                local=w.rect().center()
+                with patch.object(AlignedMenu,'exec_',edge_menu):
+                    w.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse,local,w.mapToGlobal(local)))
+                assert cfg['resource_edge_snap']
+                assert service.set_options(resource_peer_snap=False)
+                w.setGeometry(near);assert w.liquid.drop(near.center());pump(.28)
+                assert w.pos()==near.topLeft()-QPoint(0,7) and cfg['resource_edge']=='top'
+                assert service.set_options(card_snap=False)
+                w.setGeometry(near);assert not w.liquid.drop(near.center())
+        finally:peer.close();peer.deleteLater()
+
+        assert service.set_options(card_snap=True)
+        assert runtime.set_lite(True,persist=False) and runtime.lite
+        top=attached(w.geometry(),area,'top')
+        # Legacy placement can be flush with the screen even with no saved edge.
+        assert service.set_options(resource_edge='free',resource_layout=capture(list(top.getRect()),screen_records()))
+        assert w.y()==area.top()
+        assert not w.animation.isActive() and not w.liquid.live.timer.isActive()
         start=w.mapToGlobal(QPoint(65,20));event(w,QEvent.MouseButtonPress,QPoint(65,20),start)
-        event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(0,40));app.processEvents()
+        event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(35,0));app.processEvents()
+        assert not w.liquid.bridge or not w.liquid.bridge.isVisible()
+        event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(35,40));app.processEvents()
         assert w.liquid.bridge and w.liquid.bridge.isVisible() and not w.liquid.bridge.path.isEmpty()
         w.liquid.bridge.grab().save(str(output/'liquid-tether.png'));assert w.liquid.down
         w.grab().save(str(output/'liquid-pressed.png'))
-        event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(0,120));app.processEvents()
+        scene=QImage(w.width()+32,w.height()+56,QImage.Format_RGB32);scene.fill(QColor('#173246'))
+        origin=QPoint(w.x()-16,area.top());painter=QPainter(scene)
+        painter.drawPixmap(w.pos()-origin,w.grab())
+        painter.drawPixmap(w.liquid.bridge.pos()-origin,w.liquid.bridge.grab());painter.end()
+        assert scene.save(str(output/'readme-resource-edge-tether.png'))
+        # Windows can coalesce the last movement into the release event.
+        event(w,QEvent.MouseButtonRelease,QPoint(65,20),start+QPoint(35,120))
+        assert w.y()==area.top()+120 and not w.liquid.down
         assert w.liquid.broken and w.liquid.bridge.timer.isActive()
         w.liquid.bridge.grab().save(str(output/'liquid-drip.png'))
-        event(w,QEvent.MouseButtonRelease,QPoint(65,20),start+QPoint(0,120));pump(.3)
-        assert not w.liquid.bridge.isVisible() and not w.liquid.down
+        pump(.38)
+        assert not w.liquid.bridge.isVisible() and not w.liquid.bridge.timer.isActive()
+        runtime.set_lite(was_lite,persist=False)
+        checks.append('Capsule screen/peer snaps switch and persist independently, respect the global switch, and a flush legacy anchor stretches in lite mode and finishes its drop after mouse release.')
         # A disabled snap retains normal placement; a failed save restores it.
         old=copy.deepcopy(cfg['resource_layout']);old_edge=cfg['resource_edge'];old_rect=w.geometry()
         with patch.object(service,'set_options',return_value=False):
@@ -152,4 +208,6 @@ def run(api,runtime,app,output,checks):
         service.set_options(resource_enabled=False);assert service.extras is None and not w.liquid.watch.isActive()
         checks.append('Liquid capsule: four-edge snap and fold anchoring, finite tether/drip, failed-save restore, animation-off, seven vector moods in both themes, bounded live material, transparent margins at half-resolution, and capture-affinity restore on failure; hide/disable stop all workers/timers. Private desktop only; live GDI background capture not exercised.')
         checks.append('Weather: Tianjin/Urumqi/Shenyang, Beijing time and three-day parsing, city validation, compact paging, pause when hidden and stop when disabled.')
-    finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)
+    finally:
+        if runtime.lite!=was_lite:runtime.set_lite(was_lite,persist=False)
+        cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

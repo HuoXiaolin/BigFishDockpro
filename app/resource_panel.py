@@ -532,7 +532,7 @@ class ResourceWindow(ResourceContentHost):
                 rect.moveLeft(max(area.left(),min(round(center-rect.width()/2),area.right()-rect.width()+1)))
         from resource_liquid import attached
         area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
-        edge = cfg['resource_edge'] if cfg['card_snap'] and cfg['resource_edge_snap'] else 'free'
+        edge = cfg['resource_edge'] if self.liquid.edge_snap else 'free'
         rect=attached(rect,area,edge)
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
@@ -690,9 +690,13 @@ class ResourceWindow(ResourceContentHost):
         if self.press is None:return
         delta=event.globalPos()-self.press
         if delta.manhattanLength()>=QApplication.startDragDistance():self.moved=True
-        if self.moved:self.move(self.origin+delta);self.liquid.moved()
+        if self.moved:
+            target=self.origin+delta
+            if self.pos()!=target:self.move(target);self.liquid.moved()
+            event.accept()
     def mouseReleaseEvent(self,event):
         if event.button()!=Qt.LeftButton or self.press is None:return
+        self.mouseMoveEvent(event)
         self.press=None
         self.liquid.released()
         if not self.moved:
@@ -706,6 +710,7 @@ class ResourceWindow(ResourceContentHost):
         screen=QApplication.screenAt(event.globalPos()) or QApplication.primaryScreen();area=screen.availableGeometry()
         rect.moveLeft(max(area.left(),min(rect.x(),area.right()-rect.width()+1)))
         rect.moveTop(max(area.top(),min(rect.y(),area.bottom()-rect.height()+1)))
+        if self.pos()!=rect.topLeft():self.move(rect.topLeft())
         if not self.service.set_options(resource_edge='free',resource_layout=capture(list(rect.getRect()),screen_records())):self.reposition()
     def contextMenuEvent(self,event):
         self.enter_timer.stop();self.outside_since=None;menu=AlignedMenu(self);cfg=self.service.cfg
@@ -724,6 +729,8 @@ class ResourceWindow(ResourceContentHost):
         bar.triggered.connect(lambda enabled:self.service.set_options(resource_taskbar=enabled))
         auto=menu.addAction('鼠标离开自动收起');auto.setCheckable(True);auto.setChecked(cfg['resource_auto_hide'])
         auto.triggered.connect(lambda on:self.service.set_options(resource_auto_hide=on))
+        edge=menu.addAction('屏幕边缘吸附');edge.setCheckable(True);edge.setChecked(cfg['resource_edge_snap'])
+        edge.setEnabled(cfg['card_snap']);edge.triggered.connect(lambda on:self.service.set_options(resource_edge_snap=on))
         menu.addSeparator();menu.addAction('资源显示设置…',self.service.settings)
         menu.addAction('关闭资源胶囊',lambda:self.service.set_options(resource_enabled=False))
         try:menu.exec_(event.globalPos())

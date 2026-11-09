@@ -883,6 +883,7 @@
   "resource_halo_speed": "medium",
   "resource_liquid": true,
   "resource_edge_snap": true,
+  "resource_peer_snap": true,
   "resource_edge": "top",
   "resource_face": true,
   "resource_live_glass": true,
