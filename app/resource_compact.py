@@ -5,7 +5,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainterPath,QPen,QConicalGrad
 from resource_status import metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import amount_text, quota_color, remaining_percent, used_percent
-from resource_options import component_location
+from resource_options import COMPACT_DEVICE,COMPACT_ROUTINES,component_location
 
 
 def text(p,rect,value,color,size=11,bold=False,align=Qt.AlignLeft):
@@ -37,14 +37,65 @@ def paint_halo(window,p):
         brush=QBrush(gradient);brush.setTransform(transform);p.setPen(QPen(brush,width,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin));p.drawPath(window.halo_path)
 
 
+def device_values(service, selected):
+    latest=service.latest
+    status=latest.get('system_status') or {}
+    level,state=latest.get('battery',status.get('battery',(None,'unknown')))
+    volume=latest.get('volume',status.get('volume'))
+    connection=latest.get('connection',status.get('connection'))
+    reading=service.sensors.values.get('brightness',{}) if service.sensors else {}
+    brightness=reading.get('value')
+    rows=(
+        ('battery','充电中' if state=='charging' else '电池',f'{level}%' if level is not None else 'AC' if state=='ac' else '—',(level,state)),
+        ('connection','网卡','—' if connection is None else connection or '未连接',''),
+        ('volume','音量','—' if volume is None else '静音' if volume[1] else f'{volume[0]}%',''),
+        ('brightness','亮度','—' if brightness is None else f'{brightness:.0f}%',''),
+    )
+    return [row for row in rows if row[0] in selected and (row[2]!='—' or not service.cfg['resource_hide_unavailable'])]
+
+
+def routine_values(service, selected):
+    from datetime import datetime
+    from resource_pomodoro import duration_text,water_amount
+
+    cfg=service.cfg
+    values=[]
+    model=service.pomodoro
+    if model and cfg['resource_pomodoro'] and component_location(cfg,'pomodoro')=='capsule':
+        if 'pomodoro' in selected:
+            phase,status,left,_=model.focus()
+            title='专注' if phase=='focus' else '休息'
+            tone='paused' if status=='paused' else phase
+            values.append(('pomodoro',title,'已完成' if status=='done' else duration_text(left),tone))
+        if 'water' in selected:
+            _,ml,goal,_,_=model.water()
+            values.append(('water',f'喝水 {min(100,100*ml/goal):.0f}%',water_amount(ml),'water'))
+    if 'agenda' in selected and cfg['resource_agenda'] and component_location(cfg,'agenda')=='capsule':
+        agenda=service.agenda
+        now=agenda.clock() if agenda else 0
+        event=agenda.next_event(now) if agenda else None
+        if event:
+            starts=datetime.fromtimestamp(event['start'])
+            stamp=starts.strftime('%H:%M' if starts.date()==datetime.fromtimestamp(now).date() else '%m/%d')
+            values.append(('agenda','进行中' if event['start']<=now else '日程 '+stamp,event['title'],'agenda'))
+        else:values.append(('agenda','日程','暂无日程','agenda'))
+    return values
+
+
 def compact_values(window):
     cfg=window.service.cfg;bridge=window.service.deck
-    values=list(getattr(window,'values',[])) if component_location(cfg,'resources')=='capsule' else []
-    if cfg['resource_traffic'] and component_location(cfg,'traffic')=='capsule' and 'traffic' in cfg['resource_compact_metrics']:
+    resources=component_location(cfg,'resources')=='capsule'
+    selected=cfg['resource_compact_metrics']
+    values=list(getattr(window,'values',[])) if resources else []
+    if resources and cfg['resource_system_status'] and any(key in selected for key in COMPACT_DEVICE):
+        values.extend(device_values(window.service,selected))
+    if any(key in selected for key in COMPACT_ROUTINES):
+        values.extend(routine_values(window.service,selected))
+    if cfg['resource_traffic'] and component_location(cfg,'traffic')=='capsule' and 'traffic' in selected:
         data=window.service.latest.get('traffic') or {}
         for key,label in [('day','今日流量'),('month','本月流量'),('year','本年流量')]:
             v=data.get(key);values.append(('traffic',label,amount(sum(v)) if v is not None else '—',''))
-    if bridge and cfg['resource_ai'] and component_location(cfg,'ai')=='capsule':
+    if bridge and cfg['resource_ai'] and cfg['resource_compact_ai'] and component_location(cfg,'ai')=='capsule':
         for row in bridge.providers:
             metrics = row.get('quotas', [])
             quotas = [level for q in metrics if (level := used_percent(q)) is not None]
@@ -52,7 +103,7 @@ def compact_values(window):
             money = next((value for q in metrics if q.get('kind')!='spend' and (value := amount_text(q)) not in (None, '—')), None)
             value = money or (f'{remaining:.0f}%' if remaining is not None else '—')
             values.append(('ai',row['name'],value,dict(provider=row,remaining=remaining,money=bool(money))))
-    track=(bridge.media.get('track') or {}) if bridge and cfg['resource_music'] and component_location(cfg,'music')=='capsule' else {}
+    track=(bridge.media.get('track') or {}) if bridge and cfg['resource_music'] and cfg['resource_compact_music'] and component_location(cfg,'music')=='capsule' else {}
     if track:values.append(('music','音乐',track.get('lyric') or track.get('title','') if cfg['resource_music_text']=='lyrics' else track.get('title',''),track))
     extra=window.service.extras
     if extra and cfg['resource_weather'] and cfg['resource_weather_compact'] and component_location(cfg,'weather')=='capsule':
@@ -66,12 +117,16 @@ def cell_width(row,dense=False):
     if key == 'ai' and len(row) > 3 and row[3].get('money'):
         return min(76, max(42, len(row[2])*6+3))
     if dense:
-        return {'cpu':28,'gpu':28,'memory':30,'network':48,'ai':38,'music':54,'weather':54}.get(key,50)
+        return {'cpu':28,'gpu':28,'memory':30,'network':48,'ai':38,'music':54,'weather':54,
+                'battery':40,'volume':33,'brightness':33,'connection':65,'pomodoro':45,'water':54,'agenda':82}.get(key,50)
     if key in ('cpu','gpu','memory'):return 52
     if key=='network':return 104
     if key=='weather':return 84
     if key=='ai':return 44
     if key=='music':return 96
+    if key=='connection':return 92
+    if key=='agenda':return 118
+    if key=='water':return 62
     label=row[1] if len(row)>1 else ''
     font=QFont();font.setPixelSize(9);label_width=QFontMetrics(font).horizontalAdvance(label)
     template='999.99 W' if 'power' in key else '999 °C' if 'temp' in key else '9999 MHz' if 'freq' in key else '9999 RPM' if key.endswith(('fan','pump')) else '999.9 GB' if key in ('traffic','vram') else '999.99'
@@ -101,7 +156,11 @@ def plan(window,limit=None):
 
 
 def _make_plan(window,limit=None):
-    cfg=window.service.cfg;values=compact_values(window);max_width=limit or cfg['resource_compact_width']
+    cfg=window.service.cfg;max_width=limit or cfg['resource_compact_width']
+    reminders=window.service.reminders()
+    # An active alert already occupies the compact surface for this readout.
+    alerted={kind if kind in ('battery','water','agenda') else 'pomodoro' for kind,_ in reminders}
+    values=[row for row in compact_values(window) if row[0] not in alerted]
     pinned_keys = cfg['resource_compact_pinned']
     order = cfg.get('resource_compact_order', [])
     if order:
@@ -123,6 +182,12 @@ def _make_plan(window,limit=None):
     face_gap=4 if cfg['resource_face'] else 0
     face=min(round((30 if dense else 40)*cfg['resource_face_scale']/100),max_width-48-face_gap) if cfg['resource_face'] else 0
     capacity=max(32,max_width-16-face-face_gap)
+    reminder_widths=[]
+    for kind,_ in reminders:
+        if capacity<22:break
+        width=min(capacity,44 if kind in ('water','agenda','battery') or kind.endswith('_done') else 56)
+        reminder_widths.append(width);capacity=max(0,capacity-width-3)
+    reminder_space=sum(reminder_widths)+3*len(reminder_widths)
     pinned_groups=[];used=0
     # Leave one reachable supplemental slot. Never demote the entire core.
     for index,group in enumerate(groups):
@@ -139,17 +204,17 @@ def _make_plan(window,limit=None):
     gauge=window.service.bluetooth if cfg['resource_bluetooth'] and component_location(cfg,'resources')=='capsule' and 'bluetooth' in cfg['resource_compact_metrics'] else None
     if gauge and 28<=spare:bt=gauge;tail+=28;spare-=28
     room=max(0,room-tail)
-    pages=[('values',rows) for rows in packed(extras,room,dense)] if extras else [('values',[])]
+    pages=[('values',rows) for rows in packed(extras,room,dense)] if extras and (not reminder_widths or room>=26) else [('values',[])]
     # LCM lets independent city/provider slots visit every combination of pages.
     from math import lcm
     count=lcm(len(pages),*(len(g) for g in pinned_groups)) if pinned_groups else len(pages)
     pages=(pages*((count+len(pages)-1)//len(pages)))[:count]
     pinned=[g[window.offset%len(g)] for g in pinned_groups]
     prefix=max((sum(min(cell_width(r,dense),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
-    natural=16+face+face_gap+tail+used+(gap if used and prefix else 0)+min(prefix,room)
+    natural=16+face+face_gap+reminder_space+tail+used+(gap if used and prefix else 0)+min(prefix,room)
     from math import ceil
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,bt=bt,clock=clock,face=face,face_gap=face_gap,tail=tail,
-                core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups))
+                core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),reminder_widths=reminder_widths)
 
 
 def natural_width(window,limit):
@@ -159,10 +224,25 @@ def natural_width(window,limit):
 def paint_values(window,p,rows,x,mid,available,dense=False,widths=None):
     cfg=window.service.cfg;c=window.colors;bounds=[];gap=cell_gap(dense)
     short=window.height()<38;font_size=10 if dense else 11;label_y=mid-11 if short else mid-15;value_y=mid if short else mid-1
+    label_height=12 if short else 14;value_height=12 if short else 17;label_font=8 if short else 9
+    row_height=12;network_y=mid-11
+    if window.height()<30:
+        # A thin taskbar can leave less room than the desktop capsule minimum.
+        row_height=max(5,(window.height()-8)//2)
+        label_height=value_height=row_height;label_y=network_y=mid-row_height
+        font_size=min(font_size,row_height);label_font=min(label_font,row_height)
     for index,(key,label,value,meta) in enumerate(rows):
         width=min(widths[index] if widths else cell_width((key,label,value,meta),dense),max(0,available))
         if width<26:break
-        ink=metric_ink(window.service,key,c['light'],c['ink']) if key not in ('ai','music','weather','traffic') else c['ink']
+        if key=='battery':
+            from resource_system_view import battery_ink
+            ink=battery_ink(*meta,c['light'],c['muted'])
+        elif key in COMPACT_ROUTINES:
+            from resource_pomodoro_view import reminder_ink
+            ink=reminder_ink(meta,c['light'])
+        elif key in COMPACT_DEVICE or key in ('ai','music','weather','traffic'):
+            ink=c['ink']
+        else:ink=metric_ink(window.service,key,c['light'],c['ink'])
         if key in ('cpu','gpu','memory') and not dense:
             if cfg['resource_compact_rings']:
                 ring(p,QRectF(x,mid-8,16,16),metric_number(window.service,key),ink,c['hover'],{'cpu':'C','memory':'M','gpu':'G'}[key]);left=21
@@ -173,16 +253,16 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None):
             from resource_charts import rate
             for i,arrow in enumerate(('↓','↑')):
                 value=rate(net[i]).replace(' KB/s','K').replace(' MB/s','M').replace(' B/s','B') if net else '—'
-                rect=QRectF(x,mid-11+i*12,width,12) if dense else QRectF(x+i*width/2,mid-10,width/2-3,20)
+                rect=QRectF(x,network_y+i*row_height,width,row_height) if dense else QRectF(x+i*width/2,mid-10,width/2-3,20)
                 text(p,rect,arrow+' '+value,c['ink'],font_size)
         elif key=='ai':
             remaining = meta['remaining']
             ink = c['ink'] if meta['money'] else quota_color(remaining, c['light'])
-            text(p,QRectF(x,label_y,width,12),label,c['muted'],8 if short else 9)
+            text(p,QRectF(x,label_y,width,min(12,label_height)),label,c['muted'],label_font)
             left=0
             if not dense and cfg['resource_compact_rings'] and not meta.get('money'):
                 ring(p,QRectF(x+1,mid,13,13),remaining,ink,c['hover'],label[:1] if cfg['resource_ring_letters'] else '');left=18
-            text(p,QRectF(x+left,value_y,width-left,12 if short else 17),value,ink,font_size if dense else 9)
+            text(p,QRectF(x+left,value_y,width-left,value_height),value,ink,font_size if dense else 9)
             window.compact_providers.append(meta['provider']['id'])
         elif key=='music' and cfg['resource_music_text']=='wave':
             bridge=window.service.deck;levels=bridge.levels if meta.get('state')=='Playing' else [0]*8
@@ -194,8 +274,8 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None):
             window.compact_media=True
         else:
             if key=='music':window.compact_media=True
-            text(p,QRectF(x,label_y,width,12 if short else 14),label,c['muted'],8 if short else 9)
-            text(p,QRectF(x,value_y,width,12 if short else 17),value,ink,font_size)
+            text(p,QRectF(x,label_y,width,label_height),label,c['muted'],label_font)
+            text(p,QRectF(x,value_y,width,value_height),value,ink,font_size)
         bounds.append(QRectF(x,mid-(12 if short else 17),width,24 if short else 34));window.compact_shown.append(key)
         x+=width+gap;available-=width+gap
     return bounds
@@ -208,14 +288,42 @@ def paint_compact(window,p):
     right=window.width()-8;left=8.;window.compact_bounds=[]
     if layout['face']:
         window.liquid.paint_face(p,QPointF(left+layout['face']/2,mid),layout['face']);left+=layout['face']+layout['face_gap']
+    window.reminder_bounds=[];window.reminder_kinds=[]
+    if layout['reminder_widths']:
+        from resource_pomodoro_view import reminder_icon,reminder_ink
+        for width,(kind,label) in zip(layout['reminder_widths'],window.service.reminders()):
+            rect=QRectF(right-width,mid-10,width,20)
+            ink=QColor(reminder_ink(kind,c['light']))
+            tint=QColor(ink);tint.setAlpha(28 if c['light'] else 47)
+            p.setPen(Qt.NoPen);p.setBrush(tint);p.drawRoundedRect(rect,7,7)
+            if width>=37:
+                reminder_icon(p,QRectF(rect.left()+4,mid-6.5,13,13),kind,ink)
+                text(p,QRectF(rect.left()+19,mid-9,width-21,18),label,ink,10,True,Qt.AlignCenter)
+            else:reminder_icon(p,QRectF(rect.center().x()-6.5,mid-6.5,13,13),kind,ink)
+            window.reminder_bounds.append(rect);window.reminder_kinds.append(kind);right-=width+3
     if layout['clock']:
         text(p,QRectF(right-34,mid-10,34,20),time.strftime('%H:%M'),c['ink'],11,False,Qt.AlignRight);right-=38
     if layout['bt']:
         from bluetooth_gauge import draw_rings
-        draw_rings(p,QRectF(right-23,mid-11.5,23,23),layout['bt'].group(),not c['light']);right-=28
+        size=min(23,window.height()-8)
+        draw_rings(p,QRectF(right-11.5-size/2,mid-size/2,size,size),layout['bt'].group(),not c['light']);right-=28
     # Pins are anchored at the leading edge, so supplemental pages never move them.
     core=layout['core'];window.compact_bounds+=paint_values(window,p,layout['pinned'],left,mid,core,layout['dense'],layout['pinned_widths'])
     left+=core+(layout['gap'] if core and rows else 0)
     window.compact_bounds+=paint_values(window,p,rows,left,mid,max(0,right-left),layout['dense'])
     if bridge and bridge.alert_until>time.monotonic() and cfg['resource_quota_alert']:
         window.setAccessibleName(window.accessibleName().split('\n额度提示：')[0]+'\n额度提示：'+bridge.alert)
+
+
+def paint_ball_reminder(window,p,rect):
+    badges=window.service.reminders()
+    if not badges:return
+    from resource_pomodoro_view import reminder_icon,reminder_ink
+    kind,_=badges[0]
+    ink=QColor(reminder_ink(kind,window.colors['light']))
+    p.setBrush(Qt.NoBrush);p.setPen(QPen(ink,2,Qt.SolidLine,Qt.RoundCap))
+    p.drawArc(rect.adjusted(3.5,3.5,-3.5,-3.5),-9*16,77*16)
+    if rect.width()>=36:
+        mark=QRectF(rect.center().x()+4,rect.top()+3,13,13)
+        p.setPen(Qt.NoPen);p.setBrush(QColor(window.colors['surface']));p.drawEllipse(mark)
+        reminder_icon(p,mark.adjusted(1.5,1.5,-1.5,-1.5),kind,ink)

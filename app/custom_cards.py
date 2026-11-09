@@ -264,15 +264,18 @@ class CustomCard(QWidget):
         if self.drag:
             start,pointer=self.drag
             self.move(start+event.globalPos()-pointer)
+            self.runtime.resources.preview_component_at('custom',event.globalPos())
 
     def mouseReleaseEvent(self,event):
         if not self.drag or event.button()!=Qt.LeftButton:return
+        self.mouseMoveEvent(event)
         start,_=self.drag
         self.drag=None
-        if self.pos()==start:return
+        if self.pos()==start:
+            self.runtime.resources.preview_component_at('custom');return
         from card_snap import finish_drag
         self.setGeometry(self.clamped(self.geometry()))
-        finish_drag(self,event.globalPos())
+        if finish_drag(self,event.globalPos(),component='custom',identity=self.card['id']):return
         layout=getattr(self.runtime,'layout',None)
         if layout and (layout.pending or layout.applying):return
         record=capture(list(self.geometry().getRect()),screen_records())

@@ -11,7 +11,8 @@ def run(output):
     assert_isolated()
     import dock as api
     from PyQt5.QtWidgets import QApplication,QLabel,QScrollArea,QSlider
-    from PyQt5.QtCore import QCoreApplication,QEvent
+    from PyQt5.QtCore import QCoreApplication,QEvent,Qt
+    from PyQt5.QtTest import QTest
     from ui_style import apply_theme,shutdown_ui
     from runtime_controller import RuntimeController
     from batch_import import BatchImporter,BatchDialog
@@ -29,7 +30,7 @@ def run(output):
         with tempfile.TemporaryDirectory(prefix='bfp-settings-design-') as folder:
             api.CONFIG_DIR=folder;api.CONFIG_PATH=str(Path(folder)/'config.json');api.LOG_PATH=str(Path(folder)/'dock.log')
             cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG))
-            cfg.update(items=[],settings_size='medium',hide_tray=True,panel_enabled=False,notes_enabled=False,clock_enabled=False,calendar_enabled=False,desktop_icon_mode='both',desktop_middle_toggle=False,screen_corners=False,check_updates_on_start=False,lite_enabled=False)
+            cfg.update(items=[],settings_size='medium',hide_tray=True,panel_enabled=False,notes_enabled=False,clock_enabled=False,calendar_enabled=False,desktop_icon_mode='both',desktop_middle_toggle=False,screen_corners=False,check_updates_on_start=False)
             api.save_config(cfg);apply_theme(app,True)
             dock=api.Dock(cfg,preview=True);tray=api.DockTray(dock);dock.tray=tray
             tray.importer=BatchImporter(dock,tray,api.save_config)
@@ -55,11 +56,40 @@ def run(output):
                 capsule_options=ResourceOptions(runtime.resources);capsule_options.show();settle(app)
                 assert capsule_options.property('interfaceScale')==main.property('interfaceScale')
                 assert capsule_options.fields['resource_layer'].font().pixelSize()==body_size
+                pin=capsule_options.fields['resource_capsule_taskbar']
+                position=capsule_options.fields['resource_capsule_taskbar_position']
+                assert not pin.isChecked() and not position.isEnabled()
+                pin.setChecked(True);assert position.isEnabled() and position.findData('custom')>=0
+                pin.setChecked(False);assert not position.isEnabled()
                 capsule_options.grab().save(str(output/f'resource-settings-{name}.png'))
                 for index in range(capsule_options.tabs.count()):
                     capsule_options.tabs.setCurrentIndex(index);settle(app)
                     scroll=capsule_options.tabs.currentWidget().findChild(QScrollArea)
                     assert scroll.widget().width()<=scroll.viewport().width()+2,(name,index,'resource options')
+                nav=capsule_options.nav
+                heading=nav.item(0)
+                assert not heading.flags() & Qt.ItemIsSelectable
+                assert heading.font().weight()>nav.font().weight()
+                assert nav.width()==main.tabs.nav.width() and nav.iconSize()==main.tabs.nav.iconSize()
+                assert nav.font().pixelSize()==main.tabs.nav.font().pixelSize()
+                assert all(not item.icon().isNull() for item in capsule_options.nav_items.values())
+                for index in (0, 5, 3, 2):
+                    item=capsule_options.nav_items[index]
+                    nav.scrollToItem(item);settle(app)
+                    rect=nav.visualItemRect(item)
+                    assert rect.height()==main.tabs.nav.visualItemRect(main.tabs.nav.item(0)).height()
+                    point=rect.bottomRight()
+                    point.setX(point.x()-8);point.setY(point.y()-4)
+                    assert nav.itemAt(point) is item
+                    QTest.mouseClick(nav.viewport(),Qt.LeftButton,pos=point);settle(app)
+                    assert capsule_options.tabs.currentIndex()==index and len(capsule_options.loaded)==1
+                nav.scrollToItem(heading);settle(app)
+                QTest.mouseClick(nav.viewport(),Qt.LeftButton,pos=nav.visualItemRect(heading).center());settle(app)
+                assert capsule_options.tabs.currentIndex()==2
+                assert capsule_options.grab().save(str(output/f'resource-compact-{name}.png'))
+                capsule_options.tabs.setCurrentIndex(9);settle(app)
+                assert nav.currentItem() is capsule_options.nav_items[9]
+                assert capsule_options.grab().save(str(output/f'resource-agenda-{name}.png'))
                 capsule_options.reject();capsule_options.deleteLater();settle(app)
             main.size_mode.setCurrentIndex(main.size_mode.findData('medium'));settle(app)
             spin=main.fields['dock_highlight'];control=next(w for w in main.findChildren(NumericControl) if w.findChild(type(spin)) is spin)
@@ -119,6 +149,9 @@ def run(output):
                     (output/'layout-diagnostic.json').write_text(json.dumps(diagnostic,indent=2),encoding='utf-8')
                 dialog.reject()
             apply_theme(app,False);main.show();settle(app);main.tabs.setCurrentIndex(0);main.grab().save(str(output/'settings-dark.png'))
+            capsule_options=ResourceOptions(runtime.resources);capsule_options.show();settle(app)
+            assert capsule_options.grab().save(str(output/'resource-settings-dark.png'))
+            capsule_options.reject();capsule_options.deleteLater()
             for name,dialog in dialogs[:2]:
                 dialog.show();settle(app);dialog.grab().save(str(output/f'{name}-dark.png'));dialog.reject()
             checks.append('main seven pages, clock/calendar, sizing, new-card, grouping and application manager rendered; light/dark theme remains readable')

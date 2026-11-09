@@ -15,7 +15,7 @@ def run(api,runtime,root,output,checks):
     cfg=runtime.dock.cfg;original=copy.deepcopy(cfg);app=QApplication.instance();dialog=None
     calendar=runtime.calendar;clock=runtime.clock
     try:
-        runtime.set_lite(False);cfg.update(game_mode=False,fullscreen_detection=False,lite_enabled=False,theme_color='#83b9cd')
+        cfg.update(game_mode=False,fullscreen_detection=False,theme_color='#83b9cd')
         runtime.apply_settings();assert not calendar.isVisible()
         calendar.set_enabled(True);app.processEvents();assert calendar.isVisible() and calendar.tick.isActive()
         assert calendar.tick.interval()>60000
@@ -38,8 +38,8 @@ def run(api,runtime,root,output,checks):
         before=copy.deepcopy(cfg)
         with patch.object(api,'save_config',return_value=False):calendar.set_enabled(False)
         assert cfg==before and calendar.isVisible()
-        runtime.toggle_game(True);assert not calendar.isVisible()
-        runtime.toggle_game(False);assert calendar.isVisible()
+        runtime.set_desktop_paused(True);assert not calendar.isVisible()
+        runtime.set_desktop_paused(False);assert calendar.isVisible()
         from glass_capture import surface_windows
         assert calendar in surface_windows(runtime.dock)
         for title,design in DESIGNS:

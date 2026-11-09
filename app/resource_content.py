@@ -227,7 +227,7 @@ class ContentView(QWidget):
             if self.source!=urls:
                 self.source=urls;self.cancel();self.set_headlines([]);self.next_fetch=0.
             if not urls:
-                self.status.setText('到资源胶囊设置「天气与内容」添加 RSS 或 Atom 订阅。')
+                self.status.setText('到资源胶囊设置「天气与订阅」添加 RSS 或 Atom 订阅。')
                 self.update_controls()
                 return
         if not self.job and time.monotonic()>=self.next_fetch and (self.kind=='news' or self.index==0):

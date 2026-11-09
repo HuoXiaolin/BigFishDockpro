@@ -101,9 +101,11 @@ class PanelTabs(QTabBar):
         self.panel = panel
         self.pressing = False
         self.pressed_identity = None
+        self.press_point = None
+        self.order_dirty = False
         self.setMovable(True)
         self.setDrawBase(False)
-        self.setToolTip('拖动分组栏目调整顺序，自动保存；点击切换分组')
+        self.setToolTip('拖动栏目排序，拖出卡片后独立显示，拖到另一张卡片可合入')
         self.tabMoved.connect(self.save_order)
 
     def mousePressEvent(self, event):
@@ -111,24 +113,57 @@ class PanelTabs(QTabBar):
             self.pressing = True
             self.update()
             self.pressed_identity = self.tabData(self.tabAt(event.pos()))
+            self.press_point = event.globalPos()
+            self.order_dirty = False
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self,event):
+        if self.pressed_identity and not self.panel.option('locked'):
+            point=event.globalPos()
+            if not self.panel.geometry().contains(point):
+                self.panel.manager.preview_card_drop(self.panel,point)
+            else:self.panel.manager.preview_card_drop()
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         identity = self.pressed_identity
+        moved = self.press_point is not None and (event.globalPos()-self.press_point).manhattanLength()>=QApplication.startDragDistance()
         super().mouseReleaseEvent(event)
         if event.button()==Qt.LeftButton:
             self.pressing = False
             self.update()
             self.pressed_identity = None
+            self.press_point = None
+            manager=self.panel.manager
+            manager.preview_card_drop()
+            if identity and moved:
+                if not self.panel.geometry().contains(event.globalPos()):
+                    if not self.panel.option('locked') and manager.drop_tab_at(identity,self.panel,event.globalPos()):
+                        return
+                    self.panel.update_tabs(manager.merged_models(self.panel.identity))
+                    return
+                # A quick drag can reach its destination on the first move,
+                # before Qt has updated its transient tab order.
+                destination=self.tabAt(event.pos())
+                if not self.order_dirty and destination>=0:
+                    origin=next(i for i in range(self.count()) if self.tabData(i)==identity)
+                    if origin!=destination:self.moveTab(origin,destination)
+            if self.order_dirty:self.save_order()
             index = next((i for i in range(self.count()) if self.tabData(i)==identity),self.currentIndex())
             self.panel.select_tab(index)
 
     def hideEvent(self, event):
+        if self.pressing:self.panel.manager.preview_card_drop()
         self.pressing = False
         self.pressed_identity = None
+        self.press_point = None
+        self.order_dirty = False
         super().hideEvent(event)
 
-    def save_order(self, source, destination):
+    def save_order(self, *_):
+        if self.pressing:
+            self.order_dirty = True
+            return
         order = [self.tabData(index) for index in range(self.count())]
         if not self.panel.manager.reorder_panels(order):
             self.panel.update_tabs(self.panel.manager.merged_models(self.panel.identity))
@@ -145,7 +180,7 @@ class DesktopPanel(QDialog):
         self.default_ui_factor=geometry[2]/320 if not self.model.get('geometry') else 1.0
         self.ui_factor = 1.0
         from widget_face import FaceTracker
-        self.face_tracker=FaceTracker(self,lambda:self.dock.cfg,lambda:self.runtime.lite,'panel')
+        self.face_tracker=FaceTracker(self,lambda:self.dock.cfg,'panel',lambda:self.runtime.face_roles)
         self.disposed = False
         self.restoring = True
         self.collapsed = False
@@ -263,8 +298,8 @@ class DesktopPanel(QDialog):
         self.tabs.blockSignals(True)
         expected = [(model['id'],model['name']) for model in models]
         current = [(self.tabs.tabData(i),self.tabs.tabText(i)) for i in range(self.tabs.count())]
-        # Never rebuild the bar being dragged; its order already matches the saved model.
-        if current != expected:
+        # Keep Qt's transient tab order intact until the drag is committed.
+        if current != expected and not self.tabs.pressing:
             while self.tabs.count(): self.tabs.removeTab(0)
             for identity,name in expected:
                 index = self.tabs.addTab(name)
@@ -284,7 +319,7 @@ class DesktopPanel(QDialog):
         for index in range(self.tabs.count()):
             identity=self.tabs.tabData(index)
             self.tabs.setTabIcon(index,QIcon(category_icon(identity,category_color(identity,light),size,dpr)))
-            self.tabs.setTabToolTip(index,self.tabs.tabText(index))
+            self.tabs.setTabToolTip(index,self.tabs.tabText(index)+' · 拖动排序或拖出卡片')
 
     def page_state(self):
         if getattr(self,'_idle_state',None) is not None:return self._idle_state
@@ -456,12 +491,6 @@ class DesktopPanel(QDialog):
             for row in self.manager.rows(self.identity):self.manager.file_metadata.pop(path_key(row['path']),None)
             self._render_signature=None
         rows = self.visible_items()
-        if self.collapsed and self.runtime.lite:
-            self._released_selection = self.selected_keys() | getattr(self, '_released_selection', set())
-            self.list.clear()
-            self.title.setText(self.model['name'])
-            self.count.setText(str(len(self.manager.rows(self.identity))))
-            return
         restoring_idle=getattr(self,'_idle_state',None) is not None
         scroll = self._idle_state[2] if restoring_idle else self.list.verticalScrollBar().value()
         self._idle_state=None
@@ -821,16 +850,14 @@ class DesktopPanel(QDialog):
         layout=getattr(self.runtime,'layout',None)
         if layout and layout.pending:return
         if self.disposed or not self.collapsed: return
-        if self.runtime.lite: self.runtime.set_lite(False)
         if self.manager.update_panel(self.identity, collapsed=False): self.set_collapsed_geometry(False)
-        self.runtime.arm_lite()
 
     def toggle_collapse(self):
         if self.collapsed: self.expand()
         else: self.collapse()
 
     def collapse_if_outside(self):
-        if self.option('auto_hide') and self.isVisible() and not self.rect().contains(self.mapFromGlobal(QCursor.pos())) and not QApplication.activePopupWidget():
+        if self.option('auto_hide') and self.isVisible() and not self.tabs.pressing and self.drag_origin is None and not self.rect().contains(self.mapFromGlobal(QCursor.pos())) and not QApplication.activePopupWidget():
             active = QApplication.activeWindow()
             if active and active is not self and self.isAncestorOf(active): return
             self.collapse()
@@ -855,6 +882,7 @@ class DesktopPanel(QDialog):
         if event.button()==Qt.LeftButton:self.face_tracker.press(True)
         if event.button() == Qt.LeftButton and event.pos().y() <= 44 and not self.option('locked'):
             self.drag_origin = event.globalPos()-self.pos()
+            self.drag_start = event.globalPos()
             self.dragged = False
             event.accept()
         else: super().mousePressEvent(event)
@@ -863,15 +891,21 @@ class DesktopPanel(QDialog):
         self.spec_x, self.spec_alpha = event.pos().x(), .7
         self.update()
         if self.drag_origin is not None and event.buttons() & Qt.LeftButton:
-            self.dragged = True
-            self.move(event.globalPos()-self.drag_origin)
+            if self.dragged or (event.globalPos()-self.drag_start).manhattanLength()>=QApplication.startDragDistance():
+                self.dragged = True
+                self.move(event.globalPos()-self.drag_origin)
+                if not self.merged_view:self.manager.preview_card_drop(self,event.globalPos())
         else: super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button()==Qt.LeftButton:self.face_tracker.press(False)
-        if self.drag_origin is not None:
+        if event.button()==Qt.LeftButton and self.drag_origin is not None:
+            if self.dragged or (event.globalPos()-self.drag_start).manhattanLength()>=QApplication.startDragDistance():
+                self.dragged = True
+                self.move(event.globalPos()-self.drag_origin)
             self.drag_origin = None
             if self.dragged:
+                if self.manager.drop_independent_at(self,event.globalPos()):return
                 from card_snap import finish_drag
                 finish_drag(self, event.globalPos())
             self.store_geometry()
@@ -881,7 +915,9 @@ class DesktopPanel(QDialog):
 
     def moveEvent(self, event):
         super().moveEvent(event)
-        if not self.restoring: self.resize_timer.start(250)
+        badge=getattr(self,'fold_badge',None)
+        if not self.restoring and self.drag_origin is None and (not badge or badge.origin is None):
+            self.resize_timer.start(250)
 
     def resizeEvent(self, event):
         if hasattr(self,'page_transition'):self.page_transition.cancel()
@@ -1011,6 +1047,10 @@ class DesktopPanel(QDialog):
             center=QRectF(self.rect() if compact else self.header_icon.geometry()).center()
             slot=min(self.width()-12,metric(42*self.option('face_scale')/100,self.ui_factor,24)) if compact else self.header_icon.width()
             self.face_tracker.paint_face(painter,center,slot,{'ink':colors['fg'],'light':colors['light']})
+        if getattr(self.manager,'drop_preview',None) is self:
+            painter.setPen(QPen(self.palette().color(QPalette.Link),2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(shape)
 
     def surface_radius(self):
         return (22 if self.collapsed and self.option('collapse_style') in ('capsule','ball') else 18)*self.ui_factor
@@ -1082,10 +1122,13 @@ class PanelOptions(QDialog):
         choice('expand_mode','展开方式',[('鼠标移入','hover'),('点击展开','click')])
         choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar'),('圆球','ball')]);number('capsule_ratio','胶囊宽度比例（%）',1,100)
         self.face=ModernCheckBox('显示小表情（展开与收起均保留）');form.addRow(self.face)
-        self.face_interactive=ModernCheckBox('表情跟随鼠标与按压互动（精简模式保留）');form.addRow(self.face_interactive)
+        self.face_interactive=ModernCheckBox('表情跟随鼠标与按压互动');form.addRow(self.face_interactive)
         choice('face_mood','表情样式',[('随机变化','random'),('默认','default'),('开心','happy'),('眨眼','wink'),('爱心','love'),('星星眼','star'),('害羞','shy'),('嘟嘴','pout'),('眯眼','squint')])
         number('face_scale','表情大小（%）',60,130)
         self.status=label('所有桌面卡片共用此设置；保存后同步主设置。位置、大小和内容分别保留。','muted');body.addWidget(self.status)
+        self.status.setWordWrap(True)
+        from face_role_controls import add_role_controls
+        self.fields['face_role']=add_role_controls(self,form,panel.runtime,self.status,panel.option('face_role'))
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
         self.refresh_shared()
         self.preset.currentIndexChanged.connect(self.apply_preset)
@@ -1106,6 +1149,7 @@ class PanelOptions(QDialog):
             if key=='material':
                 from appearance_presets import select_material
                 select_material(field,value)
+            elif key=='face_role':field.select(value)
             elif isinstance(field,QComboBox):field.setCurrentIndex(max(0,field.findData(value)))
             else:field.setValue(value)
         self.color.setText(self.panel.option('color'));self.auto.setChecked(self.panel.option('auto_hide'));self.locked.setChecked(self.panel.option('locked'))

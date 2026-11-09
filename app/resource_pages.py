@@ -66,6 +66,12 @@ class InfoPage(CapsuleScrollArea):
         elif key=='weather':
             from resource_extras_view import WeatherView
             self.content=WeatherView(window)
+        elif key=='pomodoro':
+            from resource_pomodoro_view import PomodoroView
+            self.content=PomodoroView(window)
+        elif key=='agenda':
+            from resource_agenda_view import AgendaView
+            self.content=AgendaView(window)
         else:
             from resource_content import ContentView
             self.content=ContentView(window,key)
@@ -174,7 +180,7 @@ class AiView(QWidget):
         lay=QVBoxLayout(self);lay.setContentsMargins(3,0,3,0);lay.setSpacing(3)
         from resource_statistics import StatisticsView
         self.statistics=StatisticsView(window);self.summary=self.statistics.quotas;lay.addWidget(self.statistics)
-        self._detail_dialog=None
+        self._detail_dialog=None;self.detail_dates=None
     @property
     def detail_dialog(self):self.ensure_details();return self._detail_dialog
     @property
@@ -183,10 +189,11 @@ class AiView(QWidget):
     def models(self):self.ensure_details();return self._models
     def ensure_details(self):
         if self._detail_dialog is not None:return
-        self._detail_dialog=QDialog(self.owner);self._detail_dialog.setWindowTitle('AI 用量明细');self._detail_dialog.resize(700,430)
+        self._detail_dialog=QDialog(self);self._detail_dialog.setWindowTitle('AI 用量明细');self._detail_dialog.resize(700,430)
         detail_lay=QVBoxLayout(self._detail_dialog)
         filters=QHBoxLayout();self._provider=ModernComboBox();self._provider.addItem('全部工具','')
-        self.start=QDateEdit(QDate.currentDate().addDays(-6));self.end=QDateEdit(QDate.currentDate())
+        start,end=self.detail_dates or (QDate.currentDate().addDays(-6),QDate.currentDate())
+        self.start=QDateEdit(start);self.end=QDateEdit(end)
         for date in (self.start,self.end):
             date.setCalendarPopup(True);date.setDisplayFormat('yyyy-MM-dd');date.setMinimumDate(QDate(2000,1,1));date.setMaximumDate(QDate.currentDate());date.dateChanged.connect(self.details)
         filters.addWidget(self._provider);filters.addWidget(self.start);filters.addWidget(QLabel('至'));filters.addWidget(self.end);detail_lay.addLayout(filters)

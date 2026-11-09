@@ -13,7 +13,7 @@ def save_state(runtime):
         if flash and flash.panel is not None and flash.panel.editing:
             from flash_data import normalize_draft
             cfg['flash_draft']=normalize_draft(flash.panel.draft(),strict=True)
-        cfg.update(sticky_notes=notes.rows(),runtime_lite=runtime.lite)
+        cfg['sticky_notes']=notes.rows()
         if runtime.api.save_config(cfg) is False:raise OSError('configuration write failed')
     except (OSError,ValueError,TypeError,RuntimeError) as error:
         cfg.clear();cfg.update(before)

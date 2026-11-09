@@ -175,14 +175,15 @@ class DisplayLayout:
         bounds=project(record,screens,density=self.dock.cfg.get('card_scale',70)/100) or fallback
         return metrics(self.dock.cfg,bounds,screens,choose_screen(record,screens))[1]
 
-    def panel_update(self,identity,rect):
+    def panel_update(self,identity,rect,*,group=''):
         state=copy.deepcopy(self.dock.cfg.get('display_layout',{}))
         window=self.runtime.panels.windows.get(identity)
         record=capture(rect,self.screens(),getattr(window,'ui_factor',1.0),self.dock.cfg.get('card_scale',70)/100)
-        if self.runtime.panels.is_merged(identity):
-            group=self.runtime.panels.group_id(identity)
-            if group=='default':state['merged']=record
-            else:state.setdefault('merge_groups',{})[group]=record
+        if group=='':
+            manager=self.runtime.panels
+            group=manager.group_id(identity) if manager.is_merged(identity) else None
+        if group=='default':state['merged']=record
+        elif group is not None:state.setdefault('merge_groups',{})[group]=record
         else:state.setdefault('panels',{})[identity]=record
         return state
 

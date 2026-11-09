@@ -200,7 +200,9 @@ class DesktopClock(QWidget):
         original,pointer,edges=self.drag
         delta=event.globalPos()-pointer
         if edges:self.setGeometry(resized_rect(original,edges,delta,self.minimum))
-        else:self.move(original.topLeft()+delta)
+        else:
+            self.move(original.topLeft()+delta)
+            self.runtime.resources.preview_component_at(self.kind,event.globalPos())
         event.accept()
     def mouseReleaseEvent(self,event):
         if self.drag is None or event.button()!=Qt.LeftButton:
@@ -212,8 +214,11 @@ class DesktopClock(QWidget):
         if self.geometry()!=original:
             if not edges:
                 from card_snap import finish_drag
-                finish_drag(self,event.globalPos())
+                if finish_drag(self,event.globalPos(),component=self.kind):
+                    event.accept()
+                    return
             if self.save_geometry() is False:self.setGeometry(original)
+        elif not edges:self.runtime.resources.preview_component_at(self.kind)
         self.geometry_timer.stop();self.refresh_timer.start()
         self.setCursor(resize_cursor(edges_at(self.rect(),self.mapFromGlobal(event.globalPos()))))
         event.accept()

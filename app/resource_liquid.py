@@ -55,18 +55,18 @@ class LiquidBridge(QWidget):
 
 class CapsuleMotion(FaceTracker):
     def __init__(self,window):
-        super().__init__(window,lambda:window.service.cfg,lambda:window.service.runtime.lite,'resource')
+        super().__init__(window,lambda:window.service.cfg,'resource',lambda:window.service.runtime.face_roles)
         self.bridge=None;self.live=None;self.drag_edge='free';self.broken=False;self.landing=False
         self.snap=QPropertyAnimation(window,b'pos',window);self.snap.setDuration(240);self.snap.setEasingCurve(QEasingCurve.OutCubic)
         self.snap.finished.connect(self.landed)
         self.presentation=None
     @property
     def enabled(self):
-        return self.config().get('motion_enabled',True) and not self.lite()
+        return self.config().get('motion_enabled',True)
     @property
     def edge_snap(self):
         cfg = self.config()
-        return cfg['card_snap'] and cfg['resource_edge_snap']
+        return cfg['card_snap'] and cfg['resource_edge_snap'] and self.window.taskbar_slot() is None
     @property
     def can_stretch(self):
         cfg = self.config()
@@ -87,7 +87,7 @@ class CapsuleMotion(FaceTracker):
         if not self.can_stretch:
             self.drag_edge='free';self.stop_bridge()
         self.sync_face()
-        use_live=w.isVisible() and cfg['resource_live_glass'] and not w.service.runtime.lite and w.background['material'] not in ('clear','solid')
+        use_live=w.isVisible() and cfg['resource_live_glass'] and w.background['material'] not in ('clear','solid')
         if use_live and self.live is None:
             from resource_live_glass import LiveGlass
             self.live=LiveGlass(w)

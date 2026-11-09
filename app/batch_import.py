@@ -117,7 +117,6 @@ class BatchDialog(QDialog):
         self.worker = Discovery()
         self.worker.ready.connect(self.discovered)
         self.worker.failed.connect(self.scan_failed)
-        self.worker.finished.connect(self.release_if_idle)
         self.worker.start()
         compact_dialog(self)
         from idle_resources import watch
@@ -152,7 +151,7 @@ class BatchDialog(QDialog):
         self.running_apps=apps
         keys={launch_identity(app) for app in apps}
         self.selected[3].intersection_update(keys)
-        if self.mode==3:self.render()
+        if self.mode==3 and self.isVisible():self.render()
 
     def running_failed(self,generation,message):
         if self.closing:return
@@ -168,7 +167,6 @@ class BatchDialog(QDialog):
         self.refresh_running_button.setEnabled(True)
         if self.running_rescan and self.isVisible() and self.mode==3:self.refresh_running()
         elif self.mode==3 and self.isVisible():self.render()
-        self.release_if_idle()
 
     def scan_failed(self, message):
         if self.closing:return
@@ -178,12 +176,7 @@ class BatchDialog(QDialog):
     def discovered(self, apps):
         if self.closing:return
         self.apps = apps
-        if not (self.importer.dock.lite_mode and not self.isVisible()): self.render()
-        self.release_if_idle()
-
-    def release_if_idle(self):
-        if self.closing:return
-        if self.importer.dock.lite_mode: self.release_memory()
+        if self.isVisible():self.render()
 
     def release_memory(self):
         if self.isVisible() or self.worker.isRunning() or (self.running_worker and self.running_worker.isRunning()): return False
@@ -201,7 +194,6 @@ class BatchDialog(QDialog):
         self.worker = Discovery()
         self.worker.ready.connect(self.discovered)
         self.worker.failed.connect(self.scan_failed)
-        self.worker.finished.connect(self.release_if_idle)
         self.worker.start()
 
     def reveal(self):
@@ -386,7 +378,6 @@ class BatchDialog(QDialog):
         self.pending_remove.clear()
         self.selected = [set(), set(), set(), set()]
         super().reject()
-        self.release_if_idle()
 
 
 class BatchImporter:

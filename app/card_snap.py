@@ -83,7 +83,21 @@ def resolve(window, runtime, point=None, *, snap_edges=True, snap_peers=True):
     return snap_target(rect, screen.availableGeometry(), peers, cfg.get('card_snap_distance', 12), snap_edges=snap_edges)
 
 
-def finish_drag(window, point):
+def drop_rect(point, width, height):
+    screen = QApplication.screenAt(point)
+    if screen is None:
+        return None
+    area = screen.availableGeometry()
+    width, height = min(width, area.width()), min(height, area.height())
+    x = max(area.left(), min(point.x() - width // 2, area.right() + 1 - width))
+    y = max(area.top(), min(point.y() - 14, area.bottom() + 1 - height))
+    return [x, y, width, height]
+
+
+def finish_drag(window, point, *, component=None, identity=None):
+    if component and window.runtime.resources.return_component_at(component, point, identity):
+        return True
     match = resolve(window, window.runtime, point)
     if match is not None:
         window.move(match[0].topLeft())
+    return False

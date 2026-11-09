@@ -1,8 +1,6 @@
 """Native liquid, face and weather checks, exclusively on the private desktop."""
 import copy
-import ctypes
 import time
-from types import SimpleNamespace
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QPoint,QPointF,QRect,QRectF,QEvent
 from PyQt5.QtGui import QContextMenuEvent,QMouseEvent,QImage,QPainter,QColor
@@ -21,7 +19,6 @@ def run(api,runtime,app,output,checks):
     from screen_layout import capture,screen_records
     from ui_style import AlignedMenu
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources
-    was_lite=runtime.lite
     def pump(seconds):
         until=time.monotonic()+seconds
         while time.monotonic()<until:app.processEvents();time.sleep(.005)
@@ -34,7 +31,7 @@ def run(api,runtime,app,output,checks):
         action.trigger()
     try:
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,card_snap=True,card_snap_distance=12,
-            resource_face=True,resource_expand_mode='click',resource_live_glass=True,resource_weather=True,
+            resource_face=True,resource_expand_mode='click',resource_live_glass=True,resource_weather=True,motion_enabled=True,
             resource_background='custom',resource_appearance=dict(material='liquid',theme='light',color='',opacity=48,blur=8,highlight=45))
         service.sync();w=service.window;extra=service.extras;app.processEvents()
         assert extra and extra.weather_job is None
@@ -88,12 +85,11 @@ def run(api,runtime,app,output,checks):
         finally:peer.close();peer.deleteLater()
 
         assert service.set_options(card_snap=True)
-        assert runtime.set_lite(True,persist=False) and runtime.lite
         top=attached(w.geometry(),area,'top')
         # Legacy placement can be flush with the screen even with no saved edge.
         assert service.set_options(resource_edge='free',resource_layout=capture(list(top.getRect()),screen_records()))
         assert w.y()==area.top()
-        assert not w.animation.isActive() and not w.liquid.live.timer.isActive()
+        assert w.animation.isActive() and not w.liquid.live.timer.isActive()
         start=w.mapToGlobal(QPoint(65,20));event(w,QEvent.MouseButtonPress,QPoint(65,20),start)
         event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(35,0));app.processEvents()
         assert not w.liquid.bridge or not w.liquid.bridge.isVisible()
@@ -113,8 +109,7 @@ def run(api,runtime,app,output,checks):
         w.liquid.bridge.grab().save(str(output/'liquid-drip.png'))
         pump(.38)
         assert not w.liquid.bridge.isVisible() and not w.liquid.bridge.timer.isActive()
-        runtime.set_lite(was_lite,persist=False)
-        checks.append('Capsule screen/peer snaps switch and persist independently, respect the global switch, and a flush legacy anchor stretches in lite mode and finishes its drop after mouse release.')
+        checks.append('Capsule screen/peer snaps switch and persist independently, respect the global switch, and a flush legacy anchor stretches and finishes its drop after mouse release.')
         # A disabled snap retains normal placement; a failed save restores it.
         old=copy.deepcopy(cfg['resource_layout']);old_edge=cfg['resource_edge'];old_rect=w.geometry()
         with patch.object(service,'set_options',return_value=False):
@@ -180,20 +175,23 @@ def run(api,runtime,app,output,checks):
             assert alpha == [0, 0, 0, 0], (image.size(), alpha)
             assert image.pixelColor(width*3//4, height*3//4).alpha() > 240
         service.fold(True)
-        # Affinity is restored even when a capture fails; no actual screen read.
+        # Live sampling stays outside the actual window, including at an edge.
         import resource_live_glass as lg
         import resource_glass_capture as gc
-        class Call:
-            def __init__(self,fn):self.fn=fn
-            def __call__(self,*args):return self.fn(*args)
-        calls=[]
-        def get(hwnd,ptr):ptr._obj.value=1;return True
-        user=SimpleNamespace(GetWindowDisplayAffinity=Call(get),SetWindowDisplayAffinity=Call(lambda hwnd,value:calls.append(value) or True))
-        fake=SimpleNamespace(windll=SimpleNamespace(user32=user),byref=ctypes.byref,POINTER=ctypes.POINTER)
-        with patch.object(lg,'C',fake),patch.object(gc,'grab_tiny',side_effect=OSError('fixture')):
-            try:lg.behind(123,(0,0,100,100),(10,10))
-            except OSError:pass
-        assert calls==[0x11,1]
+        display=QRect(-800,-400,800,400)
+        for capsule in (QRect(-620,-400,500,44),QRect(-620,-44,500,44),
+                        QRect(-800,-330,64,280),QRect(-64,-330,64,280)):
+            strip=lg.adjacent_strip(capsule,display)
+            assert strip and display.contains(strip) and not capsule.intersects(strip)
+        assert lg.adjacent_strip(display,display) is None
+        with patch.object(gc,'grab_tiny',return_value=two) as grab:
+            assert lg.capture_strip(strip.getRect(),(6,8)).size()==two.size()
+            grab.assert_called_once_with(*strip.getRect(),6,8)
+        folded_geometry=w.geometry();start=QPoint(w.width()//2,w.height()//2);point=w.mapToGlobal(start)
+        event(w,QEvent.MouseButtonPress,start,point)
+        event(w,QEvent.MouseButtonRelease,start,point)
+        assert not service.compact and w.geometry()!=folded_geometry
+        service.fold(True)
         service.set_options(resource_face=True,resource_halo=True);pump(.04)
         assert w.animation.isActive() and w.clock_tick.isActive()
         w.hide();app.processEvents()
@@ -206,8 +204,7 @@ def run(api,runtime,app,output,checks):
         assert not w.liquid.landing and w.geometry()==attached(w.geometry(),area,cfg['resource_edge'])
         service.set_options(resource_weather=False);assert service.extras is None and not extra.weather_timer.isActive()
         service.set_options(resource_enabled=False);assert service.extras is None and not w.liquid.watch.isActive()
-        checks.append('Liquid capsule: four-edge snap and fold anchoring, finite tether/drip, failed-save restore, animation-off, seven vector moods in both themes, bounded live material, transparent margins at half-resolution, and capture-affinity restore on failure; hide/disable stop all workers/timers. Private desktop only; live GDI background capture not exercised.')
+        checks.append('Liquid capsule: four-edge snap and fold anchoring, finite tether/drip, failed-save restore, animation-off, seven vector moods in both themes, bounded strip sampling outside the window and transparent margins at half-resolution. Click expands with live glass enabled; hide/disable stop workers and timers. Private desktop with fixture frames.')
         checks.append('Weather: Tianjin/Urumqi/Shenyang, Beijing time and three-day parsing, city validation, compact paging, pause when hidden and stop when disabled.')
     finally:
-        if runtime.lite!=was_lite:runtime.set_lite(was_lite,persist=False)
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

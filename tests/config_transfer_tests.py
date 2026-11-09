@@ -121,7 +121,9 @@ def run(api,runtime,root,output,checks):
         settings.commit()
         app.processEvents()
         assert settings.default_candidate is None
-        assert all(cfg[key] == preset[key] for key in ('icon_size','resource_enabled','resource_weather','card_scale'))
+        assert all(cfg[key] == preset[key] for key in ('icon_size','resource_enabled','resource_weather','card_scale',
+                   'resource_compact_width','resource_compact_height','resource_expanded_width',
+                   'resource_expanded_height','resource_compact_density'))
         assert not any(cfg[key] for key in ('panel_enabled','resource_taskbar','resource_ai_tray','flash_enabled'))
         assert all(cfg[key] == value for key,value in personal.items())
         assert any(row['id'] == 'transfer-demo' for row in cfg['desktop_panels'])

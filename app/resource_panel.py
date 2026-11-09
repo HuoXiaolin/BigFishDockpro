@@ -1,6 +1,6 @@
 """Movable monitor panel. Compact and expanded states share one header-centre anchor."""
 import time
-from PyQt5.QtCore import Qt,QRect,QRectF,QPoint,QPointF,QSize,QTimer
+from PyQt5.QtCore import Qt,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap,QPalette
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
     QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy)
@@ -8,13 +8,16 @@ from ui_style import AlignedMenu
 from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import (DESKTOP_COMPONENTS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
+from resource_options import (COMPACT_DEVICE,COMPACT_ROUTINES,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
                               background,component_available,component_location)
 from flash_view import palette_for,icon
 
 
 from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
+
+
+COMPACT_PAGES={**dict.fromkeys(COMPACT_DEVICE,'resources'),'pomodoro':'pomodoro','water':'pomodoro','agenda':'agenda'}
 
 
 def display_values(service,compact=None):
@@ -35,7 +38,7 @@ def display_values(service,compact=None):
             if reading:
                 label=reading['label'];tip=reading['source'];display=f"{reading['value']:g} {reading.get('unit',SENSOR_UNITS[key])}"
             else:
-                if cfg['resource_hide_unavailable']:continue
+                if key in FAN_METRICS or cfg['resource_hide_unavailable']:continue
                 tip='当前传感器未提供读数'
         if key=='gpu':tip='所有显卡中最忙引擎的利用率' if value is not None else '等待显卡驱动计数器'
         rows.append((key,label,display,tip))
@@ -43,17 +46,22 @@ def display_values(service,compact=None):
 
 
 class BatteryRows(QWidget):
+    name_x=46
+    gap=7
+
     def __init__(self,window):
         super().__init__()
         self.owner_window=window
         self.legend=[]
         self.status=''
         self.name_width=0
-        self.setFixedHeight(62)
+        self.setFixedHeight(17)
 
     def refresh(self,gauge):
         self.legend=gauge.group() if gauge else []
         self.status=gauge.status if gauge else '正在读取蓝牙设备…'
+        height=17*max(1,len(self.legend))
+        if self.height()!=height:self.setFixedHeight(height)
         summary='\\n'.join(row['name']+' · '+self.percentage(row) for row in self.legend) or self.status
         self.setToolTip(summary);self.setAccessibleName(summary);self.update()
 
@@ -65,39 +73,89 @@ class BatteryRows(QWidget):
         from bluetooth_gauge import draw_rings,ring_ink
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         c=self.owner_window.colors
-        draw_rings(p,QRectF(1,3,54,54),self.legend,not c['light'])
-        font=QFont(self.font());font.setPixelSize(12);p.setFont(font)
+        font=QFont(self.font());font.setPixelSize(10);p.setFont(font)
         if not self.legend:
-            p.setPen(QColor(c['muted']))
-            p.drawText(QRect(63,0,max(1,self.width()-64),60),Qt.AlignVCenter|Qt.TextWordWrap,self.status)
+            p.setPen(QColor(c['muted']));width=max(1,self.width())
+            p.drawText(QRect(0,0,width,17),Qt.AlignVCenter,p.fontMetrics().elidedText(self.status,Qt.ElideRight,width))
             return
         metrics=p.fontMetrics();value_font=QFont(font);value_font.setWeight(QFont.DemiBold)
-        name_x=72;gap=8
-        # These three columns are sized by their contents. Enlarging the window never separates a reading from its ring.
+        name_x=self.name_x;gap=self.gap
         from PyQt5.QtGui import QFontMetrics
         numbers=QFontMetrics(value_font)
         value_width=max(numbers.horizontalAdvance(self.percentage(row)) for row in self.legend)+2
         self.name_width=max(1,min(112,self.width()-name_x-gap-value_width-2,
                                   max(metrics.horizontalAdvance(row['name']) for row in self.legend)))
         self.value_x=name_x+self.name_width+gap
-        first=(self.height()-19*len(self.legend))//2
+        p.setPen(QColor(c['muted']))
+        p.drawText(QRect(0,0,25,17),Qt.AlignVCenter,'蓝牙')
         for i,row in enumerate(self.legend):
-            y=first+19*i
-            p.setPen(Qt.NoPen);p.setBrush(QColor(ring_ink(row)));p.drawEllipse(QPointF(64,y+9),3,3)
+            y=17*i
+            draw_rings(p,QRectF(28,y+1,14,14),[row],not c['light'])
             p.setPen(QColor(c['ink']));p.setFont(font)
-            p.drawText(QRect(name_x,y,self.name_width+1,19),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,self.name_width+1))
-            p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,19),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
+            p.drawText(QRect(name_x,y,self.name_width+1,17),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,self.name_width+1))
+            p.setPen(QColor(ring_ink(row)) if row['level'] is not None and row['level']<15 else QColor(c['ink']))
+            p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,17),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
 
 
 class CapsuleTab(QToolButton):
-    def __init__(self,owner,title,parent):
+    def __init__(self,owner,key,title,parent):
         super().__init__(parent)
         self.owner=owner
+        self.key=key
+        self.drag_start=None
+        self.dragging=False
         self.setText(title)
         self.setAccessibleName(title)
+        self.setToolTip(title+' · 拖动排序，拖出胶囊后独立显示')
         self.setCursor(Qt.PointingHandCursor)
         self.setCheckable(True)
         self.setFocusPolicy(Qt.StrongFocus)
+
+    def mousePressEvent(self,event):
+        if event.button()==Qt.LeftButton:
+            self.drag_start=event.globalPos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self,event):
+        if self.drag_start is not None and (self.dragging or (event.globalPos()-self.drag_start).manhattanLength()>=QApplication.startDragDistance()):
+            if not self.dragging:
+                self.dragging=True
+                self.setDown(False)
+                self.setCursor(Qt.ClosedHandCursor)
+            self.owner.preview_tab_drop(self.key,event.globalPos())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self,event):
+        if event.button()==Qt.LeftButton and self.drag_start is not None:
+            moved=self.dragging or (event.globalPos()-self.drag_start).manhattanLength()>=QApplication.startDragDistance()
+            self.cancel_drag()
+            if moved:
+                self.setDown(False)
+                self.owner.finish_tab_drop(self.key,event.globalPos())
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def cancel_drag(self):
+        self.drag_start=None
+        if self.dragging:
+            self.dragging=False
+            self.setDown(False)
+            self.setCursor(Qt.PointingHandCursor)
+            self.owner.clear_tab_drop()
+
+    def event(self,event):
+        if event.type() in (QEvent.Hide,QEvent.UngrabMouse) and getattr(self,'drag_start',None) is not None:
+            self.cancel_drag()
+        return super().event(event)
+
+    def keyPressEvent(self,event):
+        if event.key()==Qt.Key_Escape and self.dragging:
+            self.cancel_drag()
+            event.accept()
+        else:super().keyPressEvent(event)
 
     def paintEvent(self,event):
         colors=self.owner.colors
@@ -219,13 +277,19 @@ class ResourceContentHost(QWidget):
         self.sensor_columns=SensorColumns(self);self.sensor_columns.setParent(self.dashboard)
         self.no_readings=QLabel('在「设置」中选择要显示的读数。');self.no_readings.setWordWrap(True);body.addWidget(self.no_readings)
         self.bt_head=QWidget();row=QHBoxLayout(self.bt_head);row.setContentsMargins(0,0,0,0)
-        row.setSpacing(5);title=QLabel('蓝牙电量');title.setObjectName('RankTitle');row.addWidget(title,1)
+        row.setSpacing(4)
         self.bt_page=QToolButton();self.bt_page.clicked.connect(self.next_devices);row.addWidget(self.bt_page)
-        self.bt_refresh=QToolButton();self.bt_refresh.setText('刷新');self.bt_refresh.clicked.connect(self.refresh_bt);row.addWidget(self.bt_refresh)
+        self.bt_refresh=QToolButton();self.bt_refresh.setAccessibleName('刷新蓝牙电量')
+        self.bt_refresh.setToolTip('刷新蓝牙电量');self.bt_refresh.clicked.connect(self.refresh_bt);row.addWidget(self.bt_refresh)
         self.battery_section=DashboardCard(self,'mint',self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
-        battery_layout.setContentsMargins(9,6,9,7);battery_layout.setSpacing(0)
-        battery_layout.addWidget(self.bt_head);self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
-        battery_layout.addStretch()
+        battery_layout.setContentsMargins(9,6,9,7);battery_layout.setSpacing(1)
+        top=QHBoxLayout();top.setSpacing(4)
+        heading=QLabel('电脑状态');heading.setObjectName('RankTitle');top.addWidget(heading,1)
+        top.addWidget(self.bt_head);battery_layout.addLayout(top)
+        from resource_system_view import SystemReadout
+        self.system_readout=SystemReadout(self);battery_layout.addWidget(self.system_readout)
+        self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
+        battery_layout.addStretch(1)
         body.addStretch()
         sync_card_controls(self.dashboard,self.colors)
 
@@ -244,8 +308,7 @@ class ResourceContentHost(QWidget):
         for row, panels in enumerate(group for group in rows if group):
             span = 2 if len(panels) == 1 else 1
             for column, panel in enumerate(panels):
-                align = Qt.AlignTop if panel in (self.graph,self.sensor_columns) else Qt.Alignment()
-                self.columns.addWidget(panel, row, column, 1, span, align)
+                self.columns.addWidget(panel, row, column, 1, span)
         self.dashboard.setVisible(any(visible))
 
     def release_dashboard(self):
@@ -257,7 +320,7 @@ class ResourceContentHost(QWidget):
         self.rank_icons.clear()
         for name in ('columns','graph','rank_section','rank_head','rank_buttons','rank_widget',
                      'dashboard_layout_key','sensor_columns','no_readings','bt_head','bt_page',
-                     'bt_refresh','battery_section','rings','body','page'):
+                     'bt_refresh','battery_section','system_readout','rings','body','page'):
             self.__dict__.pop(name, None)
         if page is not None:
             page.deleteLater()
@@ -319,15 +382,22 @@ class ResourceContentHost(QWidget):
             self.build_dashboard()
         basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network')]
         self.graph.refresh(basics);self.sensor_columns.refresh([row for row in self.values if row not in basics])
-        self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth']))
+        self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth'] or cfg['resource_system_status']))
         self.rank_section.setVisible(cfg['resource_rank'])
-        self.battery_section.setVisible(cfg['resource_bluetooth'])
+        self.battery_section.setVisible(cfg['resource_bluetooth'] or cfg['resource_system_status'])
+        self.system_readout.setVisible(cfg['resource_system_status'])
+        if cfg['resource_system_status']:self.system_readout.refresh()
         self.layout_dashboard()
         if cfg['resource_rank']:self.show_ranking()
         self.bt_head.setVisible(cfg['resource_bluetooth']);self.rings.setVisible(cfg['resource_bluetooth'])
         bt=self.service.bluetooth;self.bt_page.setVisible(bool(bt and bt.pages()>1))
         if bt:self.bt_page.setText(f'{bt.page+1}/{bt.pages()} ›')
-        if cfg['resource_bluetooth']:self.rings.refresh(bt)
+        if cfg['resource_bluetooth']:
+            ink=self.colors['muted']
+            if self.bt_refresh.property('iconInk')!=ink:
+                self.bt_refresh.setProperty('iconInk',ink)
+                self.bt_refresh.setIcon(icon('refresh',ink,13));self.bt_refresh.setIconSize(QSize(13,13))
+            self.rings.refresh(bt)
         self.body.activate()
         wanted=self.body.minimumSize().height()
         if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)
@@ -338,27 +408,36 @@ class ResourceWindow(ResourceContentHost):
         super().__init__(service)
         self.setProperty('clickThroughKey','resource')
         self.press=None;self.offset=0;self.last_layer=None
+        self.taskbar_placement=None
+        self.taskbar_size=None
         self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
         self.halo_updated_at = time.monotonic()
         self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
         self._ai_view=self._music_view=None
         self._traffic_view=self._weather_view=None
-        self._news_view=None
+        self._news_view=self._pomodoro_view=self._agenda_view=None
+        self._reminder_key=();self.reminder_bounds=();self.reminder_kinds=()
         for key in DESKTOP_COMPONENTS:setattr(self,'_'+key+'_view',None)
-        self.empty_page=QLabel('在「组件布局」中选择收入胶囊的栏目。')
+        self.empty_page=QLabel('把桌面组件拖回胶囊，或在「组件布局」中选择栏目。')
         self.empty_page.setObjectName('Subtle');self.empty_page.setWordWrap(True)
         self.detail.layout().addWidget(self.empty_page);self.empty_page.hide()
         self._saved_view_state = {}
         self.nav=QScrollArea(self);self.nav.setFrameShape(QFrame.NoFrame)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav_content=QWidget();self.nav.setWidget(self.nav_content)
+        self.tab_drag=None
+        self.tab_drop_mark=None
+        self.tab_scroll_direction=0
+        self.tab_scroll=QTimer(self)
+        self.tab_scroll.setInterval(90)
+        self.tab_scroll.timeout.connect(self.scroll_tab_drag)
         self.nav_arrows=[]
         for title,direction in [('‹',-1),('›',1)]:
             button=QToolButton(self);button.setText(title);button.setAccessibleName('向左切换栏目' if direction<0 else '向右切换栏目')
             button.clicked.connect(lambda checked=False,d=direction:self.nav.horizontalScrollBar().setValue(self.nav.horizontalScrollBar().value()+d*100));self.nav_arrows.append(button)
         self.page_buttons={}
         for key,title in tuple(OPEN_PAGES.items())[1:]:
-            btn=CapsuleTab(self,title,self.nav_content)
+            btn=CapsuleTab(self,key,title,self.nav_content)
             btn.clicked.connect(lambda checked=False,key=key:self.select_page(key));self.page_buttons[key]=btn
         self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('资源胶囊设置');self.settings_button.setToolTip('资源胶囊设置');self.settings_button.clicked.connect(service.settings)
         self.fold_button=QToolButton(self);self.fold_button.setAccessibleName('收起胶囊');self.fold_button.setToolTip('收起胶囊');self.fold_button.clicked.connect(lambda:service.fold(True))
@@ -380,7 +459,7 @@ class ResourceWindow(ResourceContentHost):
 
 
     def select_page(self,key):
-        before=self.service.active_keys()
+        before=self.service.needs()
         previous=self.page_key
         self.page_key='ai' if key=='stats' else key
         self.refresh();self.reposition()
@@ -390,14 +469,87 @@ class ResourceWindow(ResourceContentHost):
             else:scroll=self.view(self.page_key)
             scroll.verticalScrollBar().setValue(0)
         if self.page_key:self.nav.ensureWidgetVisible(self.page_buttons[self.page_key],0,0)
-        if before!=self.service.active_keys():self.service.sync()
-        elif self.service.deck:self.service.deck.configure()
+        if before!=self.service.needs():self.service.sync()
+        else:
+            if self.service.deck:self.service.deck.configure()
+            if self.service.pomodoro:self.service.pomodoro.sync()
     def page_enabled(self,key):
         cfg=self.service.cfg
         return key in self.page_buttons and component_location(cfg,key)=='capsule' and component_available(cfg,key)
 
     def first_page(self):
         return next((key for key in self.service.cfg['resource_component_order'] if self.page_enabled(key)),None)
+
+    def tab_drop_slot(self,key,point):
+        local=self.mapFromGlobal(point)
+        nav=self.nav.geometry()
+        if self.service.compact or not (nav.top()<=local.y()<=nav.bottom() and nav.left()<=local.x()<self.nav_end):
+            return None
+        x=min(local.x(),nav.right())-nav.left()+self.nav.horizontalScrollBar().value()
+        buttons=[(name,self.page_buttons[name]) for name in self.service.cfg['resource_component_order']
+                 if name!=key and self.page_enabled(name)]
+        if not buttons:
+            return None
+        before, marker=None,buttons[-1][1].geometry().right()+1
+        for name,button in buttons:
+            if x<=button.geometry().center().x():
+                before,marker=name,button.x()
+                break
+        marker=max(nav.left()+1,min(nav.right()-1,nav.left()+marker-self.nav.horizontalScrollBar().value()))
+        return before, QRect(marker,nav.top()+2,2,nav.height()-4)
+
+    def preview_tab_drop(self,key,point,*,incoming=False):
+        if incoming and not self.geometry().contains(point):
+            self.clear_tab_drop()
+            return
+        self.tab_drag=(key,point,incoming)
+        self.update_tab_drop()
+
+    def update_tab_drop(self):
+        key,point,incoming=self.tab_drag
+        slot=self.tab_drop_slot(key,point)
+        nav=self.nav.geometry()
+        x=self.mapFromGlobal(point).x()
+        bar=self.nav.horizontalScrollBar()
+        direction=0
+        if slot is not None:
+            if x-nav.left()<14 and bar.value()>bar.minimum():direction=-1
+            if nav.right()-x<14 and bar.value()<bar.maximum():direction=1
+        self.tab_scroll_direction=direction
+        if direction and not self.tab_scroll.isActive():self.tab_scroll.start()
+        elif not direction:self.tab_scroll.stop()
+        if slot is None and not incoming:
+            if self.tab_drop_mark:self.tab_drop_mark.hide()
+            return
+        if self.tab_drop_mark is None:
+            self.tab_drop_mark=QFrame(self)
+            self.tab_drop_mark.setAttribute(Qt.WA_TransparentForMouseEvents)
+        marker=self.tab_drop_mark
+        ink=self.palette().color(QPalette.Link).name()
+        style=f'background:{ink};border:0;' if slot else f'background:transparent;border:2px solid {ink};border-radius:9px;'
+        if marker.styleSheet()!=style:marker.setStyleSheet(style)
+        marker.setGeometry(slot[1] if slot else self.rect().adjusted(2,2,-2,-2))
+        marker.show()
+        marker.raise_()
+
+    def scroll_tab_drag(self):
+        if self.tab_drag:
+            bar=self.nav.horizontalScrollBar()
+            bar.setValue(bar.value()+32*self.tab_scroll_direction)
+            self.update_tab_drop()
+
+    def clear_tab_drop(self):
+        self.tab_drag=None
+        self.tab_scroll.stop()
+        if self.tab_drop_mark:self.tab_drop_mark.hide()
+
+    def finish_tab_drop(self,key,point):
+        self.clear_tab_drop()
+        slot=self.tab_drop_slot(key,point)
+        if slot is not None:
+            self.service.set_options(resource_component_order=self.service.component_order_at(key,slot[0]))
+        elif not self.geometry().contains(point) and QApplication.screenAt(point) is not None:
+            self.service.detach_component_at(key,point)
 
     def view(self,key):
         view=getattr(self,'_'+key+'_view')
@@ -410,15 +562,27 @@ class ResourceWindow(ResourceContentHost):
             setattr(self,'_'+key+'_view',view);view.hide();self.detail.layout().addWidget(view)
             state = self._saved_view_state.pop(key, None)
             if state and key == 'ai':
-                period, metric, provider = state
+                period, metric, provider, dates = state
                 view.statistics.period = period
                 view.statistics.metric = metric
                 view.statistics.refresh()
                 view.statistics.provider.setCurrentIndex(max(0, view.statistics.provider.findData(provider)))
+                view.detail_dates = dates
+            elif state and key == 'weather':
+                city, remarks = state
+                view.content.refresh()
+                view.content.city.setCurrentIndex(max(0, view.content.city.findText(city)))
+                view.content.remarks_button.setChecked(remarks)
+            elif state and key == 'traffic':
+                view.content.remarks.setChecked(True)
+            elif state and key == 'agenda':
+                view.content.calendar.setSelectedDate(state)
+            elif state and key == 'custom':
+                view.selected = state
         return view
 
     def release_inactive_views(self):
-        if self.service.compact:
+        if not self.scroll.isVisible():
             self.release_dashboard()
         for key in tuple(self.page_buttons)[1:]:
             name = '_' + key + '_view'
@@ -426,8 +590,19 @@ class ResourceWindow(ResourceContentHost):
             if view is None or view.isVisible():
                 continue
             if key == 'ai':
+                if view._detail_dialog is not None and view._detail_dialog.isVisible():
+                    continue
                 statistics = view.statistics
-                self._saved_view_state[key] = (statistics.period, statistics.metric, statistics.provider.currentData())
+                dates = (view.start.date(), view.end.date()) if view._detail_dialog is not None else view.detail_dates
+                self._saved_view_state[key] = (statistics.period, statistics.metric, statistics.provider.currentData(), dates)
+            elif key == 'weather':
+                self._saved_view_state[key] = (view.content.city.currentText(), view.content.remarks_button.isChecked())
+            elif key == 'traffic':
+                self._saved_view_state[key] = view.content.remarks.isChecked()
+            elif key == 'agenda':
+                self._saved_view_state[key] = view.content.calendar.selectedDate()
+            elif key == 'custom':
+                self._saved_view_state[key] = view.selected
             self.detail.layout().removeWidget(view)
             setattr(self, name, None)
             view.deleteLater()
@@ -441,6 +616,19 @@ class ResourceWindow(ResourceContentHost):
     def traffic(self):return self.view('traffic').content
     @property
     def weather_view(self):return self.view('weather').content
+    def refresh_reminders(self):
+        if not self.isVisible():return
+        if self.service.compact:
+            key=tuple(kind for kind,_ in self.service.reminders())
+            if key!=self._reminder_key:
+                self._reminder_key=key;self._compact_cache=None;self.reposition()
+            elif any(item in COMPACT_ROUTINES for item in self.service.cfg['resource_compact_metrics']):
+                self._compact_cache=None
+            self.update()
+        elif self.page_key in ('pomodoro','agenda'):
+            view=getattr(self,'_'+self.page_key+'_view')
+            if view:view.refresh()
+
     def animate(self):
         now = time.monotonic()
         _, period = HALO_SPEEDS[self.service.cfg['resource_halo_speed']]
@@ -451,7 +639,7 @@ class ResourceWindow(ResourceContentHost):
         if self.press is None and not self.underMouse() and self.compact_pages>1:self.offset+=1;self.update()
     def sync_animation(self):
         cfg=self.service.cfg;visible=self.isVisible()
-        for timer,active in [(self.animation,visible and cfg['resource_halo'] and cfg.get('motion_enabled',True) and not self.service.runtime.lite),
+        for timer,active in [(self.animation,visible and cfg['resource_halo'] and cfg.get('motion_enabled',True)),
                              (self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
                              (self.rotate,visible and self.service.compact and cfg['resource_compact_rotate'])]:
             if active and not timer.isActive():
@@ -490,7 +678,7 @@ class ResourceWindow(ResourceContentHost):
             self.rank_icons.clear();self.rank_frame=self.rank_style=None
             for mark,*_ in self.rank_labels:mark.clear()
         if cfg['resource_expand_mode']!='hover' or passthrough_enabled(cfg,'resource'):self.enter_timer.stop()
-        self.reposition();self.refresh();self.sync_animation()
+        self.sync_taskbar();self.reposition();self.refresh();self.sync_animation()
         if (palette_changed or previous!=self.background) and not compact and self.page_key in DESKTOP_COMPONENTS:
             self.service.runtime.sync_hosted_component(self.page_key)
         self.sync_auto_fold()
@@ -519,6 +707,17 @@ class ResourceWindow(ResourceContentHost):
     def reposition(self):
         if self.press is not None or self.liquid.landing:return
         cfg=self.service.cfg;compact=self.service.compact
+        slot=self.taskbar_slot()
+        if slot is not None and self.taskbar_placement.suppressed():
+            self.hide();return
+        rect=self.taskbar_rect(slot) if slot is not None else self.floating_rect(compact)
+        if self.geometry()!=rect:self.setGeometry(rect)
+        self.show();self.layer()
+        from window_layers import click_through
+        click_through(self,passthrough_enabled(cfg,'resource'))
+
+    def floating_rect(self,compact):
+        cfg=self.service.cfg
         screens = screen_records()
         projected = self.projected_layout(screens)
         rect = QRect(*projected) if compact and projected else self.desktop_rect(screens, projected)
@@ -533,11 +732,65 @@ class ResourceWindow(ResourceContentHost):
         from resource_liquid import attached
         area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
         edge = cfg['resource_edge'] if self.liquid.edge_snap else 'free'
-        rect=attached(rect,area,edge)
-        if self.geometry()!=rect:self.setGeometry(rect)
-        self.show();self.layer()
-        from window_layers import click_through
-        click_through(self,passthrough_enabled(cfg,'resource'))
+        return attached(rect,area,edge)
+
+    def sync_taskbar(self):
+        cfg=self.service.cfg
+        if not cfg['resource_capsule_taskbar']:
+            if self.taskbar_placement and (not self.taskbar_placement.proposal or self.taskbar_size is not None):
+                placement,self.taskbar_placement=self.taskbar_placement,None
+                placement.close();self.taskbar_size=None
+            return
+        placement=self.ensure_taskbar_placement()
+        placement.restore()
+        size=(cfg['resource_fold'],cfg['resource_compact_width'],cfg['resource_compact_height'])
+        if self.taskbar_size is not None and self.taskbar_size!=size:placement.schedule_check()
+        self.taskbar_size=size
+
+    def ensure_taskbar_placement(self):
+        if self.taskbar_placement is None:
+            from resource_taskbar import Placement
+            self.taskbar_placement=Placement(self,capsule=True)
+        return self.taskbar_placement
+
+    def taskbar_slot(self):
+        placement=self.taskbar_placement
+        if placement and (placement.proposal or placement.slot_bar==placement.target):return placement.slot
+        return None
+
+    def taskbar_width(self,bar):
+        cfg=self.service.cfg;rect=bar['rect']
+        vertical=rect.height()>rect.width()
+        if cfg['resource_fold']=='ball' or vertical:
+            thickness=rect.width() if vertical else rect.height()
+            return min(thickness-4,38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
+        return cfg['resource_compact_width']
+
+    def taskbar_rect(self,slot):
+        cfg=self.service.cfg;bar=self.taskbar_placement.slot_bar['rect']
+        vertical=bar.height()>bar.width()
+        if self.service.compact:
+            if vertical or cfg['resource_fold']=='ball':
+                width=height=min(slot.width(),slot.height(),self.taskbar_width(self.taskbar_placement.slot_bar))
+            else:
+                from resource_compact import natural_width
+                width=natural_width(self,min(slot.width(),cfg['resource_compact_width']))
+                height=min(slot.height(),cfg['resource_compact_height'])
+            return QRect(slot.x()+(slot.width()-width)//2,slot.y()+(slot.height()-height)//2,width,height)
+        screen=QApplication.screenAt(slot.center()) or QApplication.primaryScreen()
+        area=screen.availableGeometry();center=slot.center()
+        width=min(area.width(),cfg['resource_expanded_width']);height=min(area.height(),cfg['resource_expanded_height'])
+        x=center.x()-width//2;y=center.y()-height//2
+        if vertical:
+            x=bar.right()+1 if bar.center().x()<screen.geometry().center().x() else bar.left()-width
+        else:
+            y=bar.bottom()+1 if bar.center().y()<screen.geometry().center().y() else bar.top()-height
+        return QRect(max(area.left(),min(x,area.right()-width+1)),max(area.top(),min(y,area.bottom()-height+1)),width,height)
+
+    def placement_changed(self):
+        if not self.service.cfg['resource_capsule_taskbar']:self.sync_taskbar()
+        self.reposition();self.resize_edges.sync();self.update()
+
     def taskbar_at(self,point):
         if self.service.runtime.dock.preview:return None
         from resource_taskbar import taskbars
@@ -547,15 +800,36 @@ class ResourceWindow(ResourceContentHost):
         if self.service.runtime.dock.preview:return
         from window_layers import desktop_layer, is_topmost, shell_owner, owner_of
         hwnd=int(self.winId());top=self.service.cfg['resource_layer']=='top'
+        if self.taskbar_slot() is not None:
+            from window_layers import set_owner
+            from taskbar_input import place_layer
+            from platform_services import fullscreen_window
+            placement=self.taskbar_placement;bar=placement.slot_bar['hwnd']
+            state=(hwnd,'taskbar',bar,placement.layer)
+            if self.last_layer!=state or owner_of(hwnd):
+                if set_owner(hwnd,0) and place_layer(hwnd,bar,placement.layer,cover=fullscreen_window() if top else None):self.last_layer=state
+            return
         owner=0 if top else shell_owner()
         state=(hwnd,top,owner)
         if self.last_layer!=state or is_topmost(hwnd)!=top or owner_of(hwnd)!=owner:
             if desktop_layer(hwnd,top,owner):self.last_layer=state
     def raise_if_top(self):
+        if self.taskbar_slot() is not None:
+            self.restore_input_layer();return
         if self.service.cfg['resource_layer']=='top' and not self.service.runtime.dock.preview:
             from window_layers import restack
             restack(int(self.winId()),-1)
 
+    def restore_input_layer(self,cover=None):
+        if (self.press is not None or not self.isVisible() or self.taskbar_slot() is None
+                or self.service.runtime.dock.preview):return
+        from taskbar_input import place_layer,restore_input_layer
+        placement=self.taskbar_placement;hwnd=int(self.winId());bar=placement.slot_bar['hwnd']
+        if placement.layer=='bottom':place_layer(hwnd,bar,'bottom')
+        else:
+            from platform_services import fullscreen_window
+            restore_input_layer(hwnd,bar,cover=fullscreen_window() if cover is None else cover,
+                                transparent=passthrough_enabled(self.service.cfg,'resource'))
 
     def refresh(self):
         self._compact_cache=None
@@ -573,6 +847,9 @@ class ResourceWindow(ResourceContentHost):
             data=self.service.latest.get('traffic') or {}
             for key,name in [('day','今日'),('month','本月'),('year','本年')]:
                 if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
+        reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注',
+                         'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停'}
+        tips.extend(reminder_labels[kind]+' '+value for kind,value in self.service.reminders())
         if self.service.compact:tips.append('滚轮切换读数，点击展开')
         self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '资源胶囊 · 点击展开')
         if not self.service.compact:
@@ -622,14 +899,16 @@ class ResourceWindow(ResourceContentHost):
         radius=min(17,rect.height()/2) if not compact else min(12,rect.height()/2) if cfg['resource_fold']=='bar' else rect.height()/2
         self.glass.paint(p,self,self,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
                          self.liquid.radii(radius),self.liquid.live)
-        from resource_compact import paint_halo,paint_compact
+        from resource_compact import paint_halo,paint_compact,paint_ball_reminder
         paint_halo(self,p)
         ink=QColor(c['ink']);accent=QColor(metric_colors(self.service)['cpu']);font=QFont(self.font());font.setPixelSize(13)
         if compact and (self.width()<70 or (cfg['resource_fold']=='ball')):
             if cfg['resource_face']:
-                self.liquid.paint_face(p,rect.center(),max(20,self.width()-12));return
-            q=rect.center();p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
-            for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
+                self.liquid.paint_face(p,rect.center(),max(20,self.width()-12))
+            else:
+                q=rect.center();p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
+                for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
+            paint_ball_reminder(self,p,rect)
             return
         if not compact:
             if self.nav.isVisible():
@@ -665,13 +944,37 @@ class ResourceWindow(ResourceContentHost):
         if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.service.compact:self.enter_timer.start()
         super().enterEvent(event)
     def expand_hover(self):
-        if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(QCursor.pos()):self.service.fold(False,automatic=True)
+        cursor=QCursor.pos()
+        if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
+            self.expand_from(self.mapFromGlobal(cursor),automatic=True)
+
+    def expand_from(self,point,automatic=False):
+        badges=self.service.reminders()
+        icon_only=self.width()<70 or self.service.cfg['resource_fold']=='ball'
+        if badges and icon_only:
+            kind=badges[0][0]
+        elif badges:
+            kind=next((kind for kind,rect in zip(self.reminder_kinds,self.reminder_bounds) if rect.contains(QPointF(point))),None)
+        else:kind=None
+        if kind:
+            target={'agenda':'agenda','battery':'resources'}.get(kind,'pomodoro')
+        else:
+            row=next((key for key,rect in zip(getattr(self,'compact_shown',()),getattr(self,'compact_bounds',()))
+                      if rect.contains(QPointF(point))),None) if not icon_only else None
+            target=COMPACT_PAGES.get(row)
+        if target and self.service.detached(target):
+            if not automatic:self.service.open_component(target)
+            return
+        if self.service.fold(False,automatic=automatic) and not self.service.compact and target and self.page_enabled(target):
+            self.select_page(target)
     def leaveEvent(self,event):
         self.enter_timer.stop()
         super().leaveEvent(event)
     def fold_idle(self):
         # Native leave events can be lost when a popup or mouse grab takes over.
-        if (self.press is not None or self.liquid.landing or self.geometry().contains(QCursor.pos())
+        cursor=QCursor.pos();slot=self.taskbar_slot()
+        if (self.press is not None or self.tab_drag is not None or self.liquid.landing or self.geometry().contains(cursor)
+                or (slot is not None and slot.contains(cursor))
                 or QApplication.activePopupWidget() or QApplication.activeModalWidget()):
             self.outside_since = None
             return
@@ -699,12 +1002,22 @@ class ResourceWindow(ResourceContentHost):
         self.mouseMoveEvent(event)
         self.press=None
         self.liquid.released()
+        try:self.finish_move(event)
+        finally:
+            if self.taskbar_placement:self.taskbar_placement.resume()
+
+    def finish_move(self,event):
         if not self.moved:
-            if self.service.compact:self.service.fold(False)
+            if self.service.compact:self.expand_from(event.pos())
             return
         bar=self.taskbar_at(event.globalPos())
         if bar:
-            self.reposition();self.service.offer_taskbar(bar,event.globalPos());return
+            center=self.geometry().center()
+            self.reposition()
+            self.ensure_taskbar_placement().offer(bar,center)
+            return
+        if self.taskbar_slot() is not None:
+            self.reposition();return
         if self.liquid.drop(event.globalPos()):return
         rect=QRect(self.geometry())
         screen=QApplication.screenAt(event.globalPos()) or QApplication.primaryScreen();area=screen.availableGeometry()
@@ -725,6 +1038,9 @@ class ResourceWindow(ResourceContentHost):
             item.triggered.connect(lambda checked,layer=layer:self.service.set_options(resource_layer=layer))
         passing=menu.addAction('鼠标穿透');passing.setCheckable(True);passing.setChecked(cfg['resource_click_through'])
         passing.triggered.connect(lambda on:self.service.set_options(resource_click_through=on))
+        pin=menu.addAction('固定胶囊到任务栏');pin.setCheckable(True);pin.setChecked(cfg['resource_capsule_taskbar'])
+        pin.triggered.connect(lambda on:self.service.set_options(resource_capsule_taskbar=on,
+                                                               resource_collapsed=on or cfg['resource_collapsed']))
         bar=menu.addAction('任务栏监控');bar.setCheckable(True);bar.setChecked(cfg['resource_taskbar'])
         bar.triggered.connect(lambda enabled:self.service.set_options(resource_taskbar=enabled))
         auto=menu.addAction('鼠标离开自动收起');auto.setCheckable(True);auto.setChecked(cfg['resource_auto_hide'])
@@ -738,6 +1054,7 @@ class ResourceWindow(ResourceContentHost):
     def closeEvent(self,event):
         event.ignore();self.service.set_options(resource_enabled=False)
     def hideEvent(self,event):
+        self.clear_tab_drop()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
         self.enter_timer.stop();self.auto_fold_timer.stop();self.outside_since=None
         if hasattr(self,'liquid'):self.liquid.hide()
@@ -750,6 +1067,8 @@ class ResourceWindow(ResourceContentHost):
         if self.colors:self.sync_animation();self.liquid.sync()
         if self.service.extras:self.service.extras.sync()
     def dispose(self):
+        if self.taskbar_placement:
+            placement,self.taskbar_placement=self.taskbar_placement,None;placement.close()
         self.liquid.close()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
         self.enter_timer.stop();self.auto_fold_timer.stop();self.glass.clear();self.hide();self.deleteLater()

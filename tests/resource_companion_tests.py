@@ -62,25 +62,22 @@ def run(api,runtime,app,output,checks):
         mood = face.mood
         face._step(QPointF(120, 0), False, .7)
         assert mood in PetFace.MOODS and face._m == mood
-        was_lite=runtime.lite
-        try:
-            runtime.lite=True;cfg.update(resource_face_interactive=True,resource_face_mood='default',motion_enabled=True)
-            for shape,collapsed in [('pill',True),('ball',True),('pill',False)]:
-                cfg.update(resource_fold=shape,resource_collapsed=collapsed);service.auto_compact=None;service.sync();w.grab()
-                assert w.liquid.watch.isActive()
-                center=w.liquid.face_bounds.center();positions=[]
-                for direction in (-1,1):
-                    w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame()
-                    position=w.mapToGlobal(center+QPoint(direction*1250,direction*620))
-                    with patch.object(QCursor,'pos',return_value=position):
-                        w.liquid.watch_face()
-                        assert w.liquid.frames.isActive() and not w.liquid.was_near
-                        for _ in range(16):w.liquid.face._t-=.033;w.grab()
-                        positions.append((w.liquid.face.ex.x,w.liquid.face.ey.x))
-                        w.grab().save(str(output/f'face-follow-{shape}-{collapsed}-{direction}.png'))
-                assert positions[0][0]<-.4 and positions[1][0]>.4 and positions[0][1]<positions[1][1]
-                w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame();assert not w.liquid.frames.isActive()
-        finally:runtime.lite=was_lite
+        cfg.update(resource_face_interactive=True,resource_face_mood='default',motion_enabled=True)
+        for shape,collapsed in [('pill',True),('ball',True),('pill',False)]:
+            cfg.update(resource_fold=shape,resource_collapsed=collapsed);service.auto_compact=None;service.sync();w.grab()
+            assert w.liquid.watch.isActive()
+            center=w.liquid.face_bounds.center();positions=[]
+            for direction in (-1,1):
+                w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame()
+                position=w.mapToGlobal(center+QPoint(direction*1250,direction*620))
+                with patch.object(QCursor,'pos',return_value=position):
+                    w.liquid.watch_face()
+                    assert w.liquid.frames.isActive() and not w.liquid.was_near
+                    for _ in range(16):w.liquid.face._t-=.033;w.grab()
+                    positions.append((w.liquid.face.ex.x,w.liquid.face.ey.x))
+                    w.grab().save(str(output/f'face-follow-{shape}-{collapsed}-{direction}.png'))
+            assert positions[0][0]<-.4 and positions[1][0]>.4 and positions[0][1]<positions[1][1]
+            w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame();assert not w.liquid.frames.isActive()
         cfg.update(resource_fold='pill',resource_collapsed=True,resource_compact_width=560);service.sync()
         # Face switches are independent of motion and the automatic collapse setting.
         cfg.update(resource_face_mood='love',resource_face_interactive=False,resource_face_scale=75);w.sync_window();w.grab()
@@ -154,7 +151,9 @@ def run(api,runtime,app,output,checks):
         options.fields['resource_task_threshold'].setChecked(True);options.fields['resource_task_music_colorful'].setChecked(True)
         assert options.commit();saved=api.load_config()
         assert saved['resource_face_scale']==110 and saved['resource_task_threshold'] and saved['resource_task_music_colorful'] and saved['resource_weather_days']==3
-        assert {'ai','music','weather'}<=set(options.pinned_fields) and 'notifications' not in options.pinned_fields
+        assert all(options.fields[key].isChecked() for key in
+                   ('resource_compact_ai','resource_compact_music','resource_weather_compact'))
+        assert 'notifications' not in options.compact_fields
         options.reject();options.deleteLater()
         cfg['resource_face']=False;w.sync_window()
         assert not w.liquid.watch.isActive() and not w.liquid.frames.isActive()

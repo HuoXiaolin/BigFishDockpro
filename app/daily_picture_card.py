@@ -166,13 +166,17 @@ class DailyPictureCard(QWidget):
         if self.drag:
             start,pointer=self.drag
             self.move(start+event.globalPos()-pointer)
+            self.runtime.resources.preview_component_at('picture',event.globalPos())
 
     def mouseReleaseEvent(self,event):
         if event.button()!=Qt.LeftButton or not self.drag:return
+        self.mouseMoveEvent(event)
         start,_=self.drag;self.drag=None
-        if self.pos()==start:return
+        if self.pos()==start:
+            self.runtime.resources.preview_component_at('picture');return
         from card_snap import finish_drag
-        self.move(self.clamped(self.pos()));finish_drag(self,event.globalPos())
+        self.move(self.clamped(self.pos()))
+        if finish_drag(self,event.globalPos(),component='picture'):return
         if self.runtime.layout.pending or self.runtime.layout.applying:return
         record=capture(list(self.geometry().getRect()),screen_records())
         if record and not self.runtime.set_daily_picture_options(daily_picture_layout=record):self.move(start)

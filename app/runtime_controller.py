@@ -1,4 +1,5 @@
-"""Runtime state machine: normal, lightweight, manual/automatic game mode."""
+"""Manage desktop visibility, fullscreen pausing and background services."""
+from functools import cached_property
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication, QDialog
 from screen_corners import CornerManager
@@ -7,13 +8,25 @@ from update_service import UpdateService
 
 
 class RuntimeController:
+    @cached_property
+    def face_roles(self):
+        from face_roles import RoleLibrary
+        return RoleLibrary(self.api.CONFIG_DIR)
+
+    def refresh_face_roles(self, role_id):
+        if self.resources.window is not None and self.dock.cfg['resource_face_role']==role_id:
+            self.resources.window.update()
+        if self.dock.cfg['panel_face_role']==role_id:
+            for window in self.panels.windows.values():
+                if window.isVisible():
+                    window.update()
+
     def __init__(self, dock, tray, api, from_logon=False):
         self.dock, self.tray, self.api = dock, tray, api
         from component_passthrough import ClickThroughPolicy
         dock.setProperty('clickThroughKey','dock');self.click_policy=ClickThroughPolicy(self)
         from usage_stats import UsageStore
         self.usage=dock.usage=UsageStore(api.CONFIG_DIR,dock,api.log)
-        self.lite = False
         self.closed = False
         self.session_ending=False
         if from_logon:
@@ -34,10 +47,6 @@ class RuntimeController:
         self.desktop_shortcut=DesktopMiddleShortcut(dock,disabled=dock.preview or bool(os.environ.get('FISHDOCK_TEST_DESKTOP')))
         self.desktop_shortcut.triggered.connect(lambda:self.panels.toggle_desktop_icons())
         self.updater = UpdateService(self)
-        self.lite_timer = QTimer(dock)
-        self.lite_timer.setSingleShot(True)
-        self.lite_timer.setInterval(60000)
-        self.lite_timer.timeout.connect(self.enter_lite_if_allowed)
         self.fullscreen_timer = QTimer(dock)
         self.fullscreen_timer.setInterval(1500)
         self.fullscreen_timer.timeout.connect(self.check_fullscreen)
@@ -72,8 +81,6 @@ class RuntimeController:
         from interaction_motion import attach
         for window in (self.dock,self.clock,self.calendar):attach(window,lambda:self.dock.cfg)
         self.apply_settings()
-        if self.dock.cfg.get('runtime_lite'): self.set_lite(True, persist=False)
-        self.arm_lite()
         from memory_budget import MemoryBudget
         self.memory_budget=MemoryBudget(self)
         from window_layers import ForegroundLayers
@@ -88,81 +95,13 @@ class RuntimeController:
 
     def refresh_corners(self):
         # A fullscreen foreground window may be a browser/video, not a game.
-        # Static masks also stay available in lite mode without adding polling.
         self.corners.apply(self.dock.cfg['screen_corners'] and not self.dock.cfg['game_mode'],
                            self.dock.cfg['corner_radius'])
-
-    def arm_lite(self):
-        self.lite_timer.stop()
-        if self.dock.cfg['lite_enabled'] and not self.settings_open and not self.lite:
-            self.lite_timer.start(60000)
 
     def ui_busy(self):
         from glass_panel import DesktopPanel
         return any(isinstance(widget,QDialog) and not isinstance(widget,DesktopPanel) and widget.isVisible()
                    for widget in QApplication.topLevelWidgets()) or bool(QApplication.activePopupWidget())
-
-    def enter_lite_if_allowed(self):
-        if self.dock.cfg['lite_enabled'] and not self.settings_open:
-            if self.ui_busy(): self.lite_timer.start(60000)
-            else: self.set_lite(True)
-
-    def set_lite(self, enabled, persist=True):
-        enabled = bool(enabled)
-        was_lite = self.lite
-        if enabled and was_lite: return
-        # Resource mode never owns card presentation. Discard legacy snapshots;
-        # restoring one would overwrite folds made while lite mode was active.
-        candidate = dict(self.dock.cfg,runtime_lite=enabled,lite_restore={})
-        if persist and self.api.save_config(candidate) is False:
-            self.api.log('运行模式保存失败，未切换模式。')
-            return False
-        self.dock.cfg.update(runtime_lite=enabled,lite_restore={})
-        self.lite = enabled
-        self.dock.lite_mode = self.lite
-        if enabled:
-            self.lite_timer.stop()
-            self.panels.set_lite(True)
-            self.fullscreen_timer.stop()
-            self.dock.blur_timer.stop()
-            self.dock.proc_timer.stop()
-            self.dock.geo_timer.stop()
-            self.dock.icons.clear()
-            for item in self.dock.items: item.pop('_scaled', None)
-            importer = getattr(self.tray, 'importer', None)
-            if importer: importer.release_memory()
-            from app_catalog import clear_discovery_cache
-            from PyQt5.QtGui import QPixmapCache
-            clear_discovery_cache()
-            from wallpaper_source import image_file
-            image_file.cache_clear()
-            QPixmapCache.clear()
-            # Keep the UI responsive; memory mode reduces work and caches.
-            # BackgroundWorker lowers its own thread priority instead.
-            set_priority(self.dock.cfg['startup_priority'])
-            # An auto-game session must not leave the Dock hidden after detection stops.
-            self.auto_game = False
-            self.apply_visibility()
-        else:
-            set_priority(self.dock.cfg['startup_priority'])
-            self.dock.sync_background_polling(refresh=was_lite)
-            if not self.dock.preview and self.dock.isVisible():self.dock.start_backdrop()
-            self.configure_fullscreen_timer()
-            self.apply_visibility()
-            self.refresh_corners()
-            if was_lite:self.panels.set_lite(False)
-        self.notes.set_lite()
-        self.resources.sync()
-        # A mode switch must not rebuild/repaint visible components or change
-        # their appearance. Only invisible editing/catalog resources are freed.
-        if enabled:
-            dialog=getattr(self.tray,'settings_dialog',None)
-            if dialog is not None and not dialog.isVisible():
-                dialog.deleteLater();del self.tray.settings_dialog
-        self.dock._kick()
-        self.tray.setToolTip('大肥鱼Dock · '+('精简模式' if self.lite else '完整模式'))
-        if not enabled and not self.settings_open: self.arm_lite()
-        return True
 
     def show_settings(self):
         self.tray.show_settings()
@@ -171,22 +110,17 @@ class RuntimeController:
         self.settings_open = False
         self.resources.set_main_settings(False)
         self.check_fullscreen()
-        self.arm_lite()
 
     def show_batch(self):
-        self.set_lite(False)
         self.tray.importer.show()
-        self.arm_lite()
 
     def show_panel(self):
         if not self.dock.cfg['panel_enabled']:
             self.tray.showMessage('桌面面板', '请先在设置中启用桌面收纳面板。', self.tray.icon(), 3000)
             return
         if self.dock.cfg['game_mode']:
-            self.toggle_game(False)
-        self.set_lite(False)
+            self.set_desktop_paused(False)
         self.panels.reveal()
-        self.arm_lite()
 
     def toggle_panels(self):
         if self.panels.shown and self.panels.windows:
@@ -202,27 +136,29 @@ class RuntimeController:
 
     def toggle_dock(self):
         if self.game_active:
-            self.toggle_game(False)
+            self.set_desktop_paused(False)
             self.auto_game = False
             self.apply_visibility()
             self.set_dock_visible(True)
         else: self.set_dock_visible(not self.dock.isVisible())
 
-    def toggle_game(self, enabled):
-        candidate = dict(self.dock.cfg, game_mode=bool(enabled))
-        if self.api.save_config(candidate):
-            self.dock.cfg['game_mode'] = bool(enabled)
-            self.apply_visibility()
+    def set_desktop_paused(self, enabled):
+        from settings_effects import save_changes
+        return save_changes(self.tray, self.api, {'game_mode': bool(enabled)})
+
+    def set_fullscreen_pause(self, enabled):
+        from settings_effects import save_changes
+        return save_changes(self.tray, self.api, {'fullscreen_detection': bool(enabled)})
 
     def configure_fullscreen_timer(self):
-        if self.dock.cfg['fullscreen_detection'] and not self.lite:
-            self.fullscreen_timer.start()
+        if self.dock.cfg['fullscreen_detection']:
+            if not self.fullscreen_timer.isActive():self.fullscreen_timer.start()
         else:
             self.fullscreen_timer.stop()
         self.check_fullscreen()
 
     def check_fullscreen(self):
-        self.auto_game = bool(self.dock.cfg['fullscreen_detection'] and not self.lite and
+        self.auto_game = bool(self.dock.cfg['fullscreen_detection'] and
                               not self.settings_open and foreground_fullscreen())
         self.apply_visibility()
         self.refresh_corners()
@@ -251,9 +187,11 @@ class RuntimeController:
         if self.closed:return
         strip=self.resources.strip
         if strip:strip.placement.shell_changed()
+        capsule=self.resources.window
+        if capsule and capsule.taskbar_placement:capsule.taskbar_placement.shell_changed()
         cfg=self.dock.cfg
         windows=[self.dock if cfg['layer']=='top' else None,
-                 self.resources.window if cfg['resource_layer']=='top' else None,
+                 capsule if cfg['resource_layer']=='top' and capsule and capsule.taskbar_slot() is None else None,
                  self.flash.edge,self.flash.panel,self.flash.toast]
         windows.extend(note for note in self.notes.windows.values() if note.row()['pinned'])
         visible=[w for w in windows if w is not None and w.isWindow() and w.isVisible()]
@@ -282,13 +220,13 @@ class RuntimeController:
             self.sync_daily_picture()
         if placement_changed or changed & (capsule_style|{'card_scale','custom_cards'}):
             self.sync_custom_cards()
-        if policy_changed or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'runtime_lite','taskbar_text_mode','motion_enabled','card_snap','spectrum_enabled','custom_cards'}):
+        if policy_changed or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'taskbar_text_mode','motion_enabled','card_snap','spectrum_enabled','custom_cards'}):
             self.resources.sync()
         if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
             self.flash.sync()
         if changed is None or any(key.startswith('taskbar_') for key in changed):
             self.taskbar.sync()
-        if changed is not None and not set(changed)&{'game_mode','lite_enabled','runtime_lite'}:
+        if changed is not None:
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
             if 'hide_tray' in changed or policy_changed:self.sync_tray_visibility()
             panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
@@ -302,11 +240,10 @@ class RuntimeController:
                 self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=self.dock.cfg['card_scale']
             if changed&{'screen_corners','corner_radius'}:self.refresh_corners()
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
+            elif 'game_mode' in changed:self.apply_visibility()
             if 'startup_priority' in changed:set_priority(self.dock.cfg['startup_priority'])
             if policy_changed:self.click_policy.refresh()
             return
-        if self.lite and not self.dock.cfg['lite_enabled']:
-            self.set_lite(False)
         self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
         self.sync_tray_visibility()
         self.panels.apply_settings()
@@ -320,7 +257,6 @@ class RuntimeController:
         if policy_changed:self.click_policy.refresh()
         self.refresh_corners()
         set_priority(self.dock.cfg['startup_priority'])
-        if not self.settings_open: self.arm_lite()
 
     def sync_tray_visibility(self):
         from component_passthrough import enabled
@@ -438,7 +374,6 @@ class RuntimeController:
         self._session_signals.clear()
         self.notes.close(save=False)
         self.clock.dispose(save_geometry=False);self.calendar.dispose(save_geometry=False)
-        self.lite_timer.stop()
         self.fullscreen_timer.stop()
         if self.foreground_layers:self.foreground_layers.close()
         self.corners.close()

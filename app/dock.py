@@ -793,7 +793,6 @@ class Dock(QWidget):
         self.cfg = cfg
         self.tray = tray
         self.preview = preview
-        self.lite_mode = False
         self.icons = IconProvider()
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool
@@ -1560,7 +1559,7 @@ class Dock(QWidget):
         这个扫描要 6~8 毫秒，放在主线程里每几秒就会让动画卡一下，
         所以丢到后台线程做，扫完用信号把结果传回来。
         """
-        if self.preview or self.lite_mode or not self.isVisible():
+        if self.preview or not self.isVisible():
             return
         if not self.cfg["running_dots"]:
             if self.running:
@@ -1584,7 +1583,7 @@ class Dock(QWidget):
 
     def _apply_running(self, names):
         self._proc_busy = False
-        if self.lite_mode or not self.isVisible():
+        if not self.isVisible():
             return
         if names != self.running:
             self.running = names
@@ -2234,8 +2233,6 @@ class Dock(QWidget):
 
     def refresh_backdrop(self):
         """Sample wallpaper and prepare a smooth native-resolution backdrop."""
-        if self.lite_mode:
-            self.blur_timer.stop()
         if self.preview:
             return
         if not self.cfg["glass"] or self.cfg.get('clear_background', False) or self.cfg.get('dock_material') in ('clear','solid'):
@@ -2303,7 +2300,7 @@ class Dock(QWidget):
             self.update()
             return
         self.refresh_backdrop()
-        if mode == "off" or self.lite_mode:
+        if mode == "off":
             # "停止抓取"：只抓这一次，之后一次都不再抓。
             # Dock 在桌面层，背后永远只有壁纸，所以这一张画面可以一直用下去。
             self.blur_timer.stop()
@@ -2312,7 +2309,7 @@ class Dock(QWidget):
 
     def sync_background_polling(self, refresh=False):
         runtime = getattr(self.tray, 'runtime', None) if self.tray else None
-        enabled = (self.isVisible() and not self.preview and not self.lite_mode
+        enabled = (self.isVisible() and not self.preview
                    and not getattr(runtime, 'game_active', False))
         if enabled:
             if not self.geo_timer.isActive(): self.geo_timer.start(2500)
@@ -2482,7 +2479,6 @@ class DockTray(QSystemTrayIcon):
             budget.prepare_settings()
         if hasattr(self, 'runtime'):
             self.runtime.settings_open = True
-            self.runtime.lite_timer.stop()
         if not hasattr(self, 'settings_dialog'):
             from settings_dialog import SettingsDialog
             # Use this module's globals even when launched as the frozen __main__.

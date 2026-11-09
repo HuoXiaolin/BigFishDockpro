@@ -47,7 +47,6 @@ def run(api,runtime,root,output,checks):
     batch_import.discover_running_apps=lambda cancelled=lambda:False:copy.deepcopy(fixtures)
     importer=BatchImporter(runtime.dock,runtime.tray,api.save_config,api.log)
     try:
-        runtime.set_lite(False)
         cfg['items']=[{'path':paths[1],'name':'演示办公','group':'未分类'}];api.save_config(cfg);runtime.dock.reload()
         importer.show();dialog=importer.dialog;dialog.tabs.setCurrentIndex(3)
         wait_for(app,lambda:dialog.running_worker is None)

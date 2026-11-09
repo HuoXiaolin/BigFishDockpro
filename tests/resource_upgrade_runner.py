@@ -18,7 +18,7 @@ def main():
         api.CONFIG_DIR=root;api.CONFIG_PATH=str(Path(root)/'config.json');api.LOG_PATH=str(Path(root)/'dock.log')
         api.RUN_KEY=r'Software\BigFishDockpro_Test_'+desktop
         try:
-            cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[],hide_tray=True,desktop_auto_sort=False,desktop_icon_mode='both',screen_corners=False,lite_enabled=False)
+            cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[],hide_tray=True,desktop_auto_sort=False,desktop_icon_mode='both',screen_corners=False)
             dock=api.Dock(cfg,preview=True);tray=api.DockTray(dock);dock.tray=tray
             runtime=tray.runtime=RuntimeController(dock,tray,api)
             from window_layer_tests import run as run_window_layers, bluetooth_rings

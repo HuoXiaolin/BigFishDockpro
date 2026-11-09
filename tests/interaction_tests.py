@@ -189,11 +189,9 @@ def run(api, dock, importer, root, output, checks):
         batch.resize(740,580)
     batch.header.close.click()
     assert finished and not batch.isVisible()
-    # Hidden batch data is released in lite mode and rebuilt on the next open.
-    dock.lite_mode=True
+    # Hidden batch data is released by idle maintenance and rebuilt on the next open.
     importer.release_memory()
     assert batch.list.count()==0 and not batch.apps and batch.catalog_released
-    dock.lite_mode=False
     importer.show()
     batch.worker.wait(27000);app.processEvents()
     assert batch.isVisible() and batch.apps and not batch.catalog_released

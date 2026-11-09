@@ -174,6 +174,79 @@ class DesktopPanels(QObject):
         if not self.commit(history_title="移动卡片分组",**changes):return False
         self.sync_windows();return True
 
+    def card_at(self, source, point):
+        return next((window for window in self.windows.values()
+                     if window is not source and window.isVisible() and window.geometry().contains(point)),None)
+
+    def preview_card_drop(self, source=None, point=None):
+        target=self.card_at(source,point) if point is not None else None
+        previous=getattr(self,'drop_preview',None)
+        if target is previous:return
+        self.drop_preview=target
+        if previous is not None and not previous.disposed:previous.update()
+        if target is not None:target.update()
+
+    def join_panel_at(self, identity, target, point):
+        panels=copy.deepcopy(self.cfg['desktop_panels'])
+        if not self.cfg['merged_panels']:
+            for row in panels:row['merged']=False
+        source=next(row for row in panels if row['id']==identity)
+        changes=dict(desktop_panels=panels,merged_panels=True,merge_initialized=True)
+        if self.is_merged(target.identity):
+            group=self.group_id(target.identity)
+            changes.update(self.group_changes(target.identity,collapsed=False))
+        else:
+            if len(self.cfg['merge_groups'])>=64:
+                self.status('最多支持 64 个合并组。')
+                return False
+            group=uuid.uuid4().hex
+            row=next(row for row in panels if row['id']==target.identity)
+            row.update(merged=True,merge_group=group)
+            geometry=list(target.bounds() if target.collapsed else target.geometry().getRect())
+            groups=copy.deepcopy(self.cfg['merge_groups'])
+            groups.append(dict(id=group,name=row['name'],active=target.identity,geometry=geometry,
+                               collapsed=False,compact=row.get('compact',True)))
+            changes.update(merge_groups=groups,display_layout=self.runtime.layout.panel_update(target.identity,geometry,group=group))
+        source.update(merged=True,merge_group=group)
+        panels.remove(source)
+        local=target.tabs.mapFromGlobal(point)
+        index=target.tabs.tabAt(local) if target.tabs.isVisible() else -1
+        if index>=0:
+            anchor=target.tabs.tabData(index)
+            position=next(i for i,row in enumerate(panels) if row['id']==anchor)
+            if local.x()>target.tabs.tabRect(index).center().x():position+=1
+        else:
+            position=max(i for i,row in enumerate(panels) if row.get('merged',True) and row.get('merge_group','default')==group)+1
+        panels.insert(position,source)
+        if not self.commit(history_title='拖入合并卡片',**changes):return False
+        self.sync_windows()
+        if target.isVisible() and target.collapsed:target.set_collapsed_geometry(False)
+        return True
+
+    def drop_independent_at(self, source, point):
+        self.preview_card_drop()
+        if self.is_merged(source.identity):return False
+        target=self.card_at(source,point)
+        if target is None:return False
+        if not self.join_panel_at(source.identity,target,point):
+            source.set_collapsed_geometry(source.collapsed)
+        return True
+
+    def drop_tab_at(self, identity, source, point):
+        target=self.card_at(source,point)
+        if target is not None:
+            return self.join_panel_at(identity,target,point)
+        from card_snap import drop_rect
+        bounds=drop_rect(point,*source.bounds()[2:4])
+        if bounds is None:return False
+        panels=copy.deepcopy(self.cfg['desktop_panels'])
+        row=next(row for row in panels if row['id']==identity)
+        row.update(merged=False,collapsed=False,geometry=bounds)
+        anchor=self.runtime.layout.panel_update(identity,bounds,group=None)
+        if not self.commit(history_title='拖出独立卡片',desktop_panels=panels,display_layout=anchor):return False
+        self.sync_windows()
+        return True
+
     def new_merge_group(self,name=None,identity=None):
         if name is None:
             name,accepted=QInputDialog.getText(None,'新建合并组','合并组名称：')
@@ -230,7 +303,7 @@ class DesktopPanels(QObject):
         record(self.runtime,'panel_switch')
         if current and current.isVisible() and (target is None or not target.isVisible()):
             # The displayed group keeps its native window and wallpaper.
-            current.page_transition.cancel();front=current.page_transition.capture() if not current.collapsed and not self.runtime.lite else None
+            current.page_transition.cancel();front=current.page_transition.capture() if not current.collapsed else None
             order=[model['id'] for model in self.merged_models(identity)]
             direction=1 if order.index(identity)>order.index(current.identity) else -1
             previous_view=current.model.get('view','small')
@@ -529,17 +602,6 @@ class DesktopPanels(QObject):
     def set_blocked(self, blocked):
         self.blocked = blocked
         self.sync_windows()
-
-    def set_lite(self, enabled):
-        self.reconcile_timer.setInterval(60000 if enabled else 15000)
-        for window in self.windows.values():
-            window.face_tracker.sync_face()
-            window.refresh_timer.stop()
-            if enabled:
-                if not window.isVisible():
-                    window.backdrop=None
-            else:
-                if window.isVisible():window.capture_backdrop()
 
     def restore_layout_state(self):
         """Apply a saved layout's fold state without reopening native windows."""

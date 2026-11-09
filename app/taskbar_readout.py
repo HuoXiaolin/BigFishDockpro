@@ -5,7 +5,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter
 from PyQt5.QtWidgets import QWidget,QApplication
 from resource_taskbar import Placement
 from ui_style import AlignedMenu
-from resource_options import SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES,TASKBAR_LAYERS
+from resource_options import FAN_METRICS,SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES,TASKBAR_LAYERS
 from component_passthrough import enabled as passthrough_enabled
 
 
@@ -29,7 +29,7 @@ def columns(service):
                 if key=='cpu_temp' and reading['label']=='系统温区':
                     label='温区'
                 number=reading['value'];value=f'{number:g}'+reading.get('unit',SENSOR_UNITS[key])
-            elif service.cfg['resource_hide_unavailable']:return None
+            elif key in FAN_METRICS or service.cfg['resource_hide_unavailable']:return None
         elif key=='fps':
             if service.fps:
                 number=service.fps.value;tip=service.fps.name

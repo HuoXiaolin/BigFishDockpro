@@ -21,7 +21,7 @@ def run(api,runtime,root,app,output,checks):
     current=[actual]
     try:
         cfg.update(dock_visible=True,panel_enabled=True,panels_visible=True,panel_auto_hide=False,panel_locked=False,desktop_auto_sort=False,game_mode=False,fullscreen_detection=False,
-            card_scale=100,icon_size=42,position='custom',custom_bottom=220,lite_enabled=False,runtime_lite=False,
+        card_scale=100,icon_size=42,position='custom',custom_bottom=220,
             card_sizing={'width':320,'height':260,'font_size':10,'area':[1920,1020],'ui_scale':1.0,'density':1.0,'font_density':1.0,'version':2},
             merged_panels=True,merged_active='apps',merged_collapsed=True,merged_geometry=rect,
             desktop_panels=[{'id':key,'name':name,'merged':True,'enabled':True,'geometry':rect} for key,name in __import__('desktop_catalog').CATEGORIES],

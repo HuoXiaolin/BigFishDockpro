@@ -55,6 +55,9 @@ def normalize(data,api):
         if len(cfg[key])>limit:raise ValueError('配置条目过多：'+key)
     from resource_options import normalize as normalize_resources
     normalize_resources(cfg,strict=True)
+    if cfg['panel_face_role']:
+        from face_roles import clean_role_id
+        clean_role_id(cfg['panel_face_role'],strict=True)
     if cfg['custom_cards']:
         from custom_card_data import normalize_cards
         cfg['custom_cards']=normalize_cards(cfg['custom_cards'],strict=True)

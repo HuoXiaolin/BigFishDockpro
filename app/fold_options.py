@@ -56,16 +56,23 @@ class Badge(QToolButton):
     def mouseMoveEvent(self,event):
         if self.origin is not None and not (self.owner.option('locked') if hasattr(self.owner,'model') else self.owner.row()['locked']):
             if (event.globalPos()-self.start).manhattanLength()>QApplication.startDragDistance():self.moved=True
-            if self.moved:self.owner.move(event.globalPos()-self.origin)
+            if self.moved:
+                self.owner.move(event.globalPos()-self.origin)
+                if hasattr(self.owner,'model'):
+                    if not self.owner.merged_view:self.owner.manager.preview_card_drop(self.owner,event.globalPos())
+                else:self.owner.runtime.resources.preview_component_at('notes',event.globalPos())
     def mouseReleaseEvent(self,event):
         if event.button()==Qt.LeftButton and hasattr(self.owner,'face_tracker'):self.owner.face_tracker.press(False)
         if event.button()==Qt.LeftButton and self.origin is not None:
+            self.mouseMoveEvent(event)
             self.origin=None
             if self.moved:
                 from card_snap import finish_drag
-                finish_drag(self.owner, event.globalPos())
-                if hasattr(self.owner,'model'):self.owner.store_geometry()
-                else:self.owner.save_geometry()
+                if hasattr(self.owner,'model'):
+                    if self.owner.manager.drop_independent_at(self.owner,event.globalPos()):return
+                    finish_drag(self.owner,event.globalPos())
+                    self.owner.store_geometry()
+                elif not finish_drag(self.owner,event.globalPos(),component='notes'):self.owner.save_geometry()
             elif hasattr(self.owner,'model'):self.owner.expand()
             else:self.owner.set_collapsed(False)
         else:super().mouseReleaseEvent(event)

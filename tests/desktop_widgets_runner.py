@@ -729,7 +729,6 @@ def run(output,checks):
             popup_host.close();popup_host.deleteLater();apply_theme(app,True)
             checks.append('Shared dropdown widens to the screen, wraps long labels, skips disabled choices, scrolls and closes by keyboard in light and dark.')
 
-            runtime.set_lite(True,persist=False)
             original_start=service.start_job
             def actual_rank_sampler():
                 with patch.object(dock,'preview',False):original_start()
@@ -762,7 +761,6 @@ def run(output,checks):
             assert receipt['passed'] and receipt['workingSetLimit']==47*2**20 and receipt['processErrorMode']&3==3
             checks.append('Native Bridge child inherits silent error mode, its parent is restored, and Windows reports the enforced 47 MiB total working-set cap.')
 
-            runtime.set_lite(False,persist=False)
             identity=runtime.notes.new()
             paragraphs=('确认图纸','检查现场进度','记录变更事项','补充备件清单')
             note_text='\n'.join(paragraphs)
@@ -817,7 +815,8 @@ def run(output,checks):
             component_card=dict(validate_card(draft),id='componentcard',visible=True,locked=False,layout={})
             assert manager.save([component_card])
             assert service.set_options(resource_enabled=True,resource_collapsed=False,resource_ai=True,
-                resource_music=True,resource_weather=True,resource_auto_hide=False,
+                resource_music=True,resource_weather=True,resource_pomodoro=True,resource_agenda=True,
+                resource_news=True,resource_auto_hide=False,
                 clock_enabled=True,calendar_enabled=True,daily_picture_enabled=True)
             from resource_settings import ResourceOptions
             from resource_options import DESKTOP_COMPONENTS,RESOURCE_PAGES
@@ -872,6 +871,16 @@ def run(output,checks):
             assert all(card.isVisible() and not hasattr(card,'fold_button') for card in service.desktop_cards.values())
             assert service.set_options(resource_enabled=False)
             assert not service.window and all(card.isVisible() for card in service.desktop_cards.values())
+            standalone=service.detached('pomodoro')
+            service.pomodoro.reset()
+            standalone.content.content.toggle.click()
+            assert service.pomodoro.focus()[1]=='running' and service.pomodoro.timer.remainingTime()<=1100
+            assert service.get_agenda().enabled()
+            saved_locations=api.load_config()['resource_component_locations']
+            assert all(saved_locations[key]=='desktop' for key in ('pomodoro','agenda','news'))
+            service.open_component('agenda')
+            assert not service.window
+            service.pomodoro.reset()
             grab(service.detached('resources'),'detached-resources')
             assert service.set_options(resource_component_locations={'notes':'desktop'})
             pump()
@@ -879,7 +888,7 @@ def run(output,checks):
             assert runtime.notes.windows[identity].collapse_button.isHidden()
             assert runtime.clock.isWindow() and runtime.calendar.isWindow() and runtime.daily_picture.isWindow()
             assert manager.windows['componentcard'].isWindow() and api.load_config()['resource_component_order'][:5]==order
-            checks.append('Component location and tab order persist; embedded native views keep their controls, and detached resources survive folding and disabling the capsule.')
+            checks.append('Component location and order persist, including news, agenda and Pomodoro with hydration. Detached agenda and Pomodoro work when the capsule is off.')
 
             from dependency_prompts import DependencyPrompts, NET_INSTALLER
             reminder=DependencyPrompts(runtime)

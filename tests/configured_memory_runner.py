@@ -81,11 +81,10 @@ def main():
                         for key in ('resources','ai','music','traffic','weather','resources'):
                             w.select_page(key);runtime.resources.accept_sample(sampler.sample());pump(.12)
                     was_compact = runtime.resources.compact
-                    was_lite = runtime.lite
                     stage('settings_baseline')
                     started=time.perf_counter();tray.show_settings();pump(.15)
                     settings=tray.settings_dialog
-                    assert runtime.resources.compact and w.liquid.watch.isActive() and runtime.lite == was_lite
+                    assert runtime.resources.compact and w.liquid.watch.isActive()
                     sampler.configure(runtime.resources.active_keys())
                     runtime.resources.accept_sample(sampler.sample())
                     result['settings_open_ms_including_150ms_pump']=round((time.perf_counter()-started)*1000,2)
@@ -105,7 +104,7 @@ def main():
                     assert settings.fields['card_snap_distance'].value() == wanted_distance
                     assert cfg['card_snap_distance'] == saved_distance
                     settings.reject();pump()
-                    assert runtime.resources.compact == was_compact and w.liquid.watch.isActive() and runtime.lite == was_lite
+                    assert runtime.resources.compact == was_compact and w.liquid.watch.isActive()
                     runtime.memory_budget.reclaim();stage('settings_closed')
                     runtime.resources.settings_depth += 1
                     runtime.resources.settings_focus_changed()

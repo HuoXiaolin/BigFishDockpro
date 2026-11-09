@@ -1,4 +1,4 @@
-// Optional metrics. Unknown or unlabelled fans/temperatures are never guessed.
+// Optional metrics from Windows and the running hardware monitor providers.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -17,7 +17,7 @@ internal static class HardwareExtended {
         using(var rows=search.Get())foreach(ManagementObject row in rows)using(row)action(row);
     }
     public static void Collect(HashSet<string> wanted,Action<string,double,string,string> put) {
-        var supported=new HashSet<string>(new[]{"cpu_frequency","cpu_voltage","cpu_fan","cpu_pump","gpu_frequency","gpu_fan","gpu_memory","disk_temp","board_temp","case_temp"});
+        var supported=new HashSet<string>(new[]{"cpu_frequency","cpu_voltage","cpu_fan","cpu_pump","gpu_frequency","gpu_fan","gpu_memory","disk_temp","board_temp","case_temp","board_fan"});
         wanted=new HashSet<string>(wanted.Where(supported.Contains));
         if(wanted.Count==0)return;
         if(wanted.Contains("cpu_frequency"))try {
@@ -45,9 +45,15 @@ internal static class HardwareExtended {
                 if(row["Temperature"]!=null){double v=Convert.ToDouble(row["Temperature"]);if(v>0 && v<150)put("disk_temp",v,"Windows 存储可靠性 · 磁盘 "+row["DeviceId"],"磁盘温度");}
             });
         }catch(Exception){}
-        if(!wanted.Any(k=>k.EndsWith("_fan") || k.EndsWith("_pump") || k.EndsWith("_frequency") || k.EndsWith("_voltage") || k.EndsWith("_temp") || k=="gpu_memory"))return;
+        var types = new List<string>();
+        if (wanted.Any(key => HardwareFans.Labels.ContainsKey(key))) types.Add("SensorType='Fan'");
+        if (wanted.Contains("cpu_frequency") || wanted.Contains("gpu_frequency")) types.Add("SensorType='Clock'");
+        if (wanted.Contains("cpu_voltage")) types.Add("SensorType='Voltage'");
+        if (wanted.Contains("gpu_memory")) types.Add("SensorType='Load'");
+        if (wanted.Any(key => key.EndsWith("_temp"))) types.Add("SensorType='Temperature'");
+        string sensorQuery = "SELECT Identifier,Name,SensorType,Value FROM Sensor WHERE " + String.Join(" OR ", types);
         foreach(string provider in new[]{"LibreHardwareMonitor","OpenHardwareMonitor"})try {
-            Query(@"root\"+provider,"SELECT Identifier,Name,SensorType,Value FROM Sensor",row=>{
+            Query(@"root\"+provider,sensorQuery,row=>{
                 if(row["Value"]==null)return;
                 var id=Convert.ToString(row["Identifier"]).ToLowerInvariant();var name=Convert.ToString(row["Name"]);var label=name.ToLowerInvariant();var type=Convert.ToString(row["SensorType"]);
                 double value=Convert.ToDouble(row["Value"],CultureInfo.InvariantCulture);string key=null,title=null;
@@ -55,9 +61,8 @@ internal static class HardwareExtended {
                 if(type=="Clock" && (label.Contains("core") || label=="gpu")) {if(cpu){key="cpu_frequency";title="CPU 频率";}else if(gpu){key="gpu_frequency";title="GPU 频率";}}
                 if(type=="Voltage" && (cpu || label.Contains("cpu") || label.Contains("vcore"))){key="cpu_voltage";title="CPU 电压";}
                 if(type=="Fan") {
-                    if(label.Contains("pump") || label.Contains("aio")){key="cpu_pump";title="CPU 水泵";}
-                    else if(cpu || label.Contains("cpu")){key="cpu_fan";title="CPU 风扇";}
-                    else if(gpu){key="gpu_fan";title="GPU 风扇";}
+                    key=HardwareFans.MonitorMetric(id,name);
+                    if(key!=null)title=HardwareFans.Labels[key];
                 }
                 if(type=="Load" && gpu && (label.Contains("memory") || label.Contains("vram"))){key="gpu_memory";title="显存占用";}
                 if(type=="Temperature") {

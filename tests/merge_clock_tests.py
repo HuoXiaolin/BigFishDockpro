@@ -2,8 +2,40 @@
 import copy,datetime
 from pathlib import Path
 from unittest.mock import patch
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QPoint,Qt
 from PyQt5.QtWidgets import QApplication,QMessageBox
+
+
+def collection_drag_checks(api, manager, app, checks):
+    from ui_test_events import Events
+
+    cfg=manager.cfg;original=copy.deepcopy(cfg)
+    try:
+        source=manager.windows['a'];target=manager.windows['b'];handle=QPoint(42,14)
+        join=target.mapToGlobal(QPoint(24,65))
+        Events.drag(source,handle,join-source.mapToGlobal(handle));app.processEvents()
+        group=manager.group_id('b')
+        assert manager.is_merged('a') and manager.group_id('a')==group
+        assert not manager.is_merged('c') and not manager.is_merged('d')
+        tabs=target.tabs
+        assert tabs.isVisible() and [tabs.tabData(i) for i in range(tabs.count())]==['b','a']
+        point=tabs.tabRect(1).center()
+        Events.drag(tabs,point,tabs.tabRect(0).topLeft()+QPoint(3,point.y())-point);app.processEvents()
+        target=manager.windows[manager.active_for('a')];tabs=target.tabs
+        assert [tabs.tabData(i) for i in range(tabs.count())]==['a','b']
+        point=tabs.tabRect(0).center()
+        drop=target.screen().availableGeometry().bottomRight()-QPoint(100,100)
+        Events.drag(tabs,point,drop-tabs.mapToGlobal(point));app.processEvents()
+        source=manager.windows['a'];target=manager.windows['b']
+        assert not manager.is_merged('a') and source.isVisible() and source.geometry().contains(drop)
+        assert target.isVisible() and manager.group_id('b')==group
+        Events.drag(source,handle,target.geometry().center()-source.mapToGlobal(handle));app.processEvents()
+        assert manager.is_merged('a') and manager.group_id('a')==group
+        assert api.load_config()['desktop_panels']==cfg['desktop_panels']
+        checks.append('Collection card pointer gestures create a group from two cards, reorder native tabs, detach a tab and return it. Other collection cards remain independent.')
+    finally:
+        cfg.clear();cfg.update(original);api.save_config(cfg)
+        manager.apply_settings();manager.reposition();app.processEvents()
 
 
 def run(api,runtime,root,output,checks):
@@ -26,6 +58,7 @@ def run(api,runtime,root,output,checks):
         assert len(cfg['merge_groups'])==1 and all(row['merge_group']=='default' for row in cfg['desktop_panels'])
         manager=runtime.panels=DesktopPanels(runtime,roots=[]);manager.apply_settings();app.processEvents()
         assert len([w for w in manager.windows.values() if w.isVisible()])==4
+        collection_drag_checks(api,manager,app,checks)
         assert manager.set_merged('a',True);app.processEvents()
         assert len([w for w in manager.windows.values() if w.isVisible()])==1
         assert manager.windows['a'].tabs.count()==4 and cfg['merge_initialized']

@@ -1,4 +1,4 @@
-"""Shared face settings, native card input and lite-mode gaze regression."""
+"""Shared face settings, native card input and distant cursor tracking."""
 import copy,time
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QPoint,QPointF,QEvent
@@ -7,12 +7,12 @@ from PyQt5.QtGui import QCursor,QMouseEvent
 
 def run(api,runtime,app,output,checks):
     from glass_panel import PanelOptions
-    cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);was_lite=runtime.lite;dialog=None
+    cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);dialog=None
     try:
         cfg.update(panel_enabled=True,panels_visible=True,panel_auto_hide=False,panel_face=True,
                    panel_face_interactive=True,panel_face_mood='default',panel_expand_mode='click',motion_enabled=True)
         runtime.panels.apply_settings();panel=next(w for w in runtime.panels.windows.values() if w.isVisible())
-        runtime.lite=True;tracker=panel.face_tracker
+        tracker=panel.face_tracker
         for shape,collapsed in [('bar',False),('capsule',True),('ball',True)]:
             assert runtime.panels.update_panel(panel.identity,fold={'style':shape,'ratio':70})
             panel.set_collapsed_geometry(collapsed);panel.expand_timer.stop();app.processEvents();panel.grab()
@@ -54,7 +54,7 @@ def run(api,runtime,app,output,checks):
         panel.hide();assert not tracker.watch.isActive() and not tracker.frames.isActive()
         panel.show();assert tracker.watch.isActive()
         cfg['motion_enabled']=False;runtime.apply_settings({'motion_enabled'});assert not tracker.watch.isActive()
-        checks.append('Desktop faces follow distant cursor positions in expanded/capsule/ball lite mode, keep click/hover controls and moods, and stop tracking when hidden or motion is disabled.')
+        checks.append('Desktop faces follow distant cursor positions in expanded/capsule/ball layouts, keep click/hover controls and moods, and stop tracking when hidden or motion is disabled.')
     finally:
         if dialog:dialog.reject()
-        runtime.lite=was_lite;cfg.clear();cfg.update(before);runtime.apply_settings();api.save_config(cfg)
+        cfg.clear();cfg.update(before);runtime.apply_settings();api.save_config(cfg)

@@ -44,7 +44,7 @@ def main():
         from runtime_controller import RuntimeController
         with tempfile.TemporaryDirectory(prefix='bigfish-memory-') as root:
             api.CONFIG_DIR=root;api.CONFIG_PATH=str(Path(root)/'config.json');api.LOG_PATH=str(Path(root)/'dock.log');api.RUN_KEY='Software\\BigFishDockpro_Test_'+desktop
-            cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[],hide_tray=True,screen_corners=False,desktop_auto_sort=False,desktop_icon_mode='both',panel_enabled=False,lite_enabled=False,resource_ai=False,resource_music=False)
+            cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[],hide_tray=True,screen_corners=False,desktop_auto_sort=False,desktop_icon_mode='both',panel_enabled=False,resource_ai=False,resource_music=False)
             dock=api.Dock(cfg,preview=True);tray=api.DockTray(dock);dock.tray=tray;runtime=tray.runtime=RuntimeController(dock,tray,api)
             pump(.7);result['main_idle']=measure(os.getpid())
             cfg.update(resource_enabled=True,resource_collapsed=True,resource_auto_hide=False);runtime.resources.sync();pump(.5)

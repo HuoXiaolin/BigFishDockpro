@@ -30,7 +30,7 @@ def run(output):
         api.CONFIG_DIR=root.name;api.CONFIG_PATH=str(Path(root.name)/'config.json');api.LOG_PATH=str(Path(root.name)/'dock.log')
         api.RUN_KEY=r'Software\BigFishDockpro_Test_'+desktop
         cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG))
-        cfg.update(items=[],card_scale=100,settings_size='small',glass=False,running_dots=False,lite_enabled=False,hide_tray=True,
+        cfg.update(items=[],card_scale=100,settings_size='small',glass=False,running_dots=False,hide_tray=True,
                    theme='light',panel_theme='light',panel_enabled=True,panels_visible=True,desktop_auto_sort=False,
                    desktop_icon_mode='both',panel_auto_hide=False,panel_locked=False,screen_corners=False,check_updates_on_start=False,
                    merged_panels=True,merged_active='apps',merged_geometry=[70,90,640,330],merged_compact=False,
@@ -95,7 +95,8 @@ def run(output):
         from desktop_clock import draw_clock
         from PyQt5.QtCore import QRectF
         from PyQt5.QtGui import QImage,QPixmap,QPainter,QColor
-        optical=dict(cfg['clock_appearance'],material='clear',opacity=0,highlight=0,show_date=False,text_effect='glass',text_color='#ffffff')
+        optical=dict(cfg['clock_appearance'],material='clear',opacity=0,highlight=0,show_date=False,text_effect='glass',
+                     text_color='#ffffff',_now=datetime.datetime(2026,11,10,13,14,15))
         red=QPixmap(260,170);red.fill(QColor('#cc3355'));blue=QPixmap(260,170);blue.fill(QColor('#3377cc'))
         def render_clock(backdrop,effect):
             image=QImage(260,170,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
@@ -224,6 +225,7 @@ def run(output):
         assert not current.tabs.property('pointerDown')
         checks.append('category bar: seven colored vector icons in both themes, real Qt mouse press/release changes page; movable-tab signal persists ordering; selected/pressed state resets; light/dark runtime screenshots')
         assert runtime.panels.update_panel('documents',merged=False)
+        runtime.panels.sync_windows()
         independent=runtime.panels.windows['documents'];independent.resize(430,295);independent.store_geometry();app.processEvents()
         first_size=independent.size();shared_size=list(cfg['merged_geometry'][2:])
         identity=runtime.notes.new();assert identity
@@ -345,7 +347,10 @@ def run(output):
         tray.rebuild()
         for menu in (tray.menu,dock.icon_context_menu(-1)):
             titles={action.text() for action in menu.actions()}
-            assert {'应用批量管理…','Dock 布局','桌面卡片','便签','运行模式','设置…','帮助与更新'}<=titles
+            assert {'应用批量管理…','Dock 布局','桌面卡片','便签','组件暂停','设置…','帮助与更新'}<=titles
+            pause_menu = next(action.menu() for action in menu.actions() if action.text() == '组件暂停')
+            assert [action.text() for action in pause_menu.actions()] == ['暂停桌面组件', '全屏自动暂停']
+            assert all(action.isCheckable() for action in pause_menu.actions())
         tray.add_separator();assert sum(bool(item.get('sep')) for item in cfg['items'])==1
         snapshot=copy.deepcopy(cfg['items']);tray.add_separator()
         with patch.object(tray,'showMessage'):
@@ -402,8 +407,8 @@ def run(output):
         from launch_mapping_tests import run as run_launch_mapping
         run_launch_mapping(api,runtime,root.name,output,checks)
         run_hidden_resources(api,runtime,root.name,output,checks)
-        from lite_visual_tests import run as run_lite_visual
-        run_lite_visual(api,runtime,output,checks)
+        from idle_reclaim_tests import run as run_idle_reclaim
+        run_idle_reclaim(api,runtime,output,checks)
         import reliability_state_tests
         import resource_refresh_tests
         import interaction_reliability_tests
@@ -428,6 +433,12 @@ def run(output):
         from window_layer_tests import run as run_window_layers, bluetooth_rings
         run_window_layers(api,runtime,app,output,checks)
         bluetooth_rings(checks)
+        from face_role_tests import run as check_face_roles
+        check_face_roles(api,runtime,app,output,checks)
+        from resource_pomodoro_tests import run as check_pomodoro
+        check_pomodoro(api,runtime,app,output,checks)
+        from resource_calendar_tests import run as check_calendar_sync
+        check_calendar_sync(app,output,checks)
         from shutdown_tests import run as check_shutdown
         check_shutdown(api,runtime,root.name,app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.
@@ -437,7 +448,7 @@ def run(output):
         shutdown_started=time.perf_counter();runtime.session_ending=True;runtime.close();runtime=None
         shutdown_ms=round((time.perf_counter()-shutdown_started)*1000,2)
         checks.append('simulated session-end controller cleanup persists configuration and closes owned windows/timers in %.2f ms; no OS shutdown performed'%shutdown_ms)
-        result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events are simulated on a private desktop; tab reordering uses moveTab and its real persistence signal','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}
+        result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events and taskbar free space are simulated on a private desktop','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}
     except Exception:result={'passed':False,'scope':'current-ui-runtime','checks':checks,'error':traceback.format_exc()}
     finally:
         if runtime:

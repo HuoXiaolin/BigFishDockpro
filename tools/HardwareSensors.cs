@@ -90,10 +90,50 @@ internal static class HardwareSensors {
         } finally {nvmlShutdown();}
     }
 
-    static void Query(string scope,string query,Action<ManagementObject> read) {
+    internal static void Query(string scope,string query,Action<ManagementObject> read) {
         var options=new EnumerationOptions { ReturnImmediately=true,Rewindable=false,Timeout=TimeSpan.FromSeconds(2) };
         using(var search=new ManagementObjectSearcher(new ManagementScope(scope),new ObjectQuery(query),options))
         using(var list=search.Get()) foreach(ManagementObject row in list) using(row) read(row);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ScreenPoint { public int x,y; }
+    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+    struct PhysicalMonitor {
+        public IntPtr handle;
+        [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]
+        public string description;
+    }
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(ScreenPoint point,uint flags);
+    [DllImport("dxva2.dll")] static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr monitor,out uint count);
+    [DllImport("dxva2.dll")] static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr monitor,uint count,[Out] PhysicalMonitor[] devices);
+    [DllImport("dxva2.dll")] static extern bool DestroyPhysicalMonitors(uint count,[In] PhysicalMonitor[] devices);
+    [DllImport("dxva2.dll")] static extern bool GetMonitorCapabilities(IntPtr monitor,out uint caps,out uint temperatures);
+    [DllImport("dxva2.dll")] static extern bool GetMonitorBrightness(IntPtr monitor,out uint min,out uint value,out uint max);
+
+    static void Brightness(Dictionary<string,Value> data) {
+        try {
+            Query(@"root\wmi","SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE",row=>{
+                if (row["CurrentBrightness"] is byte && (byte)row["CurrentBrightness"]<=100)
+                    Put(data,"brightness",(byte)row["CurrentBrightness"],"Windows WMI · 内置屏幕","亮度");
+            });
+        } catch(ManagementException) {} catch(UnauthorizedAccessException) {} catch(COMException) {}
+        if (data.ContainsKey("brightness")) return;
+        var primary=MonitorFromPoint(new ScreenPoint(),1);
+        uint count;
+        if (primary==IntPtr.Zero || !GetNumberOfPhysicalMonitorsFromHMONITOR(primary,out count) || count<1 || count>16) return;
+        var devices=new PhysicalMonitor[count];
+        if (!GetPhysicalMonitorsFromHMONITOR(primary,count,devices)) return;
+        try {
+            foreach(var device in devices) {
+                uint caps,temperatures,min,value,max;
+                if (GetMonitorCapabilities(device.handle,out caps,out temperatures) && (caps&2)!=0 &&
+                    GetMonitorBrightness(device.handle,out min,out value,out max) && max>min && value>=min && value<=max) {
+                    Put(data,"brightness",Math.Round(100.0*(value-min)/(max-min)),"主显示器 · DDC/CI","亮度");
+                    break;
+                }
+            }
+        } finally { DestroyPhysicalMonitors(count,devices); }
     }
 
     public static object Read(string options) {
@@ -135,6 +175,8 @@ internal static class HardwareSensors {
                 if(row["CurrentTemperature"]!=null)Put(data,"cpu_temp",Convert.ToDouble(row["CurrentTemperature"])/10.0-273.15,"ACPI 热区 · CPU 封装温度未提供","系统温区");
             });}catch(Exception){}
         try{HardwareExtended.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));}catch(Exception){}
+        HardwareFans.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));
+        if(wanted.Contains("brightness"))try{Brightness(data);}catch(Exception){}
         return data;
     }
 }

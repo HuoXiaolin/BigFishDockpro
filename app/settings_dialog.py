@@ -4,79 +4,42 @@ import os
 import copy
 from contextlib import contextmanager
 from weakref import proxy
-from PyQt5.QtCore import Qt, QSize, QRectF, QEvent
-from PyQt5.QtGui import QPalette, QColor, QIcon, QPixmap, QPainter
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QSpinBox, QCheckBox, QComboBox, QScrollArea, QApplication, QLineEdit, QColorDialog,
-    QListWidget, QStackedWidget, QSizePolicy, QFileDialog)
+    QStackedWidget, QSizePolicy, QFileDialog)
 from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
+from settings_design import SettingsNavigation
 
 
 class SettingsPages(QWidget):
-    NAV_SYMBOLS = ('palette', 'panels', 'apps', 'lite', 'update', 'size', 'info')
+    NAV_SYMBOLS = ('palette', 'panels', 'apps', 'startup', 'update', 'size', 'info')
     def __init__(self):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        self.nav = QListWidget()
-        self.nav.setObjectName('SettingsNav')
-        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav.setFixedWidth(132)
+        self.nav = SettingsNavigation()
         self.pages = QStackedWidget()
         layout.addWidget(self.nav)
         layout.addWidget(self.pages, 1)
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
 
     def addTab(self, page, name):
-        self.pages.addWidget(page)
-        self.nav.addItem(name)
-        self.refresh_icons()
+        index = self.pages.addWidget(page)
+        self.nav.add_page(name,self.NAV_SYMBOLS[index])
         if self.nav.currentRow() < 0: self.nav.setCurrentRow(0)
-
-    def refresh_icons(self):
-        from dock_extras import symbol
-        from PyQt5.QtGui import QPen
-        light = self.palette().color(QPalette.Window).lightness() > 128
-        color = QColor('#526b7a' if light else '#bcc9d1')
-        for index in range(self.nav.count()):
-            pixmap = QPixmap(40, 40)
-            pixmap.setDevicePixelRatio(2)
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing)
-            kind = self.NAV_SYMBOLS[index]
-            if kind in ('update', 'info'):
-                painter.setPen(QPen(color, 1.3, Qt.SolidLine, Qt.RoundCap))
-                if kind == 'info':
-                    painter.drawEllipse(QRectF(3, 3, 14, 14))
-                    painter.drawLine(10, 9, 10, 14)
-                    painter.drawPoint(10, 6)
-                else:
-                    painter.drawArc(3, 3, 14, 14, 35*16, 285*16)
-                    painter.drawLine(16, 3, 16, 7)
-                    painter.drawLine(12, 7, 16, 7)
-            else:
-                symbol(painter, QRectF(0, 0, 20, 20), kind, color)
-            painter.end()
-            self.nav.item(index).setIcon(QIcon(pixmap))
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-        if event.type() == QEvent.PaletteChange and hasattr(self, 'nav'):
-            self.refresh_icons()
 
     def count(self): return self.pages.count()
     def currentIndex(self): return self.nav.currentRow()
     def setCurrentIndex(self, index): self.nav.setCurrentRow(index)
 
     def resizeEvent(self, event):
-        factor=float(self.window().property('interfaceScale') or .7)
-        self.nav.setFixedWidth(max(94,round(132*factor)))
-        self.nav.setIconSize(QSize(round(16*factor), round(16*factor)))
+        self.nav.fit_density()
         super().resizeEvent(event)
 
 
@@ -124,7 +87,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
-        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','lite_enabled')
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection')
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = SettingsFields(self)
         self.import_candidate=None;self.import_path=None
@@ -306,6 +269,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             try:
                 if key in ('dock_material', 'panel_material'):
                     select_material(field, value)
+                elif key == 'panel_face_role':
+                    field.select(value)
                 elif isinstance(field, QComboBox):
                     field.setCurrentIndex(max(0, field.findData(value)))
                 elif isinstance(field, QSpinBox):
@@ -378,7 +343,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(layout, 'lang')
         section_marker(layout,'屏幕圆角')
         self.add_field(layout, 'screen_corners')
-        self.fields['screen_corners'].setToolTip('仅在游戏模式隐藏，圆角区域允许鼠标穿透。')
+        self.fields['screen_corners'].setToolTip('手动暂停桌面组件时隐藏，圆角区域允许鼠标穿透。')
         self.add_field(layout, 'corner_radius')
 
         section_marker(appearance, 'Windows 任务栏')
@@ -463,6 +428,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'panel_face_interactive')
         self.add_field(panel, 'panel_face_mood')
         self.add_field(panel, 'panel_face_scale')
+        self.add_field(panel, 'panel_face_role')
         self.add_field(panel, 'panel_collapse_style')
         self.add_field(panel, 'panel_capsule_ratio')
         self.add_field(panel, 'desktop_icon_mode')
@@ -536,8 +502,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         tray, api = self.tray, self.api
         from settings_design import section_marker
         section_marker(running,'后台运行')
-        self.add_field(running, 'lite_enabled')
-        running.addRow(label('保留全部组件外观，减少后台轮询并释放闲置资源；打开设置恢复完整模式。', 'muted'))
+        running.addRow(label('空闲时自动释放隐藏的收纳窗口、资源页和可重建缓存。', 'muted'))
         self.add_field(running, 'hide_tray')
         section_marker(running,'开机启动')
         self.add_field(running, 'autostart')
@@ -563,10 +528,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(running, 'startup_priority')
         self.add_field(running, 'startup_delay')
         running.addRow(label('启用后在登录时尽早启动。设为 0 秒可免除程序等待；进程优先级作用于运行期间。', 'muted'))
-        section_marker(running,'游戏与全屏')
+        section_marker(running,'组件暂停')
         self.add_field(running, 'game_mode')
         self.add_field(running, 'fullscreen_detection')
-        running.addRow(label('手动游戏模式隐藏 Dock、卡片和圆角。自动全屏隐藏保留已置顶的任务栏监控，精简模式下暂停。', 'muted'))
+        running.addRow(label('手动暂停会隐藏 Dock、卡片、胶囊、任务栏监控和圆角。全屏自动暂停独立启用，保留已置顶的任务栏监控，退出全屏后恢复。', 'muted'))
 
     def build_updates(self, updates):
         tray, api = self.tray, self.api
@@ -723,6 +688,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         container.addWidget(ThemeSwatches(field))
         form.addRow(self.field_label(title), container)
 
+    def face_role(self, form, key, title):
+        from face_role_controls import add_role_controls
+        self.fields[key] = add_role_controls(self, form, self.tray.runtime, self.status, self._draft[key])
+
     def panel_material_changed(self):
         if getattr(self,'_profile_loading',False) or self.applying_dock_preset:return
         from appearance_presets import material_design
@@ -835,8 +804,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         except (OSError,ValueError,TypeError,RecursionError) as error:
             self.api.log('导入配置失败: '+str(error))
             self.status.setText('导入失败，当前配置未更改：'+str(error)[:80]);return False
-        # Runtime-only wake/collapse snapshots belong to this live settings session.
-        for key in ('runtime_lite','lite_restore'):cfg[key]=copy.deepcopy(self.tray.cfg[key])
         self.default_candidate = None
         self.fill_fields(cfg);self.import_candidate=cfg;self.import_path=path
         self.set_transfer_message('已载入 %d 个 Dock 入口、%d 个卡片、%d 张便签。保存后替换当前配置，关闭则放弃；文件仅保存路径引用，便签包含正文。'%(len(cfg['items']),len(cfg['desktop_panels']),len(cfg['sticky_notes'])))

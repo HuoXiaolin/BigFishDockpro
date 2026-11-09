@@ -4,3 +4,4 @@ PyQt5-sip==12.20.0
 pyinstaller==6.16.0
 pyinstaller-hooks-contrib==2026.9
 lunardate==0.3.0
+segno==1.6.6

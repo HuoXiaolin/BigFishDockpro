@@ -6,6 +6,8 @@ import re
 import time
 
 U64=C.c_ulonglong
+NET_KEYS=frozenset(('network','traffic','system_status','connection'))
+DEVICE_KEYS=frozenset(('system_status','battery','connection','volume'))
 
 
 class MemoryStatus(C.Structure):
@@ -125,11 +127,16 @@ def network_rates(previous,current,elapsed):
     return tuple(sum(end[i]-start[i] for start,end in pairs)/elapsed for i in (0,1))
 
 
+def link_speed(row):
+    return max((v for v in (row.rx_speed,row.tx_speed) if 0<v<2**63),default=0)
+
+
 class Sampler:
     def __init__(self,metrics,traffic_path=None):
         self.metrics=frozenset();self.last_cpu=None;self.last_net=None;self.net_time=0
         self.traffic_path=traffic_path;self.traffic=None
         self.kernel=C.WinDLL('kernel32');self.ip=None;self.ranking=None;self.pdh=None
+        self.device_status=None;self.adapter=None
         self.configure(metrics)
 
     def configure(self,metrics):
@@ -143,11 +150,15 @@ class Sampler:
         if 'cpu' in added:self.kernel.GetSystemTimes.argtypes=[C.POINTER(W.FILETIME)]*3
         if 'cpu' not in metrics:self.last_cpu=None
         if 'memory' in added:self.kernel.GlobalMemoryStatusEx.argtypes=[C.POINTER(MemoryStatus)]
-        if metrics & {'network','traffic'} and not self.ip:
+        if metrics & NET_KEYS and not self.ip:
             self.ip=C.WinDLL('iphlpapi')
             self.ip.GetIfTable2.argtypes=[C.POINTER(C.POINTER(IfTable))]
             self.ip.FreeMibTable.argtypes=[C.c_void_p];self.ip.FreeMibTable.restype=None
-        if not metrics & {'network','traffic'}:self.ip=self.last_net=None;self.net_time=0
+        if not metrics & NET_KEYS:self.ip=self.last_net=None;self.net_time=0
+        if metrics & DEVICE_KEYS and self.device_status is None:
+            from device_status import DeviceStatus
+            self.device_status=DeviceStatus(self.kernel)
+        elif not metrics & DEVICE_KEYS:self.device_status=None
         if 'traffic' in added:
             from resource_traffic import TrafficLedger
             if self.traffic is None:self.traffic=TrafficLedger(self.traffic_path)
@@ -174,6 +185,7 @@ class Sampler:
         return ((record.total-record.available)*100./record.total,record.total-record.available,record.total)
 
     def network(self,now):
+        self.adapter=None
         table=C.POINTER(IfTable)()
         if self.ip.GetIfTable2(C.byref(table)) or not table:
             self.last_net=None
@@ -186,6 +198,13 @@ class Sampler:
             eligible=[r for r in rows if r.oper==1 and r.type not in (24,131)]
             rows_to_count=[r for r in eligible if r.flags&1] or eligible
             readings={r.luid:(r.received,r.sent) for r in rows_to_count}
+            if 'system_status' in self.metrics or 'connection' in self.metrics:
+                def adapter_priority(row):
+                    previous=(self.last_net or {}).get(row.luid)
+                    activity=max(0,row.received-previous[0])+max(0,row.sent-previous[1]) if previous else 0
+                    return (-activity,-link_speed(row),row.index)
+                primary=min(rows_to_count,key=adapter_priority,default=None)
+                self.adapter=(bytes(primary.guid),primary.alias or primary.description) if primary else (None,'')
         finally:self.ip.FreeMibTable(table)
         result=network_rates(self.last_net,readings,now-self.net_time)
         self.last_net,self.net_time=readings,now
@@ -196,10 +215,21 @@ class Sampler:
         now=time.monotonic();data={'time':now}
         if 'cpu' in self.metrics:data['cpu']=self.cpu()
         if 'memory' in self.metrics:data['memory']=self.memory()
-        if self.metrics & {'network','traffic'}:
+        if self.metrics & NET_KEYS:
             rates=self.network(now)
             if 'network' in self.metrics:data['network']=rates
             if 'traffic' in self.metrics:data['traffic']=self.traffic.snapshot()
+        if self.device_status:
+            full='system_status' in self.metrics
+            status={}
+            if full or 'battery' in self.metrics:
+                status['battery']=self.device_status.battery()
+            if full or 'volume' in self.metrics:
+                status['volume']=self.device_status.volume()
+            if full or 'connection' in self.metrics:
+                status['connection']=self.device_status.connection_name(*self.adapter,now) if self.adapter is not None else None
+            if full:data['system_status']=status
+            data.update((key,value) for key,value in status.items() if key in self.metrics)
         ready=self.pdh and self.pdh.collect()
         if 'cpu_cores' in self.metrics:
             instances=self.pdh.read('cores') if ready else {}

@@ -143,14 +143,14 @@ def run(api, dock, tray, root, output, checks):
     checks.append('screen corners: desktop and ordinary fullscreen both visible, no extra polling, stable click-through masks and alpha geometry')
     runtime.set_dock_visible(True)
     runtime.panels.reveal()
-    runtime.toggle_game(True)
+    runtime.set_desktop_paused(True)
     assert not dock.isVisible() and not panel.isVisible() and not runtime.corners.widgets
     assert not runtime.corners.hooks and not runtime.corners.raise_timer.isActive()
-    runtime.toggle_game(False)
+    runtime.set_desktop_paused(False)
     assert dock.isVisible() and panel.isVisible()
     runtime.set_dock_visible(False)
-    runtime.toggle_game(True)
-    runtime.toggle_game(False)
+    runtime.set_desktop_paused(True)
+    runtime.set_desktop_paused(False)
     assert not dock.isVisible()
     runtime.set_dock_visible(True)
     assert covers_monitor((0,0,1920,1080),(0,0,1920,1080))
@@ -174,20 +174,15 @@ def run(api, dock, tray, root, output, checks):
         runtime.check_fullscreen()
         assert runtime.game_active and not runtime.corners.widgets
         cfg['screen_corners'] = True
-        runtime.set_lite(True)
-        runtime.check_fullscreen()
-        assert runtime.corners.widgets and not runtime.fullscreen_timer.isActive()
-        runtime.toggle_game(True)
-        assert not runtime.corners.widgets
-        runtime.toggle_game(False)
-        assert runtime.corners.widgets
-        runtime.set_lite(False)
-        assert runtime.corners.widgets and runtime.fullscreen_timer.isActive()
-        runtime_controller.foreground_fullscreen = lambda: False
-        runtime.check_fullscreen()
+        assert runtime.set_desktop_paused(True)
+        assert not runtime.corners.widgets and runtime.fullscreen_timer.isActive()
+        assert runtime.set_fullscreen_pause(False)
+        assert runtime.game_active and not runtime.corners.widgets and not runtime.fullscreen_timer.isActive()
+        assert runtime.set_desktop_paused(False)
+        assert not runtime.game_active and runtime.corners.widgets and dock.isVisible()
     finally:
         runtime_controller.foreground_fullscreen = original_detector
-    checks.append('game mode: preserve hidden/visible states, automatic transition, maximized work area excluded')
+    checks.append('desktop pause: preserve visibility intent, manual pause remains when automatic fullscreen is switched off, maximized work area excluded')
     # Real window geometry/style APIs on this isolated desktop; only the foreground
     # selector is injected because the test desktop must never receive user input.
     import ctypes
@@ -214,38 +209,11 @@ def run(api, dock, tray, root, output, checks):
         user.GetForegroundWindow = original_foreground
         probe.close()
     checks.append('native fullscreen detector: real normal/maximized/fullscreen/restore window geometry on isolated desktop')
-    cfg['lite_enabled'] = True
-    runtime.settings_open = True
-    runtime.arm_lite()
-    assert not runtime.lite_timer.isActive()
-    runtime.settings_closed()
-    assert runtime.lite_timer.isActive() and runtime.lite_timer.interval() == 60000
-    # Exercise the real Qt timeout chain with a short test-only interval.
-    for timer in (dock.blur_timer, dock.proc_timer, dock.geo_timer):
-        timer.start(8000)
-    before_lite={key:(w.collapsed,w.list.count()) for key,w in runtime.panels.windows.items()}
-    before_running=set(dock.running)
-    runtime.lite_timer.start(20)
-    loop = QEventLoop()
-    QTimer.singleShot(70, loop.quit)
-    loop.exec_()
-    assert runtime.lite and dock.lite_mode
-    assert not any(timer.isActive() for timer in (dock.blur_timer,dock.proc_timer,dock.geo_timer,runtime.fullscreen_timer))
-    assert panel.isVisible() and runtime.corners.widgets
-    assert {key:(w.collapsed,w.list.count()) for key,w in runtime.panels.windows.items()}==before_lite
-    dock._proc_busy = True
-    dock._apply_running({'test.exe'})
-    assert not dock._proc_busy and dock.running==before_running
-    runtime.settings_open = True
-    runtime.set_lite(False)
-    runtime.arm_lite()
-    assert not runtime.lite and not runtime.lite_timer.isActive()
-    panel.expand()
-    assert panel.list.count()==len(panel.visible_items())
-    cfg['lite_enabled'] = False
-    runtime.settings_closed()
-    assert not runtime.lite_timer.isActive()
-    checks.append('lightweight: real timeout transition, production 60-second delay, polling stops, settings wake and opt-out')
+    assert runtime.memory_budget.timer.isActive() and runtime.memory_budget.timer.interval() == 5000
+    before = {key:(w.collapsed,w.list.count()) for key,w in runtime.panels.windows.items() if w.isVisible()}
+    assert runtime.memory_budget.reclaim(trim_caches=False)
+    assert {key:(w.collapsed,w.list.count()) for key,w in runtime.panels.windows.items() if w.isVisible()} == before
+    checks.append('normal idle maintenance is scheduled and preserves visible cards and collapse state')
     result = parse_manifest({'product_id':'BigFishDockpro','version':'9.0.0','release_url':'https://example.com/releases'})
     assert result['newer']
     for payload in ({'product_id':'Upstream','version':'9.0.0'},
@@ -335,11 +303,10 @@ def run(api, dock, tray, root, output, checks):
         finished = []
         settings.finished.connect(finished.append)
         runtime.settings_open = True
-        runtime.arm_lite()
         settings.fields['theme'].setCurrentIndex(settings.fields['theme'].findData(theme))
         settings.commit()
         assert settings.isVisible() and not finished and runtime.settings_open
-        assert not runtime.lite_timer.isActive() and '已保存' in settings.status.text()
+        assert runtime.memory_budget.timer.isActive() and '已保存' in settings.status.text()
         settings.header.minimize.click()
         app.processEvents()
         assert settings.isMinimized() and not finished
@@ -439,4 +406,4 @@ def run(api, dock, tray, root, output, checks):
     run_layout_tests(api,runtime,root,output,checks)
     runtime.close()
     app.aboutToQuit.disconnect(runtime.close)
-    checks.append('settings: save stays open without finished or lite countdown; minimize/restore and close controls; compact and default layouts, all pages in both themes')
+    checks.append('settings: save stays open without finished; minimize/restore and close controls; compact and default layouts, all pages in both themes')

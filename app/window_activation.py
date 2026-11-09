@@ -1,4 +1,4 @@
-"""On-click window reuse, independent of startup/running-dot/lite-mode polling."""
+"""Find and reuse an existing window when an app shortcut is clicked."""
 import ctypes,os
 import ntpath
 from ctypes import wintypes

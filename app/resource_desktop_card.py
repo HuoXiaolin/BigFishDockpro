@@ -11,7 +11,8 @@ from ui_style import SubtleSizeGrip
 
 
 INITIAL_SIZES={'resources':(560,305),'ai':(450,360),'music':(430,164),
-               'traffic':(430,150),'weather':(520,303)}
+               'traffic':(430,150),'weather':(520,303),
+               'pomodoro':(470,173),'agenda':(550,315),'news':(360,248)}
 
 
 class ResourceDesktopCard(ResourceContentHost):
@@ -27,6 +28,7 @@ class ResourceDesktopCard(ResourceContentHost):
         self.setWindowTitle(title+' · 大肥鱼Dock')
         self.header=QLabel(title,self)
         self.header.setObjectName('RankTitle')
+        self.header.setToolTip('拖动标题栏移动，拖回资源胶囊可合入')
         self.settings_button=QToolButton(self)
         self.settings_button.setToolTip('组件设置')
         self.settings_button.setAccessibleName('组件设置')
@@ -102,18 +104,29 @@ class ResourceDesktopCard(ResourceContentHost):
 
     def mousePressEvent(self,event):
         if event.button()==Qt.LeftButton and event.y()<30:
-            self.drag=event.globalPos()-self.pos()
+            self.drag=self.pos(),event.globalPos()
             event.accept()
         else:super().mousePressEvent(event)
 
     def mouseMoveEvent(self,event):
-        if self.drag is not None:self.move(event.globalPos()-self.drag);event.accept()
+        if self.drag is not None:
+            origin,start=self.drag
+            delta=event.globalPos()-start
+            if delta.manhattanLength()>=QApplication.startDragDistance() or self.pos()!=origin:
+                self.move(origin+delta)
+                self.service.preview_component_at(self.page_key,event.globalPos())
+            event.accept()
 
     def mouseReleaseEvent(self,event):
         if event.button()!=Qt.LeftButton or self.drag is None:return
+        origin,_=self.drag
+        self.mouseMoveEvent(event)
         self.drag=None
+        if self.pos()==origin:
+            if self.service.window:self.service.window.clear_tab_drop()
+            return
         from card_snap import finish_drag
-        finish_drag(self,event.globalPos())
+        if finish_drag(self,event.globalPos(),component=self.page_key):return
         area=(QApplication.screenAt(event.globalPos()) or QApplication.primaryScreen()).availableGeometry()
         self.move(max(area.left(),min(self.x(),area.right()+1-self.width())),
                   max(area.top(),min(self.y(),area.bottom()+1-self.height())))

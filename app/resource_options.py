@@ -2,12 +2,14 @@
 import re
 from screen_layout import valid_record
 
-METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'蓝牙电量','fps':'帧率 FPS','cpu_temp':'CPU 温度',
+METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'蓝牙电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
          'gpu_temp':'GPU 温度','cpu_power':'CPU 功率','gpu_power':'GPU 功率','traffic':'流量统计'}
 METRICS.update(cpu_frequency='CPU 频率',cpu_voltage='CPU 电压',cpu_fan='CPU 风扇',cpu_pump='CPU 水泵',
-               gpu_frequency='GPU 频率',gpu_fan='GPU 风扇',gpu_memory='显存占用',disk_temp='磁盘温度',board_temp='主板温度',case_temp='机箱温度')
+               gpu_frequency='GPU 频率',gpu_fan='GPU 风扇',gpu_memory='显存占用',disk_temp='磁盘温度',
+               board_temp='主板温度',case_temp='机箱温度',board_fan='主板风扇')
+FAN_METRICS=('cpu_fan','gpu_fan','board_fan')
 SENSOR_UNITS={key:unit for unit,keys in [('°C',('cpu_temp','gpu_temp','disk_temp','board_temp','case_temp')),('W',('cpu_power','gpu_power')),
-                                      ('MHz',('cpu_frequency','gpu_frequency')),('V',('cpu_voltage',)),('RPM',('cpu_fan','cpu_pump','gpu_fan')),('%',('gpu_memory',))] for key in keys}
+                                      ('MHz',('cpu_frequency','gpu_frequency')),('V',('cpu_voltage',)),('RPM',(*FAN_METRICS,'cpu_pump')),('%',('gpu_memory',))] for key in keys}
 TASK_METRICS=('cpu_temp','gpu_temp','memory','network','cpu_power','gpu_power','fps','cpu','gpu','traffic')
 TASK_DEFAULT=list(TASK_METRICS[:7])
 TASK_METRICS+=tuple(k for k in SENSOR_UNITS if k not in TASK_METRICS)
@@ -17,34 +19,56 @@ TASK_COLUMN_NAMES = {
     'cpu': 'CPU / GPU 使用率', 'traffic': '日 / 月 / 年流量',
     'sensors': '其他传感器',
 }
-COMPACT_METRICS=tuple(k for k in METRICS if k!='rank')
-PINNABLE={**{k:METRICS[k] for k in COMPACT_METRICS if k!='bluetooth'},'ai':'AI 额度','music':'音乐','weather':'天气'}
-RESOURCE_PAGES={'resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气'}
+COMPACT_METRICS=tuple(k for k in METRICS if k not in ('rank','system_status'))
+COMPACT_DEVICE={'battery':'电池电量','connection':'网卡名称','volume':'系统音量','brightness':'屏幕亮度'}
+COMPACT_ROUTINES={'pomodoro':'番茄钟','water':'喝水进度','agenda':'下一项日程'}
+COMPACT_ITEMS={**{key:METRICS[key] for key in COMPACT_METRICS},**COMPACT_DEVICE,**COMPACT_ROUTINES}
+COMPACT_CONTENT={'ai':'resource_compact_ai','music':'resource_compact_music','weather':'resource_weather_compact'}
+PINNABLE={**{key:title for key,title in COMPACT_ITEMS.items() if key!='bluetooth'},
+          'ai':'AI 额度','music':'音乐','weather':'天气'}
+RESOURCE_PAGES={'resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气',
+                'pomodoro':'番茄钟','agenda':'日程','news':'新闻'}
 DESKTOP_COMPONENTS={'notes':'便签','picture':'每日图片','custom':'原生卡片','clock':'时钟','calendar':'日历'}
 PLACED_COMPONENTS={**RESOURCE_PAGES,**DESKTOP_COMPONENTS}
-CAPSULE_PAGES={**RESOURCE_PAGES,'news':'新闻',**DESKTOP_COMPONENTS}
+CAPSULE_PAGES=PLACED_COMPONENTS
 OPEN_PAGES={'last':'上次查看的页面',**CAPSULE_PAGES}
 TASKBAR_LAYERS={'bottom':'置底','top':'置顶'}
+CAPSULE_TASKBAR_POSITIONS={'left':'靠左','center':'居中','right':'靠右','custom':'记住拖放位置'}
 HALO_SPEEDS={'slow':('慢速',12), 'medium':('中速',8), 'fast':('快速',4)}
 TASK_MEDIA_PARTS={'cover':'封面图标','title':'曲名','controls':'播放按钮','wave':'声音律动 / 频谱','progress':'进度细线'}
 AI_PROVIDERS=('Claude','Codex','Cursor','Antigravity','ZCode','Dsh','Kimi','OpenCode','Pi','GrokBot')
 TINTS={'cpu':'#288bee','memory':'#22bba9','network':'#27b8c4','gpu':'#ec79a6'}
+TIMER_RANGES={
+    'resource_focus_minutes':(1,120), 'resource_break_minutes':(1,60),
+    'resource_water_interval':(5,240), 'resource_water_amount':(50,1000),
+    'resource_water_goal':(250,5000),
+}
+REMINDER_OPTIONS={
+    'resource_alert_agenda':'日程到提醒时间', 'resource_alert_focus':'番茄钟倒计时与完成',
+    'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
+}
 DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,resource_air_source='auto',
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
+              resource_capsule_taskbar=False,resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={},
               resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_layer='bottom',
               resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
-DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank') for key in METRICS})
+DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank',*FAN_METRICS) for key in METRICS})
+DEFAULTS.update(resource_system_status=True,resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
+                resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
+DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_agenda=True,resource_alert_focus=True,
+                resource_alert_water=True,resource_alert_battery=False)
 DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
-                resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_scale=100,
+                resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
                 resource_news=False,resource_news_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
-                resource_compact_width=560,resource_compact_height=44,resource_compact_metrics=list(COMPACT_METRICS),
+                resource_compact_width=500,resource_compact_height=35,resource_compact_metrics=list(COMPACT_METRICS),
                 resource_compact_auto_width=True,resource_compact_pinned=['cpu','memory','gpu','network'],resource_compact_order=[],
-                resource_compact_density='auto',
-                resource_expanded_width=560,resource_expanded_height=300,
+                resource_compact_ai=True,resource_compact_music=True,
+                resource_compact_density='dense',
+                resource_expanded_width=500,resource_expanded_height=280,
                 resource_compact_rings=True,resource_clock=True,resource_compact_rotate=True,
                 resource_ai=False,resource_ai_tray=False,resource_ai_providers=['Claude','Codex','Cursor','Antigravity'],
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
@@ -67,6 +91,10 @@ def component_available(cfg,key):
     if key in ('clock','calendar'):return cfg[key+'_enabled']
     if key=='ai':return cfg['resource_ai'] or cfg['resource_ai_tray']
     return cfg['resource_'+key]
+
+
+def resource_page_active(cfg,key):
+    return component_available(cfg,key) and (cfg['resource_enabled'] or component_location(cfg,key)=='desktop')
 
 
 def migrate_docked(data):
@@ -105,6 +133,11 @@ def clean_background(raw,strict=False):
 def normalize(cfg,strict=False):
     from resource_weather import clean_cities
     from content_sources import clean_feeds
+    role_id=cfg.get('resource_face_role','')
+    if role_id or not isinstance(role_id,str):
+        from face_roles import clean_role_id
+        role_id=clean_role_id(role_id,strict)
+    cfg['resource_face_role']=role_id
     cfg.pop('resource_notifications', None)
     locations=cfg.get('resource_component_locations',{})
     if not isinstance(locations,dict) or any(key not in PLACED_COMPONENTS or value not in ('capsule','desktop') for key,value in locations.items()):
@@ -135,6 +168,7 @@ def normalize(cfg,strict=False):
              'resource_expand_mode':('hover','click'),'resource_open_page':tuple(OPEN_PAGES),
              'resource_face_mood':('random','default','happy','wink','love','star','shy','pout','squint'),
              'resource_compact_density':('auto','dense'),
+             'resource_capsule_taskbar_position':tuple(CAPSULE_TASKBAR_POSITIONS),
              'resource_taskbar_position':('left','center','right'),
              'resource_taskbar_layer':tuple(TASKBAR_LAYERS), 'resource_halo_speed':tuple(HALO_SPEEDS),
              'resource_edge':('free','top','bottom','left','right')}
@@ -142,10 +176,23 @@ def normalize(cfg,strict=False):
         if cfg.get(key) not in allowed:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
-    for key in ('resource_edge_snap', 'resource_peer_snap'):
-        if type(cfg.get(key)) is not bool:
+    for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar',
+                'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music',*REMINDER_OPTIONS):
+        if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
+        else:cfg.setdefault(key,DEFAULTS[key])
+    for key,(low,high) in TIMER_RANGES.items():
+        value=cfg.get(key,DEFAULTS[key])
+        if type(value) is not int or not low<=value<=high:
+            if strict:raise ValueError('番茄钟设置超出范围。')
+            value=DEFAULTS[key]
+        cfg[key]=value
+    agenda=cfg.get('resource_agenda_events',[])
+    if agenda!=[]:
+        from resource_agenda import normalize_events
+        agenda=normalize_events(agenda,strict)
+    cfg['resource_agenda_events']=agenda
     cfg['resource_appearance']=clean_background(cfg.get('resource_appearance',{}),strict)
     transparency=cfg.get('resource_card_transparency',DEFAULTS['resource_card_transparency'])
     if type(transparency) is not int or not 0<=transparency<=100:
@@ -163,7 +210,7 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('任务栏监控项目无效。')
         items=TASK_DEFAULT
     cfg['resource_task_metrics']=[k for k in TASK_METRICS if k in items]
-    for key,choices in [('resource_compact_metrics',COMPACT_METRICS),('resource_compact_pinned',tuple(PINNABLE)+('bluetooth',)),('resource_ai_providers',AI_PROVIDERS),('resource_task_media_parts',TASK_MEDIA_PARTS),
+    for key,choices in [('resource_compact_metrics',COMPACT_ITEMS),('resource_compact_pinned',tuple(PINNABLE)+('bluetooth',)),('resource_ai_providers',AI_PROVIDERS),('resource_task_media_parts',TASK_MEDIA_PARTS),
                         ('resource_task_order',TASK_COLUMN_NAMES),('resource_compact_order',PINNABLE)]:
         value=cfg.get(key,DEFAULTS[key])
         if key in ('resource_compact_pinned', 'resource_compact_order') and isinstance(value, list):
@@ -188,7 +235,8 @@ def normalize(cfg,strict=False):
     record=valid_record(cfg.get('resource_layout'))
     if strict and cfg.get('resource_layout') and not record:raise ValueError('资源胶囊位置无效。')
     cfg['resource_layout']=record
-    anchor=cfg.get('resource_taskbar_anchor',{})
-    valid=isinstance(anchor,dict) and isinstance(anchor.get('screen'),str) and type(anchor.get('ratio')) in (int,float) and 0<=anchor['ratio']<=1
-    if strict and anchor and not valid:raise ValueError('任务栏停靠位置无效。')
-    cfg['resource_taskbar_anchor']={'screen':anchor['screen'][:240],'ratio':float(anchor['ratio'])} if valid else {}
+    for key in ('resource_taskbar_anchor','resource_capsule_taskbar_anchor'):
+        anchor=cfg.get(key,{})
+        valid=isinstance(anchor,dict) and isinstance(anchor.get('screen'),str) and type(anchor.get('ratio')) in (int,float) and 0<=anchor['ratio']<=1
+        if strict and anchor and not valid:raise ValueError('任务栏停靠位置无效。')
+        cfg[key]={'screen':anchor['screen'][:240],'ratio':float(anchor['ratio'])} if valid else {}

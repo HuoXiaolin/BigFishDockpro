@@ -104,7 +104,7 @@ def run(api,runtime,root,output,checks):
         hwnd,pid=map(int,report.read_text().split())
         make_links([dict(link=str(normal),target=fixture,arguments='',cwd=str(Path(fixture).parent))])
         entry=map_entry(dict(path=str(normal),name='Already running native fixture'));normal.unlink()
-        cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[entry],theme='light',running_dots=False,lite_enabled=False)
+        cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(items=[entry],theme='light',running_dots=False)
         # The external window already exists before this new Dock is constructed.
         dock=api.Dock(cfg,preview=True)
         with patch('external_launch.launch') as launch_new:

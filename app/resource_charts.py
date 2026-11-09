@@ -140,7 +140,7 @@ class MetricDisplay(DashboardCard):
         self.rows = {}
         self.basic = ()
         self.extras = ()
-        self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Preferred)
 
     def refresh(self, rows):
         self.rows = {key:(label,value,tip) for key,label,value,tip in rows}
@@ -148,7 +148,7 @@ class MetricDisplay(DashboardCard):
         self.extras = tuple(k for k in self.rows if k not in self.basic)
         upper = self.load_height if 'cpu' in self.rows or 'gpu' in self.rows else 0
         height = 2*self.inset + upper + 25*('memory' in self.rows) + 25*('network' in self.rows) + 25*math.ceil(len(self.extras)/2)
-        self.setFixedHeight(max(1,height))
+        self.setMinimumHeight(max(1,height))
         self.setVisible(bool(rows))
         tips = [label+' · '+tip for _,label,_,tip in rows if tip]
         if 'cpu' in self.rows:
@@ -267,7 +267,7 @@ class SensorColumns(DashboardCard):
 
     def __init__(self,window):
         super().__init__(window,'peach');self.groups=[];self.headings=[];self.cells=[]
-        self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Preferred)
     def refresh(self,rows):
         self.groups=[]
         for prefix,title in (('cpu_','CPU'),('gpu_','GPU'),('','主机')):
@@ -309,9 +309,10 @@ class SensorColumns(DashboardCard):
                                    QRectF(x + width - value_width, y, value_width, self.row_height)))
                 column += slots
             y += self.row_height + 3
-        self.setFixedHeight(y+self.inset-3 if self.groups else 1)
+        self.setMinimumHeight(y+self.inset-3 if self.groups else 1)
     def resizeEvent(self,event):
-        self.fit_height();super().resizeEvent(event)
+        if event.oldSize().width()!=event.size().width():self.fit_height()
+        super().resizeEvent(event)
     def paintEvent(self,event):
         if not self.groups or not self.owner.colors:return
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.owner.colors

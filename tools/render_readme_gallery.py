@@ -86,7 +86,7 @@ def run(output):
             items=entries[:3]+[{'sep':True}]+entries[3:6]+[{'sep':True}]+entries[6:]
             cfg=copy.deepcopy(api.DEFAULT_CONFIG)
             cfg.update(items=items,icon_size=64,theme='light',theme_color='#b8dff5',dock_material='liquid',dock_highlight=36,transparency=100,glass=True,blur_px=9,
-                running_dots=False,hide_tray=True,check_updates_on_start=False,lite_enabled=False,screen_corners=False,desktop_middle_toggle=False,
+                running_dots=False,hide_tray=True,check_updates_on_start=False,screen_corners=False,desktop_middle_toggle=False,
                 panel_enabled=True,panels_visible=True,panel_auto_hide=False,panel_locked=False,panel_opacity=28,panel_blur=10,panel_highlight=40,panel_theme='light',panel_material='liquid',
                 panel_color='#cee9fc',desktop_auto_sort=False,desktop_icon_mode='both',card_scale=100,settings_size='medium',card_design='aurora',
                 merged_panels=True,merge_initialized=True,merged_active='apps',merged_geometry=[100,100,740,370],merged_compact=False,

@@ -140,8 +140,18 @@ def run(api,runtime,app,output,checks):
             w.offset=page;w.grab();assert {'cpu_power','gpu_power'}<=set(w.compact_shown)
         cfg['resource_compact_pinned']=defaults
         dialog=ResourceOptions(service)
-        for key,field in dialog.pinned_fields.items():field.setChecked(key in ('cpu_power','gpu_power'))
-        assert dialog.commit() and api.load_config()['resource_compact_pinned']==['cpu_power','gpu_power'];dialog.reject();dialog.deleteLater()
+        dialog.tabs.setCurrentIndex(2)
+        for key,field in dialog.compact_fields.items():
+            field.setChecked(key in ('cpu_power','gpu_power'))
+        dialog.fields['resource_compact_ai'].setChecked(False)
+        dialog.tabs.setCurrentIndex(0)
+        dialog.tabs.setCurrentIndex(2)
+        assert not dialog.fields['resource_compact_ai'].isChecked()
+        assert dialog.commit()
+        saved=api.load_config()
+        assert saved['resource_compact_metrics']==['cpu_power','gpu_power']
+        assert saved['resource_compact_pinned']==defaults and saved['resource_ai'] and not saved['resource_compact_ai']
+        dialog.reject();dialog.deleteLater()
         cfg.update(resource_cpu=False,resource_gpu=False,resource_memory=False,resource_network=False,resource_traffic=False)
         w.refresh();w.reposition();app.processEvents();assert w.width()<400
         w.offset=0;w.grab().save(str(output/'redesign-power-only.png'))

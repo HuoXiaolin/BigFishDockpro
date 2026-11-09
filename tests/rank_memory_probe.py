@@ -25,10 +25,10 @@ def measure(runtime,app):
         while time.monotonic()<until:
             app.processEvents();time.sleep(.025)
     cfg=runtime.dock.cfg;original=copy.deepcopy(cfg);service=runtime.resources
-    old_game,old_lite=runtime.game_active,runtime.lite
+    old_game=runtime.game_active
     phases=[]
     try:
-        runtime.game_active=False;runtime.lite=False
+        runtime.game_active=False
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_collapsed=False,resource_auto_hide=False,resource_interval=1,resource_rank=False)
         start=service.start_job
         # Use production OS counters while keeping UI placement and desktop changes isolated.
@@ -53,4 +53,4 @@ def measure(runtime,app):
                 transitions.append(folded)
         return dict(passed=True,continuous_folds=transitions,columns=["private_working_set_MiB","working_set_MiB","private_commit_MiB"],phases=phases,seconds_per_phase=4.0,metrics="CPU, cores, memory, network and GPU enabled throughout; rank-only toggle",frozen=bool(getattr(__import__("sys"),"frozen",False)))
     finally:
-        cfg.clear();cfg.update(original);runtime.game_active=old_game;runtime.lite=old_lite;service.sync()
+        cfg.clear();cfg.update(original);runtime.game_active=old_game;service.sync()

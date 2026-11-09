@@ -100,7 +100,7 @@ class PetFace:
         return p
 
     def paint(self, p: QtGui.QPainter, cx: float, cy: float, s: float, a: float,
-              look: QtCore.QPointF, near: bool, colors, animate=True):
+              look: QtCore.QPointF, near: bool, colors, animate=True, anchors=None):
         def ink(alpha):
             color=QtGui.QColor(colors["ink"]);color.setAlphaF(alpha);return color
         if not animate:
@@ -119,12 +119,13 @@ class PetFace:
         glow_col = QtGui.QColor(colors["ink"]) if not colors["light"] else QtGui.QColor(0, 0, 0, 0)
         pink = QtGui.QColor(255, 92, 138)
         centers = []
-        for side in (-1, 1):
+        for index, side in enumerate((-1, 1)):
             p.save()
             try:
                 # 被按压时两只眼睛各自向外倾斜（按在中间时最明显）
-                _ex0 = cx + side * (gap / 2 + base_w / 2 + self.spread * s / 2) + self.ex.x * 5.0 * s
-                _ey0 = cy + self.ey.x * 3.0 * s
+                x, y = anchors[index] if anchors else (cx + side * (gap / 2 + base_w / 2), cy)
+                _ex0 = x + side * self.spread * s / 2 + lx * 5.0 * s
+                _ey0 = y + ly * 3.0 * s
                 if abs(self.tilt) > 0.05:
                     p.translate(_ex0, _ey0)
                     p.rotate(side * self.tilt)
@@ -133,8 +134,7 @@ class PetFace:
                 curious = 1.0 + 0.22 * max(0.0, lx * side)
                 w = base_w * (1 + 0.12 * wide) * (1 + 0.25 * b)
                 h = base_h * curious * (1 + 0.18 * wide) * (1 - 0.88 * b)
-                ex = cx + side * (gap / 2 + base_w / 2 + self.spread * s / 2) + lx * 5.0 * s
-                ey = cy + ly * 3.0 * s + bounce
+                ex, ey = _ex0, _ey0 + bounce
                 centers.append((ex, ey))
                 r = QtCore.QRectF(ex - w / 2, ey - h / 2, w, max(1.6 * s, h))
                 # 光晕
@@ -212,12 +212,13 @@ class PetFace:
                 p.setBrush(c)
                 p.drawEllipse(QtCore.QPointF(ex + side * 7.5 * s, ey + base_h * 0.55), 4.4 * s, 2.4 * s)
         # 嘴
-        mx = cx + lx * 5.0 * s
-        my = cy + base_h * 0.66 + ly * 3.0 * s + bounce
+        x, y = anchors[2] if anchors else (cx, cy + base_h * 0.66)
+        mx = x + lx * 5.0 * s
+        my = y + ly * 3.0 * s + bounce
         mc = ink(0.9 * a)
         p.setBrush(Qt.NoBrush)
         pen = QtGui.QPen(mc, 1.8 * s, Qt.SolidLine, Qt.RoundCap)
-        if m in ("happy", "wink", "love", "shy"):
+        if m in ("happy", "wink", "love", "shy") or (anchors and m == "default"):
             path = QtGui.QPainterPath()
             mw = 7.0 * s
             path.moveTo(mx - mw / 2, my)

@@ -30,7 +30,7 @@ def run(api,runtime,root,output,checks):
     from dpi_support import awareness,metric
     assert awareness()==2, 'GUI thread must be per-monitor DPI aware'
     try:
-        runtime.set_lite(False);manager.close()
+        manager.close()
         cfg.update(panel_enabled=True,desktop_auto_sort=False,panel_auto_hide=False,merged_panels=False,
                    merged_active='',desktop_entries=[],disabled_categories=[],icon_size=48,position='custom',custom_bottom=200,
                    desktop_panels=[{'id':'layout-a','name':'布局演示 A','geometry':a['rect'],'compact':False,'locked':True},
@@ -75,9 +75,8 @@ def run(api,runtime,root,output,checks):
         assert first.geometry().getRect()==tuple(project(a,[small]))
         first.collapse();first.store_geometry();first.expand();first.store_geometry()
         assert cfg['display_layout']==saved
-        runtime.set_lite(True);layout.apply()
-        assert runtime.lite and first.collapsed and not runtime.dock.blur_timer.isActive()
-        runtime.set_lite(False);assert not first.collapsed
+        layout.apply();collapsed=first.collapsed
+        assert runtime.memory_budget.reclaim(trim_caches=False) and first.collapsed==collapsed
         assert cfg['display_layout']==saved
         # Restart on the smaller replacement, then reconnect the original display.
         manager.close();cfg.update(api.load_config())
@@ -115,7 +114,7 @@ def run(api,runtime,root,output,checks):
         assert api.load_config()['display_layout']['merged']['ui_scale']==card.ui_factor
         checks.append('mixed DPI regression: per-monitor native awareness, single Qt DPI owner; same-2K 100%-150% frame/font/icon/grid/padding scale together; repeated notifications and manual move/reload retain visual scale')
         manager.windows['layout-b'].grab().save(str(Path(output)/'screen-relative-panel.png'))
-        checks.append('display layout: negative-origin monitors, proportional position and uniform dimensions including minimum-size bounds, replacement/disconnect/reconnect and temporarily unavailable monitor data without anchor drift, invalid config rejection; real locked/independent/merged cards, manual move/resize rebases, save-failure retry, lite/collapsed/restart restores, actual connected QScreen signal coalesces; Dock icon/offset scale in logical pixels')
+        checks.append('display layout: negative-origin monitors, proportional position and uniform dimensions including minimum-size bounds, replacement/disconnect/reconnect and temporarily unavailable monitor data without anchor drift, invalid config rejection; real locked/independent/merged cards, manual move/resize rebases, save-failure retry, collapsed/restart restores and idle cleanup, actual connected QScreen signal coalesces; Dock icon/offset scale in logical pixels')
     finally:
         layout.timer.stop();layout.pending=False;layout.applying=False;layout.screens=provider
         manager.close();cfg.clear();cfg.update(original);api.save_config(cfg)

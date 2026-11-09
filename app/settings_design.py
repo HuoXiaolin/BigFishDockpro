@@ -1,9 +1,72 @@
 """Light grouped settings, using the existing Qt controls and save semantics."""
 from PyQt5.QtCore import Qt, QSize, QTimer, QEvent, QRectF
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPalette
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPalette, QIcon, QPixmap
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QLabel, QCheckBox, QSpinBox, QSlider, QLineEdit, QComboBox,
-    QPlainTextEdit, QScrollArea, QSizePolicy, QApplication, QLayout, QStyle, QStyleOptionSlider)
+    QPlainTextEdit, QScrollArea, QSizePolicy, QApplication, QLayout, QStyle, QStyleOptionSlider,
+    QListWidget, QListWidgetItem)
+
+
+class SettingsNavigation(QListWidget):
+    """The same outline icons and themed list styling in both settings windows."""
+    symbol_role = Qt.UserRole + 1
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName('SettingsNav')
+        self.setFixedWidth(132)
+        self.setIconSize(QSize(16,16))
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollMode(self.ScrollPerPixel)
+
+    def add_page(self, title, symbol, page=None):
+        item = QListWidgetItem(title)
+        item.setData(self.symbol_role, symbol)
+        if page is not None:item.setData(Qt.UserRole, page)
+        self.addItem(item)
+        self.set_page_icon(item)
+        return item
+
+    def fit_density(self):
+        from ui_style import widget_px
+        self.setFixedWidth(max(94,widget_px(self,132)))
+        size = widget_px(self,16)
+        self.setIconSize(QSize(size,size))
+
+    def set_page_icon(self, item):
+        from dock_extras import symbol
+        kind = item.data(self.symbol_role)
+        light = self.palette().color(QPalette.Window).lightness() > 128
+        color = QColor('#526b7a' if light else '#bcc9d1')
+        pixmap = QPixmap(40,40)
+        pixmap.setDevicePixelRatio(2)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if kind in ('update','info','wave'):
+            painter.setPen(QPen(color,1.3,Qt.SolidLine,Qt.RoundCap))
+            if kind == 'info':
+                painter.drawEllipse(QRectF(3,3,14,14))
+                painter.drawLine(10,9,10,14)
+                painter.drawPoint(10,6)
+            elif kind == 'update':
+                painter.drawArc(3,3,14,14,35*16,285*16)
+                painter.drawLine(16,3,16,7)
+                painter.drawLine(12,7,16,7)
+            else:
+                for x,height in ((4,4),(8,9),(12,14),(16,7)):
+                    painter.drawLine(x,10-height//2,x,10+height//2)
+        else:
+            symbol(painter,QRectF(0,0,20,20),kind,color)
+        painter.end()
+        item.setIcon(QIcon(pixmap))
+
+    def changeEvent(self,event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange:
+            for row in range(self.count()):
+                item = self.item(row)
+                if item.data(self.symbol_role):self.set_page_icon(item)
 
 
 def section_marker(form, text):
@@ -462,6 +525,7 @@ def stylesheet(colors):
     QDialog[designPopup="true"] QPushButton, QDialog[designPopup="true"] QLineEdit,
     QDialog[designPopup="true"] QComboBox, QDialog[designPopup="true"] QSpinBox {border-radius:6px;}
     QDialog[designPopup="true"] QTabBar::tab {padding:6px 10px;}
+    QDialog[designPopup="true"] QListWidget#SettingsNav {background:%(frame)s; border:1px solid %(line)s; border-radius:6px; padding:6px;}
     QDialog[designPopup="true"] QListWidget#SettingsNav::item {padding:4px 7px; height:23px; min-height:23px; border-radius:8px;}
     QDialog[designPopup="true"] QSlider {background:transparent; border:0; padding:0; min-height:22px;}
     QDialog[designPopup="true"] QSlider::groove:horizontal {height:5px; background:%(hover)s; border-radius:2px;}

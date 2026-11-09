@@ -381,12 +381,17 @@ class NoteWindow(QWidget):
                 self.drag_start = self.pos()
                 self.drag = event.globalPos() - self.drag_start
                 return True
-            if event.type()==QEvent.MouseMove and self.drag is not None:self.move(event.globalPos()-self.drag);return True
+            if event.type()==QEvent.MouseMove and self.drag is not None:
+                self.move(event.globalPos()-self.drag)
+                self.runtime.resources.preview_component_at('notes',event.globalPos())
+                return True
             if event.type()==QEvent.MouseButtonRelease and self.drag is not None:
+                self.move(event.globalPos()-self.drag)
                 self.drag = None
                 if self.pos() != self.drag_start:
                     from card_snap import finish_drag
-                    finish_drag(self, event.globalPos())
+                    if finish_drag(self,event.globalPos(),component='notes'):return True
+                else:self.runtime.resources.preview_component_at('notes')
                 self.save_geometry()
                 self.manager.flush()
                 if self.row()['auto_hide']:self.collapse_timer.start()
@@ -802,11 +807,6 @@ class NotesManager(QObject):
         self.windows.clear();self.pending.clear();self.sync()
     def reposition(self):
         for window in self.windows.values():window.reposition();window.apply_style()
-    def set_lite(self):
-        if self.runtime.lite:
-            for window in self.windows.values():
-                window.refresh_timer.stop()
-                if not window.isVisible():window.backdrop=None
     def manage(self):
         if self.dialog is None:
             self.dialog=NotesDialog(self)

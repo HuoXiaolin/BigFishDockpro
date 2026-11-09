@@ -74,8 +74,11 @@ def logical(bounds,mapping):
 
 class Placement(QObject):
     layout_changed=pyqtSignal()
-    def __init__(self,window):
+    def __init__(self,window,*,capsule=False):
         super().__init__(window);self.window=window;self.slot=None;self.slot_bar=None;self.target=None;self.proposal=False
+        self.capsule=capsule
+        self.key='resource_capsule_taskbar' if capsule else 'resource_taskbar'
+        self.layer_key='resource_layer' if capsule else 'resource_taskbar_layer'
         self.closed=False;self.process=None;self.waiting=None;self.checked=False;self.retry_at=0.;self.hook=None;self.callback=None;self.deferred=None
         self.request=None
         self.shell_missing=False;self.fullscreen=False
@@ -85,14 +88,23 @@ class Placement(QObject):
     def offer(self,bar,point):
         axis=(point.y()-bar['rect'].y())/bar['rect'].height() if bar['rect'].height()>bar['rect'].width() else (point.x()-bar['rect'].x())/bar['rect'].width()
         if not self.proposal:
-            self.previous=(self.target,self.slot,getattr(self,'ratio',.65),self.checked)
-        self.proposal=True;self.target=bar;self.ratio=min((0.,.5,1.),key=lambda value:abs(axis-value))
+            self.previous=(self.target,self.slot,self.slot_bar,self.configured_ratio(),self.checked,
+                           self.shell_missing,self.fullscreen)
+        self.deferred=None
+        self.proposal=True;self.target=bar;self.ratio=max(0.,min(1.,axis))
         self.query(bar,self.ratio)
+    @property
+    def anchor(self):
+        return self.window.service.cfg[self.key+'_anchor']
+    @property
+    def layer(self):
+        return self.window.service.cfg[self.layer_key]
     def configured_ratio(self):
-        return {'left':0.,'center':.5,'right':1.}[self.window.service.cfg['resource_taskbar_position']]
+        position=self.window.service.cfg[self.key+'_position']
+        return self.anchor.get('ratio',.5) if position=='custom' else {'left':0.,'center':.5,'right':1.}[position]
     def restore(self):
         if self.closed or self.proposal:return
-        anchor=self.window.service.cfg['resource_taskbar_anchor']
+        anchor=self.anchor
         previous=getattr(self,'ratio',None);self.ratio=self.configured_ratio()
         bars=self.bars()
         current=next((r for r in bars if r['screen']==anchor.get('screen')),bars[0] if bars else None)
@@ -104,23 +116,23 @@ class Placement(QObject):
     def bars(self):
         return [] if self.window.service.runtime.dock.preview else taskbars()
     def suppressed(self):
-        if self.window.service.cfg['resource_taskbar_layer']=='bottom':
+        if self.layer=='bottom':
             return self.shell_missing or self.fullscreen
         if self.shell_missing and self.slot_bar and self.slot:
             return not any(s.name()==self.slot_bar['screen'] and s.geometry().contains(self.slot)
                            for s in QApplication.screens())
         return False
     def shell_changed(self):
-        if self.closed:return
+        if self.closed or self.proposal:return
         hidden=self.suppressed()
-        anchor=self.window.service.cfg['resource_taskbar_anchor']
+        anchor=self.anchor
         bars=self.bars()
         screen=anchor.get('screen') or (self.slot_bar or {}).get('screen')
         bar=next((b for b in bars if b['screen']==screen),None)
         if bar is None:
             # A fullscreen app can slide its taskbar offscreen. Keep the top
             # readout in the last checked slot on that display while it returns.
-            retain=(self.window.service.cfg['resource_taskbar_layer']=='top' and self.slot_bar
+            retain=(self.layer=='top' and self.slot_bar
                     and self.slot_bar['screen']==screen and any(s.name()==screen for s in QApplication.screens()))
             if not retain:bar=bars[0] if bars else None
         cover=fullscreen_window()
@@ -139,7 +151,7 @@ class Placement(QObject):
             self.window.restore_input_layer()
             if not self.debounce.isActive():self.debounce.start()
     def check(self):
-        if self.target and not self.shell_missing and not self.suppressed():self.query(self.target,self.ratio)
+        if self.target and not self.proposal and not self.shell_missing and not self.suppressed():self.query(self.target,self.ratio)
     def query(self,bar,ratio):
         if self.closed:return
         request=(bar,ratio)
@@ -177,31 +189,37 @@ class Placement(QObject):
                 # A missed UI Automation read does not invalidate a slot on the same taskbar.
                 self.checked = False
             return
-        wanted = self.window.preferred_width()
+        service=self.window.service
+        if self.capsule:
+            peer=getattr(getattr(service,'strip',None),'placement',None)
+        else:
+            peer=getattr(getattr(service,'window',None),'taskbar_placement',None)
+        if peer and peer.slot is not None and peer.slot_bar==bar:
+            blocks.append(peer.slot)
+        wanted = self.window.taskbar_width(bar) if self.capsule else self.window.preferred_width()
         self.accept(bar, ratio, free_slot(bar['rect'], blocks, ratio, wanted, min(82, wanted)))
     def accept(self,bar,ratio,slot):
-        if self.window.press is not None and not self.proposal:
+        if self.window.press is not None:
             self.deferred=(bar,ratio,slot);return
         proposal=self.proposal;self.proposal=False;self.slot=slot;self.slot_bar=bar if slot is not None else None
-        self.checked=True;self.retry_at=time.monotonic()+20
+        self.checked=True
         if proposal and slot is not None:
-            if not self.window.service.set_options(resource_taskbar=True,
-                    resource_taskbar_position={0.:'left',.5:'center',1.:'right'}[ratio],resource_taskbar_anchor={'screen':bar['screen'],'ratio':ratio}):
-                self.slot=None;self.slot_bar=None
+            self.shell_missing=False;self.fullscreen=bool(same_monitor(fullscreen_window(),bar['hwnd']))
+            # Only the capsule can be dragged. Its placement is independent of the readout.
+            if not self.window.service.set_options(resource_capsule_taskbar=True,resource_collapsed=True,
+                    resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={'screen':bar['screen'],'ratio':ratio}):
+                self.slot=None
         if self.closed:return
-        if proposal and self.slot is None and self.window.service.cfg['resource_taskbar']:
-            self.target,self.slot,self.ratio,self.checked=self.previous
-            self.slot_bar=self.target if self.slot is not None else None
-            self.window.placement_changed()
-            return
-        if proposal and self.slot is None and not self.window.service.cfg['resource_taskbar']:
+        if proposal and self.slot is None:
+            self.target,self.slot,self.slot_bar,self.ratio,self.checked,self.shell_missing,self.fullscreen=self.previous
             self.window.placement_changed();return
+        self.retry_at=time.monotonic()+20
         self.watch(bar['hwnd'])
         if not self.shell_timer.isActive():self.shell_timer.start()
         self.window.placement_changed()
     def resume(self):
         pending,self.deferred=self.deferred,None
-        if pending and not self.closed and pending[0]==self.target:self.accept(*pending)
+        if pending and not self.closed and pending[:2]==(self.target,self.ratio):self.accept(*pending)
     def watch(self,hwnd):
         if self.window.service.runtime.dock.preview:return
         if self.hook and self.hooked==hwnd:return

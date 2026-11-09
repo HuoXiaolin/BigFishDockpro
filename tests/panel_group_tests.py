@@ -32,8 +32,7 @@ def run(api,runtime,root,output,checks):
         assert len(found)==1 and not any(is_uninstall_entry(row) for row in found),found
         assert uninstaller.exists() and (fixture/'软件维护.lnk').exists()
         checks.append('discovery filter: Chinese removal names, disguised real uninstaller shortcut targets and --uninstall arguments hidden; normal aliases deduplicated, originals preserved')
-        runtime.set_lite(False)
-        cfg.update(panel_enabled=True,desktop_auto_sort=True,panel_auto_hide=False,merged_panels=False,hide_tray=False,lite_enabled=True)
+        cfg.update(panel_enabled=True,desktop_auto_sort=True,panel_auto_hide=False,merged_panels=False,hide_tray=False)
         manager.roots=[str(demo)];manager.shown=True
         first=manager.new_panel('设计资料',['.png','.txt'])
         second=manager.new_panel('共享图片',['.png'])
@@ -93,7 +92,7 @@ def run(api,runtime,root,output,checks):
         api.save_config=lambda value:False
         try:
             assert not manager.update_panel(second,view='large')
-            assert runtime.set_lite(True) is False and not runtime.lite and cfg==previous
+            assert runtime.set_desktop_paused(True) is False and not runtime.game_active and cfg==previous
         finally:api.save_config=save
         from PyQt5.QtWidgets import QMessageBox
         question=QMessageBox.question;QMessageBox.question=lambda *args:QMessageBox.Yes
@@ -155,9 +154,9 @@ def run(api,runtime,root,output,checks):
         window=manager.windows[collection]
         assert window.isVisible() and window.geometry().getRect()==independent and not window.tabs.isVisible()
         assert window.list.count()==11 and manager.model(collection)['view']=='list'
-        before={key:value.collapsed for key,value in manager.windows.items()}
-        runtime.set_lite(True);runtime.set_lite(False);app.processEvents()
-        assert {key:value.collapsed for key,value in manager.windows.items()}==before
+        before={key:value.collapsed for key,value in manager.windows.items() if value.isVisible()}
+        runtime.memory_budget.release_hidden();app.processEvents()
+        assert {key:value.collapsed for key,value in manager.windows.items() if value.isVisible()}==before
         assert manager.windows[second].isVisible() and window.isVisible()
         saved_merge=copy.deepcopy(cfg)
         save=api.save_config;api.save_config=lambda value:False
@@ -181,7 +180,7 @@ def run(api,runtime,root,output,checks):
         for identity in members:
             joined=manager.set_merged(identity,True)
             assert joined
-        checks.append('11-file list regression: distinct full rows, scrolling to final row, repeated small/large/list changes, search and selection, restart; partial merge context/group controls, active split, independent geometry, empty membership and lite coexistence')
+        checks.append('11-file list regression: distinct full rows, scrolling to final row, repeated small/large/list changes, search and selection, restart; partial merge context/group controls, active split, independent geometry, empty membership and idle cleanup')
         # Tab order: moveTab emits the same signal as native dragging; keep active identity stable.
         members=[model['id'] for model in manager.merged_models()]
         assert len(members)>=3
@@ -293,18 +292,12 @@ def run(api,runtime,root,output,checks):
                 combo.showPopup();app.sendEvent(combo.view(),QKeyEvent(QEvent.KeyPress,Qt.Key_Escape,Qt.NoModifier))
                 assert combo.currentIndex()==original_index and not combo.view().isVisible()
         settings.reject()
-        assert runtime.lite_timer.isActive() and runtime.lite_timer.interval()==60000
-        runtime.set_lite(True)
-        assert api.load_config()['runtime_lite'] and not runtime.dock.blur_timer.isActive()
         runtime.show_settings()
-        assert runtime.lite and api.load_config()['runtime_lite'] and not runtime.lite_timer.isActive()
-        assert not runtime.dock.blur_timer.isActive() and runtime.tray.settings_dialog.isVisible()
+        assert runtime.memory_budget.timer.isActive() and runtime.tray.settings_dialog.isVisible()
         runtime.tray.settings_dialog.reject()
-        assert runtime.lite and not runtime.lite_timer.isActive()
-        runtime.set_lite(False)
-        assert runtime.lite_timer.isActive()
+        assert runtime.memory_budget.timer.isActive()
         checks.append('panel groups: default switches survive scan/reload, merged tabs share position/size and restore active page; matching formats allow duplicate references, per-panel pin/exclusion, originals preserved')
-        checks.append('card views: real menu small/large/list switches preserve entries and reload; menus/popups: uniform tray layout, all settings combo popups opened in both themes, Dock settings/batch shortcuts, tray hide and preferred Dock visibility persist; real settings finished signal arms 60000ms lite timer')
+        checks.append('card views: real menu small/large/list switches preserve entries and reload; menus/popups: uniform tray layout, all settings combo popups opened in both themes, Dock settings/batch shortcuts, tray hide and preferred Dock visibility persist; idle maintenance remains scheduled through settings')
     finally:
         runtime.panels.close();cfg.clear();cfg.update(original);api.save_config(cfg)
         runtime.panels=DesktopPanels(runtime,roots=roots);runtime.apply_settings()

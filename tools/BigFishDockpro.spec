@@ -30,11 +30,11 @@ a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('a
 def retain(entry):
     name = entry[0].replace('\\', '/').lower()
     # Qt's hook collects optional dependencies before plugin filtering. This app
-    # uses QPainter's raster engine, with no OpenGL, QML, SVG or Qt networking.
+    # uses QPainter's raster engine and loads Qt SVG only for imported faces.
     if name.rsplit('/', 1)[-1] in {
         'opengl32sw.dll', 'd3dcompiler_47.dll', 'libegl.dll', 'libglesv2.dll',
         'qt5quick.dll', 'qt5qml.dll', 'qt5qmlmodels.dll', 'qt5websockets.dll',
-        'qt5network.dll', 'qt5dbus.dll', 'qt5svg.dll'}:
+        'qt5network.dll', 'qt5dbus.dll'}:
         return False
     if '/translations/' in name:
         return False

@@ -22,8 +22,10 @@ def run(api,runtime,root,output,checks):
         a.grab().save(str(Path(output)/'panel-fold-ball.png'));a.move(a.x()+30,a.y()+20);a.store_geometry();a.expand();app.processEvents();assert a.x()==before[0]+30 and a.y()==before[1]+20 and a.width()==before[2]
         assert settings(b)!=settings(a)
         manager.set_merged('a',True);app.processEvents();assert manager.update_panel('a',fold={'style':'capsule','ratio':20})
-        assert settings(manager.windows['a'])==settings(manager.windows['b'])=={'style':'capsule','ratio':20}
-        manager.windows[manager.active_for('a')].collapse();app.processEvents();manager.select_page('b');app.processEvents();assert settings(manager.windows['b'])['ratio']==20
+        active=manager.windows[manager.active_for('a')]
+        assert settings(active)=={'style':'capsule','ratio':20}
+        active.collapse();app.processEvents();manager.select_page('b');app.processEvents()
+        assert settings(manager.windows['b'])=={'style':'capsule','ratio':20}
         cfg.update(notes_enabled=True,notes_visible=True,note_style='glass');runtime.notes.reload();identity=runtime.notes.new();other=runtime.notes.new()
         assert runtime.notes.select(identity)
         note=runtime.notes.windows[identity];original=note.geometry().getRect()

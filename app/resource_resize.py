@@ -32,11 +32,12 @@ class ResizeEdge(QWidget):
             changes=dict(resource_compact_width=r.width(),resource_compact_height=r.height(),resource_compact_auto_width=False)
         else:
             changes=dict(resource_expanded_width=r.width(),resource_expanded_height=r.height())
-        changes['resource_layout']=capture(list(r.getRect()),screen_records())
-        # A deliberate resize keeps the dragged edge where it was released.
-        # Snap again on the next body drag, rather than overriding this size.
-        changes['resource_edge']='free'
+        if w.taskbar_slot() is None:
+            changes['resource_layout']=capture(list(r.getRect()),screen_records())
+            # A deliberate resize keeps the dragged edge where it was released.
+            changes['resource_edge']='free'
         if not w.service.set_options(**changes):w.reposition()
+        if w.taskbar_placement:w.taskbar_placement.resume()
         event.accept()
 
 
@@ -49,5 +50,6 @@ class ResizeEdges:
                't':(corner,0,width-2*corner,edge),'b':(corner,height-edge,width-2*corner,edge),
                'lt':(0,0,corner,corner),'rt':(width-corner,0,corner,corner),
                'lb':(0,height-corner,corner,corner),'rb':(width-corner,height-corner,corner,corner)}
+        show=not w.service.compact or (w.service.cfg['resource_fold']!='ball' and w.taskbar_slot() is None)
         for key,handle in self.handles.items():
-            handle.setGeometry(*boxes[key]);handle.setVisible(not w.service.compact or w.service.cfg['resource_fold']!='ball');handle.raise_()
+            handle.setGeometry(*boxes[key]);handle.setVisible(show);handle.raise_()

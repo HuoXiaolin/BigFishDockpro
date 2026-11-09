@@ -91,10 +91,6 @@ def run(api,runtime,root,output,checks):
         manager.toggle();assert all(window.isVisible() for window in manager.windows.values())
         runtime.game_active=True;manager.sync();assert not any(window.isVisible() for window in manager.windows.values())
         runtime.game_active=False;manager.sync()
-        backgrounds={key:window.backdrop for key,window in manager.windows.items()}
-        runtime.lite=True;manager.set_lite()
-        assert all(window.backdrop is backgrounds[key] and not window.refresh_timer.isActive() for key,window in manager.windows.items())
-        runtime.lite=False
         assert manager.select(identity)
         from screen_layout import capture
         real=__import__('sticky_notes').screen_records();area=real[0]['area'];reference=copy.deepcopy(real);reference[0]['area']=[area[0],area[1],round(area[2]*1.5),round(area[3]*1.5)]
@@ -119,9 +115,9 @@ def run(api,runtime,root,output,checks):
         assert manager.recovery.exists()
         manager=runtime.notes=NotesManager(runtime);manager.sync();assert not manager.recovery.exists()
         assert '恢复演示' in manager.windows[identity].editor.toPlainText()
-        checks.append('sticky notes: three runtime skins rendered in both themes, rich-text bold/italic/underline/bullets, toggled todos, plain-only paste/no resource reads, 600ms autosave and failure retention/retry, multi-note search/open/delete/restore, collapse/lock/pin/visibility, game/lite modes, canonical mixed-DPI note geometry/font, JSON transfer and invalid record rejection, actual controller restart and failed-shutdown recovery')
+        checks.append('sticky notes: three runtime skins rendered in both themes, rich-text bold/italic/underline/bullets, toggled todos, plain-only paste/no resource reads, 600ms autosave and failure retention/retry, multi-note search/open/delete/restore, collapse/lock/pin/visibility, desktop pause, canonical mixed-DPI note geometry/font, JSON transfer and invalid record rejection, actual controller restart and failed-shutdown recovery')
     finally:
-        runtime.game_active=False;runtime.lite=False
+        runtime.game_active=False
         if manager:manager.close()
         cfg.clear();cfg.update(original);api.save_config(cfg);runtime.notes=NotesManager(runtime);runtime.notes.sync()
         apply_theme(app,runtime.dock.is_light())

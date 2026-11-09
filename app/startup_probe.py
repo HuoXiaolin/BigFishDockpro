@@ -25,7 +25,7 @@ class StartupProbe:
             if self.resume:
                 self.expected=api.load_config();return
             cfg=api.normalize_features(dict(api.DEFAULT_CONFIG,items=[],autostart=False,glass=False,running_dots=False,startup_delay=0,
-                screen_corners=False,check_updates_on_start=False,fullscreen_detection=False,game_mode=False,lite_enabled=False,runtime_lite=False,
+                screen_corners=False,check_updates_on_start=False,fullscreen_detection=False,game_mode=False,
                 dock_visible=True,panel_enabled=True,panels_visible=True,notes_enabled=True,notes_visible=True,clock_enabled=True,desktop_auto_sort=False,panel_auto_hide=False,
                 desktop_panels=[{'id':'images','name':'恢复测试','geometry':[70,90,340,220]}]))
             assert api.save_config(cfg);self.expected=cfg
@@ -37,7 +37,7 @@ class StartupProbe:
         cfg = dict(api.DEFAULT_CONFIG, card_scale=100,settings_size='small', items=[], autostart=False, glass=False, running_dots=False,
                    startup_delay=1, screen_corners=False, check_updates_on_start=False,
                    dock_visible=self.autostart, panels_visible=self.autostart, hide_tray=self.autostart,
-                   runtime_lite=self.autostart, panel_enabled=True, panel_auto_hide=False, desktop_auto_sort=False,
+                   runtime_lite=self.autostart, lite_enabled=True, panel_enabled=True, panel_auto_hide=False, desktop_auto_sort=False,
                    desktop_panels=[{'id':'images','name':'图片','geometry':[70,90,340,220],'collapsed':True}],
                    merged_panels=self.autostart, merged_active='images', merged_geometry=[88,96,360,240],
                    merged_collapsed=True, lite_restore={'images':False,'__merged__':False} if self.autostart else {})
@@ -57,7 +57,8 @@ class StartupProbe:
                 preset = load()
                 for key in ('icon_size','dock_material','panel_enabled','panel_opacity','card_scale','autostart','flash_enabled',
                             'resource_enabled','resource_weather','resource_ai','resource_music',
-                            'resource_taskbar','resource_ai_tray','resource_face','resource_open_page','screen_corners','corner_radius'):
+                            'resource_taskbar','resource_ai_tray','resource_face','resource_open_page','screen_corners','corner_radius',
+                            'resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density'):
                     assert dock.cfg[key] == preset[key], key
                 assert dock.cfg['taskbar_text_mode']=='system'
                 assert dock.cfg['dock_quick_order'][:6]==['settings','taskbar','taskbar_text','manage','appearance','panels']
@@ -81,7 +82,6 @@ class StartupProbe:
             else:
                 assert dock.isVisible() is self.autostart
                 assert runtime.panels.shown is self.autostart
-                assert runtime.lite is self.autostart
                 assert tray.isVisible() is not self.autostart
                 panel = runtime.panels.windows['images']
                 assert panel.collapsed
@@ -92,22 +92,16 @@ class StartupProbe:
             elapsed = time.monotonic()-self.started
             if self.autostart:
                 assert elapsed >= .9
-            runtime.set_lite(True)
+            assert not {'lite_enabled', 'runtime_lite', 'lite_restore'} & dock.cfg.keys()
+            assert 'lite' not in dock.cfg['dock_quick_order']
             runtime.show_settings()
-            assert runtime.lite and runtime.settings_open
+            assert runtime.settings_open and runtime.memory_budget.timer.isActive()
             if self.autostart and not self.fresh: assert panel.collapsed
-            assert not runtime.lite_timer.isActive()
             tray.settings_dialog.reject()
-            assert runtime.lite and not runtime.settings_open and not runtime.lite_timer.isActive()
-            runtime.set_lite(False)
-            runtime.show_settings()
-            assert not runtime.lite and runtime.settings_open and not runtime.lite_timer.isActive()
-            tray.settings_dialog.reject()
-            assert not runtime.settings_open and runtime.lite_timer.isActive()
-            assert runtime.lite_timer.interval() == 60000
+            assert not runtime.settings_open and runtime.memory_budget.timer.isActive()
             result = {'passed':True, 'checks':['actual application initialization on '+self.desktop,
-                      'fresh profile: bundled default settings load for Dock, cards, tray and resource capsule; personal lists start empty; account and weather probes remain idle in isolated preview' if self.fresh else 'login start restores visible Dock, hidden tray, lite mode and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
-                      'opening settings preserves lite mode; closing settings in normal mode restarts the 60-second idle timer'],
+                      'fresh profile: bundled default settings load for Dock, cards, tray and resource capsule; personal lists start empty; account and weather probes remain idle in isolated preview' if self.fresh else 'login start restores visible Dock, hidden tray and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
+                      'legacy lite settings are ignored; normal idle cleanup remains scheduled across opening and closing settings'],
                       'elapsed_seconds':round(elapsed,2)}
             fixture=os.environ.get('FISHDOCK_EXIT_LAUNCH_FIXTURE')
             if fixture:

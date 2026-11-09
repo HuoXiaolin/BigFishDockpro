@@ -45,10 +45,15 @@ def owner_of(hwnd):
     return native().GetWindow(hwnd, 4) or 0  # GW_OWNER
 
 
-def desktop_layer(hwnd, top, owner=0):
+def set_owner(hwnd, owner):
     if owner_of(hwnd) != owner:
         native().SetWindowLongPtrW(hwnd, -8, owner)  # GWLP_HWNDPARENT of a top-level window
-    return restack(hwnd, TOPMOST if top else BOTTOM) and owner_of(hwnd) == owner
+    return owner_of(hwnd) == owner
+
+
+def desktop_layer(hwnd, top, owner=0):
+    owned = set_owner(hwnd, owner)
+    return restack(hwnd, TOPMOST if top else BOTTOM) and owned
 
 
 def click_through(window, enabled):

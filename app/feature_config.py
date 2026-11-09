@@ -29,17 +29,16 @@ DEFAULTS = {
     'daily_picture_local_paths': [], 'daily_picture_interval': 30,
     'custom_cards': [],
     'notes_enabled': False, 'notes_visible': True, 'notes_active': '', 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
-    'dock_visible': True, 'panels_visible': True, 'runtime_lite': False, 'hide_tray': False,
+    'dock_visible': True, 'panels_visible': True, 'hide_tray': False,
     'merge_groups': [], 'merge_initialized': False,
     'dock_page': 0, 'merged_panels': True, 'merged_active': '', 'merged_geometry': [],
-    'merged_collapsed': True, 'merged_compact': True, 'disabled_categories': [], 'lite_restore': {},
+    'merged_collapsed': True, 'merged_compact': True, 'disabled_categories': [],
     'screen_corners': True, 'corner_radius': 16,
-    'lite_enabled': True,
     'desktop_middle_toggle': True, 'desktop_icons_override': False,
     'desktop_icon_mode': 'hide_all', 'panel_enabled': True, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
-    'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random',
+    'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random', 'panel_face_role':'',
     'panel_face_scale':100, 'panel_expand_mode':'hover',
     'panel_collapse_style': 'ball', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
     'panel_theme': 'auto', 'panel_color': '', 'theme_color': '', 'dock_highlight': 45,
@@ -88,8 +87,9 @@ def normalize(cfg):
     result['dock_quick_order']=normalize_order(result.get('dock_quick_order'))
     from quick_cycles import normalize_custom
     result['dock_quick_custom']=normalize_custom(result.get('dock_quick_custom'))
-    # Retired live-glass state must not survive old profiles or configuration imports.
-    result.pop('realtime_glass',None)
+    # Ignore retired preferences from older profiles.
+    for key in ('realtime_glass', 'runtime_lite', 'lite_enabled', 'lite_restore'):
+        result.pop(key, None)
     # Retired selective hiding is migrated to the safe co-display mode.
     if result.get('desktop_icon_mode')=='collected':result['desktop_icon_mode']='both'
     for key, lower, upper in [('corner_radius', 0, 120), ('card_snap_distance', 2, 64), ('panel_opacity', 0, 100),
@@ -119,7 +119,6 @@ def normalize(cfg):
         if isinstance(value, bool):
             result[key] = result[key] if isinstance(result[key], bool) else value
     result['disabled_categories'] = [str(value) for value in result.get('disabled_categories', [])] if isinstance(result.get('disabled_categories'), list) else []
-    result['lite_restore'] = {str(key): value for key,value in result.get('lite_restore', {}).items() if isinstance(value,bool)} if isinstance(result.get('lite_restore'),dict) else {}
     result['merged_active'] = str(result.get('merged_active') or '')[:80]
     geo = result.get('merged_geometry')
     result['merged_geometry'] = geo if isinstance(geo,list) and len(geo)==4 and all(type(n) is int for n in geo) else []
@@ -174,6 +173,11 @@ def normalize(cfg):
         from custom_card_data import normalize_cards
         result['custom_cards']=normalize_cards(result['custom_cards'])
     from flash_data import COLORS, PALETTES, normalize_entries, normalize_draft
+    if result['panel_face_role']:
+        from face_roles import clean_role_id
+        result['panel_face_role']=clean_role_id(result['panel_face_role'])
+    else:
+        result['panel_face_role']=''
     from resource_options import normalize as normalize_resources
     normalize_resources(result)
     result['flash_layout']=valid_record(result.get('flash_layout'))

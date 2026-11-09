@@ -67,7 +67,7 @@ def symbol(p,rect,kind,color):
         for x in (5,12,19):
             for y in (5,12,19):p.drawEllipse(QPointF(x,y),1.2 if x==5 else 1.8,1.2 if x==5 else 1.8)
     elif kind=='corner':p.drawArc(3,3,18,18,90*16,90*16);p.drawLine(3,12,3,21);p.drawLine(12,3,21,3)
-    elif kind=='lite':
+    elif kind=='startup':
         p.drawRoundedRect(QRectF(2,6,19,12),3,3);p.drawLine(23,10,23,14);p.drawLine(8,10,8,14);p.drawLine(12,10,12,14)
     else:p.drawRoundedRect(QRectF(3,4,18,16),2,2);p.drawLine(6,9,18,9);p.drawLine(9,6,9,18)
     p.restore()
@@ -256,7 +256,6 @@ class DockQuickSettings(QDialog):
         values={'settings':'完整选项','add':'应用 / 快捷方式','manage':'批量添加 / 移除','appearance':preset,
                 'size':str(cfg['icon_size'])+' 像素','position':{'bottom':'底部','top':'顶部','custom':'自定义'}.get(cfg['position'],'底部'),
                 'panels':'已开启' if cfg['panel_enabled'] else '已关闭','magnify':'已开启' if cfg['magnify'] else '已关闭',
-                'lite':'已开启' if runtime and runtime.lite else '已关闭',
                 'notes':'已开启' if cfg['notes_enabled'] and cfg['notes_visible'] else '已关闭',
                 'clock':'已开启' if cfg['clock_enabled'] else '已关闭','calendar':'已开启' if cfg['calendar_enabled'] else '已关闭',
                 'reflections':'已开启' if cfg['dock_reflections'] else '已关闭','dock_time':'已开启' if cfg['dock_clock'] else '已关闭',
@@ -370,7 +369,6 @@ class DockQuickSettings(QDialog):
             elif key=='add':tray.add_icons()
             elif hasattr(tray,'importer'):tray.importer.show()
             return
-        if key=='lite' and runtime:runtime.set_lite(not runtime.lite);self.refresh();return
         cfg=self.dock.cfg;changes={}
         if key in ('appearance','size','position'):
             notes = getattr(runtime, 'notes', None)

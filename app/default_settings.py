@@ -7,9 +7,8 @@ import sys
 
 LOCAL_DATA = {
     'items', 'desktop_entries', 'desktop_excluded', 'sticky_notes', 'notes_trash',
-    'flash_entries', 'flash_draft', 'layout_profiles', 'groups', 'lite_restore',
-    'runtime_lite', 'dock_page',
-    'custom_cards', 'resource_news_feeds',
+    'flash_entries', 'flash_draft', 'layout_profiles', 'groups', 'dock_page',
+    'custom_cards', 'resource_news_feeds', 'resource_agenda_events',
 }
 LEGACY_LAYOUT_FIELDS = {
     'display_layout', 'desktop_panels', 'panel_geometry', 'merge_groups', 'merge_initialized',

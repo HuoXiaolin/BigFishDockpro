@@ -69,7 +69,7 @@ class EdgeHandle(QWidget):
 
     def animate_reveal(self,value,immediate=False):
         self.slide.stop()
-        if immediate or not self.service.cfg['motion_enabled'] or self.service.runtime.lite:self.set_reveal(value)
+        if immediate or not self.service.cfg['motion_enabled']:self.set_reveal(value)
         elif abs(value-self.reveal_level)>.01:
             self.slide.setStartValue(self.reveal_level);self.slide.setEndValue(value);self.slide.start()
 

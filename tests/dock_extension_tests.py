@@ -10,7 +10,7 @@ from dock_extras import REFLECTION_BUDGET,DockQuickSettings
 
 
 def run(api,runtime,root,output,checks):
-    cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(icon_size=46,theme='light',glass=False,dock_material='solid',lite_enabled=False,running_dots=False,
+    cfg=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG));cfg.update(icon_size=46,theme='light',glass=False,dock_material='solid',running_dots=False,
         items=[{'path':str(Path(root)/('demo-app-'+str(i)+'.exe')),'name':'演示应用 '+str(i)} for i in range(1,7)])
     colors=['#3c8dd5','#38aa96','#986ed0','#e78d73','#d4a643','#637ed8']
     def icon(path,pixels,*args,**kwargs):
@@ -20,9 +20,7 @@ def run(api,runtime,root,output,checks):
     dock=None;original=copy.deepcopy(runtime.dock.cfg)
     try:
         with patch.object(api.IconProvider,'get',side_effect=icon):dock=api.Dock(cfg,preview=True)
-        fake_runtime=SimpleNamespace(lite=False,apply_settings=MagicMock(),show_settings=MagicMock())
-        def set_lite(value):fake_runtime.lite=value;dock.lite_mode=value
-        fake_runtime.set_lite=set_lite
+        fake_runtime=SimpleNamespace(apply_settings=MagicMock(),show_settings=MagicMock())
         tray=SimpleNamespace(cfg=cfg,dock=dock,runtime=fake_runtime,add_icons=MagicMock(),show_settings=MagicMock(),importer=SimpleNamespace(show=MagicMock()))
         dock.tray=tray;dock.show();QApplication.processEvents();dock._recalc(uniform=True)
         gap=dock.bar_rect_f().bottom()-dock.rects[0][3]
@@ -49,14 +47,13 @@ def run(api,runtime,root,output,checks):
         with patch('dock_extras.compose_reflection',side_effect=AssertionError('Reflection generated during drawing')),patch.object(dock,'icon_scaled',side_effect=AssertionError('Reflection used frame-time scale cache')):
             with patch.object(api,'QPainter',Counter):dock.grab()
             assert len(calls)==len(dock.items),(len(calls),len(dock.items))
-            for lite in (False,True):
-                dock.lite_mode=lite;dock.mouse_x=-99999;dock.stretch=0;dock._recalc(uniform=True)
-                before=list(dock.tgt);rect=dock.rects[1];point=QPointF(rect[0],rect[3]-rect[2]/2)
-                QApplication.sendEvent(dock,QMouseEvent(QEvent.MouseMove,point,Qt.NoButton,Qt.NoButton,Qt.NoModifier))
-                assert max(abs(a-b) for a,b in zip(before,dock.tgt))>1,('magnify unavailable',lite)
-                for _ in range(14):dock._tick()
-                dock.grab().save(str(output/('dock-hover-'+('lite' if lite else 'normal')+'.png')))
-        dock.lite_mode=False;dock.mouse_x=-99999;dock.stretch=0;dock.stretch_target=0;dock.hover_index=-1;dock._recalc(uniform=True)
+            dock.mouse_x=-99999;dock.stretch=0;dock._recalc(uniform=True)
+            before=list(dock.tgt);rect=dock.rects[1];point=QPointF(rect[0],rect[3]-rect[2]/2)
+            QApplication.sendEvent(dock,QMouseEvent(QEvent.MouseMove,point,Qt.NoButton,Qt.NoButton,Qt.NoModifier))
+            assert max(abs(a-b) for a,b in zip(before,dock.tgt))>1,'magnify unavailable'
+            for _ in range(14):dock._tick()
+            dock.grab().save(str(output/'dock-hover-normal.png'))
+        dock.mouse_x=-99999;dock.stretch=0;dock.stretch_target=0;dock.hover_index=-1;dock._recalc(uniform=True)
         dock.grab().save(str(output/'dock-reflections-clock.png'))
         assert dock.extras.clock.isActive() and 0<dock.extras.clock.remainingTime()<=60000
         rectangles=dock.extras.rects();assert {'clock','quick','add'}==set(rectangles)
@@ -159,14 +156,14 @@ def run(api,runtime,root,output,checks):
             assert cfg[field]==original_value
         wheel_on(popup.tiles['settings'],120);assert popup.pages.currentIndex()==0
         from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_ORDER,PRIORITY_ORDER,MIME
-        assert DEFAULT_ORDER[:15] == PRIORITY_ORDER and normalize_order(PREVIOUS_ORDER) == DEFAULT_ORDER
+        assert DEFAULT_ORDER[:len(PRIORITY_ORDER)] == PRIORITY_ORDER and normalize_order(PREVIOUS_ORDER) == DEFAULT_ORDER
         assert normalize_order(['clock','clock','not-an-action'])==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
         assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
-        previous_twenty=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
-        assert len(previous_twenty)==20 and normalize_order(previous_twenty)==DEFAULT_ORDER
-        custom_twenty=list(reversed(previous_twenty))
-        assert normalize_order(custom_twenty)==custom_twenty+list(PRODUCTIVITY_ACTIONS)
-        legacy=[key for key in previous_twenty if key!='taskbar_text']
+        previous=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
+        assert normalize_order(previous+['lite'])==DEFAULT_ORDER
+        custom_order=list(reversed(previous))
+        assert normalize_order(['lite']+custom_order)==custom_order+list(PRODUCTIVITY_ACTIONS)
+        legacy=[key for key in previous if key!='taskbar_text']
         assert normalize_order(legacy)==DEFAULT_ORDER
         legacy[1],legacy[-1]=legacy[-1],legacy[1]
         assert normalize_order(legacy)==normalize_order(legacy[:-1])==DEFAULT_ORDER
@@ -218,7 +215,7 @@ def run(api,runtime,root,output,checks):
         with patch.object(dock,'start_backdrop'):
             for key,field in [('appearance','dock_material'),('position','position'),('panels','panel_enabled')]:
                 old_value=cfg[field];popup.tiles[key].click();assert cfg[field]!=old_value and api.load_config()[field]==cfg[field]
-        old_lite=fake_runtime.lite;popup.tiles['lite'].click();assert fake_runtime.lite!=old_lite
+        assert 'lite' not in popup.tiles
         popup.tiles['manage'].click();assert tray.importer.show.called
         popup.tiles['settings'].click();assert fake_runtime.show_settings.called
         # The actual quick tiles must return to the custom values, including after reopening.
@@ -264,7 +261,7 @@ def run(api,runtime,root,output,checks):
             dialog.grab().save(str(output/'dock-extension-settings.png'))
         finally:dialog.reject();dialog.deleteLater()
         (output/'dock-extension-metrics.json').write_text(json.dumps({'reflections':{'icons':len(dock.items),'bytes':memory,'budget_bytes':REFLECTION_BUDGET,'paint_draws_per_icon':1,'paint_generation':False},'unrelated_save_seconds':elapsed,'limits':'isolated UI fixture timing, not a system-wide latency measurement'},indent=2),encoding='utf-8')
-        checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; dynamic supported quick actions; local search/undo/layout/reference routes and unavailable/save-failure states, legacy 20-action order retained; taskbar text adjacent migration, three-mode cycle, persistence, main-setting sync without losing edits, backend-independent text control and failure reporting, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save and in lite; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
+        checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; dynamic supported quick actions; local search/undo/layout/reference routes and unavailable/save-failure states, retired tile removed from legacy custom order; taskbar text adjacent migration, three-mode cycle, persistence, main-setting sync without losing edits, backend-independent text control and failure reporting, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
     finally:
         if dock:dock.extras.close();dock.close();dock.deleteLater()
         runtime.dock.cfg.clear();runtime.dock.cfg.update(original);api.save_config(original);runtime.apply_settings()

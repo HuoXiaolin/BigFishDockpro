@@ -4,7 +4,8 @@ import time
 import threading
 from PyQt5.QtCore import QObject,pyqtSignal,Qt
 from background_worker import BackgroundWorker
-from resource_options import CAPSULE_PAGES,RESOURCE_PAGES,component_available,component_location
+from resource_options import (CAPSULE_PAGES,COMPACT_DEVICE,RESOURCE_PAGES,component_available,
+                              component_location,resource_page_active)
 
 
 class MonitorJob(BackgroundWorker):
@@ -66,7 +67,8 @@ class ResourceCapsule(QObject):
         self.runtime=runtime;self.window=self.strip=self.job=self.bluetooth=None
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
         self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
-        self.extras=None
+        self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
+        self.calendar_sync=None;self.calendar_checked=False
         self.desktop_cards={}
         self.dependency_prompts=None
         self.main_settings = False
@@ -152,6 +154,66 @@ class ResourceCapsule(QObject):
     def detached(self,key):
         return self.desktop_cards.get(key)
 
+    def component_order_at(self, key, before):
+        order = [item for item in self.cfg['resource_component_order'] if item != key]
+        if before is not None:
+            order.insert(order.index(before), key)
+        else:
+            last = max((i for i,item in enumerate(order) if self.window.page_enabled(item)), default=-1)
+            order.insert(last + 1, key)
+        return order
+
+    def detach_component_at(self, key, point):
+        from card_snap import drop_rect
+        from screen_layout import capture, screen_records, valid_record
+        if not self.window or not self.window.page_enabled(key):
+            return False
+        if key=='notes' and not self.runtime.notes.flush():
+            return False
+        locations = dict(self.cfg['resource_component_locations'], **{key: 'desktop'})
+        changes = {'resource_component_locations': locations}
+        if key in RESOURCE_PAGES:
+            from resource_desktop_card import INITIAL_SIZES
+            layouts = dict(self.cfg['resource_card_layouts'])
+            saved = valid_record(layouts.get(key))
+            size = saved['rect'][2:] if saved else INITIAL_SIZES[key]
+            bounds = drop_rect(point, *size)
+            if bounds is None:
+                return False
+            layouts[key] = capture(bounds, screen_records())
+            changes['resource_card_layouts'] = layouts
+        return self.set_options(**changes)
+
+    def preview_component_at(self, key, point=None):
+        window = self.window
+        if window and window.isVisible() and component_location(self.cfg,key)=='desktop':
+            if point is None:window.clear_tab_drop()
+            else:window.preview_tab_drop(key,point,incoming=True)
+
+    def return_component_at(self, key, point, identity=None):
+        window = self.window
+        if window is None:
+            return False
+        window.clear_tab_drop()
+        if (not window.isVisible() or not window.geometry().contains(point)
+                or component_location(self.cfg,key)!='desktop' or not component_available(self.cfg,key)):
+            return False
+        if key=='notes' and not self.runtime.notes.flush():
+            return False
+        locations = dict(self.cfg['resource_component_locations'], **{key: 'capsule'})
+        changes = {'resource_component_locations': locations}
+        slot = window.tab_drop_slot(key, point)
+        if slot is not None:
+            changes['resource_component_order'] = self.component_order_at(key,slot[0])
+        if not self.set_options(**changes):
+            return False
+        if self.compact:
+            self.fold(False)
+        if not self.compact and window.page_enabled(key):
+            window.select_page(key)
+            if key=='custom' and identity:window.view(key).select(identity)
+        return True
+
     def feature_visible(self,key):
         if self.runtime.game_active or not component_available(self.cfg,key):return False
         if component_location(self.cfg,key)=='desktop':return key in self.desktop_cards
@@ -178,10 +240,73 @@ class ResourceCapsule(QObject):
         if self.window and not self.closed:self.window.refresh()
 
     def open_component(self,key,identity=None):
+        card=self.detached(key)
+        if card:
+            card.show();card.raise_()
+            return
         self.open()
         if self.window and self.window.page_enabled(key):
             self.window.select_page(key)
             if identity:self.window.view(key).select(identity)
+
+    def get_pomodoro(self):
+        if self.pomodoro is None:
+            from resource_pomodoro import Pomodoro
+            self.pomodoro=Pomodoro(self)
+            self.pomodoro.changed.connect(self.reminders_changed)
+            self.pomodoro.sync()
+        return self.pomodoro
+
+    def get_agenda(self):
+        if self.agenda is None:
+            from resource_agenda import Agenda
+            self.agenda=Agenda(self)
+            self.agenda.changed.connect(self.reminders_changed)
+            self.agenda.sync()
+        return self.agenda
+
+    def get_calendar_sync(self):
+        if self.calendar_sync is None:
+            from resource_calendar_sync import CalendarSync
+            self.calendar_sync=CalendarSync(self)
+            self.calendar_checked=True
+            self.calendar_sync.events_changed.connect(self.calendar_changed)
+            self.calendar_sync.schedule()
+        return self.calendar_sync
+
+    def calendar_changed(self):
+        if self.agenda:self.agenda.sync()
+        else:self.get_agenda()
+
+    def reminders_changed(self):
+        if self.window:self.window.refresh_reminders()
+        for key in ('pomodoro','agenda'):
+            card=self.detached(key)
+            if card and card.isVisible():card.refresh()
+
+    def reminders(self):
+        badges=[]
+        if self.agenda and self.agenda.due():badges.append(('agenda','日程'))
+        level=self.low_battery()
+        if level is not None:badges.append(('battery',f'{level}%'))
+        if self.pomodoro:badges.extend(self.pomodoro.badges())
+        return tuple(badges)
+
+    def low_battery(self):
+        if self.cfg['resource_alert_battery'] and self.cfg['resource_enabled']:
+            level,state=self.latest.get('battery',(None,'unknown'))
+            if level is not None and state=='battery' and level<=15:return level
+        return None
+
+    def check_battery_alert(self):
+        level,state=self.latest.get('battery',(None,'unknown'))
+        if not self.cfg['resource_alert_battery'] or state in ('charging','ac','plugged','full') or level is not None and level>17:
+            self.battery_warned=False
+        low=self.low_battery()
+        if low is not None and not self.battery_warned:
+            self.battery_warned=True
+            if not (self.runtime.dock.preview or self.runtime.game_active):
+                tray=self.runtime.tray;tray.showMessage('电脑电量低',f'剩余 {low}%，请接上电源。',tray.icon(),5000)
 
     def needs(self):
         if self.closed:return set()
@@ -190,19 +315,26 @@ class ResourceCapsule(QObject):
         capsule=(self.window and self.window.isVisible() and component_location(self.cfg,'resources')=='capsule')
         if detailed or capsule and not (self.compact and self.cfg['resource_fold']=='ball'):
             from resource_options import METRICS
-            desktop={k for k in METRICS if k!='traffic' and self.cfg['resource_'+k]}
+            desktop={k for k in METRICS if k not in ('traffic','system_status') and self.cfg['resource_'+k]}
             if detailed or not self.compact and self.window.page_key=='resources':
                 if 'cpu' in desktop:desktop.add('cpu_cores')
-            elif self.compact:desktop.intersection_update(self.cfg['resource_compact_metrics'])
-            else:desktop.discard('rank')
+                if self.cfg['resource_system_status']:desktop.add('system_status')
+            elif self.compact:
+                selected=self.cfg['resource_compact_metrics']
+                desktop.intersection_update(selected)
+                if self.cfg['resource_system_status']:
+                    desktop.update(key for key in COMPACT_DEVICE if key in selected)
+            else:desktop.difference_update(('rank','bluetooth'))
         if self.feature_visible('traffic'):desktop.add('traffic')
+        if self.window and self.window.isVisible() and self.cfg['resource_alert_battery']:desktop.add('battery')
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
         custom=getattr(self.runtime,'custom_cards',None)
         if custom:desktop.update(custom.needs())
         return desktop
 
     def active_keys(self):
-        return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank','traffic'}
+        return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank','traffic','system_status',
+                               'battery','connection','volume'}
 
     def strip_allowed(self):
         return not self.runtime.game_active or (
@@ -213,9 +345,6 @@ class ResourceCapsule(QObject):
             from taskbar_readout import TaskbarReadout
             self.strip=TaskbarReadout(self)
         return self.strip
-
-    def offer_taskbar(self,bar,point):
-        self.make_strip().placement.offer(bar,point)
 
     def return_from_taskbar(self,point):
         changes={'resource_taskbar':False,'resource_enabled':True}
@@ -255,7 +384,7 @@ class ResourceCapsule(QObject):
             strip=self.make_strip()
             if fresh or getattr(strip.placement,'ratio',None)!=strip.placement.configured_ratio():strip.placement.restore()
             strip.reposition();strip.sync_style()
-        elif self.strip and (not strip_allowed or not self.strip.placement.proposal):
+        elif self.strip:
             strip,self.strip=self.strip,None;strip.dispose()
         demand=self.needs()
         want_tray=self.cfg['resource_ai_tray'] and not self.runtime.game_active
@@ -283,9 +412,11 @@ class ResourceCapsule(QObject):
             bt,self.bluetooth=self.bluetooth,None;bt.close()
         from resource_options import SENSOR_UNITS
         sensors=frozenset(demand & SENSOR_UNITS.keys())
+        if 'system_status' in demand or 'brightness' in demand:sensors=sensors|{'brightness'}
         self.check_dependencies(want_deck)
-        if self.sensors and self.sensors.keys!=sensors:
-            self.sensors.close();self.sensors=None
+        if self.sensors:
+            if not sensors:self.sensors.close();self.sensors=None
+            elif self.sensors.keys!=sensors:self.sensors.reconfigure(sensors)
         if sensors and not self.sensors:
             from resource_probes import SensorRead
             self.sensors=SensorRead(self,sensors)
@@ -296,7 +427,7 @@ class ResourceCapsule(QObject):
         elif not want_fps and self.fps:
             self.fps.close();self.fps=None
         keys=self.active_keys()
-        interval=max(self.cfg['resource_interval'],5 if self.runtime.lite else 2 if self.compact and not self.detached('resources') else 1)
+        interval=max(self.cfg['resource_interval'],2 if self.compact and not self.detached('resources') else 1)
         signature=(frozenset(keys),interval) if keys else None
         if signature!=self.signature:
             self.signature=signature
@@ -317,6 +448,27 @@ class ResourceCapsule(QObject):
             if self.job and signature and not self.job.cancelled.is_set():self.job.reconfigure(signature)
             elif self.job:self.job.requestInterruption()
             else:self.start_job()
+        if self.pomodoro:
+            self.pomodoro.sync()
+        elif resource_page_active(self.cfg,'pomodoro'):
+            from resource_pomodoro import state_path
+            choices=self.cfg['resource_compact_metrics']
+            if (self.cfg['resource_water_enabled'] or state_path(self.runtime.api.CONFIG_DIR).is_file()
+                    or self.window and self.compact and ('pomodoro' in choices or 'water' in choices)):
+                self.get_pomodoro()
+        agenda_enabled=resource_page_active(self.cfg,'agenda')
+        if agenda_enabled and not self.calendar_checked and not self.runtime.dock.preview:
+            from pathlib import Path
+            from resource_agenda import SYNC_SOURCES
+            self.calendar_checked=True
+            directory=Path(self.runtime.api.CONFIG_DIR)
+            if any((directory/f'resource-calendar-{source}.dat').is_file() for source in SYNC_SOURCES):
+                self.get_calendar_sync()
+        if self.calendar_sync:self.calendar_sync.schedule()
+        if self.agenda:self.agenda.sync()
+        elif agenda_enabled and (self.cfg['resource_agenda_events'] or self.calendar_sync and self.calendar_sync.states):
+            self.get_agenda()
+        self.check_battery_alert()
         self.display()
 
     def check_dependencies(self,deck_needed):
@@ -368,6 +520,7 @@ class ResourceCapsule(QObject):
                 self.latest[key]=value;self.observed[key]=now
             elif now-self.observed.get(key,float('-inf'))>max(4,2*interval+1):
                 self.latest.pop(key,None)
+        if 'battery' in keys:self.check_battery_alert()
 
         while self.history and now-self.history[0]['time']>60:self.history.popleft()
         record={k:data[k] for k in ('cpu','memory','network','gpu') if k in keys and data.get(k) is not None}
@@ -381,11 +534,15 @@ class ResourceCapsule(QObject):
         custom=getattr(self.runtime,'custom_cards',None)
         if custom:custom.redraw(metrics_only=True)
     def reposition(self):
-        if self.window:self.window.reposition()
+        if self.window:
+            self.window.sync_taskbar();self.window.reposition()
         for card in self.desktop_cards.values():card.reposition()
         if self.strip:self.strip.placement.restore();self.strip.reposition()
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
+        if self.pomodoro:self.pomodoro.timer.stop()
+        if self.agenda:self.agenda.timer.stop()
+        if self.calendar_sync:self.calendar_sync.close()
         if self.dependency_prompts:self.dependency_prompts.close()
         if self.job:
             self.job.requestInterruption();self.job.deleteLater();self.job=None

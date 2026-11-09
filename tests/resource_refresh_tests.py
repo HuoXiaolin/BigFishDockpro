@@ -1,4 +1,4 @@
-"""Bounded refresh and resource-mode regressions on the isolated desktop."""
+"""Bounded refresh and legacy preferences on the isolated desktop."""
 import copy,tempfile,json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,12 +16,11 @@ def run(api,runtime,main,app,output,checks):
     from sticky_notes import NotesManager
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);manager=runtime.panels
     previous_metadata=manager.file_metadata;previous_rows=manager.scanned_rows;previous_message=manager.message
-    previous_lite=runtime.lite;previous_scan_again=manager.scan_again
+    previous_scan_again=manager.scan_again
     manager.scan_timer.stop()
     if manager.worker:
         manager.worker.ready.disconnect(manager.scanned);manager.worker.close();manager.worker=None
     manager.scan_again=False
-    if runtime.lite:runtime.set_lite(False)
     try:
         with tempfile.TemporaryDirectory(prefix='bigfish-resource-') as directory:
             root=Path(directory);paths=[]
@@ -31,7 +30,7 @@ def run(api,runtime,main,app,output,checks):
             cfg.update(panel_enabled=True,panels_visible=True,desktop_auto_sort=True,merged_panels=False,
                        panel_auto_hide=False,disabled_categories=[],desktop_excluded=[],
                        desktop_panels=[{'id':'documents','name':'文档','view':'small','geometry':[60,70,420,280]}],
-                       desktop_entries=copy.deepcopy(rows[:2]),lite_enabled=False)
+                       desktop_entries=copy.deepcopy(rows[:2]))
             manager.file_metadata={path_key(str(path)):file_state(str(path)) for path in paths[:2]}
             manager.sync_windows();panel=manager.windows['documents'];panel.query.setText('')
             panel.set_collapsed_geometry(False);panel.render(prepare=True);panel.list.doItemsLayout()
@@ -71,14 +70,14 @@ def run(api,runtime,main,app,output,checks):
             with patch('card_file_ui.os.stat',side_effect=AssertionError('Duplicate thumbnail stat')):
                 assert picture_thumbnail(str(picture),32,state) is not None
             checks.append('unchanged scans keep QListWidgetItems and keyboard focus; changed scan synchronizes once; unchanged icons reused; scan metadata supplies time sorting and thumbnails')
-        cfg['merged_collapsed']=False
-        cfg['merge_groups']=[{'id':'default','name':'默认分组'},{'id':'resource_group','name':'资源检查','collapsed':False}]
-        runtime.set_lite(True)
-        cfg['merged_collapsed']=True;cfg['merge_groups'][1]['collapsed']=True
-        cfg['lite_restore']={'__merged__':False,'__merge_group__resource_group':False}
-        runtime.set_lite(False)
-        assert cfg['merged_collapsed'] and cfg['merge_groups'][1]['collapsed'] and cfg['lite_restore']=={}
-        checks.append('leaving lite mode preserves folds made after entering it and discards obsolete restore snapshots')
+        legacy=dict(cfg,merged_collapsed=True,lite_enabled=True,runtime_lite=True,lite_restore={'__merged__':False},
+                    dock_quick_order=['notes','lite','clock'],game_mode=True,fullscreen_detection=False)
+        from config_transfer import normalize
+        for restored in (api.normalize_features(legacy), normalize(legacy, api)):
+            assert restored['merged_collapsed'] and not {'lite_enabled','runtime_lite','lite_restore'} & restored.keys()
+            assert restored['dock_quick_order'][:2]==['notes','clock'] and 'lite' not in restored['dock_quick_order']
+            assert restored['game_mode'] and not restored['fullscreen_detection']
+        checks.append('legacy preferences drop the retired mode and tile while preserving folds, custom quick order and independent pause flags')
         notes=SimpleNamespace(pending={'one':{'id':'one','title':'pending','appearance':{'color':'blue'}}},
                               runtime=SimpleNamespace(dock=SimpleNamespace(cfg={'sticky_notes':[{'id':'one','title':'saved'}]})))
         notes.rows=lambda:(_ for _ in ()).throw(AssertionError('cloned every note'))
@@ -89,7 +88,5 @@ def run(api,runtime,main,app,output,checks):
         manager.scan_timer.stop();manager.worker=None;manager.file_metadata=previous_metadata
         manager.scanned_rows=previous_rows;manager.scan_again=previous_scan_again;manager.message=previous_message
         cfg.clear();cfg.update(before);runtime.apply_settings();runtime.layout.apply();manager.restore_layout_state()
-        runtime.set_lite(previous_lite,persist=False)
-        # Lifecycle methods can normalize session hints; restore the caller's
-        # configuration and persisted data as well as its actual resource mode.
+        # Layout methods may normalize session hints; restore the persisted input too.
         cfg.clear();cfg.update(before);api.save_config(cfg)

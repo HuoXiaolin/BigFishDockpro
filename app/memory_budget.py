@@ -37,14 +37,17 @@ class MemoryBudget:
     def check(self):
         runtime=self.runtime;cursor=QCursor.pos();moved=cursor!=self.cursor;self.cursor=cursor
         if runtime.closed or moved or runtime.ui_busy() or QApplication.mouseButtons()!=Qt.NoButton:return
-        if time.monotonic()-self.last_release<60 or private_resident()<44*2**20:return
-        self.reclaim()
+        if time.monotonic()-self.last_release<60:return
+        self.reclaim(trim_caches=private_resident()>=44*2**20)
 
     def prepare_settings(self):
         """Drop hidden renderers before allocating a settings window."""
-        runtime = self.runtime
-        if runtime.closed:
+        if self.runtime.closed:
             return
+        if not self.reclaim():self.release_hidden()
+
+    def release_hidden(self):
+        runtime = self.runtime
         runtime.panels.release_hidden_windows()
         popup = runtime.dock.extras.popup
         if popup is not None:
@@ -52,17 +55,18 @@ class MemoryBudget:
         window = runtime.resources.window
         if window is not None:
             window.release_inactive_views()
-        self.reclaim()
 
-    def reclaim(self):
+    def reclaim(self, *, trim_caches=True):
         runtime=self.runtime
         if runtime.closed or runtime.ui_busy() or QApplication.mouseButtons()!=Qt.NoButton:return False
         self.last_release=time.monotonic()
+        self.release_hidden()
         dialog=getattr(runtime.tray,'settings_dialog',None)
         if dialog is not None and not dialog.isVisible() and not getattr(dialog, '_suspended', False):
             dialog.deleteLater();del runtime.tray.settings_dialog
         importer=getattr(runtime.tray,'importer',None)
         if importer and (not importer.dialog or not importer.dialog.isVisible()):importer.release_memory()
+        if not trim_caches:return True
         from app_catalog import clear_discovery_cache
         from wallpaper_source import image_file
         clear_discovery_cache();image_file.cache_clear();QPixmapCache.clear();runtime.dock.icons.clear()

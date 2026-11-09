@@ -9,7 +9,7 @@ def run(api,runtime,root,output,checks):
     from PyQt5.QtWidgets import QApplication
     from desktop_panel_tests import wait_for
     app=QApplication.instance();dock=runtime.dock;cfg=dock.cfg
-    cfg.update(panel_enabled=True,panels_visible=True,notes_enabled=True,notes_visible=True,lite_enabled=False)
+    cfg.update(panel_enabled=True,panels_visible=True,notes_enabled=True,notes_visible=True)
     runtime.apply_settings()
     panel=next(w for w in runtime.panels.windows.values() if w.isVisible())
     paths=[]

@@ -144,9 +144,10 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         from daily_picture_card import add_menu_actions as picture_actions
         picture_actions(menu.addMenu('每日图片'),runtime)
         menu.addAction('原生卡片编辑器…').triggered.connect(runtime.open_custom_cards)
-    modes=menu.addMenu('运行模式');modes.menuAction().setEnabled(runtime is not None)
-    for title,state,callback in [('精简模式',bool(runtime and runtime.lite),lambda checked:runtime.set_lite(checked) if runtime else None),('游戏模式',tray.cfg.get('game_mode',False),lambda checked:runtime.toggle_game(checked) if runtime else None)]:
-        action=modes.addAction(title);action.setCheckable(True);action.setChecked(state);action.triggered.connect(callback)
+    pause=menu.addMenu('组件暂停');pause.menuAction().setEnabled(runtime is not None)
+    for title,key,callback in [('暂停桌面组件','game_mode',lambda on:runtime.set_desktop_paused(on) if runtime else None),
+                               ('全屏自动暂停','fullscreen_detection',lambda on:runtime.set_fullscreen_pause(on) if runtime else None)]:
+        action=pause.addAction(title);action.setCheckable(True);action.setChecked(tray.cfg[key]);action.triggered.connect(callback)
     menu.addSeparator();menu.addAction('设置…').triggered.connect(lambda:runtime.show_settings() if runtime else tray.show_settings())
     help_menu=menu.addMenu('帮助与更新')
     def refresh():
