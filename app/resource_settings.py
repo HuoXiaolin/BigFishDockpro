@@ -7,8 +7,8 @@ from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushB
                              QAbstractItemView,QStyledItemDelegate)
 from appearance_presets import COLOR_MODES,material_choices
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
-from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_CONTENT,COMPACT_DEVICE,COMPACT_ITEMS,COMPACT_ROUTINES,
-                              DESKTOP_COMPONENTS,PLACED_COMPONENTS,REMINDER_OPTIONS,component_location)
+from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
+                              DESKTOP_COMPONENTS,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -18,7 +18,7 @@ NAV_SYMBOLS = ('startup','position','size','wave','palette','monitor','corner','
 NAV_GROUPS = (('胶囊',(0,2,4,6,8)),('监控',(5,1)),('内容与接入',(9,7,3)))
 COMPACT_GROUPS = (
     ('性能与流量', ('cpu','gpu','memory','network','fps','traffic')),
-    ('电脑状态', (*COMPACT_DEVICE,'bluetooth')),
+    ('电脑状态（右侧图标）', COMPACT_STATUS),
     ('专注与日程', tuple(COMPACT_ROUTINES)),
     ('内容', tuple(COMPACT_CONTENT)),
     ('CPU 传感器', ('cpu_temp','cpu_power','cpu_frequency','cpu_voltage','cpu_fan','cpu_pump')),
@@ -81,14 +81,14 @@ class ResourceOptions(QDialog):
         2: ('compact_fields',),
         3: ('ai_fields',),
         4: ('custom_fields',),
-        5: ('limit_fields',),
+        5: ('limit_fields','weather_threshold_fields'),
         8: ('location_fields',),
     }
     field_pages=[
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_compact_rotate','resource_ring_letters','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
         {'resource_ai','resource_ai_tray','resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_live_glass','resource_background','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable'},
@@ -120,6 +120,8 @@ class ResourceOptions(QDialog):
                     widget.blockSignals(blocked)
             if index == 4:
                 self.color.setText(draft['text'])
+            elif index == 2:
+                self.fields['resource_clock_format'].setEnabled(self.fields['resource_clock'].isChecked())
             elif index == 7:
                 self.weather_cities.setText(draft['text'])
                 self.news_feeds.setPlainText(draft['feeds'])
@@ -186,7 +188,7 @@ class ResourceOptions(QDialog):
         self.loaded=set();self.fields=OptionFields(self);self.tints=dict(cfg['resource_tints'])
         self.drafts = {}
         self.orders = {}
-        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('ai_fields',3),('limit_fields',5),('location_fields',8)]:
+        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('ai_fields',3),('limit_fields',5),('weather_threshold_fields',5),('location_fields',8)]:
             setattr(self,name,PageFields(self,index))
         from copy import deepcopy
         self.baseline = {key: deepcopy(value) if key.startswith('resource_') else value for key, value in cfg.items()
@@ -314,9 +316,15 @@ class ResourceOptions(QDialog):
             spin(compact_form,'resource_expanded_width','展开宽度（各页共用）',260,1000,cfg['resource_expanded_width'],self.fields)
             spin(compact_form,'resource_expanded_height','展开高度（各页共用）',180,800,cfg['resource_expanded_height'],self.fields)
             combo(compact_form,'resource_compact_density','内容密度',[('自动紧凑','auto'),('始终紧凑','dense')],cfg['resource_compact_density'],self.fields)
-            for key,title in [('resource_compact_rings','资源占用环'),('resource_clock','显示时间'),('resource_compact_rotate','读数自动翻页'),
-                              ('resource_ring_letters','配额环内显示首字母')]:
+            for key,title in [('resource_compact_rings','资源占用环'),('resource_compact_rotate','读数自动翻页')]:
                 self.fields[key]=check(title,cfg[key]);compact.addWidget(self.fields[key])
+            clock=section(layout,'日期与时间')
+            show_clock=check('显示日期或时间',cfg['resource_clock'])
+            self.fields['resource_clock']=show_clock;clock.addWidget(show_clock)
+            form=QFormLayout();clock.addLayout(form)
+            clock_format=combo(form,'resource_clock_format','显示格式',[(label,key) for key,(label,_) in COMPACT_CLOCK_FORMATS.items()],
+                               cfg['resource_clock_format'],self.fields)
+            clock_format.setEnabled(show_clock.isChecked());show_clock.toggled.connect(clock_format.setEnabled)
             compact=section(layout,'收起时自动提醒')
             key='resource_alert_battery'
             self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
@@ -325,6 +333,7 @@ class ResourceOptions(QDialog):
         def build_3():
             layout=page(3)
             deck=section(layout,'AI 用量')
+            deck.addWidget(button('自定义用量接口…',self.gateway_connections))
             for key,title in [('resource_ai','桌面 AI 额度与用量'),('resource_ai_tray','独立 AI 用量托盘图标'),
                               ('resource_quota_alert','额度剩余降至 40% / 20% 时提醒')]:
                 self.fields[key]=check(title,cfg[key]);deck.addWidget(self.fields[key])
@@ -411,6 +420,13 @@ class ResourceOptions(QDialog):
             for key,unit in SENSOR_UNITS.items():
                 if key=='gpu_memory':continue
                 spin(limits_form,key,METRICS[key]+'（'+unit+'）',0,100000,cfg['resource_limits'].get(key,default_limit(key)),self.limit_fields)
+            weather=section(layout,'收起天气温度颜色')
+            form=QFormLayout();weather.addLayout(form)
+            labels=('深蓝低于（℃）','绿色从（℃）开始','黄色高于（℃）','红色高于（℃）')
+            for index,(label,value) in enumerate(zip(labels,cfg['resource_weather_thresholds'])):
+                spin(form,index,label,-80,80,value,self.weather_threshold_fields)
+            hint=QLabel('深蓝和绿色之间使用浅蓝。分界值按从低到高排列。')
+            hint.setWordWrap(True);weather.addWidget(hint)
             layout.addStretch()
 
         def build_6():
@@ -521,6 +537,10 @@ class ResourceOptions(QDialog):
         try:launch();self.status.setText('已打开内置安装程序。')
         except (OSError,ValueError) as error:self.status.setText(str(error))
 
+    def gateway_connections(self):
+        from resource_gateway_settings import edit_gateways
+        edit_gateways(self.service,self)
+
     def agenda_connections(self):
         from resource_calendar_settings import show_connections
         show_connections(self,self.service)
@@ -626,7 +646,10 @@ class ResourceOptions(QDialog):
                 changes['resource_compact_pinned']=list(dict.fromkeys([*pins,*added]))
         if 5 in self.drafts:
             from resource_status import default_limit
-            changes['resource_limits']={k:value for k,value in self.drafts[5]['stores']['limit_fields'].items() if value!=default_limit(k)}
+            thresholds=self.drafts[5]['stores']
+            changes['resource_limits']={k:value for k,value in thresholds['limit_fields'].items() if value!=default_limit(k)}
+            try:changes['resource_weather_thresholds']=clean_weather_thresholds([thresholds['weather_threshold_fields'][i] for i in range(4)],True)
+            except ValueError as error:self.status.setText(str(error));return False
         if len(changes.get('resource_ai_providers',[]))>7:self.status.setText('最多同时显示 7 个 AI 工具。');return False
         if 4 in self.drafts:
             changes['resource_tints']=dict(self.tints)

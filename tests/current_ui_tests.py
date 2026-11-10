@@ -439,6 +439,8 @@ def run(output):
         check_pomodoro(api,runtime,app,output,checks)
         from resource_calendar_tests import run as check_calendar_sync
         check_calendar_sync(app,output,checks)
+        from resource_gateway_tests import run as check_gateway
+        check_gateway(api,runtime,app,output,checks)
         from shutdown_tests import run as check_shutdown
         check_shutdown(api,runtime,root.name,app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.

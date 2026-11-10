@@ -220,7 +220,7 @@ class RuntimeController:
             self.sync_daily_picture()
         if placement_changed or changed & (capsule_style|{'card_scale','custom_cards'}):
             self.sync_custom_cards()
-        if policy_changed or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'taskbar_text_mode','motion_enabled','card_snap','spectrum_enabled','custom_cards'}):
+        if policy_changed or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'taskbar_text_mode','motion_enabled','card_snap','spectrum_enabled','custom_cards','calendar_enabled'}):
             self.resources.sync()
         if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
             self.flash.sync()

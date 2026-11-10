@@ -8,7 +8,7 @@ from ui_style import AlignedMenu
 from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import (COMPACT_DEVICE,COMPACT_ROUTINES,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
+from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
                               background,component_available,component_location)
 from flash_view import palette_for,icon
 
@@ -17,7 +17,7 @@ from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metri
 from capsule_glass import CapsuleGlass
 
 
-COMPACT_PAGES={**dict.fromkeys(COMPACT_DEVICE,'resources'),'pomodoro':'pomodoro','water':'pomodoro','agenda':'agenda'}
+COMPACT_PAGES={**dict.fromkeys(COMPACT_STATUS,'resources'),'weather':'weather','music':'music','ai':'ai'}
 
 
 def display_values(service,compact=None):
@@ -417,6 +417,7 @@ class ResourceWindow(ResourceContentHost):
         self._traffic_view=self._weather_view=None
         self._news_view=self._pomodoro_view=self._agenda_view=None
         self._reminder_key=();self.reminder_bounds=();self.reminder_kinds=()
+        self.status_bounds={};self.marquee_title='';self.marquee_since=0.
         for key in DESKTOP_COMPONENTS:setattr(self,'_'+key+'_view',None)
         self.empty_page=QLabel('把桌面组件拖回胶囊，或在「组件布局」中选择栏目。')
         self.empty_page.setObjectName('Subtle');self.empty_page.setWordWrap(True)
@@ -619,27 +620,36 @@ class ResourceWindow(ResourceContentHost):
     def refresh_reminders(self):
         if not self.isVisible():return
         if self.service.compact:
-            key=tuple(kind for kind,_ in self.service.reminders())
+            from resource_compact import compact_badges
+            badges,_=compact_badges(self.service)
+            key=tuple((kind,value if kind in ('agenda','water') else '') for kind,value in badges)
+            self._compact_cache=None
             if key!=self._reminder_key:
-                self._reminder_key=key;self._compact_cache=None;self.reposition()
-            elif any(item in COMPACT_ROUTINES for item in self.service.cfg['resource_compact_metrics']):
-                self._compact_cache=None
-            self.update()
+                self._reminder_key=key;self.reposition()
+            self.sync_animation();self.update()
         elif self.page_key in ('pomodoro','agenda'):
             view=getattr(self,'_'+self.page_key+'_view')
             if view:view.refresh()
 
     def animate(self):
-        now = time.monotonic()
-        _, period = HALO_SPEEDS[self.service.cfg['resource_halo_speed']]
-        self.halo_phase = (self.halo_phase + (now - self.halo_updated_at) / period) % 1
-        self.halo_updated_at = now
+        cfg=self.service.cfg
+        if cfg['resource_halo']:
+            now = time.monotonic()
+            _, period = HALO_SPEEDS[cfg['resource_halo_speed']]
+            self.halo_phase = (self.halo_phase + (now - self.halo_updated_at) / period) % 1
+            self.halo_updated_at = now
         self.update()
     def next_page(self):
         if self.press is None and not self.underMouse() and self.compact_pages>1:self.offset+=1;self.update()
     def sync_animation(self):
         cfg=self.service.cfg;visible=self.isVisible()
-        for timer,active in [(self.animation,visible and cfg['resource_halo'] and cfg.get('motion_enabled',True)),
+        motion=visible and cfg.get('motion_enabled',True)
+        title=''
+        if motion and self.service.compact and self.service.agenda and cfg['resource_fold']!='ball' and self.width()>=70:
+            from resource_compact import agenda_marquee
+            title=agenda_marquee(self)
+        if title!=self.marquee_title:self.marquee_title=title;self.marquee_since=time.monotonic()
+        for timer,active in [(self.animation,motion and (cfg['resource_halo'] or title)),
                              (self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
                              (self.rotate,visible and self.service.compact and cfg['resource_compact_rotate'])]:
             if active and not timer.isActive():
@@ -850,7 +860,10 @@ class ResourceWindow(ResourceContentHost):
         reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注',
                          'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停'}
         tips.extend(reminder_labels[kind]+' '+value for kind,value in self.service.reminders())
-        if self.service.compact:tips.append('滚轮切换读数，点击展开')
+        if self.service.compact:
+            from resource_compact import status_values
+            tips.extend(label+' '+value for _,label,value,_ in status_values(self.service))
+            tips.append('滚轮切换读数，点击展开')
         self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '资源胶囊 · 点击展开')
         if not self.service.compact:
             if not self.page_enabled(self.page_key):self.page_key=self.first_page()
@@ -865,7 +878,7 @@ class ResourceWindow(ResourceContentHost):
             enabled=self.page_enabled(key)
             btn.setVisible(not self.service.compact and enabled);btn.setChecked(key==self.page_key)
         self.layout_page_buttons()
-        if self.service.compact:self.reposition()
+        if self.service.compact:self.reposition();self.sync_animation()
         self.update()
 
     def resizeEvent(self,event):
@@ -953,7 +966,7 @@ class ResourceWindow(ResourceContentHost):
         icon_only=self.width()<70 or self.service.cfg['resource_fold']=='ball'
         if badges and icon_only:
             kind=badges[0][0]
-        elif badges:
+        elif not icon_only:
             kind=next((kind for kind,rect in zip(self.reminder_kinds,self.reminder_bounds) if rect.contains(QPointF(point))),None)
         else:kind=None
         if kind:
@@ -961,6 +974,8 @@ class ResourceWindow(ResourceContentHost):
         else:
             row=next((key for key,rect in zip(getattr(self,'compact_shown',()),getattr(self,'compact_bounds',()))
                       if rect.contains(QPointF(point))),None) if not icon_only else None
+            if row is None and not icon_only:
+                row=next((key for key,rect in self.status_bounds.items() if rect.contains(QPointF(point))),None)
             target=COMPACT_PAGES.get(row)
         if target and self.service.detached(target):
             if not automatic:self.service.open_component(target)

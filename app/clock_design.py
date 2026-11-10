@@ -186,6 +186,8 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
         marker_space=4 if o['show_holidays'] else 1
         for i in range(7):label(QRectF(m+i*cw,header_top,cw,weekday_h),weekdays[i],min(13,weekday_h*.65),muted if o['auto_contrast'] or i<5 else accent,align=Qt.AlignCenter)
         first=datetime.date(year,month,1);first-=datetime.timedelta(days=first.weekday())
+        from calendar_markers import month_markers,paint_markers
+        markers=month_markers(o.get('_calendar_events',()),o.get('_calendar_countdowns',()),first,weeks*7)
         for i in range(weeks*7):
             try:day=first+datetime.timedelta(days=i)
             except OverflowError:continue
@@ -198,15 +200,15 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             subtitle=(details['name'] if o['show_holidays'] else '') or (details['lunar'] if o['show_lunar'] else '')
             if len(subtitle)>3:subtitle=subtitle[:2]+'…'
             p.save();p.setClipRect(box)
-            day_height = ch-detail_height-marker_space if detail_row else max(1, ch - (6 if marked else 1))
+            sources=markers.get(day,())
+            day_height = ch-detail_height-(max(5,marker_space) if sources else marker_space) if detail_row else max(1, ch - (6 if marked or sources else 1))
             day_size = min(28, cw*.48, day_height*.9*scale)
             label(QRectF(box.x(),box.y(),cw,day_height),str(day.day),day_size,color,
                   QFont.Bold if current else o['font_weight'],Qt.AlignCenter)
             if detail_row and subtitle:
                 label(QRectF(box.x()+2,box.y()+day_height,cw-4,detail_height),
                       subtitle,min(12,detail_height*.95),accent if marked and not o['auto_contrast'] else muted,QFont.Medium,Qt.AlignCenter)
-            if marked:
-                mark=QColor(accent);mark.setAlpha(230);p.setPen(Qt.NoPen);p.setBrush(mark);p.drawEllipse(QPointF(box.center().x(),box.bottom()-2),1.35,1.35)
+            paint_markers(p,box,sources,o.get('_marker_light',True),accent if marked else None)
             p.restore()
         known=calendar_info(datetime.date(year,month,1),o['work'])['known']
         footer_text='今天 · '+date+'  '+weekday

@@ -34,6 +34,10 @@ def main():
             existing(api,runtime,root,app,output,checks)
             from resource_upgrade_tests import run as upgraded
             upgraded(api,runtime,root,app,output,checks)
+            from resource_pomodoro_tests import run as pomodoro
+            pomodoro(api,runtime,app,output,checks)
+            from resource_gateway_tests import run as gateways
+            gateways(api,runtime,app,output,checks)
             result=dict(passed=True,checks=checks,scope='isolated-resource-upgrade')
         except Exception:result=dict(passed=False,checks=checks,error=traceback.format_exc())
         finally:

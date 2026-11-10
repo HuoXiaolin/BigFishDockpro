@@ -9,7 +9,7 @@ from threading import Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from PyQt5.QtCore import QDate, QDateTime, QEvent, QPointF, QTimer, Qt
+from PyQt5.QtCore import QDate, QDateTime, QEvent, QPointF, QRectF, QTimer, Qt
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QApplication, QBoxLayout, QDateTimeEdit, QLineEdit, QPlainTextEdit, QPushButton
 
@@ -72,24 +72,35 @@ def run(api,runtime,app,output,checks):
             assert all(value in window.system_readout.accessibleName() for value in ('12%','静音','亮度 —','未连接'))
             assert window.battery_section.grab().save(str(output/'device-status-low.png'))
 
-            from resource_compact import compact_values,plan
+            from resource_compact import compact_badges,plan,status_values
             from resource_options import COMPACT_DEVICE
             from resource_settings import ResourceOptions
             previous_metrics=list(cfg['resource_compact_metrics'])
             previous_pins=list(cfg['resource_compact_pinned'])
             options=ResourceOptions(service);options.tabs.setCurrentIndex(2)
             for key in COMPACT_DEVICE:options.compact_fields[key].setChecked(True)
+            fmt=options.fields['resource_clock_format'];fmt.setCurrentIndex(fmt.findData('date_seconds'))
             assert options.commit()
-            assert set(COMPACT_DEVICE)<=set(cfg['resource_compact_pinned'])
+            assert set(COMPACT_DEVICE)<=set(cfg['resource_compact_metrics'])
+            assert not set(COMPACT_DEVICE)&set(cfg['resource_compact_pinned'])
+            assert api.load_config()['resource_clock_format']=='date_seconds'
             options.deleteLater()
             assert service.fold(True)
             assert {'battery','connection','volume'}<=service.active_keys() and 'system_status' not in service.active_keys()
             assert 'brightness' in service.sensors.keys
             service.sensors.values['brightness']={'value':76,'source':'演示数据','label':'亮度'}
             service.accept_sample(dict(time=time.monotonic(),battery=(62,'charging'),volume=(44,False),connection='办公无线'))
-            status={key:value for key,_,value,_ in compact_values(window)}
+            status={key:value for key,_,value,_ in status_values(service)}
             assert {key:status[key] for key in COMPACT_DEVICE}==dict(battery='62%',connection='办公无线',volume='44%',brightness='76%')
-            assert service.set_options(resource_compact_metrics=previous_metrics,resource_compact_pinned=previous_pins)
+            layout=plan(window,window.width())
+            assert layout['clock']==('%Y-%m-%d','%H:%M:%S')
+            assert window.grab().save(str(output/'readme-compact-status.png'))
+            assert set(window.status_bounds)=={*COMPACT_DEVICE,'bluetooth'}
+            assert not set(window.compact_shown)&set(window.status_bounds)
+            for rect in window.status_bounds.values():
+                assert QRectF(window.rect()).contains(rect)
+                assert not any(rect.intersects(bounds) for bounds in window.compact_bounds)
+            assert service.set_options(resource_compact_metrics=previous_metrics,resource_compact_pinned=previous_pins,resource_clock_format='time')
             assert not ({'battery','connection','volume'} & service.active_keys()) and 'brightness' not in service.sensors.keys
             assert service.fold(False)
 
@@ -119,8 +130,9 @@ def run(api,runtime,app,output,checks):
                                        resource_alert_focus=False,resource_alert_water=False)
             assert service.fold(True)
             clock[0]+=1;model.sync();window.grab()
-            compact={key:value for key,_,value,_ in compact_values(window)}
-            assert compact['pomodoro']=='24:06' and compact['water']=='500 mL'
+            compact,active=compact_badges(service)
+            assert active==0 and dict(compact)=={'focus':'24:06','water':'500 mL'}
+            window.grab();assert set(window.reminder_kinds)=={'focus','water'}
             assert model.timer.remainingTime()<=1100
             clock[0]-=1
             assert service.fold(False)
@@ -291,10 +303,10 @@ def run(api,runtime,app,output,checks):
             assert agenda.save(merge_import(agenda.local_events,meetings))
             agenda_page.calendar.setSelectedDate(QDateTime.fromSecsSinceEpoch(start).date())
             day=agenda_page.calendar.selectedDate()
-            assert agenda_page.rows.count()==4 and agenda_page.dismiss.isVisible(),(agenda_page.rows.count(),window.page_key)
-            assert agenda_page.calendar.markers[day.toJulianDay()]=={'local','dingtalk','feishu','tencent'}
-            assert not agenda_page.calendar.markers.get(day.addDays(-1).toJulianDay())
-            assert agenda_page.calendar.markers[day.addDays(1).toJulianDay()]=={'tencent'}
+            assert agenda_page.rows.count()==4 and agenda_page.reminder.isVisible(),(agenda_page.rows.count(),window.page_key)
+            assert agenda_page.calendar.markers[day.toPyDate()]=={'local','dingtalk','feishu','tencent'}
+            assert not agenda_page.calendar.markers.get(day.addDays(-1).toPyDate())
+            assert agenda_page.calendar.markers[day.addDays(1).toPyDate()]=={'tencent'}
             agenda_page.next_month.click()
             assert agenda_page.calendar.monthShown()==day.addMonths(1).month()
             today=QDate.currentDate()
@@ -308,6 +320,13 @@ def run(api,runtime,app,output,checks):
             assert last.bottom()<agenda_page.rows.viewport().height(),(last,agenda_page.rows.viewport().size())
             assert window.grab().save(str(output/'agenda-small.png'))
             window.resize(window.width(),original_height);app.processEvents()
+            progress=dict(cfg['clock_appearance']['progress'])
+            progress['countdowns']=[dict(id='fixtureCountdown',title='发布倒数日',date=day.toString('yyyy-MM-dd'),time='14:00',repeat='once')]
+            assert runtime.clock.save(clock_appearance=dict(cfg['clock_appearance'],progress=progress))
+            assert 'countdown' in agenda_page.calendar.markers[day.toPyDate()] and agenda_page.rows.count()==5
+            from calendar_markers import month_markers,countdowns
+            marks=month_markers(service.calendar_entries(),countdowns(cfg),day.toPyDate(),2)
+            assert marks[day.toPyDate()]==agenda_page.calendar.markers[day.toPyDate()]
             assert window.grab().save(str(output/'readme-agenda.png'))
             cfg['resource_appearance']['theme']='dark';window.sync_window();app.processEvents()
             assert window.grab().save(str(output/'agenda-dark.png'))
@@ -320,10 +339,10 @@ def run(api,runtime,app,output,checks):
             assert service.fold(True);app.processEvents()
             assert agenda.timer.isActive() and not agenda.due()
             view=plan(window,window.width())
-            item=next(row for row in view['pinned'] if row[0]=='agenda')
-            assert item[2]=='项目周会'
+            item=next(row for row in view['routine_badges'] if row[0]=='agenda')
+            assert '项目周会' in item[1]
             window.grab()
-            point=window.compact_bounds[window.compact_shown.index('agenda')].center()
+            point=window.reminder_bounds[window.reminder_kinds.index('agenda')].center()
             window.expand_from(point)
             assert not service.compact and window.page_key=='agenda'
             assert service.set_options(resource_compact_metrics=previous_metrics,resource_compact_pinned=previous_pins)
@@ -337,18 +356,37 @@ def run(api,runtime,app,output,checks):
             with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
                 for _ in range(2):service.accept_sample(dict(time=time.monotonic(),battery=(12,'battery')))
                 notify.assert_called_once()
-            assert service.reminders()==(('agenda','日程'),('battery','12%'))
+            assert service.reminders()==(('agenda','项目周会'),('battery','12%'))
             app.processEvents();window.grab()
             assert window.reminder_kinds==['agenda','battery']
             assert window.grab().save(str(output/'readme-agenda-compact.png'))
             window.expand_from(window.reminder_bounds[0].center())
             assert window.page_key=='agenda' and not service.compact
-            agenda_page.dismiss.click();assert not agenda.due() and api.load_config()['resource_agenda_events'][0]['ack']
+            agenda_page.reminder.click();assert not agenda.due() and api.load_config()['resource_agenda_events'][0]['ack']
+            assert agenda_page.reminder.text()=='恢复提醒'
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
+                agenda_page.reminder.click();agenda.sync()
+                notify.assert_called_once()
+            assert agenda.due() and not api.load_config()['resource_agenda_events'][0]['ack']
+            long_title='项目周会与跨部门供应链协同进度跟踪及验收工作安排、设备联调和交付问题复盘'
+            assert agenda.update_event(agenda.due()[0]['id'],title=long_title)
+            assert service.set_options(resource_halo=False,motion_enabled=True)
+            assert service.fold(True);app.processEvents()
+            assert window.marquee_title==long_title and window.animation.isActive()
+            assert 37<=plan(window,window.width())['active_badges'][0][2]<=window.width()*.20
+            frame=window.grab().toImage()
+            window.marquee_since-=2
+            assert frame!=window.grab().toImage()
+            window.marquee_since=time.monotonic()
+            assert window.grab().save(str(output/'readme-agenda-marquee.png'))
+            assert service.set_options(motion_enabled=False)
+            assert not window.animation.isActive()
             options=ResourceOptions(service);options.tabs.setCurrentIndex(2)
             for key in ('resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_battery'):
                 assert options.fields[key].isChecked();options.fields[key].setChecked(False)
             assert options.commit() and not service.reminders() and 'battery' not in service.active_keys()
             options.deleteLater()
+            checks.append('Compact status icons, full date/time format, shared routine badges, scrolling agenda title and cancel/restore. Countdown and agenda markers share one projection for both calendars.')
     finally:
         cfg['resource_enabled']=False;service.sync()
         if model:

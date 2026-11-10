@@ -85,7 +85,7 @@ class Agenda(QObject):
             if upcoming:
                 deadlines.extend(value for value in (upcoming['start'],upcoming['end']) if value>now)
         if deadlines:self.timer.start(max(1,min(86400000,round(1000*(min(deadlines)-now)))))
-        self.announced.intersection_update((row['id'],row['start'],row['lead']) for row in self.events)
+        self.announced.intersection_update((row['id'],row['start'],row['lead']) for row in self.events if not row['ack'])
         self.changed.emit()
 
     def save(self,events):
@@ -112,10 +112,17 @@ class Agenda(QObject):
             return False
         return True
 
+    def set_reminder(self,key,*,enabled):
+        event=next((row for row in self.events if row['id']==key),None)
+        if not event or event['end']<=self.clock():
+            self.error='此日程已结束或已移除。'
+            return False
+        if event.get('synced'):
+            return self.synced_reminder(key,ack=not enabled)
+        return self.save([dict(row,ack=not enabled) if row['id']==key else row for row in self.local_events])
+
     def dismiss(self,key):
-        if any(row['id']==key and row.get('synced') for row in self.events):
-            return self.synced_reminder(key,ack=True)
-        return self.save([dict(row,ack=True) if row['id']==key else row for row in self.local_events])
+        return self.set_reminder(key,enabled=False)
 
     def remove(self,key):
         return self.save([row for row in self.local_events if row['id']!=key])

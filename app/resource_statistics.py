@@ -33,7 +33,8 @@ class QuotaOverview(QWidget):
             surface(p,QRectF(0,y,self.width(),height-4),self.view.owner,'lavender')
             name_width = min(175, self.width() * .62)
             text(p,QRectF(10,y+3,name_width,18),row['name'],c['ink'],11,True)
-            text(p,QRectF(14+name_width,y+3,self.width()-24-name_width,18),row.get('plan') or row.get('status',''),c['muted'],9,False,Qt.AlignRight)
+            status=row.get('status','') if row.get('stale') else row.get('plan') or row.get('status','')
+            text(p,QRectF(14+name_width,y+3,self.width()-24-name_width,18),status,c['muted'],9,False,Qt.AlignRight)
             if not quotas:text(p,QRectF(10,y+25,self.width()-20,26),row.get('status') or '等待额度读数',c['muted'],10)
             width=(self.width()-20-10*(columns-1))/columns
             for i,q in enumerate(quotas):

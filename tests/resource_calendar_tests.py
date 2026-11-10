@@ -236,6 +236,8 @@ def run(app, output, checks):
             assert agenda.synced_reminder(key, lead=15)
             assert agenda.due()[0]['id'] == key
             assert agenda.dismiss(key) and not agenda.due()
+            assert agenda.set_reminder(key,enabled=True) and agenda.due()[0]['id']==key
+            assert agenda.dismiss(key) and not agenda.due()
 
             feishu['cancel_user']=True
             sync.connect_account('feishu')

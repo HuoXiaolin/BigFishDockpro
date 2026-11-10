@@ -49,9 +49,12 @@ class DesktopCalendar(DesktopClock):
         self.tick.start(max(1000,round((tomorrow-now).total_seconds()*1000)))
 
     def paintEvent(self,event):
+        from calendar_markers import countdowns
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         self.paint_resize_targets(painter)
-        self.paint_face(painter,'calendar_card',_calendar_year=self.view_year,_calendar_month=self.view_month)
+        self.paint_face(painter,'calendar_card',_calendar_year=self.view_year,_calendar_month=self.view_month,
+                        _calendar_events=self.runtime.resources.calendar_entries(),
+                        _calendar_countdowns=countdowns(self.dock.cfg))
 
     def build_menu(self):
         menu=AlignedMenu(self);menu.addAction('回到今天').triggered.connect(self.go_today);menu.addAction('日历设置…').triggered.connect(self.open_settings)

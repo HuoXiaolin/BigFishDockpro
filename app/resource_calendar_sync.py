@@ -10,7 +10,7 @@ from config_store import _atomic
 from resource_agenda import SYNC_SOURCES as SOURCES, normalize_events
 from resource_calendar_api import (CalendarError, authorize_feishu, exchange, primary_calendar,
                                    read_events, register_feishu, verification_url)
-from resource_options import resource_page_active
+from resource_options import calendar_data_active
 
 SYNC_SECONDS = 600
 EVENT_LIMIT = 256
@@ -288,7 +288,7 @@ class CalendarSync(QObject):
 
     def active(self):
         cfg = self.owner.cfg
-        return not (self.job or self.owner.closed or self.owner.runtime.dock.preview) and resource_page_active(cfg,'agenda')
+        return not (self.job or self.owner.closed or self.owner.runtime.dock.preview) and calendar_data_active(cfg)
 
     def schedule(self):
         self.timer.stop()
@@ -414,9 +414,8 @@ class CalendarSync(QObject):
                 if row['id'] == key:
                     updated = dict(row)
                     if lead is not None:
-                        updated.update(lead=lead, ack=row['ack'] and row['lead'] == lead)
-                    else:
-                        updated['ack'] = ack
+                        updated['lead'] = lead
+                    updated['ack'] = ack
                     events = [updated if item is row else item for item in state['events']]
                     return events == state['events'] or self.store(source, dict(state, events=events))
         return False

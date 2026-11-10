@@ -31,12 +31,15 @@ def aggregate(providers,period='today',provider='',today=None):
             summary=row['summary'];summaries.append(summary)
             if not hourly:daily.setdefault(row['date'],[]).append(summary)
             models.setdefault((p['name'],row['model']),[]).append(summary)
+        if not summaries and (reported:=p.get('periods',{}).get(period)) is not None:
+            summaries.append(reported)
         if hourly:
             for row in p.get('hours',[]):
                 if row['date'][:10]==end.isoformat():daily.setdefault(row['date'],[]).append(row['summary'])
             # Older helper snapshots have daily totals, not invented hourly points.
             if not p.get('hours') and summaries:daily.setdefault(end.isoformat(),[]).extend(summaries)
-        groups.append(dict(id=p['id'],name=p['name'],available=p.get('usageAvailable',False),summary=combine(summaries)))
+        available=p.get('usageAvailable',False) and ('periods' not in p or bool(summaries))
+        groups.append(dict(id=p['id'],name=p['name'],available=available,summary=combine(summaries)))
     total=combine(row['summary'] for row in groups if row['available'])
     series=sorted((key,combine(value)) for key,value in daily.items())
     if hourly and series and all(len(key)>10 for key,_ in series):
@@ -46,5 +49,5 @@ def aggregate(providers,period='today',provider='',today=None):
     # Keep the full sum; large histories are binned into at most 45 contiguous groups.
     if len(series)>45:
         step=(len(series)+44)//45;series=[(series[i][0],combine(v for _,v in series[i:i+step])) for i in range(0,len(series),step)]
-    return dict(total=total,groups=groups,series=series,models=[(key,combine(value)) for key,value in models.items()],available=any(p.get('usageAvailable') for p in selected),
+    return dict(total=total,groups=groups,series=series,models=[(key,combine(value)) for key,value in models.items()],available=any(g['available'] for g in groups),
                 complete=all(p.get('usageComplete',True) for p in selected),start=start,end=end)

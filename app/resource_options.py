@@ -21,11 +21,19 @@ TASK_COLUMN_NAMES = {
 }
 COMPACT_METRICS=tuple(k for k in METRICS if k not in ('rank','system_status'))
 COMPACT_DEVICE={'battery':'电池电量','connection':'网卡名称','volume':'系统音量','brightness':'屏幕亮度'}
+COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth')
 COMPACT_ROUTINES={'pomodoro':'番茄钟','water':'喝水进度','agenda':'下一项日程'}
 COMPACT_ITEMS={**{key:METRICS[key] for key in COMPACT_METRICS},**COMPACT_DEVICE,**COMPACT_ROUTINES}
 COMPACT_CONTENT={'ai':'resource_compact_ai','music':'resource_compact_music','weather':'resource_weather_compact'}
-PINNABLE={**{key:title for key,title in COMPACT_ITEMS.items() if key!='bluetooth'},
+PINNABLE={**{key:title for key,title in COMPACT_ITEMS.items() if key not in COMPACT_STATUS},
           'ai':'AI 额度','music':'音乐','weather':'天气'}
+COMPACT_CLOCK_FORMATS={
+    'time':('时:分',('%H:%M',)), 'seconds':('时:分:秒',('%H:%M:%S',)),
+    'date':('年-月-日',('%Y-%m-%d',)),
+    'date_time':('年-月-日 / 时:分',('%Y-%m-%d','%H:%M')),
+    'date_seconds':('年-月-日 / 时:分:秒',('%Y-%m-%d','%H:%M:%S')),
+}
+WEATHER_THRESHOLDS=(0,16,26,30)
 RESOURCE_PAGES={'resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气',
                 'pomodoro':'番茄钟','agenda':'日程','news':'新闻'}
 DESKTOP_COMPONENTS={'notes':'便签','picture':'每日图片','custom':'原生卡片','clock':'时钟','calendar':'日历'}
@@ -61,6 +69,7 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
+                resource_weather_thresholds=list(WEATHER_THRESHOLDS),
                 resource_news=False,resource_news_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
@@ -69,10 +78,10 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_compact_ai=True,resource_compact_music=True,
                 resource_compact_density='dense',
                 resource_expanded_width=500,resource_expanded_height=280,
-                resource_compact_rings=True,resource_clock=True,resource_compact_rotate=True,
+                resource_compact_rings=True,resource_clock=True,resource_clock_format='time',resource_compact_rotate=True,
                 resource_ai=False,resource_ai_tray=False,resource_ai_providers=['Claude','Codex','Cursor','Antigravity'],
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
-                resource_ring_letters=True,resource_quota_alert=True)
+                resource_quota_alert=True)
 DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={},
                 resource_card_transparency=20)
 
@@ -95,6 +104,10 @@ def component_available(cfg,key):
 
 def resource_page_active(cfg,key):
     return component_available(cfg,key) and (cfg['resource_enabled'] or component_location(cfg,key)=='desktop')
+
+
+def calendar_data_active(cfg):
+    return resource_page_active(cfg,'agenda') or bool(cfg.get('calendar_enabled') and cfg['resource_agenda'])
 
 
 def migrate_docked(data):
@@ -130,6 +143,14 @@ def clean_background(raw,strict=False):
     return {k:(raw[k].lower() if k=='color' else raw[k]) for k in ('material','theme','color',*ranges)}
 
 
+def clean_weather_thresholds(raw,strict=False):
+    if (isinstance(raw,list) and len(raw)==4 and all(type(value) is int and -80<=value<=80 for value in raw)
+            and all(left<right for left,right in zip(raw,raw[1:]))):
+        return list(raw)
+    if strict:raise ValueError('天气温度的四个分界值须按从低到高排列。')
+    return list(WEATHER_THRESHOLDS)
+
+
 def normalize(cfg,strict=False):
     from resource_weather import clean_cities
     from content_sources import clean_feeds
@@ -154,6 +175,7 @@ def normalize(cfg,strict=False):
     if strict and clean!=layouts:raise ValueError('桌面资源卡片位置无效。')
     cfg['resource_card_layouts']=clean
     cfg['resource_weather_cities']=clean_cities(cfg.get('resource_weather_cities',DEFAULTS['resource_weather_cities']),strict)
+    cfg['resource_weather_thresholds']=clean_weather_thresholds(cfg.get('resource_weather_thresholds',list(WEATHER_THRESHOLDS)),strict)
     if cfg.get('resource_air_source','auto') not in ('auto','cams','qweather'):
         if strict:raise ValueError('空气质量来源无效。')
         cfg['resource_air_source']='auto'
@@ -168,6 +190,7 @@ def normalize(cfg,strict=False):
              'resource_expand_mode':('hover','click'),'resource_open_page':tuple(OPEN_PAGES),
              'resource_face_mood':('random','default','happy','wink','love','star','shy','pout','squint'),
              'resource_compact_density':('auto','dense'),
+             'resource_clock_format':tuple(COMPACT_CLOCK_FORMATS),
              'resource_capsule_taskbar_position':tuple(CAPSULE_TASKBAR_POSITIONS),
              'resource_taskbar_position':('left','center','right'),
              'resource_taskbar_layer':tuple(TASKBAR_LAYERS), 'resource_halo_speed':tuple(HALO_SPEEDS),
@@ -210,11 +233,11 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('任务栏监控项目无效。')
         items=TASK_DEFAULT
     cfg['resource_task_metrics']=[k for k in TASK_METRICS if k in items]
-    for key,choices in [('resource_compact_metrics',COMPACT_ITEMS),('resource_compact_pinned',tuple(PINNABLE)+('bluetooth',)),('resource_ai_providers',AI_PROVIDERS),('resource_task_media_parts',TASK_MEDIA_PARTS),
+    for key,choices in [('resource_compact_metrics',COMPACT_ITEMS),('resource_compact_pinned',PINNABLE),('resource_ai_providers',AI_PROVIDERS),('resource_task_media_parts',TASK_MEDIA_PARTS),
                         ('resource_task_order',TASK_COLUMN_NAMES),('resource_compact_order',PINNABLE)]:
         value=cfg.get(key,DEFAULTS[key])
         if key in ('resource_compact_pinned', 'resource_compact_order') and isinstance(value, list):
-            value = [item for item in value if item != 'notifications']
+            value = [item for item in value if item not in (*COMPACT_STATUS,'notifications')]
         if not isinstance(value,list) or any(not isinstance(k,str) or k not in choices for k in value):
             if strict:raise ValueError('资源胶囊显示项目无效。')
             value=DEFAULTS[key]

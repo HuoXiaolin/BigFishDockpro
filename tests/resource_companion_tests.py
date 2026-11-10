@@ -2,7 +2,7 @@
 import copy,time
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QEvent,QPointF,QRectF,QPoint
-from PyQt5.QtGui import QPainter,QImage,QColor,QCursor,QMouseEvent
+from PyQt5.QtGui import QPainter,QImage,QColor,QCursor,QMouseEvent,QFontMetrics
 
 
 def run(api,runtime,app,output,checks):
@@ -10,7 +10,7 @@ def run(api,runtime,app,output,checks):
     from resource_redesign_tests import fixtures
     from resource_compact import plan
     from resource_settings import ResourceOptions
-    from resource_weather_style import weather_kind
+    from resource_weather_style import weather_kind,compact_temperature_ink
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources
     try:
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,
@@ -39,7 +39,7 @@ def run(api,runtime,app,output,checks):
                 assert plan(w,w.width())['face']>0
                 assert all(r.left()>=8+plan(w,w.width())['face'] for r in bounds)
                 if width>=292:assert {'cpu','memory','gpu','network'}<=set(w.compact_shown)
-            assert {'cpu','memory','gpu','network','weather'}<=seen and providers=={'Codex','Claude'} and music
+            assert {'cpu','memory','gpu','network','weather'}<=seen and providers=={'Codex','Claude'} and music,(width,seen,providers,music)
             w.offset=0;w.grab().save(str(output/f'companion-resident-{width}x{height}.png'))
         cfg.update(resource_compact_pinned=['ai','music','weather'],resource_compact_width=560)
         w.sync_window();seen_cities=set()
@@ -47,6 +47,44 @@ def run(api,runtime,app,output,checks):
             w.offset=page;w.grab();assert {'ai','music','weather'}<=set(w.compact_shown)
             seen_cities.update(r[1] for r in plan(w,w.width())['pinned'] if r[0]=='weather')
         assert seen_cities=={'天津','乌鲁木齐','沈阳'}
+        w.offset=0;assert w.grab().save(str(output/'readme-compact-content.png'))
+        import resource_compact
+        import resource_provider_icons as marks
+        assert all(marks.provider_art(name, '#223744') for name in set(marks.PROVIDER_MARKS.values()))
+        codex_mark = marks.provider_art('codex.png', '#223744')
+        assert isinstance(codex_mark, QImage) and codex_mark.width() == codex_mark.height() == 104
+        balance = dict(id='Dsh', name='DeepSeek Harness',
+                       quotas=[dict(kind='balance', label='账户余额', value='¥12.48')])
+        deck.accept(dict(type='ai', providers=[balance, *fixtures()]))
+        cfg.update(resource_compact_width=220,resource_compact_pinned=['ai'])
+        painted_amounts=[]
+        draw_text=resource_compact.text
+
+        def record_amount(painter, rect, value, color, size=11, bold=False, *args, **kwargs):
+            if value in ('¥12.48','61%'):
+                font=resource_compact.ai_value_font()
+                font.setPixelSize(size)
+                assert QFontMetrics(font).horizontalAdvance(value) <= rect.width()
+                painted_amounts.append(value)
+            draw_text(painter, rect, value, color, size, bold, *args, **kwargs)
+
+        for theme in ('light','dark'):
+            cfg['resource_appearance']['theme']=theme
+            w.sync_window()
+            for page, provider, mark, value, shot in (
+                (0,'Dsh','deepseek-color.svg','¥12.48','balance'),
+                (1,'Codex','codex.png','61%','codex'),
+            ):
+                w.offset=page
+                painted_amounts.clear()
+                with patch.object(resource_compact,'text',record_amount), patch.object(marks,'provider_art',wraps=marks.provider_art) as art:
+                    image=w.grab()
+                assert provider in w.compact_providers and value in painted_amounts
+                assert any(call.args[0]==mark for call in art.call_args_list)
+                assert image.save(str(output/f'compact-provider-{shot}-{theme}.png'))
+        cfg['resource_appearance']['theme']='light'
+        deck.accept(dict(type='ai', providers=fixtures()))
+        checks.append('Compact AI quota shows official Codex with 61% and DeepSeek with the complete CNY 12.48 balance at 220 px in both themes.')
         # A long pinned list cannot evict an enabled face, including after save.
         cfg.update(resource_compact_width=300,resource_compact_pinned=['cpu','memory','network','ai','music','weather']);w.sync_window();w.grab()
         assert plan(w,w.width())['face']>0
@@ -115,6 +153,19 @@ def run(api,runtime,app,output,checks):
         # All condition scenes render in both themes with a bounded vector surface.
         codes=[0,2,3,51,71,45,95];kinds=['sun','cloud','overcast','rain','snow','fog','storm']
         assert [weather_kind(dict(code=n)) for n in codes]==kinds
+        thresholds=cfg['resource_weather_thresholds']
+        tones=[compact_temperature_ink(n,True,thresholds) for n in (-1,0,16,27,31)]
+        assert len(set(tones))==5
+        assert compact_temperature_ink(26,True,thresholds)==tones[2]
+        assert compact_temperature_ink(30,True,thresholds)==tones[3]
+        from resource_settings import ResourceOptions
+        options=ResourceOptions(service);options.tabs.setCurrentIndex(5)
+        options.weather_threshold_fields[1].setValue(29)
+        assert not options.commit() and cfg['resource_weather_thresholds']==thresholds
+        options.weather_threshold_fields[1].setValue(18)
+        assert options.commit() and cfg['resource_weather_thresholds']==[0,18,26,30]
+        assert compact_temperature_ink(16,True,cfg['resource_weather_thresholds'])==tones[1]
+        options.deleteLater()
         from resource_weather_style import paint_weather
         montage=QImage(7*165,2*95,QImage.Format_ARGB32_Premultiplied);montage.fill(Qt.transparent);p=QPainter(montage);p.setRenderHint(QPainter.Antialiasing)
         for row,light in enumerate((True,False)):

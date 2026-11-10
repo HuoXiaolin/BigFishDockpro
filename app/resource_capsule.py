@@ -261,7 +261,7 @@ class ResourceCapsule(QObject):
         if self.agenda is None:
             from resource_agenda import Agenda
             self.agenda=Agenda(self)
-            self.agenda.changed.connect(self.reminders_changed)
+            self.agenda.changed.connect(self.agenda_changed)
             self.agenda.sync()
         return self.agenda
 
@@ -278,6 +278,15 @@ class ResourceCapsule(QObject):
         if self.agenda:self.agenda.sync()
         else:self.get_agenda()
 
+    def calendar_entries(self):
+        events=self.cfg['resource_agenda_events']
+        return self.calendar_sync.events_for(events) if self.calendar_sync else events
+
+    def agenda_changed(self):
+        self.reminders_changed()
+        calendar=getattr(self.runtime,'calendar',None)
+        if calendar and calendar.isVisible():calendar.update()
+
     def reminders_changed(self):
         if self.window:self.window.refresh_reminders()
         for key in ('pomodoro','agenda'):
@@ -286,7 +295,11 @@ class ResourceCapsule(QObject):
 
     def reminders(self):
         badges=[]
-        if self.agenda and self.agenda.due():badges.append(('agenda','日程'))
+        due=self.agenda.due() if self.agenda else ()
+        if due:
+            title=due[0]['title']
+            if len(due)>1:title+=f' · +{len(due)-1}'
+            badges.append(('agenda',title))
         level=self.low_battery()
         if level is not None:badges.append(('battery',f'{level}%'))
         if self.pomodoro:badges.extend(self.pomodoro.badges())
@@ -389,8 +402,9 @@ class ResourceCapsule(QObject):
         demand=self.needs()
         want_tray=self.cfg['resource_ai_tray'] and not self.runtime.game_active
         want_music=bool(self.strip and self.strip.music_requested())
-        want_deck=(self.cfg['resource_ai'] and self.feature_visible('ai') or self.feature_visible('music')
-                   or want_tray or want_music or bool(getattr(self.runtime,'spectrum',None)))
+        want_ai=self.cfg['resource_ai'] and self.feature_visible('ai') or want_tray
+        want_media=self.feature_visible('music') or want_music or bool(getattr(self.runtime,'spectrum',None))
+        want_deck=want_ai or want_media
         if want_deck:
             if self.deck is None:
                 from resource_deck import DeckBridge
@@ -413,7 +427,7 @@ class ResourceCapsule(QObject):
         from resource_options import SENSOR_UNITS
         sensors=frozenset(demand & SENSOR_UNITS.keys())
         if 'system_status' in demand or 'brightness' in demand:sensors=sensors|{'brightness'}
-        self.check_dependencies(want_deck)
+        self.check_dependencies(want_media or bool(want_ai and self.cfg['resource_ai_providers']))
         if self.sensors:
             if not sensors:self.sensors.close();self.sensors=None
             elif self.sensors.keys!=sensors:self.sensors.reconfigure(sensors)
@@ -456,7 +470,8 @@ class ResourceCapsule(QObject):
             if (self.cfg['resource_water_enabled'] or state_path(self.runtime.api.CONFIG_DIR).is_file()
                     or self.window and self.compact and ('pomodoro' in choices or 'water' in choices)):
                 self.get_pomodoro()
-        agenda_enabled=resource_page_active(self.cfg,'agenda')
+        from resource_options import calendar_data_active
+        agenda_enabled=calendar_data_active(self.cfg)
         if agenda_enabled and not self.calendar_checked and not self.runtime.dock.preview:
             from pathlib import Path
             from resource_agenda import SYNC_SOURCES

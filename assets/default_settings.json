@@ -916,6 +916,7 @@
   ],
   "resource_weather_compact": true,
   "resource_weather_days": 3,
+  "resource_weather_thresholds": [0, 16, 26, 30],
   "resource_task_music": true,
   "resource_task_music_colorful": true,
   "resource_task_media_parts": [
@@ -1001,6 +1002,7 @@
   "resource_expanded_height": 280,
   "resource_compact_rings": true,
   "resource_clock": true,
+  "resource_clock_format": "time",
   "resource_compact_rotate": true,
   "resource_ai": true,
   "resource_ai_tray": false,
@@ -1011,7 +1013,6 @@
   "resource_music_text": "wave",
   "resource_lyrics": true,
   "resource_equalizer": "flow",
-  "resource_ring_letters": true,
   "resource_quota_alert": true,
   "resource_open_page": "last"
 }

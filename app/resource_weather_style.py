@@ -65,6 +65,61 @@ def weather_accent(row,light):
     return QColor('#216d98' if light else '#a1d8f4')
 
 
+def compact_temperature_ink(temperature,light,thresholds):
+    blue,green,yellow,red=thresholds
+    if temperature>red:colors=('#be3446','#ff8a96')
+    elif temperature>yellow:colors=('#946000','#ffd16a')
+    elif temperature>=green:colors=('#087850','#71dfae')
+    elif temperature>=blue:colors=('#167fa6','#83d6f2')
+    else:colors=('#244ea1','#91aaff')
+    return colors[0 if light else 1]
+
+
+def paint_weather_icon(p,rect,row,light):
+    kind=weather_kind(row)
+    color={
+        'sun':('#be8007','#ffc868'), 'cloud':('#5682a1','#aacde5'),
+        'overcast':('#657991','#bac8d7'), 'rain':('#227eaf','#83d1ff'),
+        'snow':('#4a64ab','#bad0ff'), 'fog':('#378376','#a0dac9'),
+        'storm':('#6e4db4','#cab3ff'), 'unknown':('#647683','#afbfcc'),
+    }[kind][0 if light else 1]
+    p.save()
+    p.translate(rect.topLeft());p.scale(rect.width()/16,rect.height()/16)
+    ink=QColor(color)
+    if kind in ('sun','cloud'):
+        center=QPointF(8,8) if kind=='sun' else QPointF(10,5)
+        sun=QColor('#c58912' if light else '#ffd275')
+        p.setBrush(sun);p.setPen(Qt.NoPen);p.drawEllipse(center,3.5,3.5)
+        p.setPen(QPen(sun,1.1,Qt.SolidLine,Qt.RoundCap))
+        for i in range(8):
+            angle=i*math.pi/4
+            direction=QPointF(math.cos(angle),math.sin(angle))
+            p.drawLine(center+direction*5.0,center+direction*6.4)
+    if kind in ('cloud','overcast','rain','snow','storm'):
+        top=7 if kind=='cloud' else 5
+        cloud=QPainterPath();cloud.setFillRule(Qt.WindingFill)
+        cloud.addRoundedRect(QRectF(1.5,top+2,13,5),2.5,2.5)
+        cloud.addEllipse(QPointF(6.2,top+2.1),3.2,3.2)
+        cloud.addEllipse(QPointF(10.8,top+3.1),2.4,2.4)
+        p.setPen(Qt.NoPen);p.setBrush(ink);p.drawPath(cloud)
+    p.setPen(QPen(ink,1.2,Qt.SolidLine,Qt.RoundCap))
+    if kind=='rain':
+        for x in (4,8,12):p.drawLine(QPointF(x,13),QPointF(x-1,15))
+    elif kind=='snow':
+        for x in (5,10):
+            p.drawLine(QPointF(x,13),QPointF(x,15));p.drawLine(QPointF(x-1,14),QPointF(x+1,14))
+    elif kind=='storm':
+        p.setPen(QPen(QColor('#b0780c' if light else '#ffcf77'),1.5,Qt.SolidLine,Qt.RoundCap))
+        p.drawLine(QPointF(9,10),QPointF(6.5,13));p.drawLine(QPointF(6.5,13),QPointF(8.8,13))
+        p.drawLine(QPointF(8.8,13),QPointF(7.5,15))
+    elif kind=='fog':
+        for x,y,w in ((3,4,10),(1.5,8,11),(5,12,9)):
+            p.drawLine(QPointF(x,y),QPointF(x+w,y))
+    elif kind=='unknown':
+        p.drawLine(QPointF(5,8),QPointF(11,8))
+    p.restore()
+
+
 def paint_weather(p,rect,row,light,fallback,opacity=255):
     kind=weather_kind(row)
     palettes={

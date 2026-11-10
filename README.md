@@ -21,13 +21,15 @@
 - 资源胶囊设置按「胶囊」「监控」「内容与接入」分组。九宫格资源胶囊按钮直接启用或关闭桌面组件。
 - 「收起显示」按功能勾选读数。电池、网卡名称、音量、亮度、番茄钟、喝水进度和下一项日程也可加入，读数排序靠前的项目优先保留。「任务栏监控」可单独调整监控列顺序。默认收起 500 × 35、展开 500 × 280，内容始终紧凑。启用自动宽度时，收起宽度按内容缩减。正文可用滚轮或触控板上下滚动。资源页将利用率、进程排行、硬件读数和电脑状态分成紧凑卡片，窄窗口自动改为单列。可直接拖动桌面胶囊的四边或四角调整大小，收起最小 96 × 28，展开最小 260 × 180。
 - 「电脑状态」在同一卡片显示电池、充电状态、网络连接名称、默认输出音量、亮度与蓝牙电量。电池使用圆环，充电显示绿色闪电，低电量显示红色。蓝牙每台设备占一行，可刷新和翻页。
+- 收起时，选中的电脑状态以图标固定在右侧。时钟可只显示日期或时间，也可分两行显示日期和带秒时间。AI 额度使用配额环，音乐显示播放状态与频谱或曲名，天气使用彩色图标和温度，温度分界值可在「资源与阈值」调整。
 - 「番茄钟」支持专注、休息和喝水。默认专注 25 分钟、休息 5 分钟。喝水提醒可开关，支持设置间隔、每次饮水量和每日目标，记录后可撤销。胶囊收起后显示倒计时或到点提示，点击提示可打开番茄钟页。
-- 「日程」在月历日期下方以彩色小点区分本地、钉钉、飞书与腾讯会议。选中日期即可查看安排和设置提醒。「日程与提醒」控制日程、专注和喝水提醒，「收起显示」控制低电量提示。
+- 「日程」按日期显示会议标题、时间段和来源。日程月历与桌面日历共用彩色标记，包含本地日程、钉钉、飞书、腾讯会议和倒数日。每项日程可取消或恢复提醒。到点后收起胶囊优先显示提醒，长日程标题在徽标内滚动。
 - 在「日程与提醒 → 日程账号接入」选择钉钉、飞书或腾讯会议扫码。钉钉和腾讯会议通过按需下载的官方组件直接扫码，免去手动创建开放平台应用和填写密钥。下载时显示进度。Dock 运行期间每 10 分钟同步，改期、取消和删除会更新本机提醒。[扫码步骤](docs/资源胶囊与媒体.md#日程账号接入)
 - 在「资源胶囊设置 → 胶囊行为 → 展开后默认页面」可选天气等栏目，也可沿用上次查看的页面。胶囊右键菜单有相同入口。所选栏目不可用时打开排序最靠前的栏目。
 - 拖动展开页的顶部栏目可排序，拖到胶囊外可分离为桌面卡片，拖组件本体或标题栏回胶囊即可收入。便签、每日图片、原生卡片、时钟与日历也可收入胶囊。「组件布局」仍可统一调整位置与顺序。内嵌时钟和日历共用胶囊材质，独立卡片位置单独保存。
 - 胶囊内的卡片按内容使用薄荷青到蓝紫、紫蓝、金橙等渐变，底色适配深浅模式与材质。「材质与配色 → 卡底透底」可调 0%–100%，默认 20%。天气继续沿用晴雨、空气质量及日照时段的配色。
 - AI 额度可读取本机已登录的 Claude、Codex、Cursor、Antigravity、ZCode、DeepSeek Harness、Kimi、OpenCode、Pi、Grok Bot，最多同时选择 7 项；展开查看套餐、配额和重置倒计时。同一 AI 页面合并额度与统计，支持今天/昨天/7天/30天/全部、工具筛选（单应用时隐藏）、Token/记录/费用趋势、费用环图、缓存命中率和模型明细。无法读取的账号显示真实状态。左下角仅保留「备注」，点击后查看来源和估算说明。
+- 「AI 与音乐 → 自定义用量接口」可填写常用 API 地址和 Token，自动识别 OpenCode Go、Command Code 及兼容用量接口，也可指定查询地址。接口提供的额度、用量和费用显示在 AI 页。 [接入格式](docs/资源胶囊与媒体.md#自定义用量接口)
 - AI 用量托盘图标可独立开关，连续 Q 环显示剩余额度，70% 起为绿色，40% 起为黄色，10% 及以下为红色，其余为橙色；关闭桌面资源胶囊后仍可通过托盘查看额度和统计，无需开启硬件监控。
 - 音乐支持 Windows 媒体会话及网易云、QQ 音乐、酷狗的兼容接口。媒体卡片左侧显示封面，右侧显示曲名、频谱、进度和播放控制。支持切换及固定播放器、同步歌词和直播声音暂停。
 - 胶囊外圈带连续流动的彩色光环。在「资源胶囊设置 → 材质与配色」可开关光环，选择慢速、中速或快速，默认中速。
@@ -48,9 +50,15 @@ AI 与音乐组件采用流式读取，近期与全部历史共用一个缓存�
 
 ![收起时显示番茄倒计时和喝水提醒](docs/screenshots/readme-pomodoro-compact.png)
 
+![右侧电脑状态图标及日期时间](docs/screenshots/readme-compact-status.png)
+
+![独立样式的 AI 额度、音乐与天气](docs/screenshots/readme-compact-content.png)
+
 ![日程月历和列表以彩色标记区分本地、钉钉、飞书与腾讯会议，使用演示数据](docs/screenshots/readme-agenda.png)
 
 ![收起时显示低电量和日程提醒](docs/screenshots/readme-agenda-compact.png)
+
+![收起后优先滚动长日程标题](docs/screenshots/readme-agenda-marquee.png)
 
 ![从屏幕边缘拖离资源胶囊时拉出的液桥](docs/screenshots/readme-resource-edge-tether.png)
 
@@ -243,6 +251,7 @@ AI／音乐组件复用本机的 **.NET 10 Desktop Runtime（x64）**。首次�
 | FullWidget | 天气、媒体、内容卡片与可编辑组件设计 | [hmgvibe/FullWidget](https://github.com/hmgvibe/FullWidget) |
 | BrimDeck | 收起胶囊交互参考；复用 AI 配额/用量与音乐数据连接代码。本应用使用自己的 Qt 界面、主题和材质 | [MoFeng2223/BrimDeck](https://github.com/MoFeng2223/BrimDeck)，[中文说明](https://github.com/MoFeng2223/BrimDeck/blob/main/README.zh-CN.md)，Apache-2.0 |
 | OpenQuota | AI 用量筛选、费用分布、趋势图及分段额度托盘图标的设计参考；以原生 Qt 实现，不捆绑其运行时 | [deviffyy/OpenQuota](https://github.com/deviffyy/OpenQuota)，[固定版本](references/OpenQuota-PIN.json)，[MIT](licenses/OpenQuota-MIT.txt) |
+| LobeHub Icons | 收起胶囊的供应商图标素材 | [lobehub/lobe-icons](https://github.com/lobehub/lobe-icons/tree/989535d6c13da2dec5a2937fe2789d4af4fdd8e0)，[MIT 与素材来源](licenses/LobeHub-Icons-MIT.txt) |
 | Wisland | 将液态形状、弹簧与表情代码适配到 PyQt5，参考局部毛玻璃采集 | [AsamiAkito/wisland](https://github.com/AsamiAkito/wisland)，[固定版本](references/Wisland-PIN.json)，[MIT](licenses/Wisland-MIT.txt) |
 | BlueGauge | 蓝牙设备电量与独立托盘显示的功能参考 | [iKineticate/BlueGauge](https://github.com/iKineticate/BlueGauge)；本应用使用自己的设备读取与环形绘制 |
 | LiteMonitor | 硬件读数与任务栏监控的功能参考 | [Diorser/LiteMonitor](https://github.com/Diorser/LiteMonitor)；本应用保留自己的监控架构 |

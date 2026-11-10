@@ -15,8 +15,11 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $taskRoot
 if (-not $Iscc) { $Iscc = Join-Path $Toolchain 'inno_setup\ISCC.exe' }
 $taskPython = Join-Path $taskRoot '.venv\Scripts\python.exe'
+$taskDotnet = Join-Path $Toolchain 'dotnet\dotnet.exe'
+$taskSharedPackages = Join-Path $Toolchain 'nuget\packages'
 if (-not (Test-Path -LiteralPath $taskPython)) { throw 'Run bootstrap.ps1 first.' }
 if (-not (Test-Path -LiteralPath $Iscc)) { throw "Missing shared Inno Setup compiler: $Iscc" }
+if (-not (Test-Path -LiteralPath $taskDotnet -PathType Leaf)) { throw "Missing shared .NET 10 SDK: $taskDotnet" }
 if ($SkipTests -and $RuntimeChecks) { throw 'Do not combine SkipTests and RuntimeChecks.' }
 $taskMode = if ($SkipTests) {'None'} elseif ($RuntimeChecks) {'Runtime'} else {$TestMode}
 $taskSkip = $taskMode -eq 'None'
@@ -53,9 +56,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'PawnIO offline package preparation failed' }
     & $taskPython tools/prepare_presentmon.py
     if ($LASTEXITCODE -ne 0) { throw 'FPS probe preparation failed' }
-    & $taskPython tools/prepare_bluetooth.py
+    & $taskPython tools/prepare_bluetooth.py --dotnet $taskDotnet
     if ($LASTEXITCODE -ne 0) { throw 'Bluetooth probe preparation failed' }
-    & $taskPython tools/prepare_deck.py
+    & $taskPython tools/prepare_deck.py --dotnet $taskDotnet --shared-packages $taskSharedPackages
     if ($LASTEXITCODE -ne 0) { throw 'AI and media bridge preparation failed' }
     $taskVersion = & $taskPython tools/release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }

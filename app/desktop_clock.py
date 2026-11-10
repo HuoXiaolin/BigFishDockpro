@@ -44,7 +44,11 @@ class DesktopClock(QWidget):
         candidate = dict(self.dock.cfg, **values)
         if self.runtime.api.save_config(candidate) is False:
             self.runtime.api.log('桌面时钟设置保存失败。'); return False
-        self.dock.cfg.update(values); return True
+        self.dock.cfg.update(values)
+        if 'calendar_enabled' in values:self.runtime.resources.sync()
+        if 'clock_appearance' in values or 'calendar_appearance' in values:
+            self.runtime.resources.agenda_changed()
+        return True
 
     def sync(self):
         if self.closed: return
@@ -465,6 +469,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         wash.setColorAt(0,upper);wash.setColorAt(1,lower);painter.fillRect(bounds,wash);painter.restore()
         return text_rect
     from clock_design import draw
+    options['_marker_light']=light
     draw(style,painter,w,h,now,options,ink,muted,accent,text,time_text,period)
     painter.restore()
     return muted.name()
