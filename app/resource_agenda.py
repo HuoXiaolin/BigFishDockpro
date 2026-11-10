@@ -75,6 +75,7 @@ class Agenda(QObject):
                 title=new[0]['title']
                 if len(new)>1:title+=f' 等 {len(new)} 项日程'
                 runtime.tray.showMessage('日程提醒',title,runtime.tray.icon(),5000)
+                self.owner.play_reminder_sound('agenda')
             self.announced.update(stamps)
             deadlines=[value for row in self.events if not row['ack'] for value in
                        (row['start']-row['lead']*60,row['start'],row['end']) if value>now]

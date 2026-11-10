@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushB
                              QAbstractItemView,QStyledItemDelegate)
 from appearance_presets import COLOR_MODES,material_choices
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
-from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
+from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
                               DESKTOP_COMPONENTS,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
@@ -88,13 +88,13 @@ class ResourceOptions(QDialog):
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
         {'resource_ai','resource_ai_tray','resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_live_glass','resource_background','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable'},
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
-        {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water'}]
+        {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_reminder_sound'}]
 
     def ensure_page(self,index):
         if index in self.loaded:return
@@ -313,6 +313,8 @@ class ResourceOptions(QDialog):
             self.fields['resource_compact_auto_width']=check('宽度随内容收紧（不超过设定宽度）',cfg['resource_compact_auto_width']);compact.addWidget(self.fields['resource_compact_auto_width'])
             spin(compact_form,'resource_compact_width','胶囊宽度',96,1400,cfg['resource_compact_width'],self.fields)
             spin(compact_form,'resource_compact_height','胶囊高度',28,100,cfg['resource_compact_height'],self.fields)
+            spin(compact_form,'resource_compact_badge_height','徽标高度',*COMPACT_BADGE_HEIGHT_RANGE,cfg['resource_compact_badge_height'],self.fields)
+            self.fields['resource_compact_badge_height'].setSuffix(' px')
             spin(compact_form,'resource_expanded_width','展开宽度（各页共用）',260,1000,cfg['resource_expanded_width'],self.fields)
             spin(compact_form,'resource_expanded_height','展开高度（各页共用）',180,800,cfg['resource_expanded_height'],self.fields)
             combo(compact_form,'resource_compact_density','内容密度',[('自动紧凑','auto'),('始终紧凑','dense')],cfg['resource_compact_density'],self.fields)
@@ -487,6 +489,9 @@ class ResourceOptions(QDialog):
 
         def build_9():
             layout=page(9)
+            sounds=section(layout,'声音')
+            key='resource_reminder_sound'
+            self.fields[key]=check('播放提示音',cfg[key]);sounds.addWidget(self.fields[key])
             agenda=section(layout,'日程与账号')
             self.fields['resource_agenda']=check('显示日程',cfg['resource_agenda'])
             agenda.addWidget(self.fields['resource_agenda'])

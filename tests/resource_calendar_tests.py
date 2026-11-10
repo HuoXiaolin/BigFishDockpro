@@ -113,6 +113,7 @@ def run(app, output, checks):
                             ])
             self.runtime = SimpleNamespace(api=SimpleNamespace(CONFIG_DIR=folder),
                                            dock=SimpleNamespace(preview=False), tray=Mock(), game_active=False)
+            self.play_reminder_sound = Mock()
             self.calendar_sync = calendar.CalendarSync(self, lambda: now[0])
             self.agenda = Agenda(self, lambda: now[0])
             self.calendar_sync.events_changed.connect(self.agenda.sync)

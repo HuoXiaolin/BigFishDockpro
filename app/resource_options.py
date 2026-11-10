@@ -55,6 +55,7 @@ REMINDER_OPTIONS={
     'resource_alert_agenda':'日程到提醒时间', 'resource_alert_focus':'番茄钟倒计时与完成',
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
 }
+COMPACT_BADGE_HEIGHT_RANGE=(16,40)
 DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,resource_air_source='auto',
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
               resource_capsule_taskbar=False,resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={},
@@ -64,7 +65,7 @@ DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank',*
 DEFAULTS.update(resource_system_status=True,resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
                 resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
 DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_agenda=True,resource_alert_focus=True,
-                resource_alert_water=True,resource_alert_battery=False)
+                resource_alert_water=True,resource_alert_battery=False,resource_reminder_sound=True)
 DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
@@ -73,7 +74,7 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_news=False,resource_news_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
-                resource_compact_width=500,resource_compact_height=35,resource_compact_metrics=list(COMPACT_METRICS),
+                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=list(COMPACT_METRICS),
                 resource_compact_auto_width=True,resource_compact_pinned=['cpu','memory','gpu','network'],resource_compact_order=[],
                 resource_compact_ai=True,resource_compact_music=True,
                 resource_compact_density='dense',
@@ -200,7 +201,7 @@ def normalize(cfg,strict=False):
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
     for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar',
-                'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music',*REMINDER_OPTIONS):
+                'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
@@ -243,7 +244,10 @@ def normalize(cfg,strict=False):
             value=DEFAULTS[key]
         cfg[key]=list(dict.fromkeys(value))[:7] if key=='resource_ai_providers' else list(dict.fromkeys(value))
     cfg['resource_task_order'] = list(dict.fromkeys(cfg['resource_task_order'] + list(TASK_COLUMN_NAMES)))
-    for key,low,high in [('resource_task_font',2,24),('resource_weather_days',1,7),('resource_face_scale',60,130),('resource_compact_width',96,1400),('resource_compact_height',28,100),('resource_expanded_width',260,1000),('resource_expanded_height',180,800)]:
+    for key,low,high in [('resource_task_font',2,24),('resource_weather_days',1,7),('resource_face_scale',60,130),
+                         ('resource_compact_width',96,1400),('resource_compact_height',28,100),
+                         ('resource_compact_badge_height',*COMPACT_BADGE_HEIGHT_RANGE),
+                         ('resource_expanded_width',260,1000),('resource_expanded_height',180,800)]:
         if type(cfg.get(key)) is not int or not low<=cfg[key]<=high:
             if strict:raise ValueError('资源胶囊尺寸或字号无效。')
             cfg[key]=DEFAULTS[key]

@@ -907,6 +907,7 @@
   "resource_alert_focus": true,
   "resource_alert_water": true,
   "resource_alert_battery": false,
+  "resource_reminder_sound": true,
   "resource_face_scale": 100,
   "resource_weather": true,
   "resource_weather_cities": [
@@ -938,6 +939,7 @@
   ],
   "resource_compact_width": 500,
   "resource_compact_height": 35,
+  "resource_compact_badge_height": 20,
   "resource_compact_metrics": [
     "cpu",
     "memory",

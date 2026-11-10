@@ -258,6 +258,10 @@ def chip(p,rect,ink,light):
     p.setPen(Qt.NoPen);p.setBrush(tint);p.drawRoundedRect(rect,7,7)
 
 
+def badge_height(window):
+    return min(window.service.cfg['resource_compact_badge_height'], max(1, window.height() - 4))
+
+
 def ai_value_font():
     font = QFont()
     font.setPixelSize(AI_TEXT_SIZE)
@@ -299,8 +303,8 @@ def paint_content(window,p,rect,key,label,value,meta):
         chip(p,rect,ink,c['light']);paint_weather_icon(p,mark,meta,c['light'])
         if area.width()>=16:
             line=rect.height()/2
-            text(p,QRectF(area.x(),rect.y(),area.width(),line),label,c['muted'],8)
-            text(p,QRectF(area.x(),mid,area.width(),line),value,ink,10,True)
+            text(p,QRectF(area.x(),rect.y(),area.width(),line),label,c['muted'],max(1,min(8,int(line))))
+            text(p,QRectF(area.x(),mid,area.width(),line),value,ink,max(1,min(10,int(line))),True)
     else:
         ink='#285e85' if c['light'] else '#a2d7ff'
         chip(p,rect,ink,c['light'])
@@ -340,7 +344,7 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None):
         if width<26:break
         ink=c['ink'] if key in ('ai','music','weather','traffic') else metric_ink(window.service,key,c['light'],c['ink'])
         if key in ('ai','music','weather'):
-            height=min(24,window.height()-6)
+            height=badge_height(window)
             paint_content(window,p,QRectF(x,mid-height/2,width,height),key,label,value,meta)
         elif key in ('cpu','gpu','memory') and not dense:
             if cfg['resource_compact_rings']:
@@ -419,9 +423,9 @@ def agenda_marquee(window):
 
 def paint_badges(window,p,slots,right,mid):
     from resource_pomodoro_view import reminder_icon,reminder_ink
-    c=window.colors
+    c=window.colors;height=badge_height(window)
     for kind,label,width,wanted in slots:
-        rect=QRectF(right-width,mid-10,width,20)
+        rect=QRectF(right-width,mid-height/2,width,height)
         ink=reminder_ink(kind,c['light'])
         chip(p,rect,ink,c['light'])
         if width>=37:

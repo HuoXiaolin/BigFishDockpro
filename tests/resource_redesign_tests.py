@@ -65,6 +65,11 @@ def run(api,runtime,app,output,checks):
         service.accept_sample(dict(time=time.monotonic(),cpu=100.,gpu=8.,memory=(72.,11*2**30,15.4*2**30),network=(915,1024),traffic=dict(day=(17*2**20,30*2**20),month=(17*2**20,30*2**20),year=(17*2**20,30*2**20))))
         sensors={key:dict(value=value,label=label,source='隔离测试数据') for key,label,value in [('cpu_power','CPU 功耗',29.99),('gpu_power','GPU 功耗',1.56)]}
         service.sensors.values=sensors
+        with patch.object(service,'play_reminder_sound') as sound:
+            for used in (59,60,60,79,80,80):
+                row=dict(id='quota-fixture',name='测试额度',quotas=[dict(percent=used,label='每周额度')])
+                bridge.accept(dict(type='ai',providers=[row]))
+            assert [call.args for call in sound.call_args_list]==[('quota',),('quota',)]
         bridge.accept(dict(type='ai',at='2026-11-07T12:00:00+08:00',providers=fixtures()));bridge.alert_until=0
         assert 'Codex · 每周 剩余 61%' in w.accessibleName()
         painted = []

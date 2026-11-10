@@ -50,6 +50,32 @@ def run(api,runtime,app,output,checks):
         w.offset=0;assert w.grab().save(str(output/'readme-compact-content.png'))
         import resource_compact
         import resource_provider_icons as marks
+        original_height=cfg['resource_compact_height']
+        options=ResourceOptions(service)
+        badge_size=options.fields['resource_compact_badge_height']
+        assert (badge_size.minimum(),badge_size.value(),badge_size.maximum())==(16,20,40)
+        badge_size.setValue(24)
+        assert options.commit() and api.load_config()['resource_compact_badge_height']==24
+        options.reject();options.deleteLater()
+        badges=[]
+        paint_chip=resource_compact.chip
+
+        def record_badge(painter,rect,ink,light):
+            badges.append((rect.height(),rect.center().y()))
+            paint_chip(painter,rect,ink,light)
+
+        with patch.object(service,'reminders',return_value=(('focus','04:45'),)):
+            for height,requested,expected in ((35,20,20),(35,24,24),(28,24,24),(28,40,24),(35,16,16)):
+                cfg.update(resource_compact_height=height,resource_compact_badge_height=requested)
+                w.sync_window();w.refresh();w.offset=0
+                badges.clear()
+                with patch.object(resource_compact,'chip',record_badge):
+                    preview=w.grab()
+                assert {'ai','weather','music'}<=set(w.compact_shown) and w.reminder_kinds==['focus']
+                assert badges==[(expected,w.height()/2)]*4
+                if height==35 and requested in (20,24):
+                    assert preview.save(str(output/f'compact-badges-{requested}px.png'))
+        cfg.update(resource_compact_height=original_height,resource_compact_badge_height=20)
         assert all(marks.provider_art(name, '#223744') for name in set(marks.PROVIDER_MARKS.values()))
         codex_mark = marks.provider_art('codex.png', '#223744')
         assert isinstance(codex_mark, QImage) and codex_mark.width() == codex_mark.height() == 104
@@ -85,6 +111,7 @@ def run(api,runtime,app,output,checks):
         cfg['resource_appearance']['theme']='light'
         deck.accept(dict(type='ai', providers=fixtures()))
         checks.append('Compact AI quota shows official Codex with 61% and DeepSeek with the complete CNY 12.48 balance at 220 px in both themes.')
+        checks.append('Compact badge height defaults to 20 px and saves through settings. AI, weather, music and reminders share the selected height and center, limited to available space.')
         # A long pinned list cannot evict an enabled face, including after save.
         cfg.update(resource_compact_width=300,resource_compact_pinned=['cpu','memory','network','ai','music','weather']);w.sync_window();w.grab()
         assert plan(w,w.width())['face']>0

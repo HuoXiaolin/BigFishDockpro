@@ -175,7 +175,8 @@ class Pomodoro(QObject):
         if state['status']=='running' and now>=state['until']:
             state.update(status='done',until=0.,remaining=0)
             if self.cfg['resource_alert_focus']:
-                alerts.append('专注结束，可以休息一下。' if state['phase']=='focus' else '休息结束，可以开始下一轮专注。')
+                alerts.append(('focus_done','专注结束，可以休息一下。') if state['phase']=='focus'
+                              else ('rest_done','休息结束，可以开始下一轮专注。'))
         water=self.cfg['resource_water_enabled']
         if not water or state['water_ml']>=self.cfg['resource_water_goal']:
             state.update(water_at=0.,water_alerted=False)
@@ -183,11 +184,12 @@ class Pomodoro(QObject):
             state['water_at']=now+60*self.cfg['resource_water_interval']
         elif now>=state['water_at'] and not state['water_alerted']:
             state['water_alerted']=True
-            if self.cfg['resource_alert_water']:alerts.append('到喝水时间了。')
+            if self.cfg['resource_alert_water']:alerts.append(('water','到喝水时间了。'))
         self.save(state,automatic=True)
         runtime=self.owner.runtime
         if alerts and not (runtime.dock.preview or runtime.game_active):
-            runtime.tray.showMessage('番茄钟','\n'.join(alerts),runtime.tray.icon(),5000)
+            runtime.tray.showMessage('番茄钟','\n'.join(message for _,message in alerts),runtime.tray.icon(),5000)
+            for kind,_ in alerts:self.owner.play_reminder_sound(kind)
         self.changed.emit()
 
         deadlines=[]

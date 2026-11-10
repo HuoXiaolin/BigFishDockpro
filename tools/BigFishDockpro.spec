@@ -18,6 +18,7 @@ a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('a
     binaries=[], datas=[(str(root / 'artifacts/pawnio/PawnIO_setup.exe'),'resource-probe'), (str(root / 'artifacts/generated/DesktopResourceProbe.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/PresentMon.exe'), 'resource-probe'), (str(root / 'licenses/PresentMon-LICENSE.txt'),'licenses'), (str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
                         (str(root / 'licenses'), 'licenses'),
                         (str(root / 'assets/ai-providers'), 'assets/ai-providers'),
+                        (str(root / 'assets/reminder-sounds'), 'assets/reminder-sounds'),
                         (str(root / 'artifacts/deck-bridge/BigFishDeckBridge.exe'), 'deck-bridge'),
                         (str(root / 'artifacts/generated/version.json'), '.'),
                         (str(root / 'assets/default_settings.json'), 'assets')] + tls_data + taskbar_data,

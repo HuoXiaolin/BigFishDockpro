@@ -64,6 +64,7 @@ class DeckBridge(QObject):
             previous=self.previous_levels.get(row['id'],0);self.previous_levels[row['id']]=level
             if cfg['resource_quota_alert'] and level>previous:
                 self.alert=f"{row['name']}  额度剩余 {remaining_percent(used):.0f}%";self.alert_until=time.monotonic()+5
+                self.owner.play_reminder_sound('quota')
         self.owner.display()
 
     def configure(self):

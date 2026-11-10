@@ -52,7 +52,7 @@ AI 与音乐组件采用流式读取，近期与全部历史共用一个缓存�
 
 ![右侧电脑状态图标及日期时间](docs/screenshots/readme-compact-status.png)
 
-![独立样式的 AI 额度、音乐与天气](docs/screenshots/readme-compact-content.png)
+![收起时等高的 AI 额度、音乐、天气和专注提醒徽标](docs/screenshots/readme-compact-content.png)
 
 ![日程月历和列表以彩色标记区分本地、钉钉、飞书与腾讯会议，使用演示数据](docs/screenshots/readme-agenda.png)
 

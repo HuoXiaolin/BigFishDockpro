@@ -68,6 +68,7 @@ class ResourceCapsule(QObject):
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
         self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
+        self.reminder_audio=None
         self.calendar_sync=None;self.calendar_checked=False
         self.desktop_cards={}
         self.dependency_prompts=None
@@ -293,6 +294,13 @@ class ResourceCapsule(QObject):
             card=self.detached(key)
             if card and card.isVisible():card.refresh()
 
+    def play_reminder_sound(self,kind):
+        if self.closed or not self.cfg['resource_reminder_sound'] or self.runtime.dock.preview or self.runtime.game_active:return
+        if self.reminder_audio is None:
+            from resource_reminder_audio import ReminderAudio
+            self.reminder_audio=ReminderAudio(self)
+        self.reminder_audio.play(kind)
+
     def reminders(self):
         badges=[]
         due=self.agenda.due() if self.agenda else ()
@@ -320,6 +328,7 @@ class ResourceCapsule(QObject):
             self.battery_warned=True
             if not (self.runtime.dock.preview or self.runtime.game_active):
                 tray=self.runtime.tray;tray.showMessage('电脑电量低',f'剩余 {low}%，请接上电源。',tray.icon(),5000)
+                self.play_reminder_sound('battery')
 
     def needs(self):
         if self.closed:return set()
@@ -375,6 +384,8 @@ class ResourceCapsule(QObject):
 
     def sync(self):
         if self.closed:return
+        if self.reminder_audio and (self.runtime.game_active or not self.cfg['resource_reminder_sound']):
+            self.reminder_audio.stop()
         visible=self.cfg['resource_enabled'] and not self.runtime.game_active
         if not visible:self.auto_compact=None
         if visible:
@@ -555,6 +566,7 @@ class ResourceCapsule(QObject):
         if self.strip:self.strip.placement.restore();self.strip.reposition()
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
+        if self.reminder_audio:self.reminder_audio.stop()
         if self.pomodoro:self.pomodoro.timer.stop()
         if self.agenda:self.agenda.timer.stop()
         if self.calendar_sync:self.calendar_sync.close()

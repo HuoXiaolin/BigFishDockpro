@@ -8,10 +8,61 @@ import time
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import patch
+import wave
 
 from PyQt5.QtCore import QDate, QDateTime, QEvent, QPointF, QRectF, QTimer, Qt
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QApplication, QBoxLayout, QDateTimeEdit, QLineEdit, QPlainTextEdit, QPushButton
+
+
+def audio_regressions(api,service,checks):
+    from resource_reminder_audio import CUE_SPACING_MS, SOUND_DIR, SOUND_KINDS, winsound
+    from resource_settings import ResourceOptions
+
+    waveforms=set()
+    for kind in SOUND_KINDS:
+        with wave.open(str(SOUND_DIR / (kind + '.wav')),'rb') as sound:
+            duration=1000*sound.getnframes()/sound.getframerate()
+            assert 100<=duration<=200<CUE_SPACING_MS
+            assert (sound.getnchannels(),sound.getsampwidth(),sound.getcomptype())==(1,2,'NONE')
+            waveforms.add(sound.readframes(sound.getnframes()))
+    assert len(waveforms)==len(SOUND_KINDS)==6
+
+    settings=ResourceOptions(service)
+    switch=settings.fields['resource_reminder_sound']
+    assert switch.isChecked()
+    flags=winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+    with patch.object(winsound,'PlaySound') as playback:
+        try:
+            service.play_reminder_sound('agenda')
+            with patch.object(service.runtime.dock,'preview',False),patch.object(service.runtime,'game_active',True):
+                service.play_reminder_sound('agenda')
+            playback.assert_not_called()
+            with patch.object(service.runtime.dock,'preview',False):
+                for kind in ('agenda','water','agenda','battery','water'):
+                    service.play_reminder_sound(kind)
+            player=service.reminder_audio
+            playback.assert_called_once_with(str(SOUND_DIR / 'agenda.wav'),flags)
+            assert list(player.pending)==['water','battery'] and player.timer.isActive()
+            player.timer.stop();player.timer.timeout.emit()
+            assert playback.call_args.args==(str(SOUND_DIR / 'water.wav'),flags)
+            switch.setChecked(False)
+            assert settings.commit() and api.load_config()['resource_reminder_sound'] is False
+            assert playback.call_args.args==(None,0) and not player.pending and not player.timer.isActive()
+            player.timer.timeout.emit()
+            with patch.object(service.runtime.dock,'preview',False):
+                service.play_reminder_sound('agenda')
+            assert playback.call_count==3
+            switch.setChecked(True)
+            assert settings.commit() and api.load_config()['resource_reminder_sound'] is True
+            assert playback.call_count==3
+            with patch.object(service.runtime.dock,'preview',False):
+                service.play_reminder_sound('quota')
+            assert playback.call_args.args==(str(SOUND_DIR / 'quota.wav'),flags) and playback.call_count==4
+        finally:
+            if service.reminder_audio:service.reminder_audio.stop()
+            settings.reject();settings.deleteLater()
+    checks.append('Six distinct bundled WAV cues last 100-200 ms. Playback queues different kinds and coalesces duplicates. The saved sound switch stops playback and clears the queue. Preview and pause stay silent.')
 
 
 def run(api,runtime,app,output,checks):
@@ -21,6 +72,7 @@ def run(api,runtime,app,output,checks):
     from resource_options import DEFAULTS
     from resource_system_view import battery_ink
     service=runtime.resources;cfg=runtime.dock.cfg;before=copy.deepcopy(cfg)
+    audio_regressions(api,service,checks)
     previous_model=service.pomodoro;service.pomodoro=None
     if previous_model:previous_model.timer.stop()
     previous_agenda=service.agenda;service.agenda=None
@@ -99,6 +151,7 @@ def run(api,runtime,app,output,checks):
             assert not set(window.compact_shown)&set(window.status_bounds)
             for rect in window.status_bounds.values():
                 assert QRectF(window.rect()).contains(rect)
+                assert rect.center().y()==window.height()/2
                 assert not any(rect.intersects(bounds) for bounds in window.compact_bounds)
             assert service.set_options(resource_compact_metrics=previous_metrics,resource_compact_pinned=previous_pins,resource_clock_format='time')
             assert not ({'battery','connection','volume'} & service.active_keys()) and 'brightness' not in service.sensors.keys
@@ -154,9 +207,10 @@ def run(api,runtime,app,output,checks):
 
             page.toggle.click();assert page.toggle.text()=='继续'
             clock[0]+=45*60
-            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify,patch.object(service,'play_reminder_sound') as sound:
                 model.sync();model.sync()
                 notify.assert_called_once()
+                sound.assert_called_once_with('water')
             assert model.focus()[2]==1447 and model.badges()==(('water','喝水'),('paused','24:07'))
             assert service.set_options(resource_alert_water=False,resource_alert_focus=False)
             assert not model.badges() and model.water()[4] and model.focus()[1]=='paused'
@@ -172,13 +226,20 @@ def run(api,runtime,app,output,checks):
             assert not service.compact and window.page_key=='pomodoro'
             page.delay.click();assert not model.water()[4]
             clock[0]+=1448
-            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify,patch.object(service,'play_reminder_sound') as sound:
                 model.sync();model.sync()
                 notify.assert_called_once()
+                sound.assert_called_once_with('focus_done')
             assert model.badges()==(('focus_done','完成'),)
             assert service.set_options(resource_fold='ball') and service.fold(True)
             app.processEvents();assert window.grab().save(str(output/'pomodoro-ball.png'))
             page.rest_button.click();assert model.focus()==('rest','idle',300,300)
+            model.toggle()
+            clock[0]+=300
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify,patch.object(service,'play_reminder_sound') as sound:
+                model.sync();model.sync()
+                notify.assert_called_once()
+                sound.assert_called_once_with('rest_done')
             clock[0]+=86400;model.sync()
             assert model.water()[1]==0 and model.water()[3]>clock[0]
             assert service.set_options(resource_pomodoro=False)
@@ -348,14 +409,16 @@ def run(api,runtime,app,output,checks):
             assert service.set_options(resource_compact_metrics=previous_metrics,resource_compact_pinned=previous_pins)
             assert service.set_options(resource_alert_agenda=True)
             agenda.announced.clear()
-            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify,patch.object(service,'play_reminder_sound') as sound:
                 agenda.sync();agenda.sync()
                 notify.assert_called_once()
+                sound.assert_called_once_with('agenda')
             assert service.fold(True)
             assert 'battery' in service.active_keys() and 'system_status' not in service.active_keys()
-            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify,patch.object(service,'play_reminder_sound') as sound:
                 for _ in range(2):service.accept_sample(dict(time=time.monotonic(),battery=(12,'battery')))
                 notify.assert_called_once()
+                sound.assert_called_once_with('battery')
             assert service.reminders()==(('agenda','项目周会'),('battery','12%'))
             app.processEvents();window.grab()
             assert window.reminder_kinds==['agenda','battery']
@@ -364,9 +427,10 @@ def run(api,runtime,app,output,checks):
             assert window.page_key=='agenda' and not service.compact
             agenda_page.reminder.click();assert not agenda.due() and api.load_config()['resource_agenda_events'][0]['ack']
             assert agenda_page.reminder.text()=='恢复提醒'
-            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify:
+            with patch.object(runtime.dock,'preview',False),patch.object(runtime.tray,'showMessage') as notify,patch.object(service,'play_reminder_sound') as sound:
                 agenda_page.reminder.click();agenda.sync()
                 notify.assert_called_once()
+                sound.assert_called_once_with('agenda')
             assert agenda.due() and not api.load_config()['resource_agenda_events'][0]['ack']
             long_title='项目周会与跨部门供应链协同进度跟踪及验收工作安排、设备联调和交付问题复盘'
             assert agenda.update_event(agenda.due()[0]['id'],title=long_title)
