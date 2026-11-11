@@ -85,7 +85,7 @@ def edit_account(parent, sync, source):
     state = sync.states.get(source)
     if state is None:
         return
-    dialog = QDialog(parent)
+    dialog = QDialog(parent, Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
     dialog.setWindowTitle('编辑日程账号')
     dialog.resize(425, 167)
     layout = QVBoxLayout(dialog)
@@ -250,7 +250,7 @@ def qr_image(url):
 
 class CalendarConnections(QDialog):
     def __init__(self, owner, service, selected_source=None):
-        super().__init__(owner)
+        super().__init__(owner, Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.service = service
         self.sync = service.get_calendar_sync()
         self.scan_url = ''

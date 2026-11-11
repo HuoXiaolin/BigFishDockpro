@@ -140,6 +140,8 @@ def run(api,runtime,app,output,checks):
                     assert preview.save(str(output/f'compact-badges-{requested}px.png'))
         cfg.update(resource_compact_height=original_height,resource_compact_badge_height=20)
         assert all(marks.provider_art(name, '#223744') for name in set(marks.PROVIDER_MARKS.values()))
+        deepseek_mark = marks.provider_art('deepseek-color.svg', '#223744')
+        assert deepseek_mark.aspectRatioMode() == Qt.KeepAspectRatio
         codex_mark = marks.provider_art('codex.png', '#223744')
         assert isinstance(codex_mark, QImage) and codex_mark.width() == codex_mark.height() == 104
         balance = dict(id='Dsh', name='DeepSeek Harness',

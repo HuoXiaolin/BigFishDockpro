@@ -65,6 +65,19 @@ def audio_regressions(api,service,checks):
     checks.append('Six distinct bundled nature WAV clips fit the queue spacing. Playback queues different kinds and coalesces duplicates. The saved sound switch stops playback and clears the queue. Preview and pause stay silent.')
 
 
+def assert_single_caption(dialog):
+    from ui_style import SettingsHeader
+    from window_layers import native
+
+    headers = dialog.findChildren(SettingsHeader)
+    assert len(headers) == 1 and headers[0].isVisible()
+    assert dialog.windowFlags() & Qt.FramelessWindowHint
+    style = native().GetWindowLongW(int(dialog.winId()), -16)  # GWL_STYLE
+    caption = 0x00C00000  # WS_CAPTION
+    assert style & caption != caption, f'Unexpected native caption: {style:#x}'
+    return headers[0]
+
+
 def calendar_account_ui(options, service, app, output, checks):
     from traceback import format_exc
 
@@ -92,6 +105,7 @@ def calendar_account_ui(options, service, app, output, checks):
             modal=QApplication.activeModalWidget()
             try:
                 assert modal.windowTitle()=='编辑日程账号'
+                assert_single_caption(modal)
                 modal.findChild(QLineEdit).setText('项目待办')
                 next(control for control in modal.findChildren(QPushButton) if control.text()=='保存').click()
             except Exception:
@@ -107,6 +121,7 @@ def calendar_account_ui(options, service, app, output, checks):
         def check_reauthorization():
             modal=QApplication.activeModalWidget()
             try:
+                header=assert_single_caption(modal)
                 assert modal.source.currentData()=='nexttodo' and not modal.source.isEnabled()
                 assert modal.endpoint.text()=='https://next.invalid' and modal.token.text()==''
                 assert modal.connect_account.text()=='更新令牌并同步'
@@ -129,6 +144,8 @@ def calendar_account_ui(options, service, app, output, checks):
                 assert error.verticalScrollBar().maximum()>0
                 error.moveCursor(QTextCursor.End)
                 assert error.cursorRect().bottom()<=error.viewport().height()
+                header.close.click()
+                assert not modal.isVisible()
             except Exception:
                 errors.append(format_exc())
             finally:
@@ -148,7 +165,7 @@ def calendar_account_ui(options, service, app, output, checks):
             sync.forget('nexttodo')
             sync.changed.emit()
         if not visible:options.hide()
-    checks.append('Calendar settings show the connected account, last sync and actions. Editing persists the local display name, reauthorization opens the selected provider, removal confirms, and error details wrap and scroll at the smallest dialog width.')
+    checks.append('Calendar settings show the connected account, last sync and actions. Add, edit and reauthorization show one custom caption without a Windows caption. Editing persists the name, removal confirms, and error details wrap and scroll at the smallest width.')
 
 
 def run(api,runtime,app,output,checks):
@@ -398,6 +415,7 @@ def run(api,runtime,app,output,checks):
                 connections=QApplication.activeModalWidget()
                 try:
                     assert connections.windowTitle()=='日程账号接入'
+                    assert_single_caption(connections)
                     assert '用钉钉扫码' in connections.steps.text()
                     assert connections.steps.height()>=connections.steps.heightForWidth(connections.steps.width())
                     connections.source.setCurrentIndex(connections.source.findData('feishu'))

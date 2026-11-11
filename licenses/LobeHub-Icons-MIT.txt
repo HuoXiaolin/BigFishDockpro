@@ -20,10 +20,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The SVG marks in assets/ai-providers are from @lobehub/icons-static-svg 1.102.0.
+The SVG marks in assets/ai-providers, except deepseek-color.svg, are from @lobehub/icons-static-svg 1.102.0.
 Source revision 989535d6c13da2dec5a2937fe2789d4af4fdd8e0
 https://github.com/lobehub/lobe-icons/tree/989535d6c13da2dec5a2937fe2789d4af4fdd8e0
 Brand marks identify the respective AI services.
+
+deepseek-color.svg is the unmodified DeepSeek whale from the official DeepSeek
+brand assets. The DeepSeek mark belongs to DeepSeek.
+https://github.com/deepseek-ai/awesome-deepseek-integration/blob/main/docs/_logo%20svg/ICON.svg
+https://github.com/deepseek-ai/awesome-deepseek-integration/blob/main/docs/_logo%20svg/guidelines.md
 
 codex.png is the original Codex mark from the official OpenAI Windows desktop
 app bundle at webview/assets/codex-app-ga-logo.dfddfb85d7.png.

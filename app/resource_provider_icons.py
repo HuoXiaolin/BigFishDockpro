@@ -38,7 +38,10 @@ def provider_art(mark, ink):
     except OSError:
         return None
     renderer = QSvgRenderer(source.replace(b'currentColor', ink.encode('ascii')))
-    return renderer if renderer.isValid() else None
+    if not renderer.isValid():
+        return None
+    renderer.setAspectRatioMode(Qt.KeepAspectRatio)
+    return renderer
 
 
 def paint_provider_mark(painter, rect, provider, ink):
