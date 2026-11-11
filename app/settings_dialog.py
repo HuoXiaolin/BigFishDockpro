@@ -283,6 +283,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                     field.setChecked(bool(value))
             finally:
                 field.blockSignals(blocked)
+        if 'panel_face_auto_switch' in changes and 'panel_face_auto_switch' in self.fields:
+            self.fields['panel_face_switch_minutes'].setEnabled(self.fields['panel_face_auto_switch'].isChecked())
         from settings_design import NumericControl
         for control in self.findChildren(NumericControl):
             control.slider.setValue(control.spin.value())
@@ -427,6 +429,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'panel_face')
         self.add_field(panel, 'panel_face_interactive')
         self.add_field(panel, 'panel_face_mood')
+        self.add_field(panel, 'panel_face_auto_switch')
+        self.add_field(panel, 'panel_face_switch_minutes')
+        self.fields['panel_face_auto_switch'].toggled.connect(self.fields['panel_face_switch_minutes'].setEnabled)
         self.add_field(panel, 'panel_face_scale')
         self.add_field(panel, 'panel_face_role')
         self.add_field(panel, 'panel_collapse_style')

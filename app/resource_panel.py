@@ -2,7 +2,7 @@
 from math import ceil
 import time
 from PyQt5.QtCore import Qt,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
-from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap,QPalette
+from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap,QPalette,QRegion
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
     QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy)
 from ui_style import AlignedMenu
@@ -647,6 +647,7 @@ class ResourceWindow(ResourceContentHost):
 
     def animate(self):
         cfg=self.service.cfg;now=time.monotonic()
+        finishing_scroll=bool(self.compact_scroll and now-self.compact_scroll[1]>=COMPACT_SCROLL_SECONDS)
         if cfg['resource_halo']:
             _, period = HALO_SPEEDS[cfg['resource_halo_speed']]
             if self.halo_updated_at is not None:
@@ -663,7 +664,37 @@ class ResourceWindow(ResourceContentHost):
             interval = self.animation_interval(now)
             if self.animation.interval() != interval:
                 self.animation.setInterval(interval)
-        self.update()
+        if finishing_scroll:
+            self.update()
+            return
+        from resource_compact import halo_damage,marquee_frame
+        damage=halo_damage(self) if cfg['resource_halo'] else QRegion()
+        surface=getattr(self,'_compact_surface',None)
+        if self.service.compact and surface:
+            for kind,area,*_ in surface[3]:
+                if kind=='scroll' or kind=='marquee' and self.marquee_span:
+                    # Include the reset frame, then leave the text still during
+                    # its five-second pause while the halo keeps moving.
+                    shift=marquee_frame(now-self.marquee_since,self.marquee_span)[0] if kind=='marquee' else None
+                    if kind=='scroll' or shift!=getattr(self,'_marquee_shift',None):
+                        damage|=QRegion(area.toAlignedRect().adjusted(-1,-1,1,1))
+                    if kind=='marquee':self._marquee_shift=shift
+        elif self.service.compact:
+            damage=QRegion(self.rect())
+        if not damage.isEmpty():self.update(damage)
+
+    def update_music_levels(self):
+        if not self.isVisible():return
+        if self.service.compact and getattr(self,'compact_media',False) and self.service.cfg['resource_music_text']=='wave':
+            surface=getattr(self,'_compact_surface',None)
+            if not surface or self.compact_scroll:
+                self.update()
+            else:
+                for kind,area,*_ in surface[3]:
+                    if kind=='wave':self.update(area.toAlignedRect())
+        elif not self.service.compact:
+            view=getattr(self,'_music_view',None)
+            if view and view.isVisible():view.meter.update()
 
     def animation_interval(self, now):
         if not self.service.compact:
@@ -777,6 +808,8 @@ class ResourceWindow(ResourceContentHost):
             self.settings_button.setIcon(icon('settings',self.colors['ink']));self.fold_button.setIcon(icon('collapse',self.colors['ink']))
             for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
         compact = self.service.compact
+        if not compact or cfg['resource_fold']=='ball':
+            self._compact_surface=None
         opening = False
         # Temporarily folding the card while settings are open is not a new visit.
         if not self.service.editing or self.service.preview_detail:
@@ -1181,6 +1214,7 @@ class ResourceWindow(ResourceContentHost):
     def closeEvent(self,event):
         event.ignore();self.service.set_options(resource_enabled=False)
     def hideEvent(self,event):
+        self._compact_surface=None
         self.clear_tab_drop()
         self.settle_compact_scroll()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
@@ -1202,6 +1236,3 @@ class ResourceWindow(ResourceContentHost):
         self.liquid.close()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
         self.enter_timer.stop();self.auto_fold_timer.stop();self.glass.clear();self.hide();self.deleteLater()
-
-
-from resource_settings import ResourceOptions

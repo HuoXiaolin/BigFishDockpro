@@ -56,6 +56,8 @@ REMINDER_OPTIONS={
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
 }
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
+FACE_SWITCH_RANGE = (1, 1440)
+FACE_SWITCH_DEFAULT = 10
 DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,resource_air_source='auto',
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
               resource_capsule_taskbar=False,resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={},
@@ -69,6 +71,7 @@ DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_ag
 DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
+                resource_face_auto_switch=False,resource_face_switch_minutes=FACE_SWITCH_DEFAULT,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
                 resource_weather_thresholds=list(WEATHER_THRESHOLDS),
                 resource_news=False,resource_news_feeds=[],
@@ -202,11 +205,18 @@ def normalize(cfg,strict=False):
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
     for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar',
-                'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',*REMINDER_OPTIONS):
+                'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
+                'resource_face_auto_switch',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
         else:cfg.setdefault(key,DEFAULTS[key])
+    face_minutes = cfg.get('resource_face_switch_minutes', FACE_SWITCH_DEFAULT)
+    if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
+        if strict:
+            raise ValueError('表情切换间隔须为 1 至 1440 分钟。')
+        face_minutes = FACE_SWITCH_DEFAULT
+    cfg['resource_face_switch_minutes'] = face_minutes
     for key,(low,high) in TIMER_RANGES.items():
         value=cfg.get(key,DEFAULTS[key])
         if type(value) is not int or not low<=value<=high:

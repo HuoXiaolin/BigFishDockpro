@@ -27,7 +27,6 @@ class PetFace:
         self.blush = Spring(0, 120, 0.9, 0.003)
         self.mood = "default"
         self.forced_mood = None
-        self._last_mood = ""
         self._near = False
         self.blink_at = time.monotonic() + 2.5
         self.last_attention = time.monotonic()
@@ -35,11 +34,13 @@ class PetFace:
         self.spread = 0.0          # 被按压时两眼额外分开的距离（s=1 时的像素）
         self.tilt = 0.0            # 被按压时每只眼向外倾斜的角度
 
-    def _pick(self):
+    def change_mood(self):
         import random
-        choices = [m for m in self.MOODS if m != self._last_mood]
+        current = self.forced_mood or self.mood
+        choices = [m for m in self.MOODS if m != current]
         self.mood = random.choice(choices)
-        self._last_mood = self.mood
+        if self.forced_mood is not None:
+            self.forced_mood = self.mood
 
     # ---------- 状态推进 ----------
     def _step(self, look: QtCore.QPointF, near: bool, s: float):
@@ -49,7 +50,7 @@ class PetFace:
         if self.forced_mood is not None:
             self.mood = self.forced_mood
         elif near and not self._near:
-            self._pick()                       # 鼠标刚靠近：随机换表情
+            self.change_mood()                 # 鼠标刚靠近：随机换表情
         self._near = near
         if near:
             self.last_attention = now

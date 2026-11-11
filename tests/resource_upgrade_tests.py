@@ -178,6 +178,8 @@ def run(api,runtime,root,app,output,checks):
         companion_ui(api,runtime,app,output,checks)
         from resource_performance_tests import run as performance_ui
         performance_ui(api,runtime,app,output,checks)
+        from resource_render_cache_tests import run as rendering_ui
+        rendering_ui(api,runtime,app,output,checks)
         from panel_face_tests import run as panel_faces
         panel_faces(api,runtime,app,output,checks)
         pipe_check(app,output,checks)

@@ -40,6 +40,8 @@ def run(output):
         from batch_import import BatchImporter
         tray.importer=BatchImporter(dock,tray,api.save_config)
         runtime=tray.runtime=RuntimeController(dock,tray,api)
+        assert set(runtime.panels.windows)=={'apps'}
+        assert set(cfg['display_layout']['panels'])=={key for key,_ in CATEGORIES}
         if os.environ.get('BIGFISH_TEST_RANK_MEMORY')=='1':
             from rank_memory_probe import measure
             (output/'rank-memory.json').write_text(json.dumps(measure(runtime,app),indent=2),encoding='utf-8')
@@ -344,7 +346,17 @@ def run(output):
         options.reject();main.reject();main.deleteLater()
         checks.append('shared card preferences: card save refreshes main and every card; main save refreshes open card dialog, last saved shared values win without changing unrelated main drafts; obsolete overrides migrated, failed write retains saved values, local dimensions and note body font preserved')
 
+        from PyQt5 import sip
+        from PyQt5.QtWidgets import QMenu
+
         tray.rebuild()
+        original_menus = tray.menu.findChildren(QMenu)
+        assert original_menus
+        for _ in range(20):
+            tray.rebuild()
+            app.sendPostedEvents(None, QEvent.DeferredDelete)
+            assert len(tray.menu.findChildren(QMenu)) == len(original_menus)
+        assert all(sip.isdeleted(menu) for menu in original_menus)
         for menu in (tray.menu,dock.icon_context_menu(-1)):
             titles={action.text() for action in menu.actions()}
             assert {'应用批量管理…','Dock 布局','桌面卡片','便签','组件暂停','设置…','帮助与更新'}<=titles
@@ -352,13 +364,16 @@ def run(output):
             assert [action.text() for action in pause_menu.actions()] == ['暂停桌面组件', '全屏自动暂停']
             assert all(action.isCheckable() for action in pause_menu.actions())
         tray.add_separator();assert sum(bool(item.get('sep')) for item in cfg['items'])==1
-        snapshot=copy.deepcopy(cfg['items']);tray.add_separator()
+        snapshot=copy.deepcopy(cfg['items'])
+        with patch.object(tray,'showMessage') as messages:
+            tray.add_separator()
+            assert len(cfg['items'])==len(snapshot)+1, ('Second separator was not saved', messages.call_args_list)
         with patch.object(tray,'showMessage'):
             assert not tray.remove_separator(0,snapshot)
         assert len(cfg['items'])==2
         assert tray.remove_separator(0,copy.deepcopy(cfg['items'])) and len(cfg['items'])==1
         assert tray.remove_separator(None,copy.deepcopy(cfg['items'])) and not cfg['items']
-        checks.append('menus and separators: tray/Dock task groups present; add, single removal, remove-all and stale-menu guard persist safely')
+        checks.append('menus and separators: 20 tray menu rebuilds release old submenus; tray/Dock task groups, add, single removal, remove-all and stale-menu guard persist safely')
         def decide(remove):
             def click():
                 modal=QApplication.activeModalWidget()

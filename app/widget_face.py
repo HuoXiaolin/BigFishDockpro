@@ -16,6 +16,8 @@ class FaceTracker:
         self.last_tired=False;self.down=False;self.face_bounds=None
         self.watch=QTimer(window);self.watch.setInterval(IDLE_POLL);self.watch.timeout.connect(self.watch_face)
         self.frames=QTimer(window);self.frames.setInterval(33);self.frames.timeout.connect(self.face_frame)
+        self.rotation = None
+        self.face_preference = None
 
     def option(self,key):return self.config()[self.prefix+'_'+key]
 
@@ -30,13 +32,37 @@ class FaceTracker:
             from resource_face import PetFace
             self.face=PetFace()
         old_mood=self.face.forced_mood
-        self.face.forced_mood=None if self.option('face_mood')=='random' else self.option('face_mood')
-        if not self.interactive:self.hide_face()
+        mood = self.option('face_mood')
+        auto_switch = self.option('face_auto_switch')
+        if self.face_preference != (mood, auto_switch):
+            self.face.forced_mood = None if mood == 'random' else mood
+            self.face_preference = mood, auto_switch
+        self.sync_rotation(auto_switch)
+        if not self.interactive:self.stop_interaction()
         elif not self.watch.isActive():
             self.watch_face()
             self.watch.start()
             self.pulse(.5)
         elif self.face.forced_mood!=old_mood:self.pulse(.5)
+
+    def sync_rotation(self, enabled):
+        if not enabled:
+            if self.rotation is not None:
+                self.rotation.stop()
+            return
+        if self.rotation is None:
+            self.rotation = QTimer(self.window)
+            self.rotation.setTimerType(Qt.VeryCoarseTimer)
+            self.rotation.timeout.connect(self.rotate_face)
+        interval = self.option('face_switch_minutes') * 60_000
+        if not self.rotation.isActive() or self.rotation.interval() != interval:
+            self.rotation.start(interval)
+
+    def rotate_face(self):
+        self.face.change_mood()
+        if self.face_bounds is not None:
+            self.window.update(self.face_bounds)
+        self.pulse(.5)
 
     def pulse(self,seconds=.6):
         if not self.interactive:return
@@ -48,7 +74,12 @@ class FaceTracker:
 
     def watch_face(self):
         w=self.window
-        if not w.isVisible() or not self.interactive or self.face is None:self.hide_face();return
+        if not w.isVisible() or not self.option('face'):
+            self.hide_face()
+            return
+        if not self.interactive or self.face is None:
+            self.stop_interaction()
+            return
         pos=QCursor.pos();near=w.geometry().adjusted(-50,-40,50,40).contains(pos)
         now=time.monotonic()
         moved=self.cursor is not None and pos!=self.cursor
@@ -116,5 +147,10 @@ class FaceTracker:
             QPixmapCache.insert(key,pixmap)
         p.drawPixmap(rect,pixmap,QRectF(pixmap.rect()))
 
-    def hide_face(self):
+    def stop_interaction(self):
         self.watch.stop();self.frames.stop();self.down=False;self.cursor=None;self.was_near=False
+
+    def hide_face(self):
+        self.stop_interaction()
+        if self.rotation is not None:
+            self.rotation.stop()

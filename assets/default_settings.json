@@ -668,6 +668,8 @@
   "panel_page_size": 24,
   "panel_face": true,
   "panel_face_interactive": true,
+  "panel_face_auto_switch": false,
+  "panel_face_switch_minutes": 10,
   "panel_face_mood": "random",
   "panel_face_role": "",
   "panel_face_scale": 100,
@@ -910,6 +912,8 @@
   "resource_alert_battery": false,
   "resource_reminder_sound": true,
   "resource_face_scale": 100,
+  "resource_face_auto_switch": false,
+  "resource_face_switch_minutes": 10,
   "resource_weather": true,
   "resource_weather_cities": [
     "天津",

@@ -294,19 +294,35 @@ def run(api,runtime,app,output,checks):
         assert options.loaded=={0,1} and options.commit()
         assert cfg['resource_task_font']==2 and all(cfg[k]==v for k,v in untouched.items())
         options.fields['resource_face_scale'].setValue(110);options.fields['resource_face_interactive'].setChecked(True)
+        interval = options.fields['resource_face_switch_minutes']
+        assert interval.value() == 10 and not interval.isEnabled()
+        options.fields['resource_face_auto_switch'].setChecked(True)
+        assert interval.isEnabled()
+        interval.setValue(4)
+        options.show_page(6)
+        options.show_page(7)
+        options.show_page(6)
+        interval = options.fields['resource_face_switch_minutes']
+        assert interval.isEnabled() and interval.value() == 4
+        options.grab().save(str(output/'resource-face-options.png'))
         options.fields['resource_weather_days'].setCurrentIndex(options.fields['resource_weather_days'].findData(3))
         options.fields['resource_task_threshold'].setChecked(True);options.fields['resource_task_music_colorful'].setChecked(True)
         assert options.commit();saved=api.load_config()
         assert saved['resource_face_scale']==110 and saved['resource_task_threshold'] and saved['resource_task_music_colorful'] and saved['resource_weather_days']==3
+        assert saved['resource_face_auto_switch'] and saved['resource_face_switch_minutes'] == 4
+        assert w.liquid.rotation.isActive() and w.liquid.rotation.interval() == 240_000
+        assert w.liquid.watch.isActive()
         assert all(options.fields[key].isChecked() for key in
                    ('resource_compact_ai','resource_compact_music','resource_weather_compact'))
         assert 'notifications' not in options.compact_fields
         options.reject();options.deleteLater()
         cfg['resource_face']=False;w.sync_window()
         assert not w.liquid.watch.isActive() and not w.liquid.frames.isActive()
+        assert not w.liquid.rotation.isActive()
         face_calls.clear()
         with patch.object(w.liquid, 'paint_face', new=count_face):
             w.grab()
         assert not face_calls
+        checks.append('Capsule face rotation settings survive page changes and persistence, run alongside cursor tracking, and stop when faces are disabled.')
         checks.append('Resident compact regressions: 96×28–560×44 bounds, stable CPU/core pins at 292px, all supplementary values/AI/media reachable, AI/music/cities independently pinned; face static/interactive/size, hover with auto-collapse off and click-only; all five pages stay 260×180 with scrollable tabs. Seven vector weather backgrounds in both themes; options persist.')
     finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

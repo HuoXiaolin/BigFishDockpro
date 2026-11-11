@@ -2442,7 +2442,6 @@ class DockTray(QSystemTrayIcon):
         self.setContextMenu(self.menu)
         self.menu.aboutToShow.connect(self.rebuild)
         self.activated.connect(self._activated)
-        self.rebuild()
         self.setToolTip(APP_TITLE + " —— 右键管理图标")
 
     def _activated(self, reason):
@@ -2543,7 +2542,6 @@ class DockTray(QSystemTrayIcon):
         self.cfg["lang"] = "en" if str(val) == "en" else "zh"
         save_config(self.cfg)
         set_lang(self.cfg["lang"])
-        self.rebuild()                    # 菜单立刻换成对应语言
         self.dock.update()                # Dock 上的提示文字也跟着换
 
     def set_blur(self, val):

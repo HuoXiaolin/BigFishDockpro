@@ -916,7 +916,11 @@ def run(output,checks):
             with patch.object(menu,'mouse_buttons',return_value={1}),patch('tray_menu.QCursor.pos',return_value=point):
                 menu.buttons.clear();menu.poll_outside()
             assert not menu.isVisible() and not menu.watcher.isActive()
-            checks.append('Tray popup dismisses on an outside pointer press and stops watching when hidden.')
+            from PyQt5.QtWidgets import QMenu
+            pump()
+            app.sendPostedEvents(None,QEvent.DeferredDelete)
+            assert not menu.actions() and not menu.findChildren(QMenu)
+            checks.append('Tray popup dismisses on an outside pointer press, stops watching and releases its submenu tree.')
         finally:
             runtime.close();shutdown_ui(app)
 

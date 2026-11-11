@@ -45,6 +45,32 @@ def run(api,runtime,app,output,checks):
         assert saved['panel_face'] and saved['panel_face_mood']=='love' and saved['panel_face_scale']==80
         assert all(w.option('face') and w.option('face_scale')==80 for w in runtime.panels.windows.values())
         panel.grab();assert tracker.face._m=='love' and not tracker.watch.isActive() and not tracker.frames.isActive()
+        interval = dialog.fields['face_switch_minutes']
+        assert interval.value() == 10 and not interval.isEnabled()
+        dialog.face_auto_switch.setChecked(True)
+        assert interval.isEnabled()
+        interval.setValue(3)
+        assert dialog.commit()
+        saved = api.load_config()
+        assert saved['panel_face_auto_switch'] and saved['panel_face_switch_minutes'] == 3
+        timer = tracker.rotation
+        assert timer.isActive() and timer.interval() == 180_000
+        assert not tracker.watch.isActive() and not tracker.frames.isActive()
+        timer.timeout.emit()
+        panel.grab()
+        mood = tracker.face._m
+        assert mood in tracker.face.MOODS and mood != 'love'
+        panel.apply_options()
+        panel.grab()
+        assert tracker.face._m == mood and timer.isActive()
+        panel.hide()
+        assert not timer.isActive()
+        panel.show()
+        assert timer.isActive()
+        dialog.face_auto_switch.setChecked(False)
+        assert not interval.isEnabled() and dialog.commit()
+        panel.grab()
+        assert tracker.face._m == 'love' and not timer.isActive()
         dialog.grab().save(str(output/'desktop-face-options.png'))
         dialog.face.setChecked(False);assert dialog.commit();panel.grab()
         assert not tracker.watch.isActive() and not panel.header_icon.pixmap().isNull()
@@ -55,6 +81,7 @@ def run(api,runtime,app,output,checks):
         panel.show();assert tracker.watch.isActive()
         cfg['motion_enabled']=False;runtime.apply_settings({'motion_enabled'});assert not tracker.watch.isActive()
         checks.append('Desktop faces follow distant cursor positions in expanded/capsule/ball layouts, keep click/hover controls and moods, and stop tracking when hidden or motion is disabled.')
+        checks.append('Desktop face rotation defaults to 10 minutes, persists a custom interval, rotates with interaction off, pauses when hidden, and restores a fixed style when disabled.')
     finally:
         if dialog:dialog.reject()
         cfg.clear();cfg.update(before);runtime.apply_settings();api.save_config(cfg)

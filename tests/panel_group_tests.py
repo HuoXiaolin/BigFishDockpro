@@ -104,7 +104,7 @@ def run(api,runtime,root,output,checks):
         assert not manager.windows['images'].isVisible() and len([w for w in manager.windows.values() if w.isVisible()])==1
         saved=api.load_config();manager.close();cfg.update(saved)
         runtime.panels=manager=DesktopPanels(runtime,roots=[str(demo)]);manager.apply_settings();manager.scan_timer.stop();app.processEvents()
-        assert manager.active_window==second and not manager.windows['images'].isVisible()
+        assert manager.active_window==second and 'images' not in manager.windows
         assert manager.windows[second].geometry().getRect()==(90,110,430,330)
         assert len(manager.rows(second))==1 and manager.model(second)['view']=='list'
         # Eleven rows must occupy distinct rectangles, not merely exist in the model.

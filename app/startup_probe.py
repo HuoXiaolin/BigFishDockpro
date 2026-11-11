@@ -86,11 +86,15 @@ class StartupProbe:
                 assert dock.isVisible() is self.autostart
                 assert runtime.panels.shown is self.autostart
                 assert tray.isVisible() is not self.autostart
-                panel = runtime.panels.windows['images']
-                assert panel.collapsed
                 if self.autostart:
+                    panel = runtime.panels.windows['images']
+                    assert panel.collapsed
                     assert runtime.panels.active_window=='images' and panel.width()<=360 and panel.height()<240
                     assert panel.bounds()[2:]==[360,240]
+                else:
+                    assert 'images' not in runtime.panels.windows
+                    assert runtime.panels.model('images')['collapsed']
+                    assert dock.cfg['display_layout']['panels']['images']['rect']==[70,90,340,220]
                     assert runtime.dock.cfg['merged_geometry']==[88,96,360,240]
             if self.autostart:
                 assert elapsed >= .9

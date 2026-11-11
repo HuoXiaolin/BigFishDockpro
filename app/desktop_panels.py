@@ -382,7 +382,7 @@ class DesktopPanels(QObject):
                 default = new_geometry(self.cfg, default, screens)
             self.default_geometries[identity] = default
             if identity not in self.windows:
-                if self.release_hidden_cards and not visible:
+                if not visible:
                     continue
                 window = self.windows[identity] = DesktopPanel(self, identity, default)
                 state = self.dormant_pages.pop(identity, None)

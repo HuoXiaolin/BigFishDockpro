@@ -19,7 +19,6 @@ class Productivity(QObject):
             runtime.layout.apply()
             runtime.panels.restore_layout_state()
         sync_main_fields(runtime.tray,{k:runtime.dock.cfg[k] for k in changed if k in runtime.dock.cfg})
-        if hasattr(runtime.tray,'rebuild'):runtime.tray.rebuild()
 
     def commit(self,candidate,title,history=True,refresh=True):
         runtime=self.runtime;cfg=runtime.dock.cfg

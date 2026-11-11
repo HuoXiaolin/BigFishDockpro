@@ -165,6 +165,12 @@ def run(api, runtime, app, output, checks):
             main = SettingsDialog(runtime.tray, api)
             dialogs.append(main)
             assert main.fields['panel_face_role'].currentData() == 'star-girl'
+            interval = main.fields['panel_face_switch_minutes']
+            assert interval.value() == 10 and not interval.isEnabled()
+            main.set_draft_values({'panel_face_auto_switch': True, 'panel_face_switch_minutes': 7})
+            assert interval.isEnabled() and interval.value() == 7
+            main.fields['panel_face_auto_switch'].setChecked(False)
+            assert not interval.isEnabled() and main.draft_values()['panel_face_switch_minutes'] == 7
             main.set_draft_values({'panel_face_role': 'missing-role'})
             assert main.fields['panel_face_role'].currentText().startswith('缺少角色包')
             assert library.get('missing-role') is None

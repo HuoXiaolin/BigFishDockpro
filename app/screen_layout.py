@@ -256,6 +256,8 @@ class DisplayLayout:
 
     def ensure_profiles(self):
         if self.pending or self.applying:return
+        from card_metrics import metrics
+
         state=copy.deepcopy(self.dock.cfg.get('display_layout',{}));screens=self.screens()
         if not screens:return
         if not state.get('dock'):
@@ -263,19 +265,28 @@ class DisplayLayout:
         known={model['id'] for model in self.dock.cfg['desktop_panels']}
         state['panels']={key:record for key,record in state.get('panels',{}).items() if key in known}
         panels=state['panels']
-        for model in self.dock.cfg['desktop_panels']:
-            window=self.runtime.panels.windows.get(model['id'])
-            if window and model['id'] not in panels:
-                panels[model['id']]=capture(model.get('geometry',window.default_geometry),screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not model.get('geometry') else 1.0)
         manager=self.runtime.panels
+        density=self.dock.cfg.get('card_scale',70)/100
+        for model in self.dock.cfg['desktop_panels']:
+            identity=model['id']
+            if identity in panels:continue
+            window=manager.windows.get(identity)
+            saved=model.get('geometry')
+            geometry=saved or (window.default_geometry if window else manager.default_geometries.get(identity))
+            if geometry:
+                factor=window.ui_factor if window else metrics(self.dock.cfg,geometry,screens)[1]
+                panels[identity]=capture(geometry,screens,factor,1.0 if saved else density)
         valid={group['id'] for group in self.dock.cfg.get('merge_groups',[])}
         state['merge_groups']={key:record for key,record in state.get('merge_groups',{}).items() if key in valid}
         for group,identity in getattr(manager,'active_windows',{}).items():
-            window=manager.windows.get(identity)
             existing=state.get('merged') if group=='default' else state['merge_groups'].get(group)
-            if window and not existing:
-                geometry=manager.group_value(identity,'geometry')
-                record=capture(geometry or window.default_geometry,screens,window.ui_factor,self.dock.cfg.get('card_scale',70)/100 if not geometry else 1.0)
+            if existing:continue
+            window=manager.windows.get(identity)
+            saved=manager.group_value(identity,'geometry')
+            geometry=saved or (window.default_geometry if window else manager.default_geometries.get(identity))
+            if geometry:
+                factor=window.ui_factor if window else metrics(self.dock.cfg,geometry,screens)[1]
+                record=capture(geometry,screens,factor,1.0 if saved else density)
                 if group=='default':state['merged']=record
                 else:state['merge_groups'][group]=record
         if state!=self.dock.cfg.get('display_layout'):

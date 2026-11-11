@@ -138,7 +138,7 @@ class ResourceCapsule(QObject):
         return self.set_options(resource_collapsed=bool(compact))
     def settings(self,page=None):
         from contextlib import nullcontext
-        from resource_panel import ResourceOptions
+        from resource_settings import ResourceOptions
         from ui_style import exec_dialog
         main = getattr(self.runtime.tray, 'settings_dialog', None)
         scope = main.suspend_page() if main is not None and main.isVisible() else nullcontext()

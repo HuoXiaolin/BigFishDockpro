@@ -41,6 +41,7 @@ DEFAULTS = {
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
     'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random', 'panel_face_role':'',
     'panel_face_scale':100, 'panel_expand_mode':'hover',
+    'panel_face_auto_switch': False,
     'panel_collapse_style': 'ball', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
     'panel_theme': 'auto', 'panel_color': '', 'theme_color': '', 'dock_highlight': 45,
     'dock_material': 'liquid',
@@ -53,8 +54,8 @@ DEFAULTS = {
     'check_updates_on_start': False, 'update_use_proxy': True, 'update_source': DEFAULT_SOURCE,
 }
 
-from resource_options import DEFAULTS as RESOURCE_DEFAULTS
-DEFAULTS.update(RESOURCE_DEFAULTS)
+from resource_options import DEFAULTS as RESOURCE_DEFAULTS, FACE_SWITCH_DEFAULT, FACE_SWITCH_RANGE
+DEFAULTS.update(RESOURCE_DEFAULTS, panel_face_switch_minutes=FACE_SWITCH_DEFAULT)
 
 # Missing style fields in existing configurations retain pre-1.1.3 defaults.
 LEGACY_STYLE_DEFAULTS={key:DEFAULTS[key] for key in ('card_design','appearance_mode','appearance_custom','appearance_applied','note_appearance','clock_appearance','calendar_appearance','panel_opacity','panel_blur','panel_highlight','panel_material','panel_theme','panel_color','theme_color','dock_highlight','dock_material','clear_background')}
@@ -101,6 +102,9 @@ def normalize(cfg):
             result[key] = max(lower, min(upper, int(result[key])))
         except (TypeError, ValueError):
             result[key] = DEFAULTS[key]
+    face_minutes = result['panel_face_switch_minutes']
+    if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
+        result['panel_face_switch_minutes'] = FACE_SWITCH_DEFAULT
     from appearance_presets import MATERIALS
     for key, allowed in [('panel_material', tuple(value for _,value in MATERIALS)),
                          ('taskbar_text_mode', ('system','light','dark')),

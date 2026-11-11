@@ -1102,6 +1102,7 @@ class PanelOptions(QDialog):
         super().__init__(panel,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         from ui_style import SettingsHeader
         from appearance_presets import material_choices,COLOR_MODES
+        from resource_options import FACE_SWITCH_RANGE
         self.panel,self.fields=panel,{};self.applying_preset=True
         self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
@@ -1124,6 +1125,10 @@ class PanelOptions(QDialog):
         self.face=ModernCheckBox('显示小表情（展开与收起均保留）');form.addRow(self.face)
         self.face_interactive=ModernCheckBox('表情跟随鼠标与按压互动');form.addRow(self.face_interactive)
         choice('face_mood','表情样式',[('随机变化','random'),('默认','default'),('开心','happy'),('眨眼','wink'),('爱心','love'),('星星眼','star'),('害羞','shy'),('嘟嘴','pout'),('眯眼','squint')])
+        self.face_auto_switch = ModernCheckBox('定时切换表情')
+        form.addRow(self.face_auto_switch)
+        number('face_switch_minutes', '切换间隔（分钟）', *FACE_SWITCH_RANGE)
+        self.face_auto_switch.toggled.connect(self.fields['face_switch_minutes'].setEnabled)
         number('face_scale','表情大小（%）',60,130)
         self.status=label('所有桌面卡片共用此设置；保存后同步主设置。位置、大小和内容分别保留。','muted');body.addWidget(self.status)
         self.status.setWordWrap(True)
@@ -1154,6 +1159,8 @@ class PanelOptions(QDialog):
             else:field.setValue(value)
         self.color.setText(self.panel.option('color'));self.auto.setChecked(self.panel.option('auto_hide'));self.locked.setChecked(self.panel.option('locked'))
         self.face.setChecked(self.panel.option('face'));self.face_interactive.setChecked(self.panel.option('face_interactive'))
+        self.face_auto_switch.setChecked(self.panel.option('face_auto_switch'))
+        self.fields['face_switch_minutes'].setEnabled(self.face_auto_switch.isChecked())
         matching=next((i for i,(_,values) in enumerate(PANEL_PRESETS,1) if all(self.panel.option(key)==value for key,value in values.items())),0)
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
         self.applying_preset=False
@@ -1181,6 +1188,7 @@ class PanelOptions(QDialog):
         if color and not re.fullmatch(r'#[0-9a-fA-F]{6}',color):self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。');return False
         values={key:field.currentData() if isinstance(field,QComboBox) else field.value() for key,field in self.fields.items()}
         values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked(),face=self.face.isChecked(),face_interactive=self.face_interactive.isChecked())
+        values['face_auto_switch'] = self.face_auto_switch.isChecked()
         values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio')}
         if self.panel.manager.update_panel(self.panel.identity,**values):self.status.setText('已保存：外观共用，收起样式仅用于当前卡片或合并组。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

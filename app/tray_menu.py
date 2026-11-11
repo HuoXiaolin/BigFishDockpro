@@ -48,6 +48,20 @@ class TrayContextMenu(QMenu):
         self.watcher.stop()
         QApplication.instance().removeEventFilter(self)
         super().hideEvent(event)
+        # Qt hides the menu before dispatching the chosen action.
+        QTimer.singleShot(0, self.release_if_hidden)
+
+    def clear_actions(self):
+        owned_menus = {submenu for action in self.actions()
+                       if (submenu := action.menu()) is not None and submenu.parent() is self}
+        self.clear()
+        # QMenu.clear() removes submenu actions without deleting their menus.
+        for submenu in owned_menus:
+            submenu.deleteLater()
+
+    def release_if_hidden(self):
+        if not self.isVisible():
+            self.clear_actions()
 
     def eventFilter(self,watched,event):
         if self.isVisible() and event.type()==QEvent.MouseButtonPress and self.outside(event.globalPos()):
@@ -165,4 +179,5 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
 
 
 def rebuild(tray):
-    tray.menu.clear();common_actions(tray.menu,tray)
+    tray.menu.clear_actions()
+    common_actions(tray.menu, tray)

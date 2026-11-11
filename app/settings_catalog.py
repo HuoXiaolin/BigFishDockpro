@@ -12,6 +12,7 @@ def field_catalog(api, cfg):
     from taskbar_appearance import MODES
     from taskbar_text import MODES as TEXT_MODES
     from feature_config import SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
+    from resource_options import FACE_SWITCH_RANGE
 
     return {
         'dock_material': (0, '材质', 'combo', material_choices(cfg['dock_material'])),
@@ -58,6 +59,8 @@ def field_catalog(api, cfg):
         'panel_face': (1, '显示小表情（展开与收起均保留）', 'check', None),
         'panel_face_interactive': (1, '表情跟随鼠标与按压互动', 'check', None),
         'panel_face_mood': (1, '表情样式', 'combo', [('随机变化', 'random'), ('默认', 'default'), ('开心', 'happy'), ('眨眼', 'wink'), ('爱心', 'love'), ('星星眼', 'star'), ('害羞', 'shy'), ('嘟嘴', 'pout'), ('眯眼', 'squint')]),
+        'panel_face_auto_switch': (1, '定时切换表情', 'check', None),
+        'panel_face_switch_minutes': (1, '切换间隔（分钟）', 'number', FACE_SWITCH_RANGE),
         'panel_face_scale': (1, '表情大小（%）', 'number', (60, 130)),
         'panel_face_role': (1, '表情角色', 'face_role', None),
         'panel_collapse_style': (1, '收起形状', 'combo', [('胶囊', 'capsule'), ('圆球', 'ball'), ('方条', 'bar')]),

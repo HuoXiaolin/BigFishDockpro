@@ -105,7 +105,7 @@ class Capture(BackgroundWorker):
                   '--no_track_input']
             if self.pid:args+=['--process_id',str(self.pid),'--terminate_on_proc_exit']
             process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
-                                     creationflags=subprocess.CREATE_NO_WINDOW)
+                                     creationflags=subprocess.DETACHED_PROCESS)
             self.own_process(process);sources=FrameSources();header=None;last=0
             for raw in process.stdout:
                 if self.cancelled.is_set():break

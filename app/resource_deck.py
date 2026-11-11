@@ -179,9 +179,7 @@ class DeckBridge(QObject):
         elif kind=='levels' and self.signature and self.signature[2]:
             self.levels=[max(0.,min(1.,float(n))) for n in data.get('levels',[])[:20]]
             if self.owner.window:
-                self.owner.window.update()
-                view=getattr(self.owner.window,'_music_view',None)
-                if view and view.isVisible():view.meter.update()
+                self.owner.window.update_music_levels()
             if hasattr(self.owner,'detached') and (card:=self.owner.detached('music')):
                 card.content.meter.update()
             strip=getattr(self.owner,'strip',None)

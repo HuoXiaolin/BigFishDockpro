@@ -107,7 +107,8 @@ def run(api,runtime,root,app,output,checks):
     assert_isolated()
     from bluetooth_gauge import devices,tray_icon
     from resource_options import DEFAULTS,FAN_METRICS,METRICS
-    from resource_panel import ResourceOptions,display_values
+    from resource_panel import display_values
+    from resource_settings import ResourceOptions
     from resource_metrics import network_rates,busiest_engine
     from resource_taskbar import free_slot,Placement
     from resource_fps import FrameRates

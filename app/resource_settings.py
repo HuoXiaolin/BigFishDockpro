@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushB
 from appearance_presets import COLOR_MODES,material_choices
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
-                              DESKTOP_COMPONENTS,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
+                              DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -92,7 +92,8 @@ class ResourceOptions(QDialog):
         {'resource_ai','resource_ai_tray','resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable'},
-        {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale'},
+        {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
+         'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
         {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_reminder_sound'}]
 
@@ -122,6 +123,8 @@ class ResourceOptions(QDialog):
                 self.color.setText(draft['text'])
             elif index == 2:
                 self.fields['resource_clock_format'].setEnabled(self.fields['resource_clock'].isChecked())
+            elif index == 6:
+                self.fields['resource_face_switch_minutes'].setEnabled(self.fields['resource_face_auto_switch'].isChecked())
             elif index == 7:
                 self.weather_cities.setText(draft['text'])
                 self.news_feeds.setPlainText(draft['feeds'])
@@ -442,6 +445,14 @@ class ResourceOptions(QDialog):
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
             face_form=QFormLayout();interaction.addLayout(face_form)
             combo(face_form,'resource_face_mood','表情样式',list(zip(('靠近随机变化','默认','开心','眨眼','爱心','星星眼','害羞','嘟嘴','眯眼'),('random','default','happy','wink','love','star','shy','pout','squint'))),cfg['resource_face_mood'],self.fields)
+            auto_switch = check('定时切换表情', cfg['resource_face_auto_switch'])
+            self.fields['resource_face_auto_switch'] = auto_switch
+            face_form.addRow(auto_switch)
+            spin(face_form, 'resource_face_switch_minutes', '切换间隔（分钟）', *FACE_SWITCH_RANGE,
+                 cfg['resource_face_switch_minutes'], self.fields)
+            interval = self.fields['resource_face_switch_minutes']
+            interval.setEnabled(auto_switch.isChecked())
+            auto_switch.toggled.connect(interval.setEnabled)
             spin(face_form,'resource_face_scale','表情大小（%）',60,130,cfg['resource_face_scale'],self.fields)
             from face_role_controls import add_role_controls
             self.fields['resource_face_role']=add_role_controls(self,face_form,self.service.runtime,

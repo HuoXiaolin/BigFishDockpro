@@ -2,7 +2,7 @@
 from functools import lru_cache
 import time
 from PyQt5.QtCore import Qt,QRectF,QPointF
-from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainterPath,QPen,QConicalGradient,QBrush,QTransform
+from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainterPathStroker,QPen,QPixmap,QConicalGradient,QBrush,QRegion,QTransform
 from resource_status import metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import amount_text, quota_color, remaining_percent, used_percent
@@ -54,6 +54,8 @@ def paint_halo(window,p):
     if getattr(window,'halo_key',None)!=key:
         window.halo_path=window.liquid.shape(r,radius)
         window.halo_key=key
+        stroke=QPainterPathStroker();stroke.setWidth(10);stroke.setJoinStyle(Qt.RoundJoin)
+        window.halo_region=QRegion(stroke.createStroke(window.halo_path).toFillPolygon().toPolygon())
     p.setBrush(Qt.NoBrush)
     transform = QTransform.fromTranslate(r.center().x(), r.center().y())
     transform.scale(r.width() / 2, r.height() / 2)
@@ -63,6 +65,11 @@ def paint_halo(window,p):
         brush.setTransform(transform)
         p.setPen(QPen(brush, width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.drawPath(window.halo_path)
+
+
+def halo_damage(window):
+    """The animated stroke never needs to invalidate the cards inside it."""
+    return getattr(window,'halo_region',QRegion(window.rect()))
 
 
 def status_values(service):
@@ -310,7 +317,18 @@ def paint_ai_quota(p, rect, value, meta, colors):
         text(p, area, value, ink, font.pixelSize(), True)
 
 
-def paint_content(window,p,rect,key,label,value,meta):
+def paint_music_wave(window,p,area,ink,playing):
+    levels=window.service.deck.levels if playing and window.service.deck else ()
+    count=min(15,max(0,int(area.width()/3)))
+    p.setPen(QPen(QColor(ink),1.5,Qt.SolidLine,Qt.RoundCap))
+    for i in range(count):
+        level=levels[i*len(levels)//count] if levels else 0
+        height=1+max(0,min(1,level))*5
+        x=area.x()+1+i*3;mid=area.center().y()
+        p.drawLine(QPointF(x,mid-height),QPointF(x,mid+height))
+
+
+def paint_content(window,p,rect,key,label,value,meta,overlays=None):
     c=window.colors;cfg=window.service.cfg;mid=rect.center().y()
     if key=='ai':
         paint_ai_quota(p,rect,value,meta,c)
@@ -337,18 +355,12 @@ def paint_content(window,p,rect,key,label,value,meta):
             symbol=QPainterPath(QPointF(x-3,mid-4));symbol.lineTo(x+4,mid);symbol.lineTo(x-3,mid+4);symbol.closeSubpath()
             p.drawPath(symbol)
         if cfg['resource_music_text']=='wave':
-            levels=window.service.deck.levels if playing else ()
-            count=min(15,max(0,int(area.width()/3)))
-            p.setPen(QPen(QColor(ink),1.5,Qt.SolidLine,Qt.RoundCap))
-            for i in range(count):
-                level=levels[i*len(levels)//count] if levels else 0
-                height=1+max(0,min(1,level))*5
-                x=area.x()+1+i*3
-                p.drawLine(QPointF(x,mid-height),QPointF(x,mid+height))
+            if overlays is None:paint_music_wave(window,p,area,ink,playing)
+            else:overlays.append(('wave',area,ink,playing))
         elif area.width()>=16:text(p,area,value,c['ink'],10,True)
 
 
-def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None):
+def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None,overlays=None):
     cfg=window.service.cfg;c=window.colors;bounds=[];gap=cell_gap(dense)
     short=window.height()<38;font_size=10 if dense else 11;label_y=mid-11 if short else mid-15;value_y=mid if short else mid-1
     label_height=12 if short else 14;value_height=12 if short else 17;label_font=8 if short else 9
@@ -367,7 +379,7 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
         ink=c['ink'] if key in ('ai','music','weather','traffic') else metric_ink(window.service,key,c['light'],c['ink'])
         if key in ('ai','music','weather'):
             height=badge_height(window)
-            paint_content(window,p,QRectF(x,mid-height/2,width,height),key,label,value,meta)
+            paint_content(window,p,QRectF(x,mid-height/2,width,height),key,label,value,meta,overlays)
         elif key in ('cpu','gpu','memory') and not dense:
             if cfg['resource_compact_rings']:
                 ring(p,QRectF(x,mid-8,16,16),metric_number(window.service,key),ink,c['hover'],{'cpu':'C','memory':'M','gpu':'G'}[key]);left=21
@@ -466,7 +478,19 @@ def marquee_frame(elapsed, span):
     return phase * MARQUEE_SPEED, 0.
 
 
-def paint_badges(window,p,slots,right,mid):
+def paint_marquee(window,p,area,label,ink,span):
+    font=QFont(window.font());font.setPixelSize(10);font.setWeight(QFont.DemiBold)
+    metrics=QFontMetrics(font)
+    shift,_=marquee_frame(time.monotonic()-window.marquee_since,span)
+    baseline=area.center().y()+(metrics.ascent()-metrics.descent())/2
+    p.save();p.setClipRect(area,Qt.IntersectClip);p.setFont(font);p.setPen(QColor(ink))
+    x=area.x()-shift
+    p.drawText(QPointF(x,baseline),label)
+    if x+span<area.right():p.drawText(QPointF(x+span,baseline),label)
+    p.restore()
+
+
+def paint_badges(window,p,slots,right,mid,overlays=None):
     from resource_pomodoro_view import reminder_icon,reminder_ink
     c=window.colors;height=badge_height(window)
     for kind,label,width,wanted in slots:
@@ -478,17 +502,8 @@ def paint_badges(window,p,slots,right,mid):
             reminder_icon(p,QRectF(rect.left()+4,mid-6.5,13,13),kind,ink)
             area=rect.adjusted(20,1,-3,-1)
             if kind=='agenda' and label==window.marquee_title and wanted>area.width():
-                font=QFont(window.font());font.setPixelSize(10);font.setWeight(QFont.DemiBold)
-                metrics=QFontMetrics(font)
-                span = wanted + MARQUEE_GAP
-                shift, _ = marquee_frame(time.monotonic() - window.marquee_since, span)
-                baseline=mid+(metrics.ascent()-metrics.descent())/2
-                p.save();p.setClipRect(area);p.setFont(font);p.setPen(QColor(ink))
-                x=area.x()-shift
-                p.drawText(QPointF(x,baseline),label)
-                if x + span < area.right():
-                    p.drawText(QPointF(x+span,baseline),label)
-                p.restore()
+                if overlays is None:paint_marquee(window,p,area,label,ink,wanted+MARQUEE_GAP)
+                else:overlays.append(('marquee',area,label,ink,wanted+MARQUEE_GAP))
             else:text(p,area,label,ink,10,True,Qt.AlignLeft if kind=='agenda' else Qt.AlignCenter)
         else:reminder_icon(p,QRectF(rect.center().x()-6.5,mid-6.5,13,13),kind,ink)
         window.reminder_bounds.append(rect);window.reminder_kinds.append(kind)
@@ -523,15 +538,15 @@ def paint_rolling_values(window,p,layout,rows,left,right,mid,scroll):
         p.restore()
 
 
-def paint_compact(window,p,scroll=None):
+def paint_compact_body(window,p,layout,scroll=None,overlays=None):
     cfg=window.service.cfg;c=window.colors;bridge=window.service.deck;mid=window.height()/2
-    layout=plan(window,window.width());pages=layout['pages'];window.compact_pages=len(pages)
+    pages=layout['pages'];window.compact_pages=len(pages)
     _,rows=pages[window.offset%len(pages)];window.compact_shown=[];window.compact_providers=[];window.compact_media=False
     right=window.width()-8;left=8.;window.compact_bounds=[]
     if layout['face']:
-        window.liquid.paint_face(p,QPointF(left+layout['face']/2,mid),layout['face']);left+=layout['face']+layout['face_gap']
+        left+=layout['face']+layout['face_gap']
     window.reminder_bounds=[];window.reminder_kinds=[];window.status_bounds={}
-    if layout['active_badges']:right=paint_badges(window,p,layout['active_badges'],right,mid)
+    if layout['active_badges']:right=paint_badges(window,p,layout['active_badges'],right,mid,overlays)
     clock=layout['clock'];width=layout['clock_width']
     if clock:
         now=time.localtime();line=min(20 if len(clock)==1 else 12,(window.height()-4)/len(clock))
@@ -543,15 +558,50 @@ def paint_compact(window,p,scroll=None):
     for row in reversed(layout['status']):
         right-=STATUS_STEP;rect=QRectF(right,0,STATUS_STEP,window.height())
         paint_status(p,rect,row,c);window.status_bounds[row[0]]=rect
-    if layout['routine_badges']:right=paint_badges(window,p,layout['routine_badges'],right,mid)
+    if layout['routine_badges']:right=paint_badges(window,p,layout['routine_badges'],right,mid,overlays)
     if scroll:
-        paint_rolling_values(window,p,layout,rows,left,right,mid,scroll)
+        if overlays is None:paint_rolling_values(window,p,layout,rows,left,right,mid,scroll)
+        else:overlays.append(('scroll',QRectF(left,2,max(0,right-left),window.height()-4),rows))
     else:
-        core=layout['core'];window.compact_bounds+=paint_values(window,p,layout['pinned'],left,mid,core,layout['dense'],layout['pinned_widths'])
+        core=layout['core'];window.compact_bounds+=paint_values(window,p,layout['pinned'],left,mid,core,layout['dense'],layout['pinned_widths'],overlays=overlays)
         left+=core+(layout['gap'] if core and rows else 0)
-        window.compact_bounds+=paint_values(window,p,rows,left,mid,max(0,right-left),layout['dense'])
+        window.compact_bounds+=paint_values(window,p,rows,left,mid,max(0,right-left),layout['dense'],overlays=overlays)
     if bridge and bridge.alert_until>time.monotonic() and cfg['resource_quota_alert']:
         window.setAccessibleName(window.accessibleName().split('\n额度提示：')[0]+'\n额度提示：'+bridge.alert)
+
+
+def paint_compact(window,p,scroll=None):
+    """Keep one bounded layer of stationary labels, with live motion above it."""
+    layout=plan(window,window.width())
+    dpr=window.devicePixelRatioF()
+    stamp=tuple(time.strftime(pattern) for pattern in layout['clock'])
+    key=(window.size(),dpr,window.font().key(),tuple(window.colors.items()),
+         badge_height(window),stamp,window.marquee_title,bool(scroll))
+    cached=getattr(window,'_compact_surface',None)
+    if not cached or cached[0] is not layout or cached[1]!=key:
+        overlays=[]
+        # A huge user-resized/DPI-scaled capsule should not retain a huge bitmap.
+        if window.width()*window.height()*dpr*dpr>512*1024:
+            window._compact_surface=None
+            paint_compact_body(window,p,layout,scroll,overlays)
+        else:
+            image=QPixmap(max(1,round(window.width()*dpr)),max(1,round(window.height()*dpr)))
+            image.setDevicePixelRatio(dpr);image.fill(Qt.transparent)
+            painter=QPainter(image);painter.setRenderHints(p.renderHints());painter.setFont(window.font())
+            try:paint_compact_body(window,painter,layout,scroll,overlays)
+            finally:painter.end()
+            window._compact_surface=cached=(layout,key,image,overlays)
+    else:overlays=cached[3]
+    if window._compact_surface:
+        p.drawPixmap(QPointF(),cached[2])
+    for kind,area,*args in overlays:
+        if kind=='wave':paint_music_wave(window,p,area,*args)
+        elif kind=='marquee':paint_marquee(window,p,area,*args)
+        elif kind=='scroll':
+            window.compact_bounds=[];window.compact_shown=[];window.compact_providers=[];window.compact_media=False
+            paint_rolling_values(window,p,layout,args[0],area.left(),area.right(),window.height()/2,scroll)
+    if layout['face']:
+        window.liquid.paint_face(p,QPointF(8+layout['face']/2,window.height()/2),layout['face'])
 
 
 def paint_ball_reminder(window,p,rect):
