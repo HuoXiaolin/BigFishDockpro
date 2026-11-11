@@ -4,6 +4,7 @@ from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import QWidget
 
 from resource_compact import ring, text
+from resource_status import BATTERY_WARNING_LEVEL, band_ink, low_battery_ink
 
 
 BATTERY_STATES = {
@@ -17,11 +18,11 @@ def battery_ink(level, state, light, muted):
         return '#087d59' if light else '#65d8a4'
     if level is None:
         return muted
-    if level <= 15:
-        return '#b82b47' if light else '#ff8095'
+    if level <= BATTERY_WARNING_LEVEL:
+        return low_battery_ink(level, light)
     if level <= 35:
-        return '#916010' if light else '#f9c56b'
-    return '#256db2' if light else '#87c4fa'
+        return band_ink(level, 35, BATTERY_WARNING_LEVEL, 'yellow', light)
+    return band_ink(level, 100, 35, 'blue', light)
 
 
 def battery_icon(painter, center, state, ink):

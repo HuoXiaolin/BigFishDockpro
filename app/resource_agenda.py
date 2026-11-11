@@ -7,7 +7,7 @@ from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 from resource_options import component_location, resource_page_active
 
 MAX_EVENTS=128
-SOURCES={'local':'本地','dingtalk':'钉钉','feishu':'飞书','tencent':'腾讯会议'}
+SOURCES={'local':'本地','dingtalk':'钉钉','feishu':'飞书','tencent':'腾讯会议','dida':'滴答清单','nexttodo':'NextTodo'}
 SYNC_SOURCES=tuple(source for source in SOURCES if source!='local')
 
 
@@ -21,12 +21,15 @@ def normalize_events(raw,strict=False,limit=MAX_EVENTS):
             key=row.get('id');title=row.get('title');start=row.get('start');end=row.get('end')
             lead=row.get('lead',5);ack=row.get('ack',False)
             source=row.get('source','local')
+            timing=row.get('timing','')
             if (isinstance(key,str) and re.fullmatch(r'[a-f0-9]{32}',key) and key not in ids and
                     isinstance(title,str) and 1<=len(title.strip())<=120 and title.isprintable() and
                     type(start) is int and type(end) is int and 0<=start<end<10**10 and
                     type(lead) is int and 0<=lead<=180 and type(ack) is bool and
-                    isinstance(source,str) and source in SOURCES):
-                events.append(dict(id=key,title=title.strip(),start=start,end=end,lead=lead,ack=ack,source=source))
+                    isinstance(source,str) and source in SOURCES and timing in ('','deadline','all_day')):
+                event=dict(id=key,title=title.strip(),start=start,end=end,lead=lead,ack=ack,source=source)
+                if timing:event['timing']=timing
+                events.append(event)
                 ids.add(key)
                 continue
         if strict:raise ValueError('日程名称、时间或提醒设置无效。')

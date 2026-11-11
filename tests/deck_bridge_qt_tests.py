@@ -13,11 +13,18 @@ def run(app,output,checks):
         def __init__(self,root):
             super().__init__();self.cfg=dict(DEFAULTS,resource_enabled=True,resource_music=True,resource_ai=False,resource_lyrics=False)
             self.runtime=SimpleNamespace(dock=SimpleNamespace(preview=False),api=SimpleNamespace(CONFIG_DIR=root))
-            self.window=None;self.messages=0
+            self.window=None;self.messages=0;self.sounds=[]
         def display(self):self.messages+=1
+        def play_reminder_sound(self,kind):self.sounds.append(kind)
     with TemporaryDirectory(prefix='bigfish-qt-deck-') as root:
         owner=Owner(root);bridge=DeckBridge(owner);process=bridge.process
         try:
+            owner.cfg['resource_quota_alert'] = True
+            for percent, stale, expected in ((90,False,0),(30,True,0),(85,False,0),(35,False,0),(65,False,1),(90,False,2)):
+                bridge.local_providers = [dict(id='fixture', name='Fixture', stale=stale, quotas=[{'percent': percent}])]
+                bridge.provider_rows_changed()
+                assert owner.sounds == ['quota'] * expected
+            checks.append('AI quota: first low read and stale updates are silent, new threshold crossings still alert.')
             with patch('deck_runtime.installed_runtime',return_value=None),patch.object(process,'start') as start:
                 bridge.configure();bridge.refresh();assert not start.called and '.NET 10' in bridge.status
             bridge.configure();deadline=time.monotonic()+18

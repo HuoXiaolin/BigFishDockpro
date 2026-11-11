@@ -67,7 +67,7 @@ DEFAULTS.update(resource_system_status=True,resource_pomodoro=True,resource_focu
 DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_agenda=True,resource_alert_focus=True,
                 resource_alert_water=True,resource_alert_battery=False,resource_reminder_sound=True)
 DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
-                resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,resource_live_glass=False,
+                resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
                 resource_weather_thresholds=list(WEATHER_THRESHOLDS),
@@ -161,6 +161,7 @@ def normalize(cfg,strict=False):
         role_id=clean_role_id(role_id,strict)
     cfg['resource_face_role']=role_id
     cfg.pop('resource_notifications', None)
+    cfg.pop('resource_live_glass', None)
     locations=cfg.get('resource_component_locations',{})
     if not isinstance(locations,dict) or any(key not in PLACED_COMPONENTS or value not in ('capsule','desktop') for key,value in locations.items()):
         if strict:raise ValueError('组件位置设置无效。')

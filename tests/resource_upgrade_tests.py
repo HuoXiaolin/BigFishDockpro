@@ -6,8 +6,9 @@ from tempfile import TemporaryDirectory
 
 
 def ledger_checks(checks):
+    from PyQt5.QtGui import QColor
     from resource_traffic import TrafficLedger
-    from resource_status import threshold
+    from resource_status import band_ink,threshold
     with TemporaryDirectory() as root:
         path=Path(root)/'traffic.json';ledger=TrafficLedger(path)
         first=datetime(2025,12,31,23,59,59)
@@ -23,10 +24,17 @@ def ledger_checks(checks):
         restored.observe({1:(2999999,2999999)},first+timedelta(hours=2));assert restored.days==ledger.days
         path.write_text('damaged',encoding='utf-8');damaged=TrafficLedger(path);damaged.add('2026-01-01',[1,1]);damaged.flush()
         assert path.read_text()=='damaged' and damaged.error
-    assert threshold(59.999)==threshold(0) and threshold(60)!=threshold(59.999)
-    assert threshold(80)==threshold(100) and threshold(80)!=threshold(79.999)
+    for light in (True,False):
+        for readings in ((0,30,59),(60,70,79),(80,90,100)):
+            soft,middle,strong=(QColor(threshold(n,100,light)).lightness() for n in readings)
+            assert soft>middle>strong
+        assert threshold(60,100,light)==band_ink(.6,.6,.8,'yellow',light)
+        assert threshold(80,100,light)==band_ink(.8,.8,1,'red',light)
+        assert threshold(160,200,light)==threshold(80,100,light)!=threshold(79.999,100,light)
+        assert threshold(120,100,light)==threshold(100,100,light)
     assert threshold(None) is None and threshold(float('nan')) is None
-    checks.append('Traffic: per-adapter deltas, new adapter/reset baselines, midnight/month/year split, restart persistence, disabled/suspend gaps and corrupt-file preservation; threshold boundaries 60/80/100.')
+    assert threshold(80,0) is None
+    checks.append('Traffic: per-adapter deltas, new adapter/reset baselines, midnight/month/year split, restart persistence, disabled/suspend gaps and corrupt-file preservation. Resource thresholds retain 60/80 boundaries and deepen inside each band in both themes.')
 
 
 def run(api,runtime,root,app,output,checks):

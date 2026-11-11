@@ -1,12 +1,47 @@
-"""One threshold scale for desktop, compact readings and taskbar."""
+"""Numeric color ramps shared by resource, quota and device indicators."""
 import math
 
 
+# Each theme uses a readable low-intensity tone and a stronger tone of the same hue.
+COLOR_RAMPS = {
+    'green': ((0x26764f, 0x075a37), (0xa0e9be, 0x50cb8a)),
+    'yellow': ((0x886305, 0x6c4600), (0xffe4a1, 0xf5bd47)),
+    'orange': ((0xa65019, 0x863305), (0xffca9d, 0xf58d49)),
+    'red': ((0xb43a50, 0x8f1229), (0xffa1ac, 0xff6b7c)),
+    'cyan': ((0x206b88, 0x135578), (0xa4e7f9, 0x57bee2)),
+    'blue': ((0x3066a5, 0x1c4385), (0xb2cbff, 0x7d9ff7)),
+    'purple': ((0x80539d, 0x65328c), (0xe2c5ff, 0xb990ed)),
+    'maroon': ((0x96435f, 0x6f2046), (0xf2abc3, 0xe17da3)),
+}
+BATTERY_WARNING_LEVEL = 15
+
+
+def band_ink(value, soft_at, strong_at, hue, light):
+    """Interpolate within a band, including bands that strengthen as the value falls."""
+    amount = min(1., max(0., (value - soft_at) / (strong_at - soft_at)))
+    soft, strong = COLOR_RAMPS[hue][0 if light else 1]
+    color = 0
+    for shift in (16, 8, 0):
+        first = (soft >> shift) & 255
+        last = (strong >> shift) & 255
+        color = (color << 8) | round(first + (last - first) * amount)
+    return f'#{color:06x}'
+
+
+def low_battery_ink(level, light):
+    return band_ink(level, BATTERY_WARNING_LEVEL, 0, 'red', light)
+
+
 def threshold(value,maximum=100,light=False):
-    if not isinstance(value,(int,float)) or not math.isfinite(value) or maximum<=0:return None
-    ratio=max(0,value)/maximum
-    index=2 if ratio>=.8 else 1 if ratio>=.6 else 0
-    return (('#087443','#986200','#c12c39') if light else ('#73e6a0','#ffd16f','#ff8589'))[index]
+    if (not isinstance(value, (int, float)) or not math.isfinite(value)
+            or not isinstance(maximum, (int, float)) or not math.isfinite(maximum) or maximum <= 0):
+        return None
+    ratio = value / maximum
+    if ratio >= .8:
+        return band_ink(ratio, .8, 1, 'red', light)
+    if ratio >= .6:
+        return band_ink(ratio, .6, .8, 'yellow', light)
+    return band_ink(ratio, 0, .6, 'green', light)
 
 
 def metric_number(service,key):

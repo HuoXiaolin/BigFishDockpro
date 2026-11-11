@@ -56,7 +56,7 @@ class LiquidBridge(QWidget):
 class CapsuleMotion(FaceTracker):
     def __init__(self,window):
         super().__init__(window,lambda:window.service.cfg,'resource',lambda:window.service.runtime.face_roles)
-        self.bridge=None;self.live=None;self.drag_edge='free';self.broken=False;self.landing=False
+        self.bridge=None;self.drag_edge='free';self.broken=False;self.landing=False
         self.snap=QPropertyAnimation(window,b'pos',window);self.snap.setDuration(240);self.snap.setEasingCurve(QEasingCurve.OutCubic)
         self.snap.finished.connect(self.landed)
         self.presentation=None
@@ -80,18 +80,13 @@ class CapsuleMotion(FaceTracker):
             self.snap.stop();self.landing=False;self.presentation=presentation
             self.drag_edge='free';self.stop_bridge()
     def sync(self):
-        w=self.window;cfg=w.service.cfg
+        w=self.window
         if not self.enabled:
             landing=self.landing;self.snap.stop();self.landing=False
             if landing:w.reposition()
         if not self.can_stretch:
             self.drag_edge='free';self.stop_bridge()
         self.sync_face()
-        use_live=w.isVisible() and cfg['resource_live_glass'] and w.background['material'] not in ('clear','solid')
-        if use_live and self.live is None:
-            from resource_live_glass import LiveGlass
-            self.live=LiveGlass(w)
-        if self.live:self.live.sync(use_live)
     def radii(self,radius):
         w=self.window;cfg=w.service.cfg
         edge=self.drag_edge if self.drag_edge!='free' else cfg['resource_edge']
@@ -154,8 +149,6 @@ class CapsuleMotion(FaceTracker):
         if self.bridge:self.bridge.stop()
     def hide(self):
         self.hide_face();self.snap.stop();self.landing=False;self.drag_edge='free';self.stop_bridge()
-        if self.live:self.live.sync(False)
     def close(self):
         self.hide()
-        if self.live:self.live.close();self.live=None
         if self.bridge:self.bridge.deleteLater();self.bridge=None

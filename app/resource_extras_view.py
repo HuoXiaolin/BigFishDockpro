@@ -6,9 +6,10 @@ from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton
 from ui_style import ModernComboBox
 from resource_compact import text
+from resource_status import band_ink
 from resource_weather import moon_phase,weather_time
-from resource_weather_style import (AIR_SURFACES,FORECAST_TONES,paint_card,paint_weather,
-                                    solar_tone,weather_accent)
+from resource_weather_style import (AIR_HUES,AIR_SURFACES,FORECAST_TONES,air_quality_style,
+                                    paint_card,paint_weather,solar_tone,weather_accent)
 
 
 def degrees(value):return '—' if value is None else f'{value:.0f}°'
@@ -147,12 +148,8 @@ class WeatherCards(QWidget):
         data=row.get('air',{})
         aqi=data.get('aqi',data.get('us_aqi'))
         scale=data.get('scale','US AQI')
-        bands=(50,100,150,200,300,500)
         names=('优','良','轻度污染','中度污染','重度污染','严重污染') if scale.startswith('中国') else ('良好','一般','敏感人群不健康','不健康','很不健康','严重')
-        shades=('#1b8255','#947001','#b85b1a','#c73948','#8354ab','#9a354f') if c['light'] else (
-            '#62d7a4','#f1ca61','#f4ab73','#fb8892','#c6a5ef','#e888a2')
-        index=next((i for i,limit in enumerate(bands) if aqi is not None and round(aqi)<=limit),len(bands)-1)
-        color=shades[index] if aqi is not None else c['muted']
+        index,color=air_quality_style(aqi,c['light']) if aqi is not None else (-1,c['muted'])
         source=data.get('source','')
         source_label='上次读数' if data.get('stale') else '小时数据' if data.get('hourly') else source
         text(p,QRectF(10,4,width-86,16),'空气质量 · '+scale,c['ink'],11,True)
@@ -160,9 +157,9 @@ class WeatherCards(QWidget):
         text(p,QRectF(10,21,65,34),'—' if aqi is None else f'{aqi:.0f}',color,27,True)
         status=names[index] if aqi is not None else row.get('air_error','等待空气质量')
         text(p,QRectF(78,27,width-88,20),status,color,10)
-        step=(width-20)/6
-        for i,shade in enumerate(shades):
-            ink=QColor(shade);ink.setAlpha(230 if aqi is not None and i==index else 70)
+        step=(width-20)/len(AIR_HUES)
+        for i,hue in enumerate(AIR_HUES):
+            ink=QColor(color if i==index else band_ink(.5,0,1,hue,c['light']));ink.setAlpha(230 if i==index else 70)
             p.setPen(Qt.NoPen);p.setBrush(ink);p.drawRoundedRect(QRectF(10+i*step,60,step-2,3),1.5,1.5)
         step=(width-20)/3
         for i,(key,label) in enumerate((('pm2_5','PM2.5'),('pm10','PM10'),('ozone','O₃'))):

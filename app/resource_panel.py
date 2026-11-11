@@ -1,4 +1,5 @@
 """Movable monitor panel. Compact and expanded states share one header-centre anchor."""
+from math import ceil
 import time
 from PyQt5.QtCore import Qt,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap,QPalette
@@ -18,6 +19,8 @@ from capsule_glass import CapsuleGlass
 
 
 COMPACT_PAGES={**dict.fromkeys(COMPACT_STATUS,'resources'),'weather':'weather','music':'music','ai':'ai'}
+COMPACT_FRAME_MS = 16
+COMPACT_SCROLL_SECONDS = .24
 
 
 def display_values(service,compact=None):
@@ -71,6 +74,7 @@ class BatteryRows(QWidget):
 
     def paintEvent(self,event):
         from bluetooth_gauge import draw_rings,ring_ink
+        from resource_status import BATTERY_WARNING_LEVEL
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         c=self.owner_window.colors
         font=QFont(self.font());font.setPixelSize(10);p.setFont(font)
@@ -93,7 +97,8 @@ class BatteryRows(QWidget):
             draw_rings(p,QRectF(28,y+1,14,14),[row],not c['light'])
             p.setPen(QColor(c['ink']));p.setFont(font)
             p.drawText(QRect(name_x,y,self.name_width+1,17),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,self.name_width+1))
-            p.setPen(QColor(ring_ink(row)) if row['level'] is not None and row['level']<15 else QColor(c['ink']))
+            low=row['level'] is not None and row['level']<BATTERY_WARNING_LEVEL
+            p.setPen(QColor(ring_ink(row,c['light']) if low else c['ink']))
             p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,17),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
 
 
@@ -411,13 +416,15 @@ class ResourceWindow(ResourceContentHost):
         self.taskbar_placement=None
         self.taskbar_size=None
         self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
-        self.halo_updated_at = time.monotonic()
+        self.halo_updated_at = None
+        self.compact_scroll = None
+        self.compact_scroll_pending = 0
         self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
         self._ai_view=self._music_view=None
         self._traffic_view=self._weather_view=None
         self._news_view=self._pomodoro_view=self._agenda_view=None
         self._reminder_key=();self.reminder_bounds=();self.reminder_kinds=()
-        self.status_bounds={};self.marquee_title='';self.marquee_since=0.
+        self.status_bounds={};self.marquee_title='';self.marquee_since=0.;self.marquee_span=0
         for key in DESKTOP_COMPONENTS:setattr(self,'_'+key+'_view',None)
         self.empty_page=QLabel('把桌面组件拖回胶囊，或在「组件布局」中选择栏目。')
         self.empty_page.setObjectName('Subtle');self.empty_page.setWordWrap(True)
@@ -447,9 +454,16 @@ class ResourceWindow(ResourceContentHost):
         self.auto_fold_timer.setInterval(250)
         self.auto_fold_timer.timeout.connect(self.fold_idle)
         self.enter_timer=QTimer(self);self.enter_timer.setSingleShot(True);self.enter_timer.setInterval(230);self.enter_timer.timeout.connect(self.expand_hover)
-        self.animation=QTimer(self);self.animation.setInterval(33);self.animation.timeout.connect(self.animate)
+        self.animation=QTimer(self)
+        self.animation.setTimerType(Qt.PreciseTimer)
+        self.animation.setInterval(COMPACT_FRAME_MS)
+        self.animation.timeout.connect(self.animate)
         self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.update)
         self.rotate=QTimer(self);self.rotate.setInterval(6000);self.rotate.timeout.connect(self.next_page)
+        self._wallpaper_key = None
+        self.wallpaper_timer = QTimer(self)
+        self.wallpaper_timer.setInterval(5000)
+        self.wallpaper_timer.timeout.connect(self.refresh_wallpaper)
         from resource_resize import ResizeEdges
         self.resize_edges=ResizeEdges(self)
         from resource_liquid import CapsuleMotion
@@ -632,28 +646,93 @@ class ResourceWindow(ResourceContentHost):
             if view:view.refresh()
 
     def animate(self):
-        cfg=self.service.cfg
+        cfg=self.service.cfg;now=time.monotonic()
         if cfg['resource_halo']:
-            now = time.monotonic()
             _, period = HALO_SPEEDS[cfg['resource_halo_speed']]
-            self.halo_phase = (self.halo_phase + (now - self.halo_updated_at) / period) % 1
+            if self.halo_updated_at is not None:
+                self.halo_phase = (self.halo_phase + (now - self.halo_updated_at) / period) % 1
             self.halo_updated_at = now
+        if self.compact_scroll and now - self.compact_scroll[1] >= COMPACT_SCROLL_SECONDS:
+            pending = self.compact_scroll_pending
+            self.compact_scroll = None
+            self.compact_scroll_pending = 0
+            if pending:
+                self.shift_compact_page(pending)
+            self.sync_animation()
+        elif self.marquee_span and not cfg['resource_halo']:
+            interval = self.animation_interval(now)
+            if self.animation.interval() != interval:
+                self.animation.setInterval(interval)
         self.update()
+
+    def animation_interval(self, now):
+        if not self.service.compact:
+            return 33
+        if self.compact_scroll:
+            return COMPACT_FRAME_MS
+        if self.marquee_span and not self.service.cfg['resource_halo']:
+            from resource_compact import marquee_frame
+            _, pause = marquee_frame(now - self.marquee_since, self.marquee_span)
+            return max(COMPACT_FRAME_MS, ceil(pause * 1000))
+        return COMPACT_FRAME_MS
+
     def next_page(self):
-        if self.press is None and not self.underMouse() and self.compact_pages>1:self.offset+=1;self.update()
+        if self.press is None and not self.underMouse():
+            self.shift_compact_page(1)
+
+    def shift_compact_page(self, step):
+        cfg = self.service.cfg
+        if not self.service.compact or not self.isVisible() or cfg['resource_fold']=='ball' or self.width()<70:
+            return
+        from resource_compact import plan
+        count = len(plan(self, self.width())['pages'])
+        if count <= 1:
+            return
+        if self.compact_scroll:
+            self.compact_scroll_pending += step
+            return
+        previous = self.offset
+        self.offset += step
+        if cfg.get('motion_enabled', True) and step % count:
+            self.compact_scroll = (previous, time.monotonic(), 1 if step > 0 else -1)
+            if not self.animation.isActive() or self.animation.interval() != COMPACT_FRAME_MS:
+                self.animation.start(COMPACT_FRAME_MS)
+        self.update()
+
+    def settle_compact_scroll(self):
+        self.offset += self.compact_scroll_pending
+        self.compact_scroll_pending = 0
+        self.compact_scroll = None
+
     def sync_animation(self):
         cfg=self.service.cfg;visible=self.isVisible()
         motion=visible and cfg.get('motion_enabled',True)
-        title=''
-        if motion and self.service.compact and self.service.agenda and cfg['resource_fold']!='ball' and self.width()>=70:
+        scrollable = motion and self.service.compact and cfg['resource_fold']!='ball' and self.width()>=70
+        if self.compact_scroll and not scrollable:
+            self.settle_compact_scroll()
+        now = time.monotonic()
+        title, span = '', 0
+        if scrollable and self.service.agenda:
             from resource_compact import agenda_marquee
-            title=agenda_marquee(self)
-        if title!=self.marquee_title:self.marquee_title=title;self.marquee_since=time.monotonic()
-        for timer,active in [(self.animation,motion and (cfg['resource_halo'] or title)),
-                             (self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
+            title, span = agenda_marquee(self)
+        if title != self.marquee_title:
+            self.marquee_title = title
+            self.marquee_since = now
+        self.marquee_span = span
+        if motion and cfg['resource_halo']:
+            if not self.animation.isActive() or self.halo_updated_at is None:
+                self.halo_updated_at = now
+        else:
+            self.halo_updated_at = None
+        if motion and (cfg['resource_halo'] or title or self.compact_scroll):
+            interval = self.animation_interval(now)
+            if not self.animation.isActive() or self.animation.interval() != interval:
+                self.animation.start(interval)
+        else:
+            self.animation.stop()
+        for timer,active in [(self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
                              (self.rotate,visible and self.service.compact and cfg['resource_compact_rotate'])]:
             if active and not timer.isActive():
-                if timer is self.animation:self.halo_updated_at = time.monotonic()
                 timer.start()
             elif not active:timer.stop()
 
@@ -664,6 +743,30 @@ class ResourceWindow(ResourceContentHost):
         else:
             self.auto_fold_timer.stop()
             self.outside_since = None
+
+    def sync_wallpaper(self):
+        if not self.isVisible() or self.service.runtime.dock.preview or self.background['material'] in ('clear','solid'):
+            self.wallpaper_timer.stop()
+        elif not self.wallpaper_timer.isActive():
+            self.refresh_wallpaper()
+            self.wallpaper_timer.start()
+
+    def refresh_wallpaper(self):
+        if self.press is not None or self.liquid.landing:
+            return
+        # Some wallpaper changes arrive without the native setting notification.
+        from wallpaper_source import wallpaper_key
+        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        if screen is None:
+            return
+        try:
+            key = wallpaper_key(self, screen)
+        except (OSError, ValueError, RuntimeError, AttributeError):
+            return
+        if key != self._wallpaper_key:
+            self._wallpaper_key = key
+            self.glass.clear()
+            self.update()
 
     def sync_window(self):
         self.liquid.prepare()
@@ -692,6 +795,7 @@ class ResourceWindow(ResourceContentHost):
         if (palette_changed or previous!=self.background) and not compact and self.page_key in DESKTOP_COMPONENTS:
             self.service.runtime.sync_hosted_component(self.page_key)
         self.sync_auto_fold()
+        self.sync_wallpaper()
         if opening and self.page_key:
             self.nav.ensureWidgetVisible(self.page_buttons[self.page_key], 0, 0)
         self.resize_edges.sync()
@@ -911,7 +1015,7 @@ class ResourceWindow(ResourceContentHost):
         cfg=self.service.cfg;c=self.colors;compact=self.service.compact;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         radius=min(17,rect.height()/2) if not compact else min(12,rect.height()/2) if cfg['resource_fold']=='bar' else rect.height()/2
         self.glass.paint(p,self,self,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
-                         self.liquid.radii(radius),self.liquid.live)
+                         self.liquid.radii(radius))
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
         paint_halo(self,p)
         ink=QColor(c['ink']);accent=QColor(metric_colors(self.service)['cpu']);font=QFont(self.font());font.setPixelSize(13)
@@ -945,12 +1049,19 @@ class ResourceWindow(ResourceContentHost):
                 font.setPixelSize(11);font.setWeight(QFont.Normal);p.setFont(font);p.setPen(QColor(c['muted']))
                 p.drawText(QRect(header_left,0,header_width,34),Qt.AlignRight|Qt.AlignVCenter,time.strftime('%H:%M',time.localtime(sampled_at)))
             return
-        paint_compact(self,p)
+        scroll = None
+        if self.compact_scroll:
+            previous, since, direction = self.compact_scroll
+            progress = (time.monotonic() - since) / COMPACT_SCROLL_SECONDS
+            if progress < 1:
+                scroll = previous, max(0., progress), direction
+        paint_compact(self,p,scroll)
         return
 
     def wheelEvent(self,event):
         if self.service.compact and event.angleDelta().y():
-            self.offset+=1 if event.angleDelta().y()<0 else -1;self.update();event.accept()
+            self.shift_compact_page(1 if event.angleDelta().y()<0 else -1)
+            event.accept()
         else:event.ignore()
     def enterEvent(self,event):
         self.outside_since = None
@@ -1020,6 +1131,7 @@ class ResourceWindow(ResourceContentHost):
         try:self.finish_move(event)
         finally:
             if self.taskbar_placement:self.taskbar_placement.resume()
+            if self.moved:self.update()
 
     def finish_move(self,event):
         if not self.moved:
@@ -1070,7 +1182,9 @@ class ResourceWindow(ResourceContentHost):
         event.ignore();self.service.set_options(resource_enabled=False)
     def hideEvent(self,event):
         self.clear_tab_drop()
+        self.settle_compact_scroll()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
+        self.wallpaper_timer.stop()
         self.enter_timer.stop();self.auto_fold_timer.stop();self.outside_since=None
         if hasattr(self,'liquid'):self.liquid.hide()
         if self.service.extras and not self.service.detached('weather'):self.service.extras.pause()
@@ -1079,7 +1193,8 @@ class ResourceWindow(ResourceContentHost):
         super().showEvent(event)
         self.last_layer=None
         self.sync_auto_fold()
-        if self.colors:self.sync_animation();self.liquid.sync()
+        if self.colors:
+            self.sync_animation();self.liquid.sync();self.sync_wallpaper()
         if self.service.extras:self.service.extras.sync()
     def dispose(self):
         if self.taskbar_placement:

@@ -90,7 +90,7 @@ class ResourceOptions(QDialog):
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
         {'resource_ai','resource_ai_tray','resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
-        {'resource_halo','resource_halo_speed','resource_live_glass','resource_background','resource_palette','resource_card_transparency'},
+        {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable'},
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
@@ -380,8 +380,6 @@ class ResourceOptions(QDialog):
                 spin(custom,key,title,low,high,saved[key],self.custom_fields)
             self.custom_box.setVisible(source.currentData()=='custom')
             source.currentIndexChanged.connect(lambda:self.custom_box.setVisible(source.currentData()=='custom'))
-            self.fields['resource_live_glass']=check('实时毛玻璃取色',cfg['resource_live_glass'])
-            style.addWidget(self.fields['resource_live_glass'])
             style=section(layout,'图表颜色与光环')
             graph=QFormLayout();style.addLayout(graph)
             combo(graph,'resource_palette','图表配色',[('跟随整体','theme'),('活力原色','vivid'),('自定义','custom')],cfg['resource_palette'],self.fields)
@@ -488,6 +486,8 @@ class ResourceOptions(QDialog):
             layout.addStretch()
 
         def build_9():
+            from resource_calendar_settings import CalendarAccounts
+
             layout=page(9)
             sounds=section(layout,'声音')
             key='resource_reminder_sound'
@@ -497,9 +497,8 @@ class ResourceOptions(QDialog):
             agenda.addWidget(self.fields['resource_agenda'])
             key='resource_alert_agenda'
             self.fields[key]=check('收起时显示日程提醒',cfg[key]);agenda.addWidget(self.fields[key])
+            agenda.addWidget(CalendarAccounts(self.service))
             agenda.addWidget(button('日程账号接入…',self.agenda_connections))
-            hint=QLabel('扫码连接钉钉、飞书或腾讯会议。')
-            hint.setWordWrap(True);agenda.addWidget(hint)
             timers=section(layout,'专注与喝水')
             self.fields['resource_pomodoro']=check('显示番茄钟与喝水提醒',cfg['resource_pomodoro'])
             timers.addWidget(self.fields['resource_pomodoro'])

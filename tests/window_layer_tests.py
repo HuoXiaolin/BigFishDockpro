@@ -122,12 +122,16 @@ def run(api,runtime,app,output,checks):
 
 
 def bluetooth_rings(checks):
-    from bluetooth_gauge import tray_icon
-    def red_pixels(level):
-        icon=tray_icon([dict(level=level,ink='#5b8def')],False)
+    from bluetooth_gauge import ring_ink,tray_icon
+
+    def red_pixels(level,dark):
+        icon=tray_icon([dict(level=level,ink='#5b8def')],dark)
         image=icon.pixmap(32,32).toImage()
-        return sum(c.alpha()>64 and c.red()>2*c.green() and c.red()>2*c.blue()
+        return sum(c.alpha()>64 and c.red()>max(c.green(),c.blue())+50
                    for c in (image.pixelColor(x,y) for x in range(32) for y in range(32)))
-    assert red_pixels(0)>0 and red_pixels(14)>0
-    assert red_pixels(15)==red_pixels(None)==0
-    checks.append('Bluetooth ring paint: 0% and 14% are visibly red, 15% retains the device colour, and unknown remains a dotted neutral ring.')
+    for dark in (False,True):
+        assert red_pixels(0,dark)>0 and red_pixels(14,dark)>0
+        assert red_pixels(15,dark)==red_pixels(None,dark)==0
+        colors={ring_ink(dict(level=n,ink='#5b8def'),not dark) for n in (0,7,14)}
+        assert len(colors)==3
+    checks.append('Bluetooth ring paint: the red shade deepens below 15% in both themes; 15% retains the device color, and unknown remains a dotted neutral ring.')

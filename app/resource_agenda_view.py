@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QAbstractItemView, QBoxLayout, QCalendarWidget, QDa
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                              QSizePolicy, QStyle, QStyledItemDelegate, QToolButton, QVBoxLayout, QWidget)
 from card_design import paint_capsule_card
-from calendar_markers import MARKER_TONES,countdowns,countdown_on,month_markers,paint_markers
+from calendar_markers import MARKER_TONES,countdowns,countdown_on,event_last_second,month_markers,paint_markers
 from resource_agenda import SOURCES
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import text
@@ -18,6 +18,8 @@ SOURCE_TONES = {
     'dingtalk': ('ice', '#d9eaff', '#273e5b'),
     'feishu': ('mint', '#d0efe4', '#234a41'),
     'tencent': ('peach', '#f8e7cd', '#523c2a'),
+    'dida': ('ice', '#e1e5ff', '#333a65'),
+    'nexttodo': ('rose', '#f8deed', '#4b3046'),
     'countdown': ('lavender', '#efe6f7', '#3b2e4b'),
 }
 DISPLAY_SOURCES={**SOURCES,'countdown':'倒数日'}
@@ -168,12 +170,16 @@ class AgendaView(QWidget):
         legend = QGridLayout()
         legend.setHorizontalSpacing(5)
         legend.setVerticalSpacing(1)
+        columns = 3
+        for column in range(columns):
+            legend.setColumnStretch(column, 1)
         self.legend = {}
         for index, source in enumerate(DISPLAY_SOURCES):
             label = QLabel()
             label.setTextFormat(Qt.RichText)
+            label.setStyleSheet('font-size: 9px;')
             self.legend[source] = label
-            legend.addWidget(label, index // 2, index % 2)
+            legend.addWidget(label, index // columns, index % columns)
         month_body.addLayout(legend)
         month_body.addStretch(1)
         self.calendar.currentPageChanged.connect(self.update_month)
@@ -246,14 +252,27 @@ class AgendaView(QWidget):
         selected=self.selected()
         self.rows.clear()
         for event in events:
-            start,end=local_time(event['start']),local_time(event['end'])
-            if not start.date()<=day<=end.addSecs(-1).date():continue
+            start=local_time(event['start'])
+            last=local_time(event_last_second(event))
+            if not start.date()<=day<=last.date():continue
             flag=' · 提醒中' if event['id'] in due else ' · 提醒已取消' if event['ack'] else ''
             source=event['source']
-            start_text=start.toString('HH:mm' if start.date()==day else 'M/d')
-            end_text=end.toString('HH:mm' if end.date()==day else 'M/d')
-            item=QListWidgetItem(f"{start_text} {event['title']}，{SOURCES[source]}，{end_text} 结束{flag}")
-            item.setToolTip(event['title']+'\n'+start.toString('M/d HH:mm')+' – '+end.toString('M/d HH:mm'))
+            timing=event.get('timing')
+            end_text=''
+            if timing=='all_day':
+                start_text='全天'
+                detail=start.toString('M/d')
+                if start.date()!=last.date():detail+=' – '+last.toString('M/d')
+            elif timing=='deadline':
+                start_text=start.toString('HH:mm')+' 截止'
+                detail=start.toString('M/d HH:mm')+' 截止'
+            else:
+                end=local_time(event['end'])
+                start_text=start.toString('HH:mm' if start.date()==day else 'M/d')
+                end_text=end.toString('HH:mm' if end.date()==day else 'M/d')
+                detail=start.toString('M/d HH:mm')+' – '+end.toString('M/d HH:mm')
+            item=QListWidgetItem(f"{event['title']}，{SOURCES[source]}，{detail}{flag}")
+            item.setToolTip(event['title']+'\n'+detail)
             item.setData(Qt.UserRole,event['id'])
             item.setData(Qt.UserRole+1,(event['title'],start_text,end_text,source,flag))
             self.rows.addItem(item)
@@ -315,17 +334,26 @@ class AgendaView(QWidget):
         title=QLineEdit(event['title'] if event else '');title.setMaxLength(120)
         title.setAccessibleName('标题');form.addRow('标题',title)
         start=QDateTimeEdit(initial)
-        end=QDateTimeEdit(local_time(event['end']) if event else initial.addSecs(1800))
-        for label,field in (('开始',start),('结束',end)):
-            field.setCalendarPopup(True);field.setDisplayFormat('yyyy-MM-dd HH:mm')
-            field.setAccessibleName(label);form.addRow(label,field)
+        timing=event.get('timing') if event else None
+        if timing=='deadline':
+            times=(('截止',start),)
+        elif timing=='all_day':
+            end=QDateTimeEdit(local_time(event_last_second(event)))
+            times=(('日期',start),) if start.date()==end.date() else (('开始',start),('结束',end))
+        else:
+            end=QDateTimeEdit(local_time(event['end']) if event else initial.addSecs(1800))
+            times=(('开始',start),('结束',end))
+        for label,field in times:
+            field.setCalendarPopup(not synced)
+            field.setDisplayFormat('yyyy-MM-dd' if timing=='all_day' else 'yyyy-MM-dd HH:mm')
+            field.setAccessibleName(label);field.setReadOnly(synced);form.addRow(label,field)
         if synced:
-            for field in (title,start,end):field.setReadOnly(True)
+            title.setReadOnly(True)
             hint=QLabel(f"标题和时间随{SOURCES[event['source']]}同步。")
             hint.setWordWrap(True)
             layout.addWidget(hint)
         lead=ModernSpinBox();lead.setRange(0,180);lead.setValue(event['lead'] if event else 5)
-        lead.setSpecialValueText('开始时');form.addRow('提前提醒（分钟）',lead)
+        lead.setSpecialValueText('截止时' if timing=='deadline' else '开始时');form.addRow('提前提醒（分钟）',lead)
         status=QLabel();status.setWordWrap(True);status.hide();layout.addWidget(status)
         actions=QHBoxLayout()
         def show_error():

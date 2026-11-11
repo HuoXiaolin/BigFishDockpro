@@ -19,7 +19,7 @@ class CapsuleGlass:
         self.image = None
         self.tiny = None
 
-    def paint(self, painter, widget, owner, radius, moving=False, appearance=None, inset=0, shape=None, live=None):
+    def paint(self, painter, widget, owner, radius, moving=False, appearance=None, inset=0, shape=None):
         service = owner.service
         cfg = service.cfg
         style=appearance if appearance is not None else {k:cfg['panel_'+k] for k in ('material','theme','color','opacity','blur','highlight')}
@@ -34,18 +34,15 @@ class CapsuleGlass:
         dock = service.runtime.dock
         mode = style['theme']
         light = dock._sys_light if mode == 'auto' else mode == 'light'
-        key = (rect.getRect(), dpr, radius, inset, tuple(shape) if shape else None, live.revision if live else 0, light, material, style['blur'],
+        key = (rect.getRect(), dpr, radius, inset, tuple(shape) if shape else None, moving, light, material, style['blur'],
                style['opacity'], style['highlight'], style['color'])
-        if self.key != key and (not moving or self.image is None or shape or live):
+        if self.key != key and (not moving or self.image is None or shape):
             texture_dpr = dpr * .5 if rect.width()*rect.height()*dpr*dpr > 128*1024 else dpr
             buffer = QPixmap(max(1,round(rect.width()*texture_dpr)),max(1,round(rect.height()*texture_dpr)))
             buffer.fill(Qt.transparent)
             screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()
             backdrop = None
-            if live and live.image is not None and material!='solid':
-                backdrop=QPixmap.fromImage(live.image).scaled(buffer.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
-                backdrop.setDevicePixelRatio(texture_dpr)
-            elif moving and shape and self.tiny is not None and material!='solid':
+            if moving and shape and self.tiny is not None and material!='solid':
                 backdrop=QPixmap.fromImage(self.tiny).scaled(buffer.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
                 backdrop.setDevicePixelRatio(texture_dpr)
             elif material != 'solid' and not dock.preview and screen and not moving:

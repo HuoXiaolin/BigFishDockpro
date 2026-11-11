@@ -124,10 +124,10 @@ def run(api,runtime,app,output,checks):
             cfg['resource_task_threshold']=True;colored=strip.grab().toImage();assert colored!=mono
             from resource_status import threshold
             images=[]
-            for value in (59.9,60,80):
+            for value in (59.9,60,70,80,98):
                 service.latest['memory']=(value,12,16);strip.refresh();img=strip.grab().toImage();images.append(img)
                 assert any(img.pixelColor(x,y).name()==threshold(value,100,strip.system_mode!=0) for x in range(img.width()) for y in range(img.height()))
-            assert images[0]!=images[1] and images[1]!=images[2]
+            assert all(first!=second for first,second in zip(images,images[1:]))
             cfg.update(resource_task_threshold=False,resource_threshold=True,resource_task_music=True,resource_task_metrics=list(DEFAULTS['resource_task_metrics']))
             bridge.configure();bridge.accept(media);bridge.levels=[.2,.6,.9,.8,.5,.4,.3,.6]
             service.accept_sample(dict(time=time.monotonic(),memory=(76.2,12,16),network=(7*1024,995*1024)));strip.refresh()

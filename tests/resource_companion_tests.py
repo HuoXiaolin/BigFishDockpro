@@ -2,7 +2,68 @@
 import copy,time
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QEvent,QPointF,QRectF,QPoint
-from PyQt5.QtGui import QPainter,QImage,QColor,QCursor,QMouseEvent,QFontMetrics
+from PyQt5.QtGui import QPainter,QImage,QColor,QCursor,QMouseEvent,QFontMetrics,QWheelEvent
+
+
+def check_compact_scroll(window,app,output,checks):
+    from resource_compact import plan
+    from resource_panel import COMPACT_SCROLL_SECONDS
+
+    cfg=window.service.cfg
+    options=dict(resource_compact_width=392,resource_compact_height=35,
+                 resource_compact_pinned=['cpu','ai','weather'],resource_face_interactive=False,
+                 resource_halo=False,resource_compact_rotate=True,motion_enabled=True)
+    original={key:cfg[key] for key in options}
+    point=QPointF(45,17)
+
+    def wheel(delta):
+        event=QWheelEvent(point,QPointF(window.mapToGlobal(point.toPoint())),QPoint(),QPoint(0,delta),
+                          Qt.NoButton,Qt.NoModifier,Qt.NoScrollPhase,False)
+        app.sendEvent(window,event)
+        assert event.isAccepted()
+
+    def finish():
+        with patch('resource_panel.time.monotonic',return_value=window.compact_scroll[1]+COMPACT_SCROLL_SECONDS+.01):
+            window.animate()
+
+    def bounds(key):
+        return [rect for name,rect in zip(window.compact_shown,window.compact_bounds) if name==key]
+
+    def middle(direction):
+        assert window.compact_scroll[2]==direction and window.animation.interval()==16
+        since=window.compact_scroll[1]
+        with patch('resource_panel.time.monotonic',return_value=since+COMPACT_SCROLL_SECONDS/2):
+            image=window.grab()
+        outgoing,incoming=bounds('weather')
+        assert (outgoing.center().y()-incoming.center().y())*direction<0
+        assert not outgoing.intersects(incoming)
+        assert bounds('cpu')==cpu and window.reminder_bounds==reminders and window.geometry()==geometry
+        assert len(window.compact_providers)==2
+        assert image.save(str(output/f'compact-scroll-{direction}.png'))
+
+    try:
+        cfg.update(options)
+        with patch.object(window.service,'reminders',return_value=(('focus','04:45'),)):
+            window.offset=0;window.sync_window();window.grab()
+            assert len(plan(window,window.width())['pages'])>2
+            cpu=bounds('cpu');reminders=window.reminder_bounds;geometry=window.geometry()
+            assert cpu and reminders and not window.animation.isActive()
+            wheel(-120);middle(1);finish()
+            assert window.offset==1 and not window.compact_scroll and not window.animation.isActive()
+            wheel(120);middle(-1)
+            wheel(-120);wheel(-120);finish()
+            assert window.offset==2 and window.compact_scroll[0]==0
+            finish()
+            with patch.object(window,'underMouse',return_value=False):
+                window.rotate.timeout.emit()
+            assert window.offset==3 and window.compact_scroll[2]==1
+            cfg['motion_enabled']=False;window.sync_animation()
+            assert not window.compact_scroll and not window.animation.isActive()
+            wheel(120)
+            assert window.offset==2 and not window.compact_scroll and not window.animation.isActive()
+    finally:
+        cfg.update(original);window.offset=0;window.sync_window()
+    checks.append('Compact pages and rotating pinned cells scroll vertically in both directions; fixed readings and reminder hit regions stay aligned, rapid wheel events settle, and animation obeys the motion setting.')
 
 
 def run(api,runtime,app,output,checks):
@@ -10,7 +71,8 @@ def run(api,runtime,app,output,checks):
     from resource_redesign_tests import fixtures
     from resource_compact import plan
     from resource_settings import ResourceOptions
-    from resource_weather_style import weather_kind,compact_temperature_ink
+    from resource_status import band_ink
+    from resource_weather_style import weather_kind,compact_temperature_ink,air_quality_style
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources
     try:
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,
@@ -48,6 +110,7 @@ def run(api,runtime,app,output,checks):
             seen_cities.update(r[1] for r in plan(w,w.width())['pinned'] if r[0]=='weather')
         assert seen_cities=={'天津','乌鲁木齐','沈阳'}
         w.offset=0;assert w.grab().save(str(output/'readme-compact-content.png'))
+        check_compact_scroll(w,app,output,checks)
         import resource_compact
         import resource_provider_icons as marks
         original_height=cfg['resource_compact_height']
@@ -181,17 +244,21 @@ def run(api,runtime,app,output,checks):
         codes=[0,2,3,51,71,45,95];kinds=['sun','cloud','overcast','rain','snow','fog','storm']
         assert [weather_kind(dict(code=n)) for n in codes]==kinds
         thresholds=cfg['resource_weather_thresholds']
-        tones=[compact_temperature_ink(n,True,thresholds) for n in (-1,0,16,27,31)]
-        assert len(set(tones))==5
-        assert compact_temperature_ink(26,True,thresholds)==tones[2]
-        assert compact_temperature_ink(30,True,thresholds)==tones[3]
+        for light in (True,False):
+            for degrees in ((-18,-8,-1),(0,8,15),(16,21,26),(27,28,30),(31,37,45)):
+                assert len({compact_temperature_ink(n,light,thresholds) for n in degrees})==3
+            assert compact_temperature_ink(26,light,thresholds)==band_ink(26,16,26,'green',light)
+            assert compact_temperature_ink(30,light,thresholds)==band_ink(30,26,30,'yellow',light)
+            samples=[air_quality_style(n,light) for n in (101,125,150)]
+            assert {index for index,_ in samples}=={2} and len({ink for _,ink in samples})==3
+            assert air_quality_style(151,light)[0]==3
         from resource_settings import ResourceOptions
         options=ResourceOptions(service);options.tabs.setCurrentIndex(5)
         options.weather_threshold_fields[1].setValue(29)
         assert not options.commit() and cfg['resource_weather_thresholds']==thresholds
         options.weather_threshold_fields[1].setValue(18)
         assert options.commit() and cfg['resource_weather_thresholds']==[0,18,26,30]
-        assert compact_temperature_ink(16,True,cfg['resource_weather_thresholds'])==tones[1]
+        assert compact_temperature_ink(16,True,cfg['resource_weather_thresholds'])==band_ink(16,18,0,'cyan',True)
         options.deleteLater()
         from resource_weather_style import paint_weather
         montage=QImage(7*165,2*95,QImage.Format_ARGB32_Premultiplied);montage.fill(Qt.transparent);p=QPainter(montage);p.setRenderHint(QPainter.Antialiasing)

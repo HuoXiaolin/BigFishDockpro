@@ -34,12 +34,27 @@ internal static class Program
     static Pricing? Prices;
     static bool AllHistory;
     static DispatcherTimer Tick = null!;
+    const uint AlwaysShowErrorUi = 0x10;
+    const uint NoErrorUi = 0x20;
+
     [DllImport("kernel32")]
     static extern uint GetErrorMode();
+    [DllImport("kernel32")]
+    static extern uint SetErrorMode(uint mode);
+    [DllImport("kernel32")]
+    static extern nint GetCurrentProcess();
+    [DllImport("kernel32")]
+    static extern int WerGetFlags(nint process, out uint flags);
+    [DllImport("kernel32")]
+    static extern int WerSetFlags(uint flags);
 
     [STAThread]
     static void Main(string[] args)
     {
+        // A background helper reports failures to Dock through its exit code.
+        SetErrorMode(GetErrorMode() | 0x0003);
+        WerGetFlags(GetCurrentProcess(), out uint faultFlags);
+        WerSetFlags((faultFlags & ~AlwaysShowErrorUi) | NoErrorUi);
         Console.InputEncoding = new UTF8Encoding(false); Console.OutputEncoding = new UTF8Encoding(false);
         Loc.Use("zh-CN");
         try { MemoryBudget.Install(); }
@@ -265,7 +280,19 @@ internal static class Program
         var result = JsonSerializer.Serialize(Provider(new(new AppEntry { QuotaSource = ProviderId.Codex }, sample, sample), DateTime.Today), Json);
         if (!result.Contains("\"tokens\":15") || !result.Contains("\"cacheRead\":2") || !result.Contains("\"records\":1")) throw new Exception("usage");
         if (MemoryBudget.InstalledLimit() != MemoryBudget.Bytes) throw new Exception("memory limit");
+        if (WerGetFlags(GetCurrentProcess(), out uint faultFlags) != 0 || (faultFlags & NoErrorUi) == 0)
+            throw new Exception("headless error reporting");
+        var buffers = new byte[12][];
+        for (int i = 0; i < 512; i++)
+        {
+            // Rotate short-lived large buffers under the small bridge heap.
+            var buffer = new byte[(96 + i * 53 % 228) * 1024];
+            buffer[0] = (byte)i;
+            buffers[i % buffers.Length] = buffer;
+        }
+        GC.KeepAlive(buffers);
         Emit(new { passed = true, workingSetLimit = MemoryBudget.InstalledLimit(), managedHeapLimit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, processErrorMode = GetErrorMode(),
-            checks = new[] { "quota", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB" } });
+            gcRegionSize = GC.GetConfigurationVariables().GetValueOrDefault("GCRegionSize"),
+            checks = new[] { "quota", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB", "bridge fault reporting runs without UI", "repeated large-object allocation under the managed heap limit" } });
     }
 }

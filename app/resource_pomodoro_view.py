@@ -10,10 +10,13 @@ from flash_view import icon
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import ring, text
 from resource_pomodoro import duration_text, water_amount
+from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
 
 
-def reminder_ink(kind,light):
-    palette={'agenda':('#6246a2','#c8b6ff'), 'battery':('#b82b47','#ff8095'),
+def reminder_ink(kind,light,battery_level=None):
+    if kind=='battery':
+        return low_battery_ink(BATTERY_WARNING_LEVEL if battery_level is None else battery_level,light)
+    palette={'agenda':('#6246a2','#c8b6ff'),
              'water':('#1268ab','#83c7ff'), 'rest':('#087959','#72dfb4'),
              'paused':('#59657b','#b9c5d8'), 'focus':('#ab412d','#ffa08a')}
     return palette[kind.removesuffix('_done')][0 if light else 1]

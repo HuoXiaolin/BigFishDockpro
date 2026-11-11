@@ -1,5 +1,8 @@
 """Canonical screen-relative layouts; automatic projection never replaces user anchors."""
 import copy
+import ctypes
+from ctypes import wintypes
+
 from PyQt5.QtCore import QAbstractNativeEventFilter
 
 
@@ -27,6 +30,21 @@ def normalize_layout(value):
     return {'dock':valid_record(value.get('dock')), 'merged':valid_record(value.get('merged')), 'panels':panels,'merge_groups':groups}
 
 
+def primary_work_area(screen):
+    # Windows reports the primary work area in physical pixels, even while
+    # Qt still has the previous session's screen geometry.
+    work = wintypes.RECT()
+    query = ctypes.windll.user32.SystemParametersInfoW
+    query.argtypes = (wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT)
+    if not query(0x0030, 0, ctypes.byref(work), 0):  # SPI_GETWORKAREA
+        return None
+    ratio = screen.devicePixelRatio()
+    left, top, right, bottom = (round(edge / ratio) for edge in (work.left, work.top, work.right, work.bottom))
+    if right > left and bottom > top:
+        return [left, top, right - left, bottom - top]
+    return None
+
+
 def screen_records():
     from PyQt5.QtWidgets import QApplication
     app=QApplication.instance();primary=app.primaryScreen()
@@ -36,6 +54,8 @@ def screen_records():
         serial=screen.serialNumber().strip()
         identity=['hardware',screen.manufacturer(),screen.model(),serial] if serial.lower() not in ('','0','-1','unknown') and serial.strip('0') else ['connector',screen.name(),screen.manufacturer(),screen.model()]
         area=list(screen.availableGeometry().getRect())
+        if screen is primary and app.platformName() == 'windows':
+            area=primary_work_area(screen) or area
         if area[2]<=0 or area[3]<=0:continue
         records.append({'screen':'|'.join(identity),'area':area})
     return records
@@ -83,11 +103,33 @@ def project(record,screens,minimum=None,density=1.0):
 
 class DisplayEvents(QAbstractNativeEventFilter):
     """Guard saved anchors before Qt processes Windows' temporary DPI rectangles."""
-    def __init__(self,layout):super().__init__();self.layout=layout
+    def __init__(self, layout):
+        super().__init__()
+        self.layout = layout
+        self.session_hwnd = 0
+        self.wts = None
+        if layout.app.platformName() == 'windows':
+            self.wts = ctypes.WinDLL('wtsapi32', use_last_error=True)
+            self.wts.WTSRegisterSessionNotification.argtypes = (wintypes.HWND, wintypes.DWORD)
+            self.wts.WTSUnRegisterSessionNotification.argtypes = (wintypes.HWND,)
+
+    def watch_session(self):
+        if self.layout.closed or self.wts is None:
+            return
+        hwnd = int(self.layout.dock.winId())
+        if hwnd == self.session_hwnd:
+            return
+        self.unwatch_session()
+        if self.wts.WTSRegisterSessionNotification(hwnd, 0):  # NOTIFY_FOR_THIS_SESSION
+            self.session_hwnd = hwnd
+
+    def unwatch_session(self):
+        if self.session_hwnd:
+            self.wts.WTSUnRegisterSessionNotification(self.session_hwnd)
+            self.session_hwnd = 0
+
     def nativeEventFilter(self,event_type,message):
         if self.layout.closed or event_type not in (b'windows_generic_MSG',b'windows_dispatcher_MSG'):return False,0
-        import ctypes
-        from ctypes import wintypes
         msg=wintypes.MSG.from_address(int(message))
         if msg.message==0x0016:self.layout.runtime.session_ending=bool(msg.wParam)  # WM_ENDSESSION, including cancellation.
         elif msg.message==0x001a and msg.wParam==20:  # SPI_SETDESKWALLPAPER
@@ -100,7 +142,12 @@ class DisplayEvents(QAbstractNativeEventFilter):
                 if flash:
                     for bar in (flash.toolbar,flash.filters_bar,flash.launch_shell,flash.composer):
                         bar.material.clear();bar.update()
+        elif msg.message==0x001a and msg.wParam==0x002f:self.layout.changed()  # SPI_SETWORKAREA
         elif msg.message==0x007e:self.layout.changed()  # WM_DISPLAYCHANGE
+        elif msg.message==0x02b1 and msg.hWnd==self.session_hwnd:  # WM_WTSSESSION_CHANGE
+            # Console/remote connect or disconnect, unlock, remote control or desktop ready.
+            if msg.wParam in (1, 2, 3, 4, 8, 9, 15):
+                self.layout.session_changed()
         elif msg.message==0x02e0:  # WM_DPICHANGED: let Qt remain the DPI owner.
             windows=[self.layout.dock,self.layout.runtime.clock,self.layout.runtime.calendar,*self.layout.runtime.panels.windows.values(),*self.layout.runtime.notes.windows.values()]
             for window in windows:
@@ -114,21 +161,41 @@ class DisplayEvents(QAbstractNativeEventFilter):
 
 
 class DisplayLayout:
+    SESSION_SETTLE_MS = 2600
+
     def __init__(self,runtime):
         from PyQt5.QtCore import QTimer
         from PyQt5.QtWidgets import QApplication
         self.runtime=runtime;self.dock=runtime.dock;self.pending=False;self.applying=False;self.closed=False
+        self.session_transition = False
         self.bound=[];self.revision=0
         self.timer=QTimer(self.dock);self.timer.setSingleShot(True);self.timer.setInterval(180);self.timer.timeout.connect(self.apply_pending)
         self.settle_timer=QTimer(self.dock);self.settle_timer.setSingleShot(True);self.settle_timer.setInterval(450);self.settle_timer.timeout.connect(self.finish)
         app=QApplication.instance();self.app=app
         app.screenAdded.connect(self.changed);app.screenRemoved.connect(self.changed);app.primaryScreenChanged.connect(self.changed)
         self.native_filter=DisplayEvents(self);app.installNativeEventFilter(self.native_filter)
+        self.native_filter.watch_session()
+        if not self.native_filter.session_hwnd and self.native_filter.wts is not None:
+            # The Windows session service may still be starting at logon.
+            QTimer.singleShot(3500, self.native_filter.watch_session)
         self.bind_screens()
         self.ensure_profiles()
         self.update_dock()
 
     def screens(self):return screen_records()
+
+    def check_work_area(self):
+        # Also catch remote viewers which change the Windows work area without
+        # a Qt screen notification. Reuse the Dock's existing position check.
+        if self.pending or self.closed:
+            return
+        screens = self.screens()
+        if screens and screens[0]['area'] != list(self.dock.available_area().getRect()):
+            self.changed()
+
+    def session_changed(self):
+        self.session_transition = True
+        self.changed()
 
     def bind_screens(self):
         current=self.app.screens()
@@ -214,8 +281,8 @@ class DisplayLayout:
         if state!=self.dock.cfg.get('display_layout'):
             if self.runtime.api.save_config(dict(self.dock.cfg,display_layout=state)) is not False:self.dock.cfg['display_layout']=state
 
-    def update_dock(self):
-        screens=self.screens()
+    def update_dock(self, screens=None):
+        screens=self.screens() if screens is None else screens
         if not screens:return
         record=self.dock.cfg.get('display_layout',{}).get('dock',{})
         from PyQt5.QtCore import QRect
@@ -225,19 +292,21 @@ class DisplayLayout:
 
     def apply_pending(self):
         self.apply(settling=True)
-        if self.pending:self.settle_timer.start()
+        if self.pending and not self.timer.isActive():
+            self.settle_timer.start(self.SESSION_SETTLE_MS if self.session_transition else 450)
 
     def finish(self):
         self.apply()
 
     def apply(self,settling=False):
         if self.closed:return
-        if not self.screens():
+        screens=self.screens()
+        if not screens:
             self.pending=True
             return  # Wait for the next display notification, without polling or saving fallback coordinates.
         self.applying=True;revision=self.revision
         try:
-            self.update_dock()
+            self.update_dock(screens)
             self.runtime.panels.reposition()
             if getattr(self.runtime,'notes',None):self.runtime.notes.reposition()
             for name in ('clock','calendar'):
@@ -263,11 +332,22 @@ class DisplayLayout:
         if not settling:
             self.timer.stop();self.settle_timer.stop()
             self.ensure_profiles()
-            self.runtime.apply_visibility()
+            self.native_filter.watch_session()
+            if self.session_transition:
+                self.session_transition = False
+                self.runtime.check_fullscreen()
+                if self.dock.isVisible() and self.dock.isMinimized():
+                    self.dock.showNormal()
+                    self.dock.reposition()
+            else:
+                self.runtime.apply_visibility()
+            if self.dock.isVisible():
+                self.dock.apply_layer()
 
     def close(self):
         if self.closed:return
         self.closed=True;self.timer.stop();self.settle_timer.stop()
+        self.native_filter.unwatch_session()
         self.app.removeNativeEventFilter(self.native_filter)
         for signal in (self.app.screenAdded,self.app.screenRemoved,self.app.primaryScreenChanged):
             try:signal.disconnect(self.changed)

@@ -58,13 +58,17 @@ class DeckBridge(QObject):
         self.providers=[*self.local_providers,*(self.gateway.rows if self.gateway else ())]
         cfg=self.owner.cfg
         for row in self.providers:
+            if row.get('stale'):
+                continue
             used=max((value for q in row.get('quotas',[]) if (value:=used_percent(q)) is not None),default=None)
             if used is None:continue
             level=2 if used>=80 else 1 if used>=60 else 0
-            previous=self.previous_levels.get(row['id'],0);self.previous_levels[row['id']]=level
-            if cfg['resource_quota_alert'] and level>previous:
+            previous = self.previous_levels.get(row['id'])
+            self.previous_levels[row['id']] = level
+            if cfg['resource_quota_alert'] and level>(previous or 0):
                 self.alert=f"{row['name']}  额度剩余 {remaining_percent(used):.0f}%";self.alert_until=time.monotonic()+5
-                self.owner.play_reminder_sound('quota')
+                if previous is not None:
+                    self.owner.play_reminder_sound('quota')
         self.owner.display()
 
     def configure(self):

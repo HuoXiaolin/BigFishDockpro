@@ -23,7 +23,7 @@ def audio_regressions(api,service,checks):
     for kind in SOUND_KINDS:
         with wave.open(str(SOUND_DIR / (kind + '.wav')),'rb') as sound:
             duration=1000*sound.getnframes()/sound.getframerate()
-            assert 100<=duration<=200<CUE_SPACING_MS
+            assert 350<=duration<=700<CUE_SPACING_MS
             assert (sound.getnchannels(),sound.getsampwidth(),sound.getcomptype())==(1,2,'NONE')
             waveforms.add(sound.readframes(sound.getnframes()))
     assert len(waveforms)==len(SOUND_KINDS)==6
@@ -62,13 +62,100 @@ def audio_regressions(api,service,checks):
         finally:
             if service.reminder_audio:service.reminder_audio.stop()
             settings.reject();settings.deleteLater()
-    checks.append('Six distinct bundled WAV cues last 100-200 ms. Playback queues different kinds and coalesces duplicates. The saved sound switch stops playback and clears the queue. Preview and pause stay silent.')
+    checks.append('Six distinct bundled nature WAV clips fit the queue spacing. Playback queues different kinds and coalesces duplicates. The saved sound switch stops playback and clears the queue. Preview and pause stay silent.')
+
+
+def calendar_account_ui(options, service, app, output, checks):
+    from traceback import format_exc
+
+    from PyQt5.QtGui import QTextCursor
+    from PyQt5.QtWidgets import QMessageBox
+    from resource_calendar_settings import CalendarAccounts
+    from resource_task_calendars import token_account
+
+    accounts=options.findChild(CalendarAccounts)
+    sync=accounts.sync
+    errors=[]
+    visible=options.isVisible()
+    try:
+        assert not accounts.rows
+        state=dict(account=token_account('nexttodo','fixture-token','https://next.invalid'),
+                   updated=int(time.time()),events=[],truncated=False)
+        assert sync.store('nexttodo',state)
+        sync.changed.emit()
+        options.show();app.processEvents()
+        row=accounts.rows['nexttodo']
+        assert '已连接' in row.status.text() and '上次同步' in row.status.text()
+        assert not accounts.empty.isVisible() and row.edit.isVisible() and row.remove.isVisible()
+
+        def rename():
+            modal=QApplication.activeModalWidget()
+            try:
+                assert modal.windowTitle()=='编辑日程账号'
+                modal.findChild(QLineEdit).setText('项目待办')
+                next(control for control in modal.findChildren(QPushButton) if control.text()=='保存').click()
+            except Exception:
+                errors.append(format_exc())
+            finally:
+                if modal and modal.isVisible():modal.reject()
+
+        QTimer.singleShot(50,rename)
+        row.edit.click()
+        assert not errors and row.title.text()=='NextTodo · 项目待办',errors
+        assert options.grab().save(str(output/'calendar-account-management.png'))
+
+        def check_reauthorization():
+            modal=QApplication.activeModalWidget()
+            try:
+                assert modal.source.currentData()=='nexttodo' and not modal.source.isEnabled()
+                assert modal.endpoint.text()=='https://next.invalid' and modal.token.text()==''
+                assert modal.connect_account.text()=='更新令牌并同步'
+                modal.resize(modal.minimumWidth(),modal.height())
+                message='Cloudflare 拦截了日程接口（HTTP 403，错误 1010）。请联系服务器管理员检查防护规则。\n请核对服务器地址和连接状态。'
+                sync.errors['nexttodo']=message
+                sync.changed.emit();app.processEvents();modal.grab()
+                error=modal.error
+                assert error.isVisible() and error.toPlainText()==message
+                assert error.verticalScrollBar().maximum()==0
+                assert error.geometry().bottom()<modal.connect_account.geometry().top()
+                assert modal.token.isVisible() and modal.token.height()>=20, modal.token.geometry()
+                assert modal.token_fields.rect().contains(modal.token.geometry()), (
+                    modal.token_fields.rect(),modal.token.geometry(),modal.token_fields.minimumSizeHint())
+                assert modal.grab().save(str(output/'calendar-connection-error.png'))
+                extended=message+'\n'+'diagnostic-reference-'*64+'\n错误详情已结束。'
+                sync.errors['nexttodo']=extended
+                sync.changed.emit();app.processEvents();modal.grab()
+                assert error.toPlainText()==extended and error.horizontalScrollBar().maximum()==0
+                assert error.verticalScrollBar().maximum()>0
+                error.moveCursor(QTextCursor.End)
+                assert error.cursorRect().bottom()<=error.viewport().height()
+            except Exception:
+                errors.append(format_exc())
+            finally:
+                if modal and modal.isVisible():modal.reject()
+
+        QTimer.singleShot(50,check_reauthorization)
+        row.authorize.click()
+        assert not errors,errors
+        with patch.object(QMessageBox,'question',return_value=QMessageBox.Cancel):
+            row.remove.click()
+        assert 'nexttodo' in sync.states
+        with patch.object(QMessageBox,'question',return_value=QMessageBox.Yes),patch.object(service.runtime.dock,'preview',False):
+            row.remove.click()
+        assert not accounts.rows and accounts.empty.isVisible()
+    finally:
+        if 'nexttodo' in sync.states:
+            sync.forget('nexttodo')
+            sync.changed.emit()
+        if not visible:options.hide()
+    checks.append('Calendar settings show the connected account, last sync and actions. Editing persists the local display name, reauthorization opens the selected provider, removal confirms, and error details wrap and scroll at the smallest dialog width.')
 
 
 def run(api,runtime,app,output,checks):
     from bluetooth_gauge import devices
     from device_status import DeviceStatus, battery_status
     from resource_pomodoro import DEFAULT_STATE, Pomodoro, read_state
+    from resource_pomodoro_view import reminder_ink
     from resource_options import DEFAULTS
     from resource_system_view import battery_ink
     service=runtime.resources;cfg=runtime.dock.cfg;before=copy.deepcopy(cfg)
@@ -84,6 +171,10 @@ def run(api,runtime,app,output,checks):
     assert battery_status(1,1,100)==(100,'full')
     assert battery_status(255,255,255)==(None,'unknown')
     assert battery_ink(12,'battery',True,'#888888')!=battery_ink(12,'charging',True,'#888888')
+    for light in (True,False):
+        for levels in ((15,8,0),(35,25,16),(100,65,36)):
+            assert len({battery_ink(level,'battery',light,'#888888') for level in levels})==3
+        assert reminder_ink('battery',light,8)==battery_ink(8,'battery',light,'#888888')
     reader=DeviceStatus.__new__(DeviceStatus);reader.connection_cache=None
     with patch.object(reader,'network_profile',side_effect=('办公无线','')):
         assert reader.connection_name(b'wireless','Wi-Fi',20)=='办公无线'
@@ -313,7 +404,7 @@ def run(api,runtime,app,output,checks):
                     app.processEvents()
                     assert '用飞书扫码' in connections.steps.text()
                     assert connections.steps.height()>=connections.steps.heightForWidth(connections.steps.width())
-                    assert not connections.findChildren(QLineEdit)
+                    assert connections.token_fields.isHidden()
                     assert connections.grab().save(str(output/'calendar-settings.png'))
                     sync=connections.sync
                     cancelled=Event()
@@ -344,6 +435,21 @@ def run(api,runtime,app,output,checks):
                         assert connections.qr.isVisible() and '腾讯会议' in connections.status.text()
                     finally:
                         sync.job=None;sync.scan_info=None;sync.transfer=None;connections.update_status()
+                    connections.source.setCurrentIndex(connections.source.findData('dida'))
+                    app.processEvents()
+                    assert connections.token.isVisible() and connections.token.echoMode()==QLineEdit.Password
+                    assert connections.endpoint.isHidden() and connections.qr.isHidden()
+                    assert 'API 口令' in connections.steps.text()
+                    connections.token.setText('discard-on-provider-switch')
+                    connections.source.setCurrentIndex(connections.source.findData('nexttodo'))
+                    app.processEvents()
+                    assert connections.token.text()=='' and connections.endpoint.text()=='local'
+                    assert connections.endpoint.isVisible() and connections.connect_account.text()=='连接并同步'
+                    connections.token.setText('fixture-read-token')
+                    with patch.object(sync,'connect_account',return_value=True) as connect:
+                        connections.connect_account.click()
+                        connect.assert_called_once_with('nexttodo',token='fixture-read-token',endpoint='local')
+                    assert connections.token.text()==''
                     QTimer.singleShot(50,import_samples)
                     next(b for b in connections.findChildren(QPushButton) if b.text()=='手动导入…').click()
                 except Exception as error:
@@ -353,6 +459,7 @@ def run(api,runtime,app,output,checks):
             QTimer.singleShot(50,open_manual_import)
             next(b for b in options.findChildren(QPushButton) if b.text()=='日程账号接入…').click()
             assert not errors,errors
+            calendar_account_ui(options,service,app,output,checks)
             options.deleteLater()
             assert api.load_config()['resource_agenda_events'][0]['title']=='项目周会'
             assert {event['source'] for event in agenda.events}=={'local','dingtalk','feishu'}
@@ -388,7 +495,30 @@ def run(api,runtime,app,output,checks):
             from calendar_markers import month_markers,countdowns
             marks=month_markers(service.calendar_entries(),countdowns(cfg),day.toPyDate(),2)
             assert marks[day.toPyDate()]==agenda_page.calendar.markers[day.toPyDate()]
+            from resource_task_calendars import task_events
+            tomorrow=day.addDays(1)
+            tomorrow_15=QDateTime.fromString(tomorrow.toString('yyyy-MM-dd')+'T15:00:00',Qt.ISODate)
+            dated_tasks=[*task_events('dida',[dict(id='demo-dida',title='整理项目交付清单',status=0,
+                dueDate=tomorrow_15.toString(Qt.ISODate))],start,end+2*86400),
+                *task_events('nexttodo',[dict(id='demo-nexttodo',title='发出设计评审材料',
+                    due=dict(date=tomorrow.toString('yyyy-MM-dd'),time='16:30'))],start,end+2*86400)]
+            previous_events=agenda.local_events
+            assert agenda.save(merge_import(previous_events,dated_tasks))
+            agenda_page.calendar.setSelectedDate(tomorrow)
+            app.processEvents()
+            legend_labels=list(agenda_page.legend.values())
+            assert all(label.font().pixelSize()==9 and label.width()>=label.sizeHint().width()
+                       for label in legend_labels)
+            positions=[label.pos() for label in legend_labels]
+            assert len({pos.y() for pos in positions[:3]})==1 and len({pos.x() for pos in positions[:3]})==3
+            assert positions[3].x()==positions[0].x() and positions[3].y()>positions[0].y()
+            assert agenda_page.calendar.markers[tomorrow.toPyDate()]=={'dida','nexttodo','tencent'}
+            task_details=[agenda_page.rows.item(i).data(Qt.UserRole+1) for i in range(agenda_page.rows.count())]
+            assert {row[3] for row in task_details}=={'dida','nexttodo','tencent'}
+            assert all('截止' in row[1] for row in task_details if row[3] in ('dida','nexttodo'))
             assert window.grab().save(str(output/'readme-agenda.png'))
+            assert agenda.save(previous_events)
+            agenda_page.calendar.setSelectedDate(day)
             cfg['resource_appearance']['theme']='dark';window.sync_window();app.processEvents()
             assert window.grab().save(str(output/'agenda-dark.png'))
             cfg['resource_appearance']['theme']='light';window.sync_window()
@@ -438,6 +568,24 @@ def run(api,runtime,app,output,checks):
             assert service.fold(True);app.processEvents()
             assert window.marquee_title==long_title and window.animation.isActive()
             assert 37<=plan(window,window.width())['active_badges'][0][2]<=window.width()*.20
+            from resource_compact import MARQUEE_SPEED, MARQUEE_START_PAUSE, marquee_frame
+            span=window.marquee_span
+            travel=span/MARQUEE_SPEED
+            assert window.animation.timerType()==Qt.PreciseTimer
+            for cycle in range(3):
+                arrival=MARQUEE_START_PAUSE+cycle*(travel+5)+travel
+                assert marquee_frame(arrival-.01,span)[0]>0
+                shift,wait=marquee_frame(arrival+.01,span)
+                assert shift==0 and abs(wait-4.99)<.001
+                assert marquee_frame(arrival+4.99,span)[0]==0
+                assert marquee_frame(arrival+5.01,span)[0]>0
+            since=window.marquee_since
+            with patch('resource_panel.time.monotonic',return_value=since+MARQUEE_START_PAUSE+travel+2):
+                window.sync_animation()
+                assert window.marquee_since==since and 2999<=window.animation.interval()<=3001
+            with patch('resource_panel.time.monotonic',return_value=since+MARQUEE_START_PAUSE+travel+5.1):
+                window.animate()
+                assert window.animation.interval()==16
             frame=window.grab().toImage()
             window.marquee_since-=2
             assert frame!=window.grab().toImage()
@@ -463,4 +611,5 @@ def run(api,runtime,app,output,checks):
     checks.append('Computer status shares the sampler, shows charge/low/muted/missing states and aligns the top and bottom edges of both dashboard rows.')
     checks.append('Pomodoro and hydration align their icons and readouts, persist, notify once and open from the capsule; device status, timers and the next agenda entry can stay visible with alerts disabled.')
     checks.append('The native add-event form receives a mouse click at the visible Save button; reminders and local records persist.')
-    checks.append('Settings expose three QR entry points and cancellable download progress; the agenda paints per-source dates and rows in both themes, with deduplicated manual import.')
+    checks.append('Settings expose QR entry points, cancellable downloads, and masked Dida and NextTodo credentials; the agenda paints per-source dates and rows in both themes.')
+    checks.append('Compact agenda titles retain their phase during refresh, pause five seconds per loop, and use the precise animation timer while moving.')

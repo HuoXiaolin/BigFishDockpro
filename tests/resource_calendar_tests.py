@@ -1,14 +1,16 @@
 """Exercise QR login, token rotation and authoritative snapshots."""
 from base64 import urlsafe_b64decode
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import gzip
 from hashlib import sha256
 from io import BytesIO
 import json
+from os import environ
 from threading import Event
 from time import monotonic, sleep, time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 from zipfile import ZipFile
 
@@ -79,6 +81,151 @@ def check_dingtalk_download(directory, api, dingtalk):
             else:
                 raise AssertionError('cancelled download installed')
         assert not managed.exists()
+
+
+def check_task_accounts(sync, agenda, finish, now):
+    from calendar_markers import MARKER_TONES, month_markers
+    import resource_calendar_api as api
+    import resource_calendar_sync as calendar
+    import resource_task_calendars as tasks
+
+    cutoff = datetime.fromtimestamp(now[0]).replace(hour=23, minute=59, second=45, microsecond=0)
+    tomorrow = cutoff.date() + timedelta(days=1)
+    dida = dict(id='dida-id', title='有截止时间的任务', status=0, dueDate=cutoff.astimezone().isoformat())
+    dida_rows = [dida, dict(id='dida-start', title='只有开始时间', status=0, startDate=dida['dueDate']),
+                 dict(id='ignored', title='无日期', status=0), dict(dida, id='finished', status=2)]
+    nexttodo = dict(id='next-id', title='等待前置任务', status='waiting', done_at=None,
+                    due=dict(date=tomorrow.isoformat(), time='09:30', remind_before=25))
+    all_day = dict(id='next-all-day', title='全天任务', due=dict(date=tomorrow.isoformat()))
+    next_rows = [nexttodo, all_day, dict(nexttodo, id='finished', done_at=1), dict(nexttodo, id='undated', due=None)]
+    snapshot = dict(user='nexttodo-test-user', tasks=next_rows)
+    next_error = ''
+
+    def request(http, timeout):
+        assert timeout == 8
+        auth = http.get_header('Authorization')
+        if http.full_url == tasks.DIDA_FILTER:
+            assert http.get_method() == 'POST' and json.loads(http.data) == {'status': [0]}
+            if auth == 'Bearer rejected-fixture':
+                raise HTTPError(http.full_url, 401, 'Unauthorized', {}, BytesIO(b'[]'))
+            assert auth == 'Bearer fixture-dida'
+            data = dida_rows
+        else:
+            assert http.get_method() == 'GET' and http.data is None and auth == 'Bearer fixture-next'
+            assert http.get_header('User-agent') == 'BigFishDockpro'
+            assert http.full_url in ('https://next.invalid/todo/api/v1/snapshot',
+                                     'https://127.0.0.1:44007/api/v1/snapshot',
+                                     'https://127.0.0.1:44008/api/v1/snapshot')
+            if next_error == 'edge':
+                body = b'{"cloudflare_error":true,"error_code":1010}'
+                raise HTTPError(http.full_url, 403, 'Forbidden', {}, BytesIO(body))
+            if next_error == 'expired':
+                raise HTTPError(http.full_url, 401, 'Unauthorized', {}, BytesIO(b'{}'))
+            data = snapshot
+        return BytesIO(json.dumps(data).encode('utf-8'))
+
+    opener = Mock()
+    opener.open.side_effect = request
+    with patch.object(api, 'build_opener', return_value=opener):
+        assert sync.connect_account('dida', token='Bearer fixture-dida')
+        finish()
+        assert 'dida' not in sync.errors and sync.timer.isActive()
+        state = sync.states['dida']
+        assert len(state['events']) == 2 and all(row['timing'] == 'deadline' for row in state['events'])
+        assert month_markers(state['events'], (), cutoff.date(), 2) == {cutoff.date(): {'dida'}}
+        path = calendar.connection_path(sync.directory, 'dida')
+        assert b'fixture-dida' not in path.read_bytes() and calendar.read_connection(path, 'dida') == state
+        assert sync.connect_account('dida', token='rejected-fixture')
+        finish()
+        assert sync.states['dida'] == state and 'dida' not in sync.reauthorize
+        assert '缺少待办读取权限' in sync.errors['dida']
+
+        assert sync.connect_account('nexttodo', token='fixture-next', endpoint='https://next.invalid/todo/mcp')
+        finish()
+        assert sync.rename_account('nexttodo', '  项目待办  ')
+        state = sync.states['nexttodo']
+        assert state['label'] == '项目待办'
+        assert state['account']['endpoint'] == 'https://next.invalid/todo'
+        records = {row['title']: row for row in state['events']}
+        all_day_record = records[all_day['title']]
+        deadline = records[nexttodo['title']]
+        assert all_day_record['timing'] == 'all_day' and all_day_record['ack']
+        assert deadline['timing'] == 'deadline' and deadline['lead'] == 25
+        assert MARKER_TONES['dida'] != MARKER_TONES['nexttodo']
+
+        next_error = 'edge'
+        sync.sync_now('nexttodo')
+        finish()
+        assert 'Cloudflare' in sync.errors['nexttodo'] and '1010' in sync.errors['nexttodo']
+        assert 'nexttodo' not in sync.reauthorize and sync.states['nexttodo'] == state
+        next_error = 'expired'
+        sync.sync_now('nexttodo')
+        finish()
+        path = calendar.connection_path(sync.directory, 'nexttodo')
+        reopened = calendar.read_connection(path, 'nexttodo')
+        assert 'nexttodo' in sync.reauthorize and reopened['needs_auth'] and reopened['label'] == '项目待办'
+        assert '项目待办'.encode('utf-8') not in path.read_bytes()
+        next_error = ''
+        assert sync.connect_account('nexttodo', token='fixture-next', endpoint='https://next.invalid/todo')
+        finish()
+        assert 'nexttodo' not in sync.reauthorize and 'needs_auth' not in sync.states['nexttodo']
+        assert sync.states['nexttodo']['label'] == '项目待办'
+
+        cfg = sync.owner.cfg
+        cfg.update(resource_enabled=False, resource_component_locations={'agenda': 'desktop'})
+        sync.schedule()
+        assert sync.timer.isActive()
+        cfg['resource_agenda'] = False
+        sync.schedule()
+        assert not sync.timer.isActive()
+        cfg.update(resource_enabled=True, resource_agenda=True)
+
+        assert agenda.synced_reminder(deadline['id'], lead=15, ack=True)
+        nexttodo['due']['time'] = '10:00'
+        sync.sync_now('nexttodo')
+        finish()
+        moved = next(row for row in sync.states['nexttodo']['events'] if row['id'] == deadline['id'])
+        assert moved['start'] == deadline['start'] + 1800 and moved['lead'] == 15 and not moved['ack']
+        snapshot['tasks'] = {'invalid': True}
+        sync.sync_now('nexttodo')
+        finish()
+        assert 'nexttodo' in sync.errors and moved in sync.states['nexttodo']['events']
+        snapshot['tasks'] = next_rows
+
+        appdata = sync.directory / 'nexttodo-local-fixture'
+        address = appdata / 'cn.juniexd.nexttodo' / 'local' / 'address'
+        address.parent.mkdir(parents=True, exist_ok=True)
+        context = Mock()
+        test_ssl = SimpleNamespace(SSLContext=Mock(return_value=context), PROTOCOL_TLS_CLIENT=tasks.ssl.PROTOCOL_TLS_CLIENT)
+        with patch.dict(environ, APPDATA=str(appdata)), patch.object(tasks, 'ssl', test_ssl), \
+                patch.object(tasks, 'build_opener', return_value=opener):
+            address.write_text(json.dumps(dict(url='https://127.0.0.1:44007', ca='fixture CA')), encoding='utf-8')
+            assert sync.connect_account('nexttodo', token='fixture-next', endpoint='local')
+            finish()
+            context.load_verify_locations.assert_called_once_with(cadata='fixture CA')
+            assert sync.states['nexttodo']['account']['endpoint'] == 'local'
+            address.write_text(json.dumps(dict(url='https://127.0.0.1:44008', ca='rotated CA')), encoding='utf-8')
+            sync.sync_now('nexttodo')
+            finish()
+            assert ':44008/' in opener.open.call_args.args[0].full_url
+            calls = opener.open.call_count
+            address.write_text(json.dumps(dict(url='https://next.invalid:44008', ca='rotated CA')), encoding='utf-8')
+            sync.sync_now('nexttodo')
+            finish()
+            assert opener.open.call_count == calls and moved in sync.states['nexttodo']['events']
+
+        dida_rows.clear()
+        sync.next_sync['dida'] = now[0]
+        sync.poll()
+        finish()
+        assert not sync.states['dida']['events']
+        path = calendar.connection_path(sync.directory, 'nexttodo')
+        assert b'fixture-next' not in path.read_bytes()
+        assert calendar.read_connection(path, 'nexttodo') == sync.states['nexttodo']
+        assert sync.rename_account('nexttodo', '') and 'label' not in sync.states['nexttodo']
+        for source in tasks.TOKEN_SOURCES:
+            sync.disconnect(source)
+            assert source not in sync.states and not calendar.connection_path(sync.directory, source).exists()
 
 
 def run(app, output, checks):
@@ -155,12 +302,16 @@ def run(app, output, checks):
             row = dict(id='ding-event',status='cancelled')
         return dict(success=True,result=dict(events=[row]),nextCursor='next' if ding['second'] else '')
 
-    meeting_state = dict(start=start+3600, cancelled=False, partial=False)
+    meeting_state = dict(start=start+3600, cancelled=False, partial=False, cancel_login=False)
 
     def mock_tencent(job, args, timeout=25, on_scan=None):
         if args[:2] == ('auth','login'):
             assert args[2:] == ('--no-browser',) and on_scan
+            assert not cli_metadata.exists()
             on_scan('tencent','https://meeting.tencent.com/marketplace/tencentmeeting-cli-auth.html?code=fixture')
+            if meeting_state['cancel_login']:
+                job.cancelled.set()
+                return b''
             cli_metadata.write_text('{"active_open_id":"tencent_fixture"}',encoding='utf-8')
             return b''
         if args == ('auth','logout'):
@@ -244,6 +395,7 @@ def run(app, output, checks):
             sync.connect_account('feishu')
             finish()
             assert 'feishu' not in sync.states and calendar.feishu_app_path(folder).is_file()
+            assert 'feishu' in sync.account_sources() and sync.pending_registration('feishu')
             assert b'fei-fixture-secret' not in calendar.feishu_app_path(folder).read_bytes()
             app_scan=next(url for _,phase,url in scans if phase=='feishu-app')
             encoded=parse_qs(urlsplit(app_scan).query)['addons'][0]
@@ -307,6 +459,15 @@ def run(app, output, checks):
             assert any(phase == 'tencent' for _,phase,_ in scans)
             record, = sync.states['tencent']['events']
             assert record['title']=='周期例会' and record['start']==meeting_state['start']
+            meeting_state['cancel_login']=True
+            assert sync.connect_account('tencent')
+            finish()
+            assert 'tencent' in sync.reauthorize and not cli_metadata.exists()
+            assert sync.states['tencent']['events']==[record]
+            meeting_state['cancel_login']=False
+            assert sync.connect_account('tencent')
+            finish()
+            assert 'tencent' not in sync.reauthorize and cli_metadata.is_file()
             assert agenda.synced_reminder(record['id'], lead=25)
             meeting_state.update(start=record['start']+1800,partial=True)
             sync.sync_now('tencent')
@@ -331,14 +492,13 @@ def run(app, output, checks):
             try:
                 assert set(reopened.states) == {'feishu'}
                 assert reopened.states['feishu']['account']['refresh'] == 'fei-refresh-new'
-                owner.cfg.update(resource_enabled=False,resource_component_locations={'agenda':'desktop'})
-                reopened.schedule()
-                assert reopened.timer.isActive()
-                owner.cfg['resource_agenda'] = False
+                assert 'feishu' in reopened.reauthorize
                 reopened.schedule()
                 assert not reopened.timer.isActive()
             finally:
                 reopened.close()
+            owner.cfg.update(resource_enabled=True, resource_agenda=True)
+            check_task_accounts(sync, agenda, finish, now)
     finally:
         sync.close()
         agenda.timer.stop()
@@ -346,4 +506,6 @@ def run(app, output, checks):
     checks.extend([
         'DingTalk verified component reuse, download progress, cancellation and rejection of partial downloads. Three official authorization paths are exercised against fixture responses.',
         'Calendar sync works in standalone mode, preserves reminders across reschedules and incomplete pages, removes cancellations, and clears authorization on disconnect.',
+        'Dida and NextTodo sync dated tasks read-only, preserve good credentials after a failed replacement, reload encrypted snapshots, and follow NextTodo local address and CA rotation.',
+        'Calendar account names and required authorization survive reload. Tencent renewal requests a new scan, and NextTodo sends its exact client name and distinguishes Cloudflare denial from an expired token.',
     ])

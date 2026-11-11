@@ -1,9 +1,10 @@
 """Native liquid, face and weather checks, exclusively on the private desktop."""
 import copy
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QPoint,QPointF,QRect,QRectF,QEvent
-from PyQt5.QtGui import QContextMenuEvent,QMouseEvent,QImage,QPainter,QColor
+from PyQt5.QtGui import QContextMenuEvent,QMouseEvent,QImage,QPainter,QColor,QScreen
 from PyQt5.QtWidgets import QApplication,QWidget
 
 
@@ -11,6 +12,7 @@ def run(api,runtime,app,output,checks):
     from run_isolated_test import assert_isolated
     assert_isolated()
     from resource_options import DEFAULTS,migrate_docked
+    from feature_config import normalize
     from resource_liquid import attached
     from resource_settings import ResourceOptions
     from resource_weather import forecast,clean_cities,DEFAULT_CITIES
@@ -30,12 +32,13 @@ def run(api,runtime,app,output,checks):
         assert action.isCheckable() and action.isEnabled() and not action.isChecked()
         action.trigger()
     try:
+        assert 'resource_live_glass' not in normalize({'resource_live_glass':True})
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,card_snap=True,card_snap_distance=12,
-            resource_face=True,resource_expand_mode='click',resource_live_glass=True,resource_weather=True,motion_enabled=True,
+            resource_face=True,resource_expand_mode='click',resource_weather=True,motion_enabled=True,
             resource_background='custom',resource_appearance=dict(material='liquid',theme='light',color='',opacity=48,blur=8,highlight=45))
         service.sync();w=service.window;extra=service.extras;app.processEvents()
         assert extra and extra.weather_job is None
-        assert not w.liquid.live.job and w.liquid.watch.isActive()
+        assert not w.wallpaper_timer.isActive() and w.liquid.watch.isActive()
         area=(QApplication.screenAt(w.geometry().center()) or QApplication.primaryScreen()).availableGeometry()
         demo_area = QRect(-500, 0, 1000, 650)
         middle = QRect(-100, 200, 100, 65)
@@ -89,7 +92,7 @@ def run(api,runtime,app,output,checks):
         # Legacy placement can be flush with the screen even with no saved edge.
         assert service.set_options(resource_edge='free',resource_layout=capture(list(top.getRect()),screen_records()))
         assert w.y()==area.top()
-        assert w.animation.isActive() and not w.liquid.live.timer.isActive()
+        assert w.animation.isActive()
         start=w.mapToGlobal(QPoint(65,20));event(w,QEvent.MouseButtonPress,QPoint(65,20),start)
         event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(35,0));app.processEvents()
         assert not w.liquid.bridge or not w.liquid.bridge.isVisible()
@@ -150,52 +153,74 @@ def run(api,runtime,app,output,checks):
         service.fold(True);w.offset=0;seen=set()
         for page in range(12):w.offset=page;w.grab();seen.update(w.compact_shown)
         assert 'weather' in seen
-        # A bounded synthetic background exercises the actual material renderer.
-        live=w.liquid.live
-        one=QImage(64,8,QImage.Format_ARGB32_Premultiplied);one.fill(QColor('#d14455'));live.image=one;live.revision+=1;first=w.grab().toImage()
-        two=QImage(64,8,QImage.Format_ARGB32_Premultiplied);two.fill(QColor('#2660ba'));live.image=two;live.revision+=1;second=w.grab().toImage()
-        assert first!=second and live.image.byteCount()<=64*8*4
-        second.save(str(output/'liquid-live-material.png'))
+        # A real PNG exercises the wallpaper crop and material cache even with motion off.
+        import wallpaper_source as wallpaper
+        screen=QApplication.screenAt(w.geometry().center()) or QApplication.primaryScreen()
+        monitor=screen.geometry()
+        wallpapers=[]
+        for color in ('#d14455','#2660ba'):
+            source=QImage(64,32,QImage.Format_RGB32);source.fill(QColor(color))
+            path=output/f'wallpaper-{color[1:]}.png';assert source.save(str(path))
+            wallpapers.append(str(path))
+        foreground=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint)
+        foreground.setGeometry(monitor.adjusted(32,32,-32,-32));foreground.show()
+        current=wallpapers[0];now=0.0
+        wallpaper.invalidate_source()
+        service.set_options(motion_enabled=False, resource_expanded_width=501, resource_expanded_height=321,
+                            resource_edge='free', resource_halo=True)
         # Large panels cache the background at half resolution. The four
         # margins must stay transparent and the far side must still be filled.
-        service.set_options(resource_expanded_width=501, resource_expanded_height=321,
-                            resource_edge='free', resource_halo=True)
-        service.fold(False)
-        w.select_page('resources')
-        live.image = two
-        live.revision += 1
-        expanded_glass = w.grab().toImage()
-        cache = w.glass.image.toImage()
-        expanded_glass.save(str(output/'liquid-expanded-clip.png'))
-        assert cache.width() == round(w.width() * w.devicePixelRatioF() / 2)
-        for image in (cache, expanded_glass):
-            width, height = image.width(), image.height()
-            rim = [(0, height//2), (width-1, height//2), (width//2, 0), (width//2, height-1)]
-            alpha = [image.pixelColor(x, y).alpha() for x, y in rim]
-            assert alpha == [0, 0, 0, 0], (image.size(), alpha)
-            assert image.pixelColor(width*3//4, height*3//4).alpha() > 240
+        try:
+            with patch.object(wallpaper,'desktop_wallpaper',side_effect=lambda _: (current,2,QColor('white'),monitor,monitor)), \
+                 patch.object(wallpaper,'time',SimpleNamespace(monotonic=lambda:now)), \
+                 patch.object(QScreen,'grabWindow',side_effect=AssertionError('Foreground capture forbidden')):
+                for compact in (True,False):
+                    service.fold(compact)
+                    if not compact:w.select_page('resources')
+                    current=wallpapers[0];now+=3
+                    with patch.object(runtime.dock,'preview',False):
+                        w.sync_wallpaper()
+                        assert w.wallpaper_timer.isActive()
+                        w.grab()
+                        first=w.glass.image.toImage()
+                        foreground.setStyleSheet('background:#36ed52');foreground.raise_()
+                        w.wallpaper_timer.timeout.emit();w.grab()
+                        unchanged=w.glass.image.cacheKey()
+                        foreground.setStyleSheet('background:#ff00ff');foreground.raise_()
+                        now+=6
+                        w.wallpaper_timer.timeout.emit();w.grab()
+                        assert w.glass.image.cacheKey()==unchanged
+                        current=wallpapers[1];now+=6
+                        w.wallpaper_timer.timeout.emit()
+                        frame=w.grab().toImage()
+                        cache=w.glass.image.toImage()
+                        x,y=cache.width()*3//4,cache.height()//2
+                        assert first.pixelColor(x,y).red()>cache.pixelColor(x,y).red()
+                        assert first.pixelColor(x,y).blue()<cache.pixelColor(x,y).blue()
+                    w.sync_wallpaper()
+                    if compact:assert frame.save(str(output/'liquid-wallpaper-compact.png'))
+                assert frame.save(str(output/'liquid-expanded-clip.png'))
+                assert cache.width()==round(w.width()*w.devicePixelRatioF()/2)
+                for image in (cache,frame):
+                    width,height=image.width(),image.height()
+                    rim=[(0,height//2),(width-1,height//2),(width//2,0),(width//2,height-1)]
+                    alpha=[image.pixelColor(x,y).alpha() for x,y in rim]
+                    assert alpha==[0,0,0,0],(image.size(),alpha)
+                    assert image.pixelColor(width*3//4,height*3//4).alpha()>240
+        finally:
+            foreground.close();foreground.deleteLater();wallpaper.invalidate_source()
         service.fold(True)
-        # Live sampling stays outside the actual window, including at an edge.
-        import resource_live_glass as lg
-        import resource_glass_capture as gc
-        display=QRect(-800,-400,800,400)
-        for capsule in (QRect(-620,-400,500,44),QRect(-620,-44,500,44),
-                        QRect(-800,-330,64,280),QRect(-64,-330,64,280)):
-            strip=lg.adjacent_strip(capsule,display)
-            assert strip and display.contains(strip) and not capsule.intersects(strip)
-        assert lg.adjacent_strip(display,display) is None
-        with patch.object(gc,'grab_tiny',return_value=two) as grab:
-            assert lg.capture_strip(strip.getRect(),(6,8)).size()==two.size()
-            grab.assert_called_once_with(*strip.getRect(),6,8)
         folded_geometry=w.geometry();start=QPoint(w.width()//2,w.height()//2);point=w.mapToGlobal(start)
         event(w,QEvent.MouseButtonPress,start,point)
         event(w,QEvent.MouseButtonRelease,start,point)
         assert not service.compact and w.geometry()!=folded_geometry
         service.fold(True)
-        service.set_options(resource_face=True,resource_halo=True);pump(.04)
+        service.set_options(resource_face=True,resource_halo=True,motion_enabled=True);pump(.04)
         assert w.animation.isActive() and w.clock_tick.isActive()
+        with patch.object(runtime.dock,'preview',False):w.sync_wallpaper()
+        assert w.wallpaper_timer.isActive()
         w.hide();app.processEvents()
-        assert not w.liquid.watch.isActive() and not w.liquid.frames.isActive() and not live.timer.isActive() and live.image is None
+        assert not w.liquid.watch.isActive() and not w.liquid.frames.isActive() and not w.wallpaper_timer.isActive()
         assert not extra.weather_timer.isActive()
         assert not w.animation.isActive() and not w.clock_tick.isActive() and not w.rotate.isActive()
         w.show();pump(.04);assert extra.weather_timer.isActive() and w.animation.isActive() and w.clock_tick.isActive()
@@ -204,7 +229,8 @@ def run(api,runtime,app,output,checks):
         assert not w.liquid.landing and w.geometry()==attached(w.geometry(),area,cfg['resource_edge'])
         service.set_options(resource_weather=False);assert service.extras is None and not extra.weather_timer.isActive()
         service.set_options(resource_enabled=False);assert service.extras is None and not w.liquid.watch.isActive()
-        checks.append('Liquid capsule: four-edge snap and fold anchoring, finite tether/drip, failed-save restore, animation-off, seven vector moods in both themes, bounded strip sampling outside the window and transparent margins at half-resolution. Click expands with live glass enabled; hide/disable stop workers and timers. Private desktop with fixture frames.')
+        checks.append('Liquid capsule: four-edge snap and fold anchoring, finite tether/drip, failed-save restore, seven vector moods in both themes, click expansion, transparent margins at half-resolution, and timers stop on hide/disable.')
+        checks.append('Capsule wallpaper: legacy capture preference discarded; compact and expanded cache ignores a changing foreground window and refreshes from a second wallpaper file with motion disabled. Private desktop with fixture wallpapers.')
         checks.append('Weather: Tianjin/Urumqi/Shenyang, Beijing time and three-day parsing, city validation, compact paging, pause when hidden and stop when disabled.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

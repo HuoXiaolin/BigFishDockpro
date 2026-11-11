@@ -38,12 +38,14 @@ def normalize(data,api):
     if cfg['settings_size'] == 'large':  # Legacy exported profiles.
         cfg['settings_size'] = 'medium'
     from work_schedule import normalize as normalize_work
+    from feature_config import STARTUP_ANIMATION_STYLES
     for appearance in ('clock_appearance','calendar_appearance'):
         if isinstance(cfg.get(appearance),dict) and 'work' in cfg[appearance]:normalize_work(cfg[appearance]['work'],strict=True)
     for key,low,high in [('icon_size',20,256),('transparency',0,100),('bottom_margin',0,200),('custom_bottom',0,2000)]:
         if not low<=cfg[key]<=high:raise ValueError('配置数值超出范围：'+key)
     for key,allowed in [('position',{'top','bottom','custom'}),('layer',{'top','bottom'}),
                         ('theme',{'auto','light','dark','fog','gloss'}),('blur_mode',{'smart','fast','normal','slow','off'}),
+                        ('startup_animation_style',dict(STARTUP_ANIMATION_STYLES).values()),
                         ('clock_style',{value for _,value in STYLES}),('settings_size',{'auto','small','medium','custom'}),('note_style',{'glass','paper','plain'}),('desktop_icon_mode',{'both','collected','hide_all'}),('lang',{'zh','en'}),('bump_level',{'low','mid','high'})]:
         if cfg[key] not in allowed:raise ValueError('配置选项不受支持：'+key)
     if not 50<=cfg['card_scale']<=150 or not 50<=cfg['settings_custom_density']<=150:raise ValueError('界面缩放比例无效。')

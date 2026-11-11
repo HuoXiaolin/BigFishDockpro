@@ -11,7 +11,7 @@ def field_catalog(api, cfg):
     from sticky_notes_store import STYLES
     from taskbar_appearance import MODES
     from taskbar_text import MODES as TEXT_MODES
-    from feature_config import SPECTRUM_STYLES
+    from feature_config import SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
 
     return {
         'dock_material': (0, '材质', 'combo', material_choices(cfg['dock_material'])),
@@ -93,6 +93,8 @@ def field_catalog(api, cfg):
         'running_dots': (2, '显示 Dock 应用的运行标记', 'check', None),
         'hide_tray': (3, '隐藏托盘图标', 'check', None),
         'autostart': (3, '开机自动启动', 'check', None),
+        'startup_animation': (3, '播放 Dock 启动动画', 'check', None),
+        'startup_animation_style': (3, '动画样式', 'combo', STARTUP_ANIMATION_STYLES),
         'startup_priority': (3, '进程优先级', 'combo', [('低（节省后台竞争）', 'low'), ('普通', 'normal'), ('较高（非实时）', 'high')]),
         'startup_delay': (3, '登录后延迟（秒）', 'number', (0, 300)),
         'game_mode': (3, '暂停桌面组件', 'check', None),

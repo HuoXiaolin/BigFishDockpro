@@ -29,7 +29,9 @@ def collection_drag_checks(api, manager, app, checks):
         source=manager.windows['a'];target=manager.windows['b']
         assert not manager.is_merged('a') and source.isVisible() and source.geometry().contains(drop)
         assert target.isVisible() and manager.group_id('b')==group
-        Events.drag(source,handle,target.geometry().center()-source.mapToGlobal(handle));app.processEvents()
+        join=target.mapToGlobal(QPoint(24,65))
+        assert manager.card_at(source,join) is target
+        Events.drag(source,handle,join-source.mapToGlobal(handle));app.processEvents()
         assert manager.is_merged('a') and manager.group_id('a')==group
         assert api.load_config()['desktop_panels']==cfg['desktop_panels']
         checks.append('Collection card pointer gestures create a group from two cards, reorder native tabs, detach a tab and return it. Other collection cards remain independent.')

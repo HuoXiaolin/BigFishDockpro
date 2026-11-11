@@ -106,6 +106,15 @@ def source_info(window,screen):
     return cached[1]
 
 
+def wallpaper_key(window,screen):
+    path,position,color,monitor,bounds=source_info(window,screen)
+    try:
+        stamp=os.stat(path).st_mtime_ns if path else None
+    except OSError:
+        stamp=None
+    return path,stamp,position,color.rgba(),monitor.getRect(),bounds.getRect()
+
+
 def capture(window,screen):
     info=source_info(window,screen)
     path,position,color,monitor,bounds=info

@@ -4,10 +4,13 @@ from datetime import timedelta
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QLinearGradient,QRadialGradient,QPainterPath,QPen
 from card_design import SOFT_SURFACES,blend
+from resource_status import band_ink
 
 
 FORECAST_TONES=tuple(zip(SOFT_SURFACES['lavender'],('#4d5695','#b7c2ff')))
 AIR_SURFACES=SOFT_SURFACES['mint']
+AIR_BANDS=(50,100,150,200,300,500)
+AIR_HUES=('green','yellow','orange','red','purple','maroon')
 SUN_TONES={
     'dawn':(('#ffd7b8','#8c411b'),('#553628','#ffc69c')),
     'day':tuple(zip(SOFT_SURFACES['peach'],('#844f35','#f1bf9f'))),
@@ -67,12 +70,22 @@ def weather_accent(row,light):
 
 def compact_temperature_ink(temperature,light,thresholds):
     blue,green,yellow,red=thresholds
-    if temperature>red:colors=('#be3446','#ff8a96')
-    elif temperature>yellow:colors=('#946000','#ffd16a')
-    elif temperature>=green:colors=('#087850','#71dfae')
-    elif temperature>=blue:colors=('#167fa6','#83d6f2')
-    else:colors=('#244ea1','#91aaff')
-    return colors[0 if light else 1]
+    if temperature>red:
+        return band_ink(temperature,red,red+15,'red',light)
+    if temperature>yellow:
+        return band_ink(temperature,yellow,red,'yellow',light)
+    if temperature>=green:
+        return band_ink(temperature,green,yellow,'green',light)
+    if temperature>=blue:
+        return band_ink(temperature,green,blue,'cyan',light)
+    return band_ink(temperature,blue,blue-20,'blue',light)
+
+
+def air_quality_style(aqi,light):
+    value=round(aqi)
+    index=next((i for i,limit in enumerate(AIR_BANDS) if value<=limit),len(AIR_BANDS)-1)
+    start=AIR_BANDS[index-1] if index else 0
+    return index,band_ink(aqi,start,AIR_BANDS[index],AIR_HUES[index],light)
 
 
 def paint_weather_icon(p,rect,row,light):

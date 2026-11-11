@@ -666,7 +666,7 @@ def start_menu_dirs():
 from dpi_support import prepare as prepare_dpi
 prepare_dpi()
 
-from PyQt5.QtCore import (Qt, QTimer, QPoint, QPointF, QRectF, QSize, QFileInfo,
+from PyQt5.QtCore import (Qt, QTimer, QPoint, QPointF, QRect, QRectF, QSize, QFileInfo,
                           QSharedMemory, QEvent, pyqtSignal)
 from PyQt5.QtGui import (QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap,
                          QLinearGradient, QRadialGradient, QPen, QBrush, QFont,
@@ -1465,7 +1465,6 @@ class Dock(QWidget):
 
     # ---------------- 位置 ----------------
     def available_area(self):
-        from PyQt5.QtCore import QRect
         area=getattr(self,'_display_area',None)
         if area is not None and area.isValid():return QRect(area)
         screen=QGuiApplication.primaryScreen()
@@ -1493,23 +1492,18 @@ class Dock(QWidget):
         self.label_below = bool(bar_top - geo.top() < need_above)
         return bar_top, geo
 
-    def target_pos(self):
+    def target_geometry(self):
         bar_top, geo = self.layout_position()
-        x = geo.left() + (geo.width() - self.width()) // 2
+        size = self.total_size()
+        x = geo.left() + (geo.width() - size.width()) // 2
         y = bar_top - self.head_room()
-        x=max(geo.left(),min(x,geo.right()+1-self.width()))
-        y=max(geo.top(),min(y,geo.bottom()+1-self.height()))
-        return QPoint(int(x), int(y))
+        x = max(geo.left(), min(x, geo.right() + 1 - size.width()))
+        y = max(geo.top(), min(y, geo.bottom() + 1 - size.height()))
+        return QRect(QPoint(int(x), int(y)), size)
 
     def reposition(self):
-        # 必须先算位置（这一步会决定名称放上面还是下面），
-        # 再按算好的结果调整窗口大小，最后才移动。
-        # 顺序反了的话，换位置的第一次会用到旧的名称方向，位置就会错一格。
-        self.layout_position()
-        want = self.total_size()
-        if want != self.size():
-            self.resize(want)
-        self.move(self.target_pos())
+        # Commit position and size together when Windows moves the Dock to a new screen.
+        self.setGeometry(self.target_geometry())
         # 窗口尺寸 / 名称方向可能变了，图标坐标必须跟着重算，
         # 否则会出现"玻璃条位置对了、图标还停在旧位置"的现象
         self.cur = []
@@ -1533,17 +1527,15 @@ class Dock(QWidget):
 
     def check_position(self):
         layout=getattr(getattr(self.tray,'runtime',None),'layout',None)
-        if layout and layout.pending:return
+        if layout:
+            layout.check_work_area()
+            if layout.pending:
+                return
         was_below = self.label_below
-        self.layout_position()          # 顺带更新 label_below
-        size = self.total_size()
-        changed = size != self.size()
-        if changed:
-            self.resize(size)
-        want = self.target_pos()
-        moved = want != self.pos()
-        if moved:
-            self.move(want)
+        target = self.target_geometry()
+        changed = target.size() != self.size()
+        if target != self.geometry():
+            self.setGeometry(target)
         # 尺寸或名称方向变了，图标坐标要重算（否则图标会停在旧位置）
         if changed or self.label_below != was_below:
             self.cur = []
@@ -2834,28 +2826,47 @@ def main():
         tray.setVisible(not cfg['hide_tray'])
         if cfg.get('dock_visible', True):
             dock.show()
-            dock.start_backdrop()
         from runtime_controller import RuntimeController
         tray.runtime = RuntimeController(dock, tray, sys.modules[__name__], from_logon='--autostart' in args)
         dock.winId()  # A hidden instance still needs its settings-wake HWND.
         state.update(dock=dock, tray=tray, runtime=tray.runtime)
-        if not probe and cfg.get('autostart') and '--scheduled-startup' not in args:
-            # Defer migration until the first frame; the logon path itself
-            # never has to wait for a scheduler query or registry write.
-            from startup_service import set_enabled
-            QTimer.singleShot(250,lambda: cfg.get('autostart') and
-                              set_enabled(sys.modules[__name__],True,automatic=True))
-        if probe:
-            QTimer.singleShot(200, lambda: probe.complete(state))
         if cfg['check_updates_on_start']:
             QTimer.singleShot(2000, tray.runtime.updater.check)
         log('启动完成，共 %d 个入口' % len(cfg['items']))
+        # First-time widget creation and icon extraction run on this Qt thread.
+        # Start the animation after that work, so none of it holds a visible frame.
+        QTimer.singleShot(0, complete_startup)
+
+    def schedule_startup_registration():
+        if probe or state.get('closing') or not cfg.get('autostart') or '--scheduled-startup' in args:
+            return
+        from startup_service import set_enabled
+        QTimer.singleShot(250, lambda: not state.get('closing') and cfg.get('autostart') and
+                          set_enabled(sys.modules[__name__], True, automatic=True))
+
+    def animation_closed():
+        state.pop('startup_animation', None)
+        # Scheduler and registry calls can wait until the animation is gone.
+        schedule_startup_registration()
+
+    def complete_startup():
+        if cfg['startup_animation']:
+            from startup_animation import StartupAnimation
+            animation = state['startup_animation'] = StartupAnimation(cfg['startup_animation_style'], cfg['lang'])
+            animation.destroyed.connect(animation_closed)
+            animation.play()
+        else:
+            schedule_startup_registration()
+        if probe:
+            QTimer.singleShot(200, lambda: probe.complete(state))
 
     delay_ms = cfg['startup_delay']*1000 if '--autostart' in args else 0
     QTimer.singleShot(delay_ms, initialize)
     try:
         return app.exec_()
     finally:
+        state['closing'] = True
+        if state.get('startup_animation'): state['startup_animation'].close()
         if state.get('runtime'): state['runtime'].close()
         if state.get('tray') and getattr(state['tray'], 'importer', None): state['tray'].importer.close()
         from ui_style import shutdown_ui

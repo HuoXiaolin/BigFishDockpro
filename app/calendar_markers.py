@@ -9,6 +9,7 @@ from PyQt5.QtGui import QColor
 MARKER_TONES={
     'local':('#56677a','#b4c1d2'), 'dingtalk':('#1763ba','#85baff'),
     'feishu':('#12745d','#67dcb3'), 'tencent':('#a6570c','#ffc17a'),
+    'dida':('#4246ad','#adb5ff'), 'nexttodo':('#a3366d','#ffa7d4'),
     'countdown':('#8548a3','#e4afff'),
 }
 
@@ -31,13 +32,17 @@ def countdown_on(row,day):
     return day.day==min(target.day,calendar.monthrange(day.year,day.month)[1])
 
 
+def event_last_second(event):
+    return event['start'] if event.get('timing') == 'deadline' else event['end'] - 1
+
+
 def month_markers(events,items,first,days):
     start=first.toordinal()
     finish=min(date.max.toordinal(),start+days-1)
     result={}
     for event in events:
         first_day=max(start,date.fromtimestamp(event['start']).toordinal())
-        last_day=min(finish,date.fromtimestamp(event['end']-1).toordinal())
+        last_day=min(finish,date.fromtimestamp(event_last_second(event)).toordinal())
         for number in range(first_day,last_day+1):
             result.setdefault(date.fromordinal(number),set()).add(event['source'])
     if items:

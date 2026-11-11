@@ -49,12 +49,25 @@ No GlassDesk or GlassBoard source or proprietary assets are included.
 
 - Wisland by wisland contributors (MIT), https://github.com/AsamiAkito/wisland,
   pinned at `35478b13897149b6927d932c06013bd5e21a2db3`. The spring, liquid path,
-  vector face and small GDI capture helpers are adapted from its Python source
-  to the existing PyQt5 app; window ownership, bounded capture scheduling and
-  theme integration are local implementations. Notification metadata polling
-  follows its public design. Source is retained under `references/Wisland` and
+  and vector face code are adapted from its Python source to the existing
+  PyQt5 app. Source is retained under `references/Wisland` and
   the original copyright/license is in Wisland-MIT.txt. Its PySide6 runtime,
   ASR models, stock service and application UI are not bundled.
 - Weather data: Open-Meteo (https://open-meteo.com/), credited in the optional
   weather component's remarks. The app requests only configured city names
   or coordinates and a three-day forecast; no location permission is used.
+
+## Natural reminder sounds
+
+The recordings used in the bundled reminder sounds are licensed under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The app uses
+short excerpts with soft fades and adjusted volume.
+
+| Cue | Recording and creator |
+| --- | --- |
+| Agenda | [Rain on Window by RadioWaffle](https://freesound.org/people/RadioWaffle/sounds/877437/) |
+| Focus complete | [fire-crackling.wav by jmehlferber](https://freesound.org/people/jmehlferber/sounds/370938/) |
+| Break complete | [Gentle Waves - Quiet Beach 2 by amholma](https://freesound.org/people/amholma/sounds/376796/) |
+| Water | [Water drop (splash) by bolkmar](https://freesound.org/people/bolkmar/sounds/451126/) |
+| Low battery | [Water Drop by willstepp](https://freesound.org/people/willstepp/sounds/188293/) |
+| AI quota | [WindyLeaves by TimOut789](https://freesound.org/people/TimOut789/sounds/751869/) |

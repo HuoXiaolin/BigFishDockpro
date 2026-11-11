@@ -22,6 +22,7 @@
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="9" />
     <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="16777216" />
+    <RuntimeHostConfigurationOption Include="System.GC.RegionSize" Value="1048576" />
     <Compile Remove="Core/**/*.cs" />
     <ProjectReference Include="Core/CoreAdapter.csproj" />
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />

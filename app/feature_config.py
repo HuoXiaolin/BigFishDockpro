@@ -7,6 +7,7 @@ SPECTRUM_STYLES = (
     ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
 )
 RING_HEIGHT_MAX = 140
+STARTUP_ANIMATION_STYLES = (('流动描边', 'outline'), ('滚动文字', 'rolling'))
 
 DEFAULTS = {
     'flash_enabled':False, 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
@@ -47,6 +48,7 @@ DEFAULTS = {
     'desktop_panels': [], 'desktop_entries': [], 'desktop_excluded': [],
     'groups': ['未分类', '办公', '开发', '网络', '影音', '游戏', '文件夹'],
     'startup_priority': 'normal', 'startup_delay': 0,
+    'startup_animation': True, 'startup_animation_style': 'outline',
     'game_mode': False, 'fullscreen_detection': False,
     'check_updates_on_start': False, 'update_use_proxy': True, 'update_source': DEFAULT_SOURCE,
 }
@@ -110,7 +112,8 @@ def normalize(cfg):
                          ('desktop_icon_mode', ('both', 'hide_all')),
                          ('note_style', ('glass', 'paper', 'plain')),
                          ('settings_size',('auto','small','medium','custom')),
-                           ('startup_priority', ('low', 'normal', 'high'))]:
+                         ('startup_priority', ('low', 'normal', 'high')),
+                         ('startup_animation_style', tuple(style for _, style in STARTUP_ANIMATION_STYLES))]:
         if result[key] not in allowed:
             result[key] = DEFAULTS[key]
     from card_design import DESIGNS

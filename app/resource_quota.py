@@ -1,6 +1,8 @@
 """Keep currency amounts separate from rate-limited AI quota windows."""
 from math import isfinite
 
+from resource_status import band_ink
+
 
 def amount_text(metric):
     value = metric.get('value') or ''
@@ -34,12 +36,12 @@ def quota_color(remaining, light=False):
     if remaining is None:
         return '#84939e'
     if remaining >= 70:
-        return '#16824d' if light else '#59d697'
+        return band_ink(remaining, 100, 70, 'green', light)
     if remaining >= 40:
-        return '#9d7000' if light else '#f2cd5b'
+        return band_ink(remaining, 70, 40, 'yellow', light)
     if remaining > 10:
-        return '#b95112' if light else '#f5a363'
-    return '#b5253b' if light else '#ff7c89'
+        return band_ink(remaining, 40, 10, 'orange', light)
+    return band_ink(remaining, 10, 0, 'red', light)
 
 
 def quota_text(metric):

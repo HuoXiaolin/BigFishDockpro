@@ -504,6 +504,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(running,'后台运行')
         running.addRow(label('空闲时自动释放隐藏的收纳窗口、资源页和可重建缓存。', 'muted'))
         self.add_field(running, 'hide_tray')
+        section_marker(running, '启动动画')
+        preview = button('预览动画', self.preview_startup_animation)
+        preview.setAccessibleName('预览启动动画')
+        self.component_row(running, 'startup_animation', self.catalog['startup_animation'][1], preview)
+        self.add_field(running, 'startup_animation_style')
         section_marker(running,'开机启动')
         self.add_field(running, 'autostart')
         running.addRow(label('启动后恢复上次的显示与运行状态。', 'muted'))
@@ -532,6 +537,14 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(running, 'game_mode')
         self.add_field(running, 'fullscreen_detection')
         running.addRow(label('手动暂停会隐藏 Dock、卡片、胶囊、任务栏监控和圆角。全屏自动暂停独立启用，保留已置顶的任务栏监控，退出全屏后恢复。', 'muted'))
+
+    def preview_startup_animation(self):
+        from startup_animation import StartupAnimation
+        if self.findChild(StartupAnimation) is not None:
+            return
+        style = self.fields['startup_animation_style'].currentData()
+        animation = StartupAnimation(style, self.tray.cfg['lang'], self)
+        animation.play(self.screen())
 
     def build_updates(self, updates):
         tray, api = self.tray, self.api

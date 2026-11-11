@@ -100,8 +100,18 @@ def invoke(job, args, timeout=25, on_scan=None):
 
 def login(job):
     job.verified_tool = ensure_tool(job)
+    folder = config_folder(job.directory)
+    identity = job.account.get('identity')
+    if identity and job.account.get('mode') == 'tencent-device' and active_identity(folder) == identity:
+        # The official CLI requires logout before authorizing a new session.
+        try:
+            logout(job)
+        finally:
+            job.previous_login_removed = active_identity(folder) != identity
+    if job.cancelled.is_set():
+        raise CalendarError('已取消腾讯会议授权。')
     invoke(job, ('auth', 'login', '--no-browser'), timeout=330, on_scan=job.scan.emit)
-    identity = active_identity(config_folder(job.directory))
+    identity = active_identity(folder)
     if not identity:
         raise CalendarError('未取得腾讯会议登录账号，请重新扫码。', 'login')
     return dict(mode='tencent-device', identity=identity)

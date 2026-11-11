@@ -6,6 +6,7 @@ from PyQt5.QtCore import QObject,pyqtSignal,Qt
 from background_worker import BackgroundWorker
 from resource_options import (CAPSULE_PAGES,COMPACT_DEVICE,RESOURCE_PAGES,component_available,
                               component_location,resource_page_active)
+from resource_status import BATTERY_WARNING_LEVEL
 
 
 class MonitorJob(BackgroundWorker):
@@ -316,7 +317,7 @@ class ResourceCapsule(QObject):
     def low_battery(self):
         if self.cfg['resource_alert_battery'] and self.cfg['resource_enabled']:
             level,state=self.latest.get('battery',(None,'unknown'))
-            if level is not None and state=='battery' and level<=15:return level
+            if level is not None and state=='battery' and level<=BATTERY_WARNING_LEVEL:return level
         return None
 
     def check_battery_alert(self):

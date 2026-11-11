@@ -9,8 +9,8 @@ from PyQt5.QtCore import QObject, QTimer
 
 SOUND_DIR = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets/reminder-sounds'
 SOUND_KINDS = ('agenda', 'focus_done', 'rest_done', 'water', 'battery', 'quota')
-# Every clip is under 200 ms. Leave room for the device to finish before the next cue.
-CUE_SPACING_MS = 270
+# Leave a short gap after the longest nature clip and its fade.
+CUE_SPACING_MS = 760
 
 
 class ReminderAudio(QObject):

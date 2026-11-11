@@ -2,6 +2,7 @@
 from base64 import b64encode, urlsafe_b64encode
 from datetime import datetime, timezone
 import gzip
+from http.client import HTTPException
 import json
 import time
 from urllib.error import HTTPError
@@ -29,7 +30,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def request_json(url, *, headers=None, body=None, form=False, expected_errors=()):
+def request_json(url, *, headers=None, body=None, form=False, expected_errors=(), opener=None, allow_list=False):
     headers = dict(headers or {}, Accept='application/json')
     if body is not None:
         if form:
@@ -40,14 +41,16 @@ def request_json(url, *, headers=None, body=None, form=False, expected_errors=()
             headers['Content-Type'] = 'application/json'
     request = Request(url, data=body, headers=headers)
     status = 200
+    challenged = False
     try:
-        with build_opener(NoRedirect()).open(request, timeout=8) as response:
+        with (opener or build_opener(NoRedirect())).open(request, timeout=8) as response:
             raw = response.read(MAX_RESPONSE + 1)
     except HTTPError as error:
         with error:
             status = error.code
+            challenged = bool(error.headers and error.headers.get('cf-mitigated') == 'challenge')
             raw = error.read(32768)
-    except OSError as error:
+    except (OSError, HTTPException) as error:
         raise CalendarError('暂时无法连接，稍后自动重试。') from error
 
     data = {}
@@ -58,8 +61,17 @@ def request_json(url, *, headers=None, body=None, form=False, expected_errors=()
     except (ValueError, RecursionError):
         if status == 200:
             raise CalendarError('接口响应无法读取，已保留上次同步结果。') from None
-    if not isinstance(data, dict):
+    if status == 200 and allow_list and isinstance(data, list):
+        return data
+    if status == 200 and not isinstance(data, dict):
         raise CalendarError('接口响应格式有误。')
+    if not isinstance(data, dict):
+        data = {}
+    if challenged or status >= 400 and data.get('cloudflare_error') is True:
+        edge_code = data.get('error_code')
+        suffix = f'，错误 {edge_code}' if type(edge_code) is int and 1000 <= edge_code < 2000 else ''
+        raise CalendarError(f'Cloudflare 拦截了日程接口（HTTP {status}{suffix}）。请联系服务器管理员检查防护规则。',
+                            'edge', status)
     code = str(data.get('error') or data.get('code', '0'))
     if status < 500 and code in expected_errors:
         return data

@@ -1,4 +1,5 @@
 """Content-sized compact rows and an inexpensive perimeter-following halo."""
+from functools import lru_cache
 import time
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainterPath,QPen,QConicalGradient,QBrush,QTransform
@@ -14,6 +15,10 @@ AI_ICON_SIZE = 16
 AI_PADDING = 4
 AI_GAP = 4
 AI_TEXT_SIZE = 11
+MARQUEE_SPEED = 32
+MARQUEE_GAP = 20
+MARQUEE_START_PAUSE = .65
+MARQUEE_LOOP_PAUSE = 5
 
 
 def text(p,rect,value,color,size=11,bold=False,align=Qt.AlignLeft):
@@ -28,6 +33,17 @@ def ring(p,rect,value,color,track,letter='',stroke=2.5):
     if letter:text(p,rect,letter,color,10,True,Qt.AlignCenter)
 
 
+@lru_cache(maxsize=1)
+def halo_brushes():
+    layers = []
+    for width, alpha in ((7, 30), (4, 65), (1.5, 230)):
+        gradient = QConicalGradient(QPointF(0, 0), 0)
+        for i in range(7):
+            gradient.setColorAt(i / 6, QColor.fromHsvF((i / 6) % 1, .64, .98, alpha / 255))
+        layers.append((width, QBrush(gradient)))
+    return tuple(layers)
+
+
 def paint_halo(window,p):
     if not window.service.cfg['resource_halo']:return
     r=QRectF(window.rect()).adjusted(4.5,4.5,-4.5,-4.5)
@@ -38,11 +54,15 @@ def paint_halo(window,p):
     if getattr(window,'halo_key',None)!=key:
         window.halo_path=window.liquid.shape(r,radius)
         window.halo_key=key
-    p.setBrush(Qt.NoBrush);transform=QTransform();transform.translate(r.center().x(),r.center().y());transform.scale(r.width()/2,r.height()/2)
-    for width,alpha in ((7,30),(4,65),(1.5,230)):
-        gradient=QConicalGradient(QPointF(0,0),window.halo_phase*360)
-        for i in range(7):gradient.setColorAt(i/6,QColor.fromHsvF((i/6)%1,.64,.98,alpha/255))
-        brush=QBrush(gradient);brush.setTransform(transform);p.setPen(QPen(brush,width,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin));p.drawPath(window.halo_path)
+    p.setBrush(Qt.NoBrush)
+    transform = QTransform.fromTranslate(r.center().x(), r.center().y())
+    transform.scale(r.width() / 2, r.height() / 2)
+    transform.rotate(-window.halo_phase * 360)
+    for width, base in halo_brushes():
+        brush = QBrush(base)
+        brush.setTransform(transform)
+        p.setPen(QPen(brush, width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPath(window.halo_path)
 
 
 def status_values(service):
@@ -244,7 +264,8 @@ def _make_plan(window,limit=None):
     prefix=max((sum(min(cell_width(r,dense),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
     natural=16+face+face_gap+tail+used+(gap if used and prefix else 0)+min(prefix,room)
     from math import ceil
-    return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,clock=clock,clock_width=clock_width,
+    return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
+                pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,clock=clock,clock_width=clock_width,
                 face=face,face_gap=face_gap,core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),
                 active_badges=active,routine_badges=routine,status=status)
 
@@ -293,7 +314,6 @@ def paint_content(window,p,rect,key,label,value,meta):
     c=window.colors;cfg=window.service.cfg;mid=rect.center().y()
     if key=='ai':
         paint_ai_quota(p,rect,value,meta,c)
-        window.compact_providers.append(meta['provider']['id'])
         return
     mark=QRectF(rect.x()+4,mid-7,14,14)
     area=rect.adjusted(22,0,-4,0)
@@ -326,14 +346,16 @@ def paint_content(window,p,rect,key,label,value,meta):
                 x=area.x()+1+i*3
                 p.drawLine(QPointF(x,mid-height),QPointF(x,mid+height))
         elif area.width()>=16:text(p,area,value,c['ink'],10,True)
-        window.compact_media=True
 
 
-def paint_values(window,p,rows,x,mid,available,dense=False,widths=None):
+def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None):
     cfg=window.service.cfg;c=window.colors;bounds=[];gap=cell_gap(dense)
     short=window.height()<38;font_size=10 if dense else 11;label_y=mid-11 if short else mid-15;value_y=mid if short else mid-1
     label_height=12 if short else 14;value_height=12 if short else 17;label_font=8 if short else 9
     row_height=12;network_y=mid-11
+    hit_half = 12 if short else 17
+    if clip is not None:
+        hit_half = min(hit_half, clip.height()/2)
     if window.height()<30:
         # A thin taskbar can leave less room than the desktop capsule minimum.
         row_height=max(5,(window.height()-8)//2)
@@ -361,7 +383,16 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None):
         else:
             text(p,QRectF(x,label_y,width,label_height),label,c['muted'],label_font)
             text(p,QRectF(x,value_y,width,value_height),value,ink,font_size)
-        bounds.append(QRectF(x,mid-(12 if short else 17),width,24 if short else 34));window.compact_shown.append(key)
+        hit = QRectF(x,mid-hit_half,width,2*hit_half)
+        if clip is not None:
+            hit = hit.intersected(clip)
+        if not hit.isEmpty():
+            bounds.append(hit)
+            window.compact_shown.append(key)
+            if key=='ai':
+                window.compact_providers.append(meta['provider']['id'])
+            elif key=='music':
+                window.compact_media=True
         x+=width+gap;available-=width+gap
     return bounds
 
@@ -417,8 +448,22 @@ def paint_status(p,rect,row,colors):
 
 def agenda_marquee(window):
     layout=plan(window,window.width())
-    return next((label for kind,label,width,wanted in (*layout['active_badges'],*layout['routine_badges'])
-                 if kind=='agenda' and width>=37 and wanted>width-23),'')
+    return next(((label, wanted + MARQUEE_GAP)
+                 for kind,label,width,wanted in (*layout['active_badges'],*layout['routine_badges'])
+                 if kind=='agenda' and width>=37 and wanted>width-23), ('', 0))
+
+
+def marquee_frame(elapsed, span):
+    """Return the fractional position and the time until motion resumes."""
+    elapsed -= MARQUEE_START_PAUSE
+    if elapsed < 0:
+        return 0., -elapsed
+    travel = span / MARQUEE_SPEED
+    cycle = travel + MARQUEE_LOOP_PAUSE
+    phase = elapsed % cycle
+    if phase >= travel:
+        return 0., cycle - phase
+    return phase * MARQUEE_SPEED, 0.
 
 
 def paint_badges(window,p,slots,right,mid):
@@ -426,7 +471,8 @@ def paint_badges(window,p,slots,right,mid):
     c=window.colors;height=badge_height(window)
     for kind,label,width,wanted in slots:
         rect=QRectF(right-width,mid-height/2,width,height)
-        ink=reminder_ink(kind,c['light'])
+        level=window.service.low_battery() if kind=='battery' else None
+        ink=reminder_ink(kind,c['light'],level)
         chip(p,rect,ink,c['light'])
         if width>=37:
             reminder_icon(p,QRectF(rect.left()+4,mid-6.5,13,13),kind,ink)
@@ -434,12 +480,14 @@ def paint_badges(window,p,slots,right,mid):
             if kind=='agenda' and label==window.marquee_title and wanted>area.width():
                 font=QFont(window.font());font.setPixelSize(10);font.setWeight(QFont.DemiBold)
                 metrics=QFontMetrics(font)
-                span=wanted+20
-                shift=(max(0.,time.monotonic()-window.marquee_since-.65)*32)%span
+                span = wanted + MARQUEE_GAP
+                shift, _ = marquee_frame(time.monotonic() - window.marquee_since, span)
                 baseline=mid+(metrics.ascent()-metrics.descent())/2
                 p.save();p.setClipRect(area);p.setFont(font);p.setPen(QColor(ink))
                 x=area.x()-shift
-                p.drawText(QPointF(x,baseline),label);p.drawText(QPointF(x+span,baseline),label)
+                p.drawText(QPointF(x,baseline),label)
+                if x + span < area.right():
+                    p.drawText(QPointF(x+span,baseline),label)
                 p.restore()
             else:text(p,area,label,ink,10,True,Qt.AlignLeft if kind=='agenda' else Qt.AlignCenter)
         else:reminder_icon(p,QRectF(rect.center().x()-6.5,mid-6.5,13,13),kind,ink)
@@ -448,7 +496,34 @@ def paint_badges(window,p,slots,right,mid):
     return right
 
 
-def paint_compact(window,p):
+def paint_rolling_values(window,p,layout,rows,left,right,mid,scroll):
+    previous, progress, direction = scroll
+    clip = QRectF(left,2,max(0,right-left),window.height()-4)
+    distance = clip.height() * direction
+    eased = progress * progress * (3 - 2 * progress)
+    outgoing, incoming = mid - distance * eased, mid + distance * (1 - eased)
+    dense = layout['dense']
+
+    def draw(current, before, x, space, widths=None):
+        if before == current:
+            window.compact_bounds.extend(paint_values(window,p,current,x,mid,space,dense,widths))
+        else:
+            window.compact_bounds.extend(paint_values(window,p,before,x,outgoing,space,dense,widths,clip))
+            window.compact_bounds.extend(paint_values(window,p,current,x,incoming,space,dense,widths,clip))
+
+    p.save()
+    p.setClipRect(clip,Qt.IntersectClip)
+    try:
+        for group, row, width in zip(layout['pinned_groups'], layout['pinned'], layout['pinned_widths']):
+            draw((row,), (group[previous % len(group)],), left, width, (width,))
+            left += width + layout['gap']
+        pages = layout['pages']
+        draw(rows, pages[previous % len(pages)][1], left, max(0,right-left))
+    finally:
+        p.restore()
+
+
+def paint_compact(window,p,scroll=None):
     cfg=window.service.cfg;c=window.colors;bridge=window.service.deck;mid=window.height()/2
     layout=plan(window,window.width());pages=layout['pages'];window.compact_pages=len(pages)
     _,rows=pages[window.offset%len(pages)];window.compact_shown=[];window.compact_providers=[];window.compact_media=False
@@ -469,10 +544,12 @@ def paint_compact(window,p):
         right-=STATUS_STEP;rect=QRectF(right,0,STATUS_STEP,window.height())
         paint_status(p,rect,row,c);window.status_bounds[row[0]]=rect
     if layout['routine_badges']:right=paint_badges(window,p,layout['routine_badges'],right,mid)
-    # Pins are anchored at the leading edge, so supplemental pages never move them.
-    core=layout['core'];window.compact_bounds+=paint_values(window,p,layout['pinned'],left,mid,core,layout['dense'],layout['pinned_widths'])
-    left+=core+(layout['gap'] if core and rows else 0)
-    window.compact_bounds+=paint_values(window,p,rows,left,mid,max(0,right-left),layout['dense'])
+    if scroll:
+        paint_rolling_values(window,p,layout,rows,left,right,mid,scroll)
+    else:
+        core=layout['core'];window.compact_bounds+=paint_values(window,p,layout['pinned'],left,mid,core,layout['dense'],layout['pinned_widths'])
+        left+=core+(layout['gap'] if core and rows else 0)
+        window.compact_bounds+=paint_values(window,p,rows,left,mid,max(0,right-left),layout['dense'])
     if bridge and bridge.alert_until>time.monotonic() and cfg['resource_quota_alert']:
         window.setAccessibleName(window.accessibleName().split('\n额度提示：')[0]+'\n额度提示：'+bridge.alert)
 
@@ -482,7 +559,8 @@ def paint_ball_reminder(window,p,rect):
     if not badges:return
     from resource_pomodoro_view import reminder_icon,reminder_ink
     kind,_=badges[0]
-    ink=QColor(reminder_ink(kind,window.colors['light']))
+    level=window.service.low_battery() if kind=='battery' else None
+    ink=QColor(reminder_ink(kind,window.colors['light'],level))
     p.setBrush(Qt.NoBrush);p.setPen(QPen(ink,2,Qt.SolidLine,Qt.RoundCap))
     p.drawArc(rect.adjusted(3.5,3.5,-3.5,-3.5),-9*16,77*16)
     if rect.width()>=36:

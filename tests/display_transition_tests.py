@@ -17,6 +17,7 @@ def run(api,runtime,root,app,output,checks):
     rect=[left+550,top+210,640,330];record=dict(base,rect=rect,density=1.0)
     dock=runtime.dock;panel=None
     user=ctypes.windll.user32;user.GetClientRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
+    user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
     user.SendMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
     current=[actual]
     try:
@@ -119,9 +120,49 @@ def run(api,runtime,root,app,output,checks):
             assert layout.pending and not layout.timer.isActive() and not layout.settle_timer.isActive()
             current[:]=[actual];layout.changed();wait_for(app,lambda:not layout.pending,seconds=4)
             assert cfg['display_layout']==anchor and QRect(*actual['area']).contains(dock.geometry())
+            # A VM can connect before the remote display and taskbar report their final size.
+            remote=dict(screen='connector|remote',area=[left,top,round(work_w*.67),round(work_h*.78)])
+            hwnd=int(dock.winId())
+            with patch.object(layout.native_filter,'session_hwnd',hwnd), patch.object(dock,'apply_layer',wraps=dock.apply_layer) as layer:
+                user.SendMessageW(hwnd,0x02b1,3,0)  # WM_WTSSESSION_CHANGE / WTS_REMOTE_CONNECT
+                assert layout.session_transition and layout.pending
+                wait_for(app,lambda:layout.settle_timer.isActive(),seconds=2)
+                assert layout.settle_timer.remainingTime()>1200
+                current[:]=[remote]  # No second Qt signal accompanies this late update.
+                dock.showMinimized()
+                wait_for(app,lambda:not layout.pending,seconds=5)
+                area=QRect(*remote['area'])
+                assert dock.available_area()==area and area.contains(dock.geometry())
+                assert abs(dock.geometry().center().x()-area.center().x())<=1
+                assert dock.icon_size==max(12,round(42*min(area.width()/1920,area.height()/1020)))
+                assert dock.isVisible() and not dock.isMinimized() and layer.called
+                physical=wintypes.RECT();assert user.GetWindowRect(hwnd,ctypes.byref(physical))
+                dpr=dock.devicePixelRatioF()
+                actual_pixels=(physical.left,physical.top,physical.right-physical.left,physical.bottom-physical.top)
+                assert all(abs(p-l*dpr)<=2 for p,l in zip(actual_pixels,dock.geometry().getRect()))
+                assert cfg['display_layout']==anchor and not layout.session_transition
+            # The normal position timer also detects an unannounced resolution change.
+            current[:]=[actual]
+            dock.check_position();assert layout.pending
+            wait_for(app,lambda:not layout.pending,seconds=4)
+            assert dock.available_area()==QRect(*actual['area']) and cfg['display_layout']==anchor
+            assert not layout.timer.isActive() and not layout.settle_timer.isActive()
+        # Check the native physical work rectangle wins over an older Qt work rectangle,
+        # including when the taskbar reserves space at the left or top.
+        def native_work_area(action, parameter, pointer, flags):
+            assert action==0x0030
+            work=ctypes.cast(pointer,ctypes.POINTER(wintypes.RECT)).contents
+            work.left,work.top,work.right,work.bottom=48,32,1440,900
+            return True
+        with patch.object(user,'SystemParametersInfoW',side_effect=native_work_area):
+            ratio=app.primaryScreen().devicePixelRatio()
+            x,y,right,bottom=(round(edge/ratio) for edge in (48,32,1440,900))
+            assert screen_records()[0]['area']==[x,y,right-x,bottom-y]
         (Path(output)/'display-transition-metrics.json').write_text(json.dumps(measures,ensure_ascii=False,indent=2),encoding='utf-8')
         checks.append('display transition: all components derive from original anchors across four resolution/aspect maps; Dock stays visible, centered and in bounds with proportional height/icon size and clamped extreme offset; native WM_DISPLAYCHANGE and WM_DPICHANGED guards protect saved positions, repair an oversized collapsed card, restore after no screens, and finish without idle polling')
+        checks.append('remote-session display transition: native connect message refreshes after late work-area changes, restores a minimized Dock and its layer, preserves saved anchors, and detects a missed screen event through the existing position timer')
     finally:
         if 'icons' in locals():icons.stop()
         layout.timer.stop();layout.settle_timer.stop();layout.pending=False;layout.applying=False;layout.screens=provider
+        layout.session_transition=False
         cfg.clear();cfg.update(before);api.save_config(cfg);runtime.notes.reload();runtime.apply_settings();layout.apply();app.processEvents()

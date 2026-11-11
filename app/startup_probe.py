@@ -36,6 +36,7 @@ class StartupProbe:
             return
         cfg = dict(api.DEFAULT_CONFIG, card_scale=100,settings_size='small', items=[], autostart=False, glass=False, running_dots=False,
                    startup_delay=1, screen_corners=False, check_updates_on_start=False,
+                   startup_animation=self.autostart, startup_animation_style='rolling',
                    dock_visible=self.autostart, panels_visible=self.autostart, hide_tray=self.autostart,
                    runtime_lite=self.autostart, lite_enabled=True, panel_enabled=True, panel_auto_hide=False, desktop_auto_sort=False,
                    desktop_panels=[{'id':'images','name':'图片','geometry':[70,90,340,220],'collapsed':True}],
@@ -50,6 +51,8 @@ class StartupProbe:
         if self.visibility:return self.complete_visibility(state)
         try:
             dock, tray, runtime = state['dock'], state['tray'], state['runtime']
+            elapsed = time.monotonic()-self.started
+            animation_check = self.check_animation(state)
             from dpi_support import awareness
             assert awareness()==2 and awareness(int(dock.winId()))==2 and dock.ui_mult==1.0
             if self.fresh:
@@ -89,7 +92,6 @@ class StartupProbe:
                     assert runtime.panels.active_window=='images' and panel.width()<=360 and panel.height()<240
                     assert panel.bounds()[2:]==[360,240]
                     assert runtime.dock.cfg['merged_geometry']==[88,96,360,240]
-            elapsed = time.monotonic()-self.started
             if self.autostart:
                 assert elapsed >= .9
             assert not {'lite_enabled', 'runtime_lite', 'lite_restore'} & dock.cfg.keys()
@@ -97,10 +99,17 @@ class StartupProbe:
             runtime.show_settings()
             assert runtime.settings_open and runtime.memory_budget.timer.isActive()
             if self.autostart and not self.fresh: assert panel.collapsed
-            tray.settings_dialog.reject()
+            dialog = tray.settings_dialog
+            dialog.tabs.setCurrentIndex(3)
+            assert dialog.fields['startup_animation'].isChecked() == dock.cfg['startup_animation']
+            assert dialog.fields['startup_animation_style'].currentData() == dock.cfg['startup_animation_style']
+            if not self.fresh and not self.autostart:
+                self.check_animation_settings(dialog)
+            dialog.reject()
             assert not runtime.settings_open and runtime.memory_budget.timer.isActive()
             result = {'passed':True, 'checks':['actual application initialization on '+self.desktop,
                       'fresh profile: bundled default settings load for Dock, cards, tray and resource capsule; personal lists start empty; account and weather probes remain idle in isolated preview' if self.fresh else 'login start restores visible Dock, hidden tray and merged panel geometry/page/collapse after delay' if self.autostart else 'manual start restores hidden Dock and panels without delay',
+                      animation_check,
                       'legacy lite settings are ignored; normal idle cleanup remains scheduled across opening and closing settings'],
                       'elapsed_seconds':round(elapsed,2)}
             fixture=os.environ.get('FISHDOCK_EXIT_LAUNCH_FIXTURE')
@@ -125,6 +134,64 @@ class StartupProbe:
             result = {'passed':False, 'error':traceback.format_exc()}
         (self.output/'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2),encoding='utf-8')
         QApplication.instance().quit()
+
+    def check_animation(self, state):
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QApplication
+        from desktop_panel_tests import wait_for
+        from ctypes import windll, wintypes
+        cfg = state['dock'].cfg
+        if not cfg['startup_animation']:
+            assert not self.autostart and not self.fresh
+            assert 'startup_animation' not in state
+            return 'startup animation disabled: no splash created by the real launch path'
+        style = 'rolling' if self.autostart and not self.fresh else 'outline'
+        animation = state['startup_animation']
+        assert animation.style_name == cfg['startup_animation_style'] == style
+        assert animation.windowTitle() == animation.accessibleName() == 'PureDock'
+        assert animation.isVisible() and animation.frames.isActive() and animation.clock.isValid()
+        assert animation.frames.timerType() == Qt.PreciseTimer
+        assert animation.windowFlags() & Qt.NoDropShadowWindowHint
+        get_style = windll.user32.GetWindowLongW
+        get_style.argtypes = [wintypes.HWND, wintypes.INT]
+        get_style.restype = wintypes.LONG
+        assert get_style(int(animation.winId()), -20) & 0x08000020 == 0x08000020
+        clock = animation.clock
+        first = animation.grab().toImage()
+        assert first.save(str(self.output/f'startup-{style}.png'))
+        wait_for(QApplication.instance(), lambda: animation.clock.elapsed() >= animation.READY_MS, 3)
+        ready = animation.grab().toImage()
+        assert first != ready and ready.save(str(self.output/f'startup-{style}-ready.png'))
+        for frame in (first, ready):
+            assert frame.hasAlphaChannel()
+            assert all(frame.pixelColor(frame.width() // 2, y).alpha() == 0
+                       for y in (frame.height() // 8, frame.height() * 7 // 8))
+            assert all(frame.pixelColor(x, y).alpha() == 0 for x in (0, frame.width() - 1)
+                       for y in range(frame.height()))
+            samples = (frame.pixelColor(x, y)
+                       for x in range(0, frame.width(), 2) for y in range(0, frame.height(), 2))
+            ink = [pixel for pixel in samples if pixel.alpha() >= 32]
+            assert ink and min(pixel.lightness() for pixel in ink) >= 125
+        wait_for(QApplication.instance(), lambda: 'startup_animation' not in state, 3)
+        assert 'startup_animation' not in state and clock.elapsed() >= 3430
+        return f'startup animation {style}: precise frame timer, transparent background, bright glyphs without dark outlines, native click-through and no-activate flags, at least 3.43 s visible, then automatically destroyed'
+
+    def check_animation_settings(self, dialog):
+        from PyQt5.QtWidgets import QApplication, QPushButton
+        from desktop_panel_tests import wait_for
+        from startup_animation import StartupAnimation
+        style = dialog.fields['startup_animation_style']
+        style.setCurrentIndex(style.findData('outline'))
+        preview = next(button for button in dialog.findChildren(QPushButton) if button.accessibleName() == '预览启动动画')
+        wait_for(QApplication.instance(), lambda: not style.visibleRegion().isEmpty() and not preview.visibleRegion().isEmpty(), 2)
+        assert dialog.grab().save(str(self.output/'startup-animation-settings.png'))
+        preview.click()
+        animation = dialog.findChild(StartupAnimation)
+        assert animation is not None and animation.isVisible() and animation.style_name == 'outline'
+        dialog.commit()
+        config = dialog.api.load_config()
+        assert config['startup_animation'] is False and config['startup_animation_style'] == 'outline'
+        wait_for(QApplication.instance(), lambda: dialog.findChild(StartupAnimation) is None, 5)
 
     def complete_visibility(self,state):
         from PyQt5.QtWidgets import QApplication

@@ -26,7 +26,7 @@ def private_bytes():
 def check_idle_reclaim(runtime):
     from PyQt5 import sip
     from PyQt5.QtCore import QCoreApplication, QDate, QEvent
-    from PyQt5.QtGui import QCursor, QImage
+    from PyQt5.QtGui import QCursor
     from PyQt5.QtWidgets import QApplication
     from resource_options import background
 
@@ -37,7 +37,7 @@ def check_idle_reclaim(runtime):
     appearance = dict(background(cfg), material='liquid')
     with patch.dict(cfg, resource_enabled=True, resource_collapsed=False, resource_auto_hide=False,
                     resource_ai=True, resource_weather=True, resource_weather_cities=['天津', '沈阳'],
-                    resource_component_locations={}, resource_live_glass=True, resource_background='custom',
+                    resource_component_locations={}, resource_background='custom',
                     resource_appearance=appearance, resource_face=True, resource_face_interactive=True,
                     motion_enabled=True):
         service.sync()
@@ -54,12 +54,8 @@ def check_idle_reclaim(runtime):
         window.weather_view.remarks_button.setChecked(True)
         weather = window._weather_view
         geometry = window.geometry()
-        frame = QImage(12, 8, QImage.Format_ARGB32_Premultiplied)
-        frame.fill(0xff5b8296)
-        live = window.liquid.live
-        live.image = frame
-        live.revision += 1
-        revision = live.revision
+        window.grab()
+        glass_key = window.glass.image.cacheKey()
         budget.last_release = time.monotonic() - 61
         with patch.object(QCursor, 'pos', return_value=budget.cursor), patch('memory_budget.private_resident', return_value=32*2**20):
             with patch.object(runtime, 'ui_busy', return_value=True):
@@ -72,7 +68,7 @@ def check_idle_reclaim(runtime):
         assert window._ai_view is None and window.dashboard is None
         assert sip.isdeleted(details) and sip.isdeleted(dashboard)
         assert window._weather_view is weather and window.page_key == 'weather' and window.geometry() == geometry
-        assert window.liquid.watch.isActive() and live.image is frame and live.revision == revision
+        assert window.liquid.watch.isActive() and window.glass.image.cacheKey() == glass_key
         assert all(panel.isVisible() for panel in runtime.panels.windows.values())
 
         window.select_page('ai')

@@ -11,9 +11,11 @@ from resource_agenda import SYNC_SOURCES as SOURCES, normalize_events
 from resource_calendar_api import (CalendarError, authorize_feishu, exchange, primary_calendar,
                                    read_events, register_feishu, verification_url)
 from resource_options import calendar_data_active
+from resource_task_calendars import TOKEN_SOURCES, read_task_events, token_account
 
 SYNC_SECONDS = 600
 EVENT_LIMIT = 256
+ACCOUNT_NAME_LIMIT = 40
 STORAGE_LIMIT = 512 * 1024
 STORAGE_ERROR = '日程同步数据保存失败，请检查本机数据目录。'
 
@@ -89,10 +91,28 @@ def feishu_app_path(directory):
     return Path(directory) / 'resource-calendar-feishu-app.dat'
 
 
+def account_name(value):
+    if not isinstance(value, str):
+        raise ValueError('账号名称无效。')
+    value = value.strip()
+    if len(value) > ACCOUNT_NAME_LIMIT:
+        raise ValueError(f'账号名称最多 {ACCOUNT_NAME_LIMIT} 个字符。')
+    if value and not value.isprintable():
+        raise ValueError('请输入单行显示名称。')
+    return value
+
+
 def read_connection(path, source):
     state = read_private(path)
     account = check_fields(state['account'], (('identity', 512),))
-    if not uses_tool(source, account):
+    if source in TOKEN_SOURCES:
+        check_fields(account, (('token', 8192),))
+        if source == 'nexttodo':
+            check_fields(account, (('endpoint', 2048),))
+        normalized = token_account(source, account['token'], account.get('endpoint', ''))
+        if any(account.get(key) != value for key, value in normalized.items() if key != 'identity'):
+            raise ValueError('Invalid task calendar credential')
+    elif not uses_tool(source, account):
         check_fields(account, APP_FIELDS + (('access', 8192), ('refresh', 8192)))
         if type(account.get('expires')) is not int or not 0 <= account['expires'] < 10**10:
             raise ValueError('Invalid calendar credential expiry')
@@ -101,8 +121,17 @@ def read_connection(path, source):
     events = normalize_events(state['events'], strict=True, limit=EVENT_LIMIT)
     if any(row['source'] != source for row in events):
         raise ValueError('Invalid calendar source')
-    return dict(account=account, updated=state['updated'], events=events,
-                truncated=state.get('truncated') is True)
+    result = dict(account=account, updated=state['updated'], events=events,
+                  truncated=state.get('truncated') is True)
+    try:
+        label = account_name(state.get('label', ''))
+    except ValueError:
+        label = ''
+    if label:
+        result['label'] = label
+    if state.get('needs_auth') is True:
+        result['needs_auth'] = True
+    return result
 
 
 def reconcile(incoming, existing, now):
@@ -114,7 +143,7 @@ def reconcile(incoming, existing, now):
     for row in ordered[:EVENT_LIMIT]:
         old = previous.get(row['id'])
         if old:
-            row = dict(row, lead=old['lead'], ack=old['ack'] and old['start'] == row['start'])
+            row = dict(row, lead=old['lead'], ack=old['ack'] if old['start'] == row['start'] else row['ack'])
         events.append(row)
     return sorted(events, key=lambda row: (row['start'], row['id']))
 
@@ -132,6 +161,7 @@ class CalendarJob(BackgroundWorker):
         self.connecting = connecting
         self.disconnecting = disconnecting
         self.signed_in = False
+        self.previous_login_removed = False
         self.now = now
         self.directory = directory
         self.result = None
@@ -175,6 +205,10 @@ class CalendarJob(BackgroundWorker):
 
     def run(self):
         try:
+            if self.source in TOKEN_SOURCES:
+                if not self.cancelled.is_set():
+                    self.result = read_task_events(self.source, self.account, self.now)
+                return
             if self.disconnecting:
                 provider_tool(self.source).logout(self)
                 self.result = []
@@ -210,6 +244,7 @@ class CalendarSync(QObject):
         self.errors = {}
         self.next_sync = {}
         self.reauthorize = set()
+        self.unreadable = set()
         self.job = None
         self.scan_info = None
         self.transfer = None
@@ -224,8 +259,18 @@ class CalendarSync(QObject):
                 continue
             except (OSError, ValueError, AttributeError, KeyError, TypeError, RecursionError):
                 self.errors[source] = '本机授权记录无法读取，请重新授权。'
+                self.unreadable.add(source)
                 continue
+            if self.states[source].get('needs_auth'):
+                self.reauthorize.add(source)
             self.next_sync[source] = 0
+
+    def pending_registration(self, source):
+        return source == 'feishu' and source not in self.states and feishu_app_path(self.directory).is_file()
+
+    def account_sources(self):
+        return tuple(source for source in SOURCES
+                     if source in self.states or source in self.unreadable or self.pending_registration(source))
 
     def events_for(self, local):
         if not self.states:
@@ -243,26 +288,59 @@ class CalendarSync(QObject):
         self.events_changed.emit()
 
     def store(self, source, state):
+        previous = self.states.get(source)
+        state = dict(state)
+        label = state.pop('label', (previous or {}).get('label'))
+        if label:
+            state['label'] = label
         try:
             write_private(connection_path(self.directory, source), state)
         except (OSError, ValueError):
             self.errors[source] = STORAGE_ERROR
             return False
-        previous = self.states.get(source)
         self.states[source] = state
+        self.unreadable.discard(source)
         if (previous is None or previous['events'] != state['events'] or
                 bool(previous['updated']) != bool(state['updated'])):
             self.change_events()
         return True
 
-    def connect_account(self, source):
+    def rename_account(self, source, label):
+        label = account_name(label)
+        state = self.states.get(source)
+        if state is None:
+            return False
+        if state.get('label', '') == label:
+            return True
+        saved = self.store(source, dict(state, label=label))
+        if saved and self.errors.get(source) == STORAGE_ERROR:
+            self.errors.pop(source)
+        self.changed.emit()
+        return saved
+
+    def require_authorization(self, source):
+        self.reauthorize.add(source)
+        state = self.states.get(source)
+        if state and not state.get('needs_auth'):
+            self.store(source, dict(state, needs_auth=True))
+
+    def connect_account(self, source, *, token='', endpoint=''):
         if source not in SOURCES or self.job or self.owner.runtime.dock.preview:
-            return
-        account = self.states.get(source, {}).get('account', {})
+            return False
+        if source in TOKEN_SOURCES:
+            try:
+                account = token_account(source, token, endpoint)
+            except ValueError as error:
+                self.errors[source] = str(error)
+                self.changed.emit()
+                return False
+        else:
+            account = self.states.get(source, {}).get('account', {})
         self.start(source, account, connecting=True)
+        return True
 
     def disconnect(self, source):
-        if self.job:
+        if source not in SOURCES or self.job or self.owner.runtime.dock.preview:
             return
         account = self.states.get(source, {}).get('account', {})
         if uses_tool(source, account):
@@ -283,6 +361,7 @@ class CalendarSync(QObject):
             self.errors.pop(source, None)
             self.next_sync.pop(source, None)
             self.reauthorize.discard(source)
+            self.unreadable.discard(source)
             if self.states.pop(source, None) is not None:
                 self.change_events()
 
@@ -354,6 +433,7 @@ class CalendarSync(QObject):
         old = self.states.get(job.source)
         if old and old['account']['identity'] == account['identity']:
             state = dict(old, account=account)
+            state.pop('needs_auth', None)
         else:
             state = dict(account=account, events=[], updated=0, truncated=False)
         if self.store(job.source, state):
@@ -378,12 +458,15 @@ class CalendarSync(QObject):
         self.transfer = None
         job.deleteLater()
         source = job.source
+        if job.previous_login_removed and not job.signed_in:
+            self.require_authorization(source)
         if not job.cancelled.is_set():
             if job.error is not None:
                 if source not in self.errors:
                     self.errors[source] = str(job.error)
-                if not job.disconnecting and job.error.kind in ('login', 'token'):
-                    self.reauthorize.add(source)
+                replacing_token = job.connecting and source in TOKEN_SOURCES
+                if not (job.disconnecting or replacing_token) and job.error.kind in ('login', 'token'):
+                    self.require_authorization(source)
             elif job.disconnecting:
                 self.forget(source)
             elif job.result is not None:

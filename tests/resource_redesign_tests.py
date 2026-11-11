@@ -48,11 +48,12 @@ def aggregation(checks):
 
 def run(api,runtime,app,output,checks):
     from PyQt5.QtCore import QRectF,QTimer
-    from PyQt5.QtGui import QFontMetrics
+    from PyQt5.QtGui import QColor,QFontMetrics
     from resource_options import DEFAULTS,SENSOR_UNITS
     from resource_compact import plan
     from resource_ai_tray import quota_icon
     from resource_quota import amount_label, amount_text, quota_color, quota_text, used_percent
+    from resource_status import band_ink
     from resource_settings import ResourceOptions
     import resource_compact
     import resource_statistics
@@ -175,13 +176,21 @@ def run(api,runtime,app,output,checks):
         assert amount_text(dict(value='¥12.48', percent=87.52)) == '¥12.48'
         spend=dict(kind='spend',label='累计消费',value='≥¥3.18')
         assert amount_text(spend)=='¥3.18' and amount_label(spend)=='累计消费（已知金额）'
-        assert quota_color(100) == quota_color(70) != quota_color(69)
-        assert quota_color(69) == quota_color(40) != quota_color(39)
-        assert quota_color(39) == quota_color(11) != quota_color(10)
-        assert quota_color(10) == quota_color(0)
+        for light in (True,False):
+            for remaining in ((100,85,70),(69,55,40),(39,25,11),(10,5,0)):
+                soft,middle,strong=(QColor(quota_color(n,light)).lightness() for n in remaining)
+                assert soft>middle>strong
+            assert quota_color(70,light)==band_ink(70,100,70,'green',light)
+            assert quota_color(40,light)==band_ink(40,70,40,'yellow',light)
+            assert quota_color(10.1,light)==band_ink(10.1,40,10,'orange',light)
+            assert quota_color(10,light)==band_ink(10,10,0,'red',light)
+            for remaining in (10,5,0):
+                icon=quota_icon(100-remaining,light).pixmap(32,32).toImage()
+                assert icon.pixelColor(23,25).name()==quota_color(remaining,light)
         assert {s.width() for s in quota_icon(30).availableSizes()} >= {16, 20, 24, 32}
         cfg['resource_ai_tray']=False;service.sync();app.processEvents();assert not service.deck and not service.ai_tray and not service.signature
         (output/'resource-page-sizes.json').write_text(json.dumps(sizes),encoding='utf-8')
         checks.append('Reported UI regressions: identical page geometry, long mixed-language title in bounded lines, no aggregate hover popup, all compact values/AI/media reachable at 220–800 widths without overlapping or dropped cells, persisted custom pinned metrics, automatic width shrink, independent AI tray with hardware/music stopped, quota icons and complete shutdown.')
+        checks.append('AI quota shades deepen within all four existing ranges in both themes. The tray tail uses the same red ramp at 10%, 5% and 0% remaining.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)
