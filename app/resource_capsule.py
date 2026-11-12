@@ -1,5 +1,6 @@
 """Demand-driven GPU/CPU sampling, Bluetooth sharing, window and settings ownership."""
 from collections import deque
+from itertools import zip_longest
 import time
 import threading
 from PyQt5.QtCore import QObject,pyqtSignal,Qt
@@ -655,26 +656,51 @@ class ResourceCapsule(QObject):
 
     def sync_peripherals(self):
         profiles=self.cfg.get('resource_peripheral_profiles',[])
-        visible=(self.window and self.window.isVisible() or self.detached('resources'))
-        enabled=(profiles and visible and not self.runtime.game_active and
+        desktop=not self.runtime.game_active and (self.window and self.window.isVisible() or self.detached('resources'))
+        enabled=(profiles and (desktop or self.cfg['resource_bt_tray']) and
                  not self.peripheral_editing and not self.runtime.dock.preview)
         if self.peripherals and (not enabled or self.peripherals.profiles!=profiles):
             monitor,self.peripherals=self.peripherals,None
             monitor.close()
+            self.batteries_changed()
         if enabled and self.peripherals is None:
             from resource_peripheral_monitor import PeripheralMonitor
             self.peripherals=PeripheralMonitor(self,profiles)
+            self.batteries_changed()
 
-    def peripherals_changed(self):
+    def battery_rows(self,tray=False):
+        from bluetooth_gauge import HUES
+        from resource_peripherals import format_reading
+        bluetooth=self.bluetooth.rows if self.bluetooth and (tray or self.cfg['resource_bluetooth']) else ()
+        peripherals=self.peripherals.rows if self.peripherals else ()
+        occupied={row['ink'] for row in bluetooth}
+        colors=[ink for ink in HUES if ink not in occupied] or HUES
+        wireless=(dict(row,source='2.4g',display_value=format_reading(row),ink=colors[i%len(colors)])
+                  for i,row in enumerate(peripherals))
+        connected=(dict(row,source='bluetooth',display_value=f"{row['level']}%" if row['level'] is not None else '未报告')
+                   for row in bluetooth)
+        return [row for pair in zip_longest(connected,wireless) for row in pair if row is not None]
+
+    def battery_status(self,tray=False):
+        bt=self.bluetooth if tray or self.cfg['resource_bluetooth'] else None
+        statuses=[reader.status for reader in (bt,self.peripherals) if reader and reader.status]
+        return ' · '.join(statuses) or '暂无外设电量'
+
+    def refresh_batteries(self):
+        if self.bluetooth:self.bluetooth.refresh()
+        if self.peripherals:self.peripherals.refresh()
+
+    def batteries_changed(self):
         if self.closed:return
+        if self.bluetooth:self.bluetooth.paint_tray()
         if self.window:
             if self.compact and self.cfg['resource_fold']!='ball':
-                if 'peripherals' in self.cfg['resource_compact_metrics']:
+                if 'bluetooth' in self.cfg['resource_compact_metrics']:
                     self.window.refresh()
             elif self.window.page_key=='resources' and not self.compact:
-                self.window.refresh_peripherals()
+                self.window.refresh_battery_rows()
         card=self.desktop_cards.get('resources')
-        if card:card.refresh_peripherals()
+        if card:card.refresh_battery_rows()
 
     def display(self):
         if self.window:self.window.refresh()

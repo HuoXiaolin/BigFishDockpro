@@ -90,16 +90,11 @@ def status_values(service):
         ('brightness','亮度','—' if brightness is None else f'{brightness:.0f}%',brightness),
     )
     values=[row for row in rows if row[0] in selected and (row[2]!='—' or not cfg['resource_hide_unavailable'])] if cfg['resource_system_status'] else []
-    if service.bluetooth and cfg['resource_bluetooth'] and 'bluetooth' in selected:
-        group=service.bluetooth.group()
-        label=' · '.join(row['name']+' '+('未报告' if row['level'] is None else f"{row['level']}%") for row in group)
-        values.append(('bluetooth','蓝牙电量',label or service.bluetooth.status,group))
-    monitor=getattr(service,'peripherals',None)
-    if monitor and 'peripherals' in selected:
-        from resource_peripherals import format_reading
-        group=monitor.group()
-        label=' · '.join(row['name']+' '+format_reading(row) for row in group)
-        values.append(('peripherals','2.4G 外设',label or monitor.status,group))
+    if 'bluetooth' in selected and (cfg['resource_bluetooth'] or cfg.get('resource_peripheral_profiles')):
+        from bluetooth_gauge import GROUP
+        rows=service.battery_rows()
+        label=' · '.join(f"{row['name']} {row['display_value']}" for row in rows)
+        values.append(('bluetooth','外设电量',label or service.battery_status(),rows[:GROUP]))
     return values
 
 
@@ -421,10 +416,6 @@ def paint_status(p,rect,row,colors):
     size=min(20,rect.height()-7)
     circle=QRectF(center.x()-size/2,center.y()-size/2,size,size)
     if key=='bluetooth':
-        from bluetooth_gauge import draw_rings
-        draw_rings(p,circle,value,not colors['light'])
-        return
-    if key=='peripherals':
         from bluetooth_gauge import draw_peripheral_rings
         draw_peripheral_rings(p,circle,value,not colors['light'])
         return

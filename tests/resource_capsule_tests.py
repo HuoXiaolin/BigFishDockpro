@@ -106,7 +106,7 @@ def run(api,runtime,root,app,output,checks):
     from run_isolated_test import assert_isolated
     assert_isolated()
     from bluetooth_gauge import devices,tray_icon
-    from resource_options import DEFAULTS,FAN_METRICS,METRICS
+    from resource_options import DEFAULTS,FAN_METRICS,METRICS,normalize as normalize_resource
     from resource_panel import display_values
     from resource_settings import ResourceOptions
     from resource_metrics import network_rates,busiest_engine
@@ -120,19 +120,47 @@ def run(api,runtime,root,app,output,checks):
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_hide_unavailable=False,resource_edge_snap=False,resource_auto_hide=False);service.sync()
         assert service.window is None and service.job is None and service.bluetooth is None
         assert service.fps is None and service.sensors is None and service.history is None
+        for old in (['peripherals'],['bluetooth','peripherals'],['bluetooth']):
+            saved=dict(cfg,resource_compact_metrics=old)
+            normalize_resource(saved)
+            assert saved['resource_compact_metrics']==['bluetooth']
+        saved=dict(cfg,resource_compact_metrics=[]);normalize_resource(saved)
+        assert saved['resource_compact_metrics']==[]
         assert service.set_options(resource_bt_tray=True)
         bt=service.bluetooth;assert bt.tray and service.window is None and service.signature is None
         raw=[dict(id=f'{i:012X}',name=name,level=level) for i,(name,level) in enumerate(
             [('耳机',74),('旅行键盘',38),('无线鼠标',100),('触控笔',None),('演示器',0)],1)]
         data=devices(raw+[dict(raw[0],level=None)])
-        bt.publish(data,'');first=[r['id'] for r in bt.group()];assert len(first)==3 and bt.pages()==2
-        assert len({r['ink'] for r in bt.group()})==3
+        bt.publish(data,'');group,pages=bt.tray_group();first=[r['id'] for r in group]
+        assert len(first)==3 and pages==2 and len({r['ink'] for r in group})==3
         before=dict(bt.assignments)
         bt.publish(devices(list(reversed(raw))),'')
-        assert first==[r['id'] for r in bt.group()] and before==bt.assignments
-        bt.turn(1);assert [r['level'] for r in bt.group()]==[None,0]
+        assert first==[r['id'] for r in bt.tray_group()[0]] and before==bt.assignments
+        bt.turn_tray();assert [r['level'] for r in bt.tray_group()[0]]==[None,0]
+        assert first==[r['id'] for r in service.battery_rows(tray=True)[:3]]
         assert '未报告' in bt.tray.toolTip() and '0%' in bt.tray.toolTip()
-        bt.turn(-1);assert tray_icon(bt.group(),False).pixmap(32,32).save(str(output/'bluetooth-tray-rings.png'))
+        bt.turn_tray();assert tray_icon(bt.tray_group()[0],False).pixmap(32,32).save(str(output/'bluetooth-tray-rings.png'))
+        wireless=dict(id='p310',name='天选 P310',level=94,state='sleeping',stale=True,ink='#41b66a')
+        profiles=[{'id':'p310'}]
+        with patch.dict(cfg,resource_peripheral_profiles=profiles), patch.object(runtime.dock,'preview',False), \
+                patch('resource_peripheral_monitor.PeripheralMonitor') as monitor:
+            reader=monitor.return_value
+            reader.rows=[wireless];reader.status='';reader.profiles=profiles
+            service.sync_peripherals()
+            monitor.assert_called_once_with(service,profiles)
+            bt.publish(devices(raw[:1]),'')
+            tooltip=bt.tray.toolTip()
+            assert all(text in tooltip for text in ('外设电量','耳机','74%','天选 P310','2.4G','上次 94%','休眠'))
+            bt.publish([],'未发现已连接的蓝牙设备。')
+            assert '天选 P310' in bt.tray.toolTip() and service.window is None
+            bt.build_menu()
+            assert any('天选 P310' in action.text() and not action.isEnabled() for action in bt.menu.actions())
+            with patch.dict(cfg,resource_bt_tray=False):
+                service.sync_peripherals()
+                reader.close.assert_called_once()
+                assert service.peripherals is None and '天选 P310' not in bt.tray.toolTip()
+        bt.publish(devices(raw),'')
+        checks.append('Peripheral battery tray: one icon shows Bluetooth and 2.4G together, retains a 2.4G-only reading with capsule off, keeps paging independent and labels a stale sleeping value.')
         cfg['resource_collapsed'] = False
         popup=DockQuickSettings(runtime.dock.extras);popup.refresh();popup.tiles['resources'].click();app.processEvents()
         assert cfg['resource_enabled'] and service.window is not None
@@ -179,11 +207,9 @@ def run(api,runtime,root,app,output,checks):
         assert window.rank_section.geometry().bottom() < window.battery_section.y()
         assert window.sensor_columns.y() == window.battery_section.y()
         assert window.sensor_columns.geometry().right() < window.battery_section.x()
-        assert window.rings.value_x==window.rings.name_x+window.rings.name_width+window.rings.gap
-        assert window.rings.height()==51 and window.rings.value_x<155
-        old_value_x=window.rings.value_x
+        assert window.rings.height()==51 and len(window.rings.legend)==3
         window.rings.resize(window.rings.width()+120,window.rings.height());window.rings.grab()
-        assert window.rings.value_x==old_value_x and '旅行键盘' in window.rings.toolTip()
+        assert all(value in window.rings.accessibleName() for value in ('旅行键盘','38%','蓝牙'))
         assert window.grab().save(str(output/'resource-expanded.png'))
         regular = window.geometry()
         window.resize(500, regular.height());app.processEvents();window.body.activate()
@@ -395,7 +421,7 @@ def run(api,runtime,root,app,output,checks):
         service.set_options(**bt_only,resource_layout={},resource_collapsed=False,
                             resource_expanded_width=560,resource_expanded_height=300)
         service.bluetooth.publish(devices(long_names),'');app.processEvents();window.grab()
-        assert window.width()<=280 and not window.graph.isVisible() and window.rings.isVisible() and window.rings.name_width<=112
+        assert window.width()<=280 and not window.graph.isVisible() and window.rings.isVisible()
         assert long_names[0]['name'] in window.rings.toolTip()
         all_off={'resource_'+key:False for key in __import__('resource_options').METRICS}
         assert service.set_options(**all_off) and not service.signature and not service.history and not service.bluetooth and not service.fps and not service.sensors

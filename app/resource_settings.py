@@ -400,6 +400,8 @@ class ResourceOptions(QDialog):
         def build_5():
             layout=page(5)
             peripherals=section(layout,'外设电量')
+            for key,title in [('resource_bluetooth','在资源卡片和胶囊中显示蓝牙设备'),('resource_bt_tray','显示外设电量托盘图标')]:
+                self.fields[key]=check(title,cfg[key]);peripherals.addWidget(self.fields[key])
             profiles=self.orders.get('resource_peripheral_profiles',cfg['resource_peripheral_profiles'])
             device_row=QHBoxLayout()
             count=QLabel(f'已添加 {len(profiles)} 台设备' if profiles else '尚未添加 2.4G 外设')
@@ -410,10 +412,10 @@ class ResourceOptions(QDialog):
             readouts=section(layout,'资源读数')
             form=QFormLayout();readouts.addLayout(form)
             combo(form,'resource_interval','采样间隔',[(str(s)+' 秒',s) for s in (1,2,5)],cfg['resource_interval'],self.fields)
-            for key,title in [('resource_bt_tray','蓝牙电量托盘图标'),('resource_hide_unavailable','隐藏未提供读数的传感器')]:
-                self.fields[key]=check(title,cfg[key]);readouts.addWidget(self.fields[key])
+            self.fields['resource_hide_unavailable']=check('隐藏未提供读数的传感器',cfg['resource_hide_unavailable'])
+            readouts.addWidget(self.fields['resource_hide_unavailable'])
             grid=QGridLayout();readouts.addLayout(grid)
-            for i,(key,title) in enumerate(METRICS.items()):
+            for i,(key,title) in enumerate((key,title) for key,title in METRICS.items() if key!='bluetooth'):
                 field=check(title,cfg['resource_'+key]);self.fields['resource_'+key]=field;grid.addWidget(field,i//3,i%3)
             fan_hint=QLabel('CPU、GPU 和主板风扇仅在读到实际转速时显示。')
             fan_hint.setWordWrap(True);readouts.addWidget(fan_hint)

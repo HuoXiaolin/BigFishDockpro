@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 from threading import Event
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import wave
 
 from PyQt5.QtCore import QDate, QDateTime, QEvent, QPointF, QRectF, QTimer, Qt
@@ -238,6 +238,35 @@ def run(api,runtime,app,output,checks):
             service.sensors.values.pop('brightness');service.display();app.processEvents()
             assert all(value in window.system_readout.accessibleName() for value in ('12%','静音','亮度 —','未连接'))
             assert window.battery_section.grab().save(str(output/'device-status-low.png'))
+
+            peripherals=SimpleNamespace(rows=[
+                dict(id='p310',name='华硕天选 P310',level=94,state='active',ink='#35adb3'),
+                dict(id='mouse',name='鼠标',level=33,state='charging',ink='#41b66a'),
+                dict(id='keyboard',name='键盘',level=26,state='sleeping',stale=True,ink='#8297c9'),
+            ],status='',refresh=Mock())
+            with patch.dict(cfg,resource_peripheral_profiles=[{}]), patch.object(service,'peripherals',peripherals):
+                with patch.object(service.bluetooth,'refresh') as refresh_bluetooth:
+                    window.refresh_battery_rows()
+                    assert window.rings.height()==51 and not window.battery_next.isHidden()
+                    summary=window.rings.accessibleName()
+                    assert all(value in summary for value in ('蓝牙 · BOW5.0 · 79%', '2.4G · 华硕天选 P310 · 94%', '充电中'))
+                    from resource_compact import status_values
+                    with patch.dict(cfg,resource_compact_metrics=['bluetooth']):
+                        badges=status_values(service)
+                        assert len(badges)==1 and badges[0][:2]==('bluetooth','外设电量')
+                        assert {row['source'] for row in badges[0][3]}=={'bluetooth','2.4g'}
+                    window.battery_refresh.click()
+                    refresh_bluetooth.assert_called_once()
+                    peripherals.refresh.assert_called_once()
+                    window.battery_next.click()
+                    assert window.rings.height()==17 and '上次 26% · 休眠' in window.rings.accessibleName()
+                    with patch.dict(cfg,resource_bluetooth=False,resource_system_status=False):
+                        window.refresh_dashboard()
+                        assert window.battery_title.text()=='外设电量' and window.battery_next.isHidden()
+                        assert window.rings.height()==51 and 'BOW5.0' not in window.rings.accessibleName()
+            window.refresh_dashboard()
+            assert window.rings.height()==17 and 'BOW5.0' in window.rings.accessibleName()
+            checks.append('Expanded device battery shows Bluetooth and 2.4G together, refreshes both, paginates together and stays visible for 2.4G-only profiles.')
 
             from resource_compact import compact_badges,plan,status_values
             from resource_options import COMPACT_DEVICE

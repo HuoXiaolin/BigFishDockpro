@@ -1,8 +1,9 @@
 """Movable monitor panel. Compact and expanded states share one header-centre anchor."""
+from html import escape
 from math import ceil
 import time
 from PyQt5.QtCore import Qt,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
-from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QCursor,QPixmap,QPalette,QRegion
+from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics,QCursor,QPixmap,QPalette,QRegion
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
     QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy)
 from ui_style import AlignedMenu
@@ -52,37 +53,28 @@ class BatteryRows(QWidget):
     name_x=46
     gap=7
 
-    def __init__(self,window,peripheral=False):
+    def __init__(self,window):
         super().__init__()
         self.owner_window=window
-        self.peripheral=peripheral
         self.legend=[]
         self.status=''
-        self.name_width=0
         self.setFixedHeight(17)
 
-    def refresh(self,gauge):
-        rows=gauge.group() if gauge else []
-        status=gauge.status if gauge else ('正在读取 2.4G 外设…' if self.peripheral else '正在读取蓝牙设备…')
+    def refresh(self,rows,status):
         if rows==self.legend and status==self.status:return
         self.legend=rows;self.status=status
         height=17*max(1,len(self.legend))
         if self.height()!=height:self.setFixedHeight(height)
-        summary='\n'.join(row['name']+' · '+self.percentage(row) for row in self.legend) or self.status
-        if self.peripheral and rows:
-            from html import escape
-            self.setToolTip('<qt>'+escape(summary).replace('\n','<br>')+'</qt>')
-        else:self.setToolTip(summary)
+        summary='\n'.join(f"{self.source_name(row)} · {row['name']} · {row['display_value']}" for row in rows) or status
+        self.setToolTip('<qt>'+escape(summary).replace('\n','<br>')+'</qt>')
         self.setAccessibleName(summary);self.update()
 
-    def percentage(self,row):
-        if self.peripheral:
-            from resource_peripherals import format_reading
-            return format_reading(row)
-        return '未报告' if row['level'] is None else f"{row['level']}%"
+    @staticmethod
+    def source_name(row):
+        return '2.4G' if row['source']=='2.4g' else '蓝牙'
 
     def paintEvent(self,event):
-        from bluetooth_gauge import draw_rings,draw_peripheral_rings,ring_ink
+        from bluetooth_gauge import draw_peripheral_rings,ring_ink
         from resource_status import BATTERY_WARNING_LEVEL
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         c=self.owner_window.colors
@@ -93,24 +85,24 @@ class BatteryRows(QWidget):
             return
         metrics=p.fontMetrics();value_font=QFont(font);value_font.setWeight(QFont.DemiBold)
         name_x=self.name_x;gap=self.gap
-        from PyQt5.QtGui import QFontMetrics
         numbers=QFontMetrics(value_font)
-        value_width=max(numbers.horizontalAdvance(self.percentage(row)) for row in self.legend)+2
-        self.name_width=max(1,min(112,self.width()-name_x-gap-value_width-2,
-                                  max(metrics.horizontalAdvance(row['name']) for row in self.legend)))
-        self.value_x=name_x+self.name_width+gap
-        p.setPen(QColor(c['muted']))
-        p.drawText(QRect(0,0,27,17),Qt.AlignVCenter,'2.4G' if self.peripheral else '蓝牙')
-        for i,row in enumerate(self.legend):
+        readings=[row['display_value'] for row in self.legend]
+        available=max(2,self.width()-name_x-gap-2)
+        value_width=min(max(numbers.horizontalAdvance(value) for value in readings)+2,max(1,available-20))
+        name_width=max(1,min(112,available-value_width,
+                             max(metrics.horizontalAdvance(row['name']) for row in self.legend)))
+        value_x=name_x+name_width+gap
+        for i,(row,value) in enumerate(zip(self.legend,readings)):
             y=17*i
-            draw=draw_peripheral_rings if self.peripheral else draw_rings
-            draw(p,QRectF(28,y+1,14,14),[row],not c['light'])
+            p.setPen(QColor(c['muted']));p.setFont(font)
+            p.drawText(QRect(0,y,27,17),Qt.AlignVCenter,self.source_name(row))
+            draw_peripheral_rings(p,QRectF(28,y+1,14,14),[row],not c['light'])
             p.setPen(QColor(c['ink']));p.setFont(font)
-            p.drawText(QRect(name_x,y,self.name_width+1,17),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,self.name_width+1))
+            p.drawText(QRect(name_x,y,name_width+1,17),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,name_width+1))
             low=row['level'] is not None and row['level']<BATTERY_WARNING_LEVEL
-            tinted=low or self.peripheral and (row.get('state')=='charging' or row.get('stale'))
+            tinted=low or row.get('state')=='charging' or row.get('stale')
             p.setPen(QColor(ring_ink(row,c['light']) if tinted else c['ink']))
-            p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,17),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
+            p.setFont(value_font);p.drawText(QRect(value_x,y,value_width,17),Qt.AlignRight|Qt.AlignVCenter,numbers.elidedText(value,Qt.ElideRight,value_width))
 
 
 class CapsuleTab(QToolButton):
@@ -193,6 +185,8 @@ class CapsuleTab(QToolButton):
 
 class ResourceContentHost(QWidget):
     """Shared page surface and hardware dashboard for the capsule and desktop cards."""
+    battery_page_size=3
+
     def __init__(self,service,hardware=True):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
         self.service=service
@@ -200,7 +194,7 @@ class ResourceContentHost(QWidget):
         self.rank_labels=[]
         self.rank_icons={}
         self.dashboard=None
-        self.peripheral_ui=None
+        self.battery_page=0
         self.colors={}
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -293,17 +287,17 @@ class ResourceContentHost(QWidget):
         body.addWidget(self.dashboard)
         self.sensor_columns=SensorColumns(self);self.sensor_columns.setParent(self.dashboard)
         self.no_readings=QLabel('在「设置」中选择要显示的读数。');self.no_readings.setWordWrap(True);body.addWidget(self.no_readings)
-        self.bt_head=QWidget();row=QHBoxLayout(self.bt_head);row.setContentsMargins(0,0,0,0)
+        self.battery_actions=QWidget();row=QHBoxLayout(self.battery_actions);row.setContentsMargins(0,0,0,0)
         row.setSpacing(4)
-        self.bt_page=QToolButton();self.bt_page.clicked.connect(self.next_devices);row.addWidget(self.bt_page)
-        self.bt_refresh=QToolButton();self.bt_refresh.setAccessibleName('刷新蓝牙电量')
-        self.bt_refresh.setToolTip('刷新蓝牙电量');self.bt_refresh.clicked.connect(self.refresh_bt);row.addWidget(self.bt_refresh)
+        self.battery_next=QToolButton();self.battery_next.setAccessibleName('下一组外设电量')
+        self.battery_next.clicked.connect(self.next_devices);row.addWidget(self.battery_next)
+        self.battery_refresh=QToolButton();self.battery_refresh.setAccessibleName('刷新外设电量')
+        self.battery_refresh.setToolTip('刷新外设电量');self.battery_refresh.clicked.connect(self.service.refresh_batteries);row.addWidget(self.battery_refresh)
         self.battery_section=DashboardCard(self,'mint',self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
         battery_layout.setContentsMargins(9,6,9,7);battery_layout.setSpacing(1)
         top=QHBoxLayout();top.setSpacing(4)
-        heading=QLabel('电脑状态');heading.setObjectName('RankTitle');top.addWidget(heading,1)
-        top.addWidget(self.bt_head);battery_layout.addLayout(top)
-        self.battery_header=top
+        self.battery_title=QLabel('电脑状态');self.battery_title.setObjectName('RankTitle');top.addWidget(self.battery_title,1)
+        top.addWidget(self.battery_actions);battery_layout.addLayout(top)
         from resource_system_view import SystemReadout
         self.system_readout=SystemReadout(self);battery_layout.addWidget(self.system_readout)
         self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
@@ -334,12 +328,11 @@ class ResourceContentHost(QWidget):
             return
         page = self.scroll.takeWidget()
         self.dashboard = None
-        self.peripheral_ui = None
         self.rank_labels = []
         self.rank_icons.clear()
         for name in ('columns','graph','rank_section','rank_head','rank_buttons','rank_widget',
-                     'dashboard_layout_key','sensor_columns','no_readings','bt_head','bt_page',
-                     'bt_refresh','battery_section','battery_header','system_readout','rings','body','page'):
+                     'dashboard_layout_key','sensor_columns','no_readings','battery_actions','battery_next',
+                     'battery_refresh','battery_section','battery_title','system_readout','rings','body','page'):
             self.__dict__.pop(name, None)
         if page is not None:
             page.deleteLater()
@@ -390,54 +383,30 @@ class ResourceContentHost(QWidget):
         self.rank_icons=icons
 
     def next_devices(self):
-        if self.service.bluetooth:self.service.bluetooth.turn(1)
+        self.refresh_battery_rows(1)
 
-    def refresh_bt(self):
-        if self.service.bluetooth:self.service.bluetooth.refresh()
-
-    def next_peripherals(self):
-        monitor=self.service.peripherals
-        if monitor:monitor.turn()
-
-    def read_peripherals(self):
-        monitor=self.service.peripherals
-        if monitor:monitor.refresh()
-
-    def build_peripherals(self):
-        header=QWidget(self.battery_section)
-        actions=QHBoxLayout(header);actions.setContentsMargins(0,0,0,0);actions.setSpacing(4)
-        page=QToolButton();page.setAccessibleName('下一组 2.4G 外设')
-        page.clicked.connect(self.next_peripherals);actions.addWidget(page)
-        refresh=QToolButton();refresh.setAccessibleName('刷新 2.4G 外设电量')
-        refresh.setToolTip('刷新 2.4G 外设电量')
-        refresh.clicked.connect(self.read_peripherals);actions.addWidget(refresh)
-        rings=BatteryRows(self,peripheral=True)
-        self.battery_header.insertWidget(1,header)
-        layout=self.battery_section.layout()
-        layout.insertWidget(layout.indexOf(self.rings)+1,rings)
-        self.peripheral_ui=(header,page,refresh,rings)
-        sync_card_controls(header,self.colors)
-
-    def refresh_peripherals(self):
+    def refresh_battery_rows(self,step=0):
         if self.dashboard is None:return
-        enabled=bool(self.service.cfg.get('resource_peripheral_profiles'))
+        cfg=self.service.cfg
+        enabled=bool(cfg['resource_bluetooth'] or cfg.get('resource_peripheral_profiles'))
+        self.battery_actions.setVisible(enabled)
+        self.rings.setVisible(enabled)
         if not enabled:
-            if self.peripheral_ui:
-                header,_,_,rings=self.peripheral_ui
-                self.peripheral_ui=None
-                for layout,widget in ((self.battery_header,header),(self.battery_section.layout(),rings)):
-                    layout.removeWidget(widget);widget.hide();widget.deleteLater()
+            self.battery_page=0
+            self.rings.refresh([],'')
             return
-        if self.peripheral_ui is None:self.build_peripherals()
-        _,page,refresh,rings=self.peripheral_ui
-        monitor=getattr(self.service,'peripherals',None)
-        page.setVisible(bool(monitor and monitor.pages()>1))
-        if monitor:page.setText(f'{monitor.page+1}/{monitor.pages()} ›')
+        rows=self.service.battery_rows()
+        size=self.battery_page_size
+        pages=max(1,(len(rows)+size-1)//size)
+        self.battery_page=(min(self.battery_page,pages-1)+step)%pages
+        self.battery_next.setVisible(pages>1)
+        self.battery_next.setText(f'{self.battery_page+1}/{pages} ›')
         ink=self.colors['muted']
-        if refresh.property('iconInk')!=ink:
-            refresh.setProperty('iconInk',ink)
-            refresh.setIcon(icon('refresh',ink,13));refresh.setIconSize(QSize(13,13))
-        rings.refresh(monitor)
+        if self.battery_refresh.property('iconInk')!=ink:
+            self.battery_refresh.setProperty('iconInk',ink)
+            self.battery_refresh.setIcon(icon('refresh',ink,13));self.battery_refresh.setIconSize(QSize(13,13))
+        start=self.battery_page*size
+        self.rings.refresh(rows[start:start+size],'' if rows else self.service.battery_status())
 
     def refresh_dashboard(self):
         cfg=self.service.cfg
@@ -449,20 +418,12 @@ class ResourceContentHost(QWidget):
         self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth'] or cfg['resource_system_status'] or peripherals))
         self.rank_section.setVisible(cfg['resource_rank'])
         self.battery_section.setVisible(cfg['resource_bluetooth'] or cfg['resource_system_status'] or peripherals)
+        self.battery_title.setText('电脑状态' if cfg['resource_system_status'] else '外设电量')
         self.system_readout.setVisible(cfg['resource_system_status'])
         if cfg['resource_system_status']:self.system_readout.refresh()
         self.layout_dashboard()
         if cfg['resource_rank']:self.show_ranking()
-        self.bt_head.setVisible(cfg['resource_bluetooth']);self.rings.setVisible(cfg['resource_bluetooth'])
-        bt=self.service.bluetooth;self.bt_page.setVisible(bool(bt and bt.pages()>1))
-        if bt:self.bt_page.setText(f'{bt.page+1}/{bt.pages()} ›')
-        if cfg['resource_bluetooth']:
-            ink=self.colors['muted']
-            if self.bt_refresh.property('iconInk')!=ink:
-                self.bt_refresh.setProperty('iconInk',ink)
-                self.bt_refresh.setIcon(icon('refresh',ink,13));self.bt_refresh.setIconSize(QSize(13,13))
-            self.rings.refresh(bt)
-        self.refresh_peripherals()
+        self.refresh_battery_rows()
         self.body.activate()
         wanted=self.body.minimumSize().height()
         if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)

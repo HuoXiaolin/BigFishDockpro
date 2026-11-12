@@ -1,4 +1,4 @@
-"""One on-demand device reader shared by both the monitor and its optional tray icon."""
+"""Bluetooth readings and the shared peripheral battery tray icon."""
 import json
 import os
 import re
@@ -77,26 +77,28 @@ def tray_icon(rows,dark):
     result=QIcon()
     for side in (16,20,24,32,48,64):
         pm=QPixmap(side,side);pm.fill(Qt.transparent);p=QPainter(pm)
-        draw_rings(p,QRectF(0,0,side,side),rows,dark);p.end();result.addPixmap(pm)
+        draw_peripheral_rings(p,QRectF(0,0,side,side),rows,dark);p.end();result.addPixmap(pm)
     return result
+
+
+def tray_line(row):
+    name=row['name']
+    if row['source']=='2.4g':
+        name+='（2.4G）'
+    return f'{name}  {row["display_value"]}'
 
 
 class BluetoothGauge(QObject):
     def __init__(self,owner):
         super().__init__(owner)
-        self.owner=owner;self.rows=[];self.assignments={};self.page=0;self.status='正在读取蓝牙电量…'
-        self.tray=self.menu=None;self.closed=False;self.busy=False
+        self.owner=owner;self.rows=[];self.assignments={};self.status='正在读取蓝牙电量…'
+        self.tray=self.menu=None;self.tray_page=0;self.closed=False;self.busy=False
         self.preview=owner.runtime.dock.preview or bool(os.environ.get('FISHDOCK_TEST_DESKTOP'))
         self.process=QProcess(self);self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.process_error)
         self.next=QTimer(self);self.next.setSingleShot(True);self.next.setInterval(120000);self.next.timeout.connect(self.refresh)
         self.deadline=QTimer(self);self.deadline.setSingleShot(True);self.deadline.setInterval(16000);self.deadline.timeout.connect(self.timed_out)
 
-    def group(self):
-        start=self.page*GROUP;return self.rows[start:start+GROUP]
-    def pages(self):return max(1,(len(self.rows)+GROUP-1)//GROUP)
-    def turn(self,step):
-        self.page=(self.page+step)%self.pages();self.paint_status()
     def refresh(self):
         if self.closed or self.busy or self.preview:return
         root=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]))
@@ -132,14 +134,14 @@ class BluetoothGauge(QObject):
             if row['id'] not in self.assignments:
                 self.assignments[row['id']]=next((c for c in HUES if c not in self.assignments.values()),HUES[i%len(HUES)])
             row['ink']=self.assignments[row['id']]
-        self.rows=rows;self.page=min(self.page,self.pages()-1);self.paint_status()
+        self.rows=rows;self.owner.batteries_changed()
         if not self.preview:self.next.start()
 
     def set_tray(self,visible):
         if visible and self.tray is None:
             self.tray=QSystemTrayIcon(self);self.menu=AlignedMenu()
             self.menu.aboutToShow.connect(self.build_menu);self.tray.setContextMenu(self.menu)
-            self.tray.activated.connect(self.activated);self.paint_status()
+            self.tray.activated.connect(self.activated);self.paint_tray()
             if not self.preview:self.tray.show()
         elif not visible and self.tray is not None:
             self.tray.hide();self.tray.setContextMenu(None);self.tray.deleteLater();self.tray=None
@@ -150,28 +152,37 @@ class BluetoothGauge(QObject):
             from PyQt5.QtGui import QCursor
             self.menu.popup(QCursor.pos())
 
-    def build_menu(self):
-        self.menu.clear();self.menu.addAction('蓝牙电量').setEnabled(False)
-        for row in self.group():
-            value='未报告' if row['level'] is None else str(row['level'])+'%'
-            self.menu.addAction(row['name'].replace('&','&&')+'   '+value).setEnabled(False)
-        if not self.rows:self.menu.addAction(self.status).setEnabled(False)
-        if self.pages()>1:
-            self.menu.addAction(f'下一组（{self.page+1}/{self.pages()}）',lambda:self.turn(1))
-        self.menu.addSeparator()
-        self.menu.addAction('刷新电量',self.refresh)
-        self.menu.addAction('关闭蓝牙电量托盘图标',lambda:self.owner.set_options(resource_bt_tray=False))
+    def tray_group(self,step=0):
+        rows=self.owner.battery_rows(tray=True)
+        pages=max(1,(len(rows)+GROUP-1)//GROUP)
+        self.tray_page=(min(self.tray_page,pages-1)+step)%pages
+        start=self.tray_page*GROUP
+        return rows[start:start+GROUP],pages
 
-    def paint_status(self):
-        if self.tray is not None:
-            self.tray.setIcon(tray_icon(self.group(),not self.owner.runtime.dock.is_light()))
-            lines=['蓝牙电量']
-            for row in self.group():
-                lines.append(row['name']+'  '+('未报告' if row['level'] is None else str(row['level'])+'%'))
-            if not self.rows:lines.append(self.status)
-            if self.pages()>1:lines.append(f'第 {self.page+1}/{self.pages()} 组')
-            self.tray.setToolTip('\n'.join(lines))
-        self.owner.display()
+    def turn_tray(self):
+        self.tray_group(1)
+        self.paint_tray()
+
+    def build_menu(self):
+        rows,pages=self.tray_group()
+        self.menu.clear();self.menu.addAction('外设电量').setEnabled(False)
+        for row in rows:
+            self.menu.addAction(tray_line(row).replace('&','&&')).setEnabled(False)
+        if not rows:self.menu.addAction(self.owner.battery_status(tray=True)).setEnabled(False)
+        if pages>1:
+            self.menu.addAction(f'下一组（{self.tray_page+1}/{pages}）',self.turn_tray)
+        self.menu.addSeparator()
+        self.menu.addAction('刷新电量',self.owner.refresh_batteries)
+        self.menu.addAction('关闭外设电量托盘图标',lambda:self.owner.set_options(resource_bt_tray=False))
+
+    def paint_tray(self):
+        if self.tray is None:return
+        rows,pages=self.tray_group()
+        self.tray.setIcon(tray_icon(rows,not self.owner.runtime.dock.is_light()))
+        lines=['外设电量']+[tray_line(row) for row in rows]
+        if not rows:lines.append(self.owner.battery_status(tray=True))
+        if pages>1:lines.append(f'第 {self.tray_page+1}/{pages} 组')
+        self.tray.setToolTip('\n'.join(lines))
 
     def close(self):
         self.closed=True;self.next.stop();self.deadline.stop();self.set_tray(False)

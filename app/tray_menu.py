@@ -137,7 +137,7 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         monitor.addAction('显示与采样设置…').triggered.connect(runtime.resources.settings)
         show=monitor.addAction('显示桌面资源胶囊');show.setCheckable(True);show.setChecked(tray.cfg['resource_enabled'])
         show.triggered.connect(lambda on:runtime.resources.set_options(resource_enabled=on))
-        bt=monitor.addAction('显示蓝牙电量托盘图标');bt.setCheckable(True);bt.setChecked(tray.cfg['resource_bt_tray'])
+        bt=monitor.addAction('显示外设电量托盘图标');bt.setCheckable(True);bt.setChecked(tray.cfg['resource_bt_tray'])
         bt.triggered.connect(lambda on:runtime.resources.set_options(resource_bt_tray=on))
         from taskbar_menu import add_menu as taskbar_actions
         taskbar_actions(menu.addMenu('任务栏'),runtime)

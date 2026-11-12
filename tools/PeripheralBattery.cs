@@ -1,4 +1,4 @@
-// Windows USB HID discovery and read-only battery/status queries for known receivers.
+// Windows USB HID discovery and battery/status queries.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using Microsoft.Win32.SafeHandles;
 
-internal static class PeripheralBattery {
+internal static partial class PeripheralBattery {
     const int MaxDevices = 12;
     const int MaxCollections = 192;
     const int MaxRequestChars = 32768;
@@ -40,6 +40,7 @@ internal static class PeripheralBattery {
         public string name { get; set; }
         public string protocol { get; set; }
         public string compatible_protocol { get; set; }
+        public Dictionary<string, object> reader { get; set; }
     }
 
     public sealed class Reading {
@@ -144,8 +145,8 @@ internal static class PeripheralBattery {
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool CancelIoEx(SafeFileHandle handle, IntPtr overlapped);
 
-    // All commands below are fixed queries. A configuration can select only an
-    // adapter whose USB identity and HID collection match these constraints.
+    // These built-in adapters can send only their fixed queries. Configurable
+    // readers use the separate read-only transport in PeripheralBattery.Custom.cs.
     sealed class Adapter {
         internal int Vid, Pid, Page, Usage, Interface, Collection, Input, Output, Feature;
         internal string Protocol, Name;
@@ -192,6 +193,7 @@ internal static class PeripheralBattery {
         new Adapter(0x046d, 0xc547, "Logitech G502 X PLUS", "logitech-unified", 0xff00, input:20, output:20),
         new Adapter(0x0b05, 0x1a1a, "ROG 魔刃 X", "rog-chakram", 0xff01, 1, 0, 65, 65),
         new Adapter(0x0b05, 0x1a18, "ROG 魔刃 X", "rog-chakram", 0xff01, 1, 0, 65, 65, optional:true, cable:true),
+        new Adapter(0x0b05, 0x1a8d, "华硕天选游戏鼠标", "rog-chakram", 0xff01, 1, 0, 65, 65),
         new Adapter(0x0b05, 0x1ace, "ROG 夜魔 OMNI", "rog-azoth-omni", 0xff00, 1, 2, 64, 64, collection:2),
         new Adapter(0x0b05, 0x1a83, "ROG 夜魔", "rog-azoth", 0xff00, 1, 1, 65, 65, optional:true, cable:true),
         new Adapter(0x0b05, 0x1a85, "ROG 夜魔", "rog-azoth", 0xff00, 1, 1, 65, 65, optional:true),
@@ -333,13 +335,9 @@ internal static class PeripheralBattery {
     }
 
     internal static object Read() {
-        var data = new char[MaxRequestChars + 1];
-        int count;
-        using (var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false), false))
-            count = input.ReadBlock(data, 0, data.Length);
-        if (count == 0 || count > MaxRequestChars) return new Reading[0];
-        var requests = new JavaScriptSerializer { MaxJsonLength = MaxRequestChars, RecursionLimit = 8 }
-            .Deserialize<List<Descriptor>>(new String(data, 0, count));
+        string data = ReadRequest();
+        if (data == null) return new Reading[0];
+        var requests = RequestSerializer().Deserialize<List<Descriptor>>(data);
         if (requests == null || requests.Count > MaxDevices) return new Reading[0];
         requests = requests.Where(d => d != null && ValidId(d.device_id)).ToList();
         if (requests.Count == 0) return new Reading[0];
@@ -348,8 +346,10 @@ internal static class PeripheralBattery {
         var used = new HashSet<string>(StringComparer.Ordinal);
         foreach (var request in requests) {
             var adapter = Adapters.FirstOrDefault(a => a.Protocol == request.protocol && a.Match(request));
+            var reader = request.protocol == CustomProtocol ? ParseReader(request) : null;
             Reading reading = Result(null, "unavailable");
-            if (adapter != null) {
+            string name = adapter != null ? adapter.Name : "USB HID";
+            if (adapter != null || reader != null) {
                 var matches = rows.Where(row => SameCollection(row.Info, request)).ToArray();
                 var match = matches.FirstOrDefault(row => row.Info.device_id == request.device_id);
                 // Rebinding after a port change is safe only for an unambiguous live descriptor.
@@ -357,16 +357,21 @@ internal static class PeripheralBattery {
                     !requests.Any(other => other.device_id == matches[0].Info.device_id))
                     match = matches[0];
                 if (match == null) reading = Result(null, matches.Length == 0 ? "offline" : "unavailable");
-                else if (used.Add(match.Info.device_id)) reading = QueryBounded(match, adapter);
+                else if (used.Add(match.Info.device_id)) {
+                    if (reader != null) name = match.Info.name;
+                    reading = reader != null
+                        ? ProbeBounded(match, () => QueryCustom(match, reader), state => Result(null, state))
+                        : ProbeBounded(match, () => Query(match, adapter), state => Result(null, state));
+                }
             }
             reading.id = request.device_id;
-            reading.name = adapter != null ? adapter.Name : "USB HID";
+            reading.name = name;
             results.Add(reading);
         }
         return results;
     }
 
-    static Reading QueryBounded(Collection row, Adapter adapter) {
+    static T ProbeBounded<T>(Collection row, Func<T> probe, Func<string, T> failure) {
         // The driver owns the outstanding operation. A broken driver must not
         // hold up subsequent probes or our UI. The short-lived process provides
         // the outer deadline and releases any stuck handle on exit.
@@ -376,14 +381,14 @@ internal static class PeripheralBattery {
                     bool acquired;
                     try { acquired = gate.WaitOne(0); }
                     catch (AbandonedMutexException) { acquired = true; }
-                    if (!acquired) return Result(null, "busy");
-                    try { return Query(row, adapter); }
+                    if (!acquired) return failure("busy");
+                    try { return probe(); }
                     finally { gate.ReleaseMutex(); }
                 }
             }
-            catch (Exception) { return Result(null, "unavailable"); }
+            catch (Exception) { return failure("unavailable"); }
         });
-        return query.Wait(850) ? query.Result : Result(null, "unavailable");
+        return query.Wait(850) ? query.Result : failure("unavailable");
     }
 
     static Reading Query(Collection row, Adapter adapter) {

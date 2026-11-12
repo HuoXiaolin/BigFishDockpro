@@ -90,7 +90,7 @@ def field_catalog(api, cfg):
         'flash_delay': (1, '收起延迟（秒）', 'number', (1, 30)),
         'resource_enabled': (1, '显示资源胶囊', 'check', None),
         'resource_taskbar': (1, '显示任务栏监控', 'check', None),
-        'resource_bt_tray': (1, '蓝牙电量托盘图标', 'check', None),
+        'resource_bt_tray': (1, '外设电量托盘图标', 'check', None),
         'resource_ai_tray': (1, 'AI 用量托盘图标', 'check', None),
         'reorder': (2, '允许拖动 Dock 图标排序', 'check', None),
         'running_dots': (2, '显示 Dock 应用的运行标记', 'check', None),

@@ -5,9 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from resource_app_traffic import AppTrafficHistory, add_interval, frame_rows
-from resource_peripherals import (bind_profiles, diagnostics_prompt, format_reading, load_profile_file,
-                                  merge_readings, normalize_profiles, save_diagnostics,
-                                  save_diagnostics_prompt, save_profile_file)
+from resource_peripherals import (bind_profiles, decode_custom_report, diagnostics_prompt, export_sample_file, format_reading,
+                                  load_profile_file, merge_readings, normalize_profiles, parse_profile_bytes,
+                                  save_diagnostics, save_diagnostics_prompt, save_profile_file)
 from resource_traffic import TrafficLedger
 
 
@@ -50,7 +50,7 @@ def run(checks):
         prompt=diagnostics_prompt([unavailable,device],device['device_id'],diagnostic.name)
         assert '第 2 条' in prompt and 'compx-power' in prompt and 'peripheral-profiles.json' in prompt
         assert device['device_id'] not in prompt and alias not in prompt
-        assert '两种协议字段都缺失' in diagnostics_prompt([unavailable],unavailable['device_id'])
+        assert 'custom-read' in diagnostics_prompt([unavailable],unavailable['device_id'])
         companion=save_diagnostics_prompt(diagnostic,prompt)
         another=save_diagnostics_prompt(diagnostic,'different prompt')
         assert companion!=another and companion.read_text(encoding='utf-8')==prompt
@@ -58,6 +58,7 @@ def run(checks):
         save_profile_file(exported,named)
         assert bind_profiles(load_profile_file(exported),[profile])==named
     checks.append('2.4G diagnostic prompts select a redacted interface and request the import format; aliases round-trip without changing receiver identity.')
+    check_custom_hid(checks)
 
     with TemporaryDirectory(prefix='fishdock-traffic-ledgers-') as directory:
         root=Path(directory)
@@ -93,3 +94,64 @@ def run(checks):
         finally:
             reopened.close()
     checks.append('Traffic ranks merge app deltas, preserve midnight totals across reopen, and reset each ledger independently with a fresh network baseline.')
+
+
+def check_custom_hid(checks):
+    from copy import deepcopy
+    reader={'mode':'get-feature','report_id':7,'match':[dict(offset=1,mask=255,value=164)],
+            'level':dict(offset=2,mask=255,shift=0,maximum=100),
+            'status':dict(offset=3,mask=3,charging=[1],sleeping=[2],offline=[3])}
+    device=dict(device_id='c'*32,name='Fixture HID',vid=0x1234,pid=0x5678,
+                usage_page=0xff00,usage=1,input=8,output=0,feature=8,
+                revision=0x100,interface=1,collection=1,protocol=None)
+    profile={key:value for key,value in device.items() if key!='device_id'}
+    profile.update(protocol='custom-read',reader=reader)
+
+    def parse(row,version=2):
+        return parse_profile_bytes(json.dumps(dict(format='bigfishdock-peripherals',version=version,
+                                                    profiles=[row])).encode())
+
+    def rejects(call):
+        try:
+            call()
+        except ValueError:
+            return
+        raise AssertionError('Invalid custom HID configuration was accepted')
+
+    parsed=parse(profile)
+    bound=bind_profiles(parsed,[device])
+    assert bound[0]['device_id']==device['device_id'] and bound[0]['reader']==reader
+    assert decode_custom_report(reader,bytes.fromhex('07a4480100000000'))['level']==72
+    assert decode_custom_report(reader,bytes.fromhex('07a4480100000000'))['state']=='charging'
+    sleeping=decode_custom_report(reader,bytes.fromhex('07a4ff0200000000'))
+    assert sleeping['state']=='sleeping' and sleeping['level'] is None
+    assert decode_custom_report(reader,bytes.fromhex('08a4480100000000')) is None
+    assert decode_custom_report(reader,bytes.fromhex('07a5480100000000')) is None
+    assert decode_custom_report(reader,bytes.fromhex('07a4ff0000000000')) is None
+    rejects(lambda:parse(profile,1))
+    rejects(lambda:parse(dict(profile,usage_page=1)))
+    rejects(lambda:parse(dict(profile,reader=dict(reader,command='070100'))))
+    rejects(lambda:parse(dict(profile,reader=dict(reader,mode='set-feature'))))
+    rejects(lambda:bind_profiles(parsed,[dict(device,feature=9)]))
+    rejects(lambda:bind_profiles(parsed,[device,dict(device,device_id='d'*32)]))
+    invalid=deepcopy(profile)
+    invalid['reader']['level']['offset']=8
+    rejects(lambda:parse(invalid))
+    with TemporaryDirectory(prefix='fishdock-custom-hid-') as directory:
+        root=Path(directory)
+        file=root/'peripheral-profiles.json'
+        save_profile_file(file,bound)
+        assert json.loads(file.read_text(encoding='utf-8'))['version']==2
+        assert bind_profiles(load_profile_file(file),[device])==bound
+        rejects(lambda:parse_profile_bytes(file.read_bytes(),allow_custom=False))
+        sample=root/'vendor-sample.json'
+        export_sample_file(sample,device,'input-report',-1,
+                           ['07A4480100000000','08A43A0000000000'],'厂商界面显示 72%，充电中')
+        captured=json.loads(sample.read_text(encoding='utf-8'))
+        assert captured['report_id']==-1 and captured['reports'][0]=='07a4480100000000'
+        assert 'device_id' not in captured['device'] and '72%' in captured['observation']
+        prompt=diagnostics_prompt([device],device['device_id'],sample_name=sample.name)
+        assert sample.name in prompt and 'report_id=-1' in prompt
+        rejects(lambda:export_sample_file(sample,device,'get-feature',-1,['07a4480100000000']))
+        rejects(lambda:export_sample_file(sample,device,'input-report',7,['08a43a0000000000']))
+    checks.append('Custom read-only HID binds an unknown vendor interface by exact fingerprint, decodes known sample states, rejects writes, mismatches and ambiguous receivers, and round-trips v2 profiles.')

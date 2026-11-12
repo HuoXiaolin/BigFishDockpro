@@ -8,6 +8,7 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 SOURCE=ROOT/'tools'/'BluetoothBattery.cs'
 PERIPHERALS=ROOT/'tools'/'PeripheralBattery.cs'
+CUSTOM_PERIPHERALS=ROOT/'tools'/'PeripheralBattery.Custom.cs'
 SENSORS=ROOT/'tools'/'HardwareSensors.cs'
 CPU=ROOT/'tools'/'CpuSensors.cs'
 EXTENDED=ROOT/'tools'/'HardwareExtended.cs'
@@ -20,7 +21,7 @@ SHARED_DOTNET=Path(r'D:\Agant\toolchain\dotnet\dotnet.exe')
 
 
 def prepare(dotnet: Path = SHARED_DOTNET):
-    sources=(SOURCE,PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC)
+    sources=(SOURCE,PERIPHERALS,CUSTOM_PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC)
     if TARGET.is_file() and TARGET.stat().st_mtime_ns>=max(p.stat().st_mtime_ns for p in (*sources,*MODULES,Path(__file__))):return TARGET
     dotnet=dotnet.resolve()
     env=dict(os.environ,DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_NOLOGO='1',

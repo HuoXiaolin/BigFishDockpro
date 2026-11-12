@@ -6,18 +6,18 @@ from urllib.parse import urlsplit
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QPushButton, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout,
+    QApplication, QDialog, QFileDialog, QFormLayout, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
 )
 
 from background_worker import BackgroundWorker
 from resource_peripherals import (
-    DIAGNOSTICS_FILENAME, FIELDS, MAX_PROFILE_BYTES, MAX_PROFILES, PROFILE_FILENAME,
-    STATE_LABELS, PeripheralProbe, bind_profiles, diagnostics_prompt, load_profile_file,
+    DIAGNOSTICS_FILENAME, FIELDS, MAX_PROFILE_BYTES, MAX_PROFILES, MAX_REPORT_BYTES, PROFILE_FILENAME,
+    SAMPLE_FILENAME, STATE_LABELS, PeripheralProbe, bind_profiles, diagnostics_prompt, export_sample_file, load_profile_file,
     normalize_alias, normalize_profiles, parse_profile_bytes, save_diagnostics,
     save_diagnostics_prompt, save_profile_file,
 )
-from ui_style import AlignedMenu, SettingsHeader, button, compact_dialog
+from ui_style import AlignedMenu, ModernComboBox, ModernSpinBox, SettingsHeader, button, compact_dialog
 from update_sources import REPOSITORY
 
 
@@ -26,6 +26,8 @@ CATALOG_URL = REPOSITORY + '/releases/latest/download/' + CATALOG_FILE
 CATALOG_LIMIT = 128
 ASSET_HOSTS = {'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}
 ID_ROLE = Qt.UserRole
+SAMPLE_MODES = (('input-report', 'input', '接收设备主动上报'),
+                ('get-feature', 'feature', '读取指定 Feature 报文'))
 STATE_HINTS = {
     'sleeping': '设备已休眠。唤醒设备后再次试读。',
     'offline': '设备未连接。请检查接收器并唤醒设备。',
@@ -104,7 +106,7 @@ class CatalogWorker(BackgroundWorker):
                             break
                         data.extend(chunk)
                 try:
-                    catalog = parse_profile_bytes(bytes(data), limit=CATALOG_LIMIT)
+                    catalog = parse_profile_bytes(bytes(data), limit=CATALOG_LIMIT, allow_custom=False)
                 except ValueError:
                     self._result([], '发布频道的适配文件无效，可继续使用本机适配。')
                 else:
@@ -145,6 +147,68 @@ def _signature(row):
     return tuple(row[key] for key in FIELDS)
 
 
+def _sample_modes(row):
+    if not row or not 0xff00 <= row['usage_page'] <= 0xffff:
+        return ()
+    return tuple((mode, title) for mode, length, title in SAMPLE_MODES if 2 <= row[length] <= MAX_REPORT_BYTES)
+
+
+def _receiver(row):
+    return row.get('receiver_id') or (row['vid'], row['pid'], row.get('name'))
+
+
+def _interface(row):
+    return (f"{row['usage_page']:04X}:{row['usage']:04X} · "
+            f"MI {row['interface']} · Col {row['collection']}")
+
+
+class SampleOptions(QDialog):
+    def __init__(self, parent, row):
+        super().__init__(parent, Qt.Dialog | Qt.FramelessWindowHint)
+        self.setWindowTitle('采集电量报文样本')
+        self.setProperty('simpleForms', True)
+        self.resize(460, 250)
+        layout = QVBoxLayout(self)
+        layout.addWidget(SettingsHeader(self, self.windowTitle()))
+        hint = QLabel(f'{_name(row)} · {_interface(row)}\n'
+                      '只读取此厂商接口。设备主动上报时可先唤醒设备；读取 Feature 需要从协议资料确认报文 ID。')
+        hint.setTextFormat(Qt.PlainText)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        form = QFormLayout()
+        layout.addLayout(form)
+        self.mode = ModernComboBox()
+        for mode, title in _sample_modes(row):
+            self.mode.addItem(title, mode)
+        self.report_id = ModernSpinBox()
+        self.report_id.setRange(-1, 255)
+        self.observation = QLineEdit()
+        self.observation.setMaxLength(80)
+        self.observation.setPlaceholderText('例如厂商软件显示 72%，正在充电')
+        form.addRow('读取方式', self.mode)
+        form.addRow('报文 ID（十进制）', self.report_id)
+        form.addRow('已知电量或状态（选填）', self.observation)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        actions.addWidget(button('取消', self.reject))
+        self.start_button = button('开始采集', self.accept, 'primary')
+        actions.addWidget(self.start_button)
+        layout.addLayout(actions)
+        self.mode.currentIndexChanged.connect(self.update_report_id)
+        self.report_id.valueChanged.connect(self.update_start_button)
+        self.update_report_id()
+        compact_dialog(self)
+
+    def update_report_id(self):
+        passive = self.mode.currentData() == 'input-report'
+        self.report_id.setSpecialValueText('任意报文 ID' if passive else '请填写报文 ID')
+        self.report_id.setValue(-1)
+        self.update_start_button()
+
+    def update_start_button(self):
+        self.start_button.setEnabled(self.mode.currentData() == 'input-report' or self.report_id.value() >= 0)
+
+
 class PeripheralSettings(QDialog):
     """Edits stay local to the dialog until the user saves the device list."""
 
@@ -165,6 +229,9 @@ class PeripheralSettings(QDialog):
         self.rows = {}
         self.pending = None
         self.import_batch = []
+        self.sample_request = None
+        self.last_sample = None
+        self.exported_sample = None
         self.catalog_job = None
         self.catalog_timeout = QTimer(self)
         self.catalog_timeout.setSingleShot(True)
@@ -185,6 +252,8 @@ class PeripheralSettings(QDialog):
         self.import_action = self.menu.addAction('导入适配配置…', self.import_profiles)
         self.export_action = self.menu.addAction('导出已添加设备的适配…', self.export_profiles)
         self.diagnostics_action = self.menu.addAction('导出扫描诊断与提示词…', self.export_diagnostics)
+        self.sample_action = self.menu.addAction('采集电量报文样本…', self.capture_sample)
+        self.export_sample_action = self.menu.addAction('导出上次报文样本…', self.export_sample)
         self.copy_prompt_action = self.menu.addAction('复制适配提示词', self.copy_prompt)
         self.more_button.setMenu(self.menu)
         tools.addWidget(self.scan_button)
@@ -241,6 +310,11 @@ class PeripheralSettings(QDialog):
         item = self.table.currentItem()
         return self.rows.get(item.data(0, ID_ROLE)) if item is not None else None
 
+    def _selected_scan(self):
+        row = self._selected()
+        if row is not None:
+            return next((scan for scan in self.scanned if scan['device_id'] == row['device_id']), None)
+
     def _known_rows(self):
         rows = {row['device_id']: row for row in self.scanned}
         if not self.catalog:
@@ -279,13 +353,14 @@ class PeripheralSettings(QDialog):
                 ids = signatures.get((_signature(row), row['protocol']), ())
                 if len(ids) == 1:
                     reattached.add(ids[0])
+        vendor_receivers = {_receiver(row) for row in found.values() if _sample_modes(row)}
         unknown_receivers = set()
         for key, row in found.items():
-            if key in saved or key in reattached:
+            if key in saved or (key in reattached and not _sample_modes(row)):
                 continue
-            if not _trial(row):
-                physical = row.get('receiver_id') or (row['vid'], row['pid'], row.get('name'))
-                if physical in unknown_receivers:
+            if not _trial(row) and not _sample_modes(row):
+                physical = _receiver(row)
+                if physical in unknown_receivers or physical in vendor_receivers:
                     continue
                 unknown_receivers.add(physical)
             ordered.append(row)
@@ -300,9 +375,12 @@ class PeripheralSettings(QDialog):
                 '已添加' if key in saved else ('待试读' if _trial(row) else '尚无适配'))
             if reading and key in saved:
                 status = '已添加 · ' + status
-            item = QTreeWidgetItem([_name(row), _read_level(reading), status])
+            label = _name(row)
+            if not _trial(row) and _sample_modes(row):
+                label += f' · {_interface(row)}'
+            item = QTreeWidgetItem([label, _read_level(reading), status])
             item.setData(0, ID_ROLE, key)
-            tooltip = f'<span>{escape(_name(row))}</span>'
+            tooltip = f'<span>{escape(label)}</span>'
             if row.get('alias'):
                 tooltip += f'<br>设备名称：{escape(row["name"])}'
             item.setToolTip(0, tooltip)
@@ -348,6 +426,9 @@ class PeripheralSettings(QDialog):
         self.export_action.setEnabled(bool(self.profiles))
         self.diagnostics_action.setEnabled(self.has_scanned)
         self.copy_prompt_action.setEnabled(self.has_scanned and bool(self.scanned))
+        scan = self._selected_scan()
+        self.sample_action.setEnabled(available and bool(_sample_modes(scan)))
+        self.export_sample_action.setEnabled(available and self.last_sample is not None)
         if row is None:
             details = '若设备未出现，请重插接收器后扫描。'
         elif reading and reading['state'] in STATE_HINTS:
@@ -355,10 +436,12 @@ class PeripheralSettings(QDialog):
         elif _has_live_level(reading):
             details = '请核对电量，确认后添加。' if not saved else '可在资源卡片查看电量和状态。'
         elif not _trial(row):
-            details = ('此接口没有已知的电量查询方式。可以检查适配更新、导入配置，或导出诊断。'
-                       f"  USB {row['vid']:04X}:{row['pid']:04X}")
+            details = ('此接口尚无适配。可结合协议资料采集报文、导出诊断，或导入已有配置。'
+                       if _sample_modes(scan) else '此接口尚无适配。可检查更新、导入已有配置或导出诊断。')
         else:
             details = '试读会查询选中设备的电量和状态。'
+        if scan:
+            details += f"\nUSB {scan['vid']:04X}:{scan['pid']:04X} · {_interface(scan)}"
         self.detail.setText(details)
 
     def _start(self, operation, label, start):
@@ -388,12 +471,12 @@ class PeripheralSettings(QDialog):
 
     def _completed(self, operation, rows, error):
         pending = self.pending
-        if pending not in ('scan', 'preview', 'import'):
-            return
-        if (operation == 'scan') != (pending == 'scan'):
+        if {'scan': 'scan', 'preview': 'read', 'import': 'read', 'sample': 'sample'}.get(pending) != operation:
             return
         self.pending = None
-        if error:
+        if operation == 'sample':
+            self._finish_sample(rows, error)
+        elif error:
             self.import_batch = []
             self.status.setText(error)
         elif operation == 'scan':
@@ -462,31 +545,46 @@ class PeripheralSettings(QDialog):
         try:
             rows = bind_profiles(load_profile_file(Path(file)), self.scanned)
             current = {row['device_id']: row for row in self.profiles}
-            rows = [row for row in rows if row['device_id'] not in current or
-                    ('alias' in row and row['alias'] != current[row['device_id']].get('alias'))]
-            if len(current.keys() | {row['device_id'] for row in rows}) > MAX_PROFILES:
+            present = {row['device_id'] for row in self.scanned}
+            targets = set()
+            updates = []
+            for row in rows:
+                key = row['device_id']
+                if key not in current:
+                    same = [old['device_id'] for old in self.profiles
+                            if old['device_id'] not in present and _signature(old) == _signature(row)]
+                    if len(same) == 1 and sum(_signature(scan) == _signature(row) for scan in self.scanned) == 1:
+                        key = same[0]
+                previous = current.get(key)
+                if previous is not None:
+                    row = dict(row, name=previous['name'])
+                    if previous.get('alias') and 'alias' not in row:
+                        row['alias'] = previous['alias']
+                if row != previous:
+                    if key in targets:
+                        raise ValueError('适配文件包含同一接收器的多条配置。')
+                    targets.add(key)
+                    updates.append((key, row))
+            if len(current.keys() | targets) > MAX_PROFILES:
                 raise ValueError(f'最多添加 {MAX_PROFILES} 台设备。')
         except (ValueError, OSError) as exc:
             self.status.setText(str(exc))
             return
-        if not rows:
-            self.status.setText('配置中的设备均已添加。')
+        if not updates:
+            self.status.setText('配置中的设备已添加，适配规则未变化。')
             return
-        self.import_batch = rows
-        if not self._start('import', '正在试读导入配置中的设备…', lambda: self.probe.read(rows)):
+        self.import_batch = updates
+        if not self._start('import', '正在试读导入配置中的设备…',
+                           lambda: self.probe.read([row for _, row in updates])):
             self.import_batch = []
 
     def _finish_import(self, readings):
         rows, self.import_batch = self.import_batch, []
         current = {row['id']: row for row in readings}
-        passed = [row for row in rows if _has_live_level(current.get(row['device_id']))]
+        passed = [(key, row) for key, row in rows if _has_live_level(current.get(row['device_id']))]
         current_profiles = {row['device_id']: row for row in self.profiles}
-        for row in passed:
-            key = row['device_id']
-            if key not in current_profiles:
-                current_profiles[key] = row
-            elif 'alias' in row:
-                current_profiles[key] = dict(current_profiles[key], alias=row['alias'])
+        for key, row in passed:
+            current_profiles[key] = row
         self.profiles = normalize_profiles(list(current_profiles.values()))
         failures = len(rows) - len(passed)
         summary = f'{len(passed)} 台试读成功。'
@@ -495,6 +593,62 @@ class PeripheralSettings(QDialog):
         if passed:
             summary += ' 点击「保存」应用。'
         self.status.setText(summary)
+
+    def capture_sample(self):
+        row = self._selected_scan()
+        if self.pending is not None or not _sample_modes(row):
+            return
+        dialog = SampleOptions(self, row)
+        try:
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            mode, report_id = dialog.mode.currentData(), dialog.report_id.value()
+            observation = dialog.observation.text().strip()
+        finally:
+            dialog.deleteLater()
+        self.sample_request = (row, mode, report_id, observation)
+        try:
+            started = self._start('sample', '正在读取选中接口的报文…',
+                                  lambda: self.probe.sample(row, mode, report_id))
+        except ValueError as exc:
+            self.pending = None
+            self.status.setText(str(exc))
+            self._update_controls()
+            started = False
+        if not started:
+            self.sample_request = None
+
+    def _finish_sample(self, result, error):
+        request, self.sample_request = self.sample_request, None
+        if error:
+            self.status.setText(error)
+            return
+        reports = result.get('reports', [])
+        if request and reports:
+            row, mode, report_id, observation = request
+            self.last_sample = (row, mode, report_id, reports, observation)
+            self.status.setText(f'已取得 {len(reports)} 条报文，可从「更多操作」导出上次报文样本。')
+        else:
+            state = result.get('state', 'unavailable')
+            hint = (STATE_HINTS[state] if state in ('offline', 'busy') else
+                    '未读到匹配报文。请核对接口和报文 ID，唤醒设备后重试。')
+            self.status.setText(hint)
+
+    def export_sample(self):
+        if self.pending is not None or self.last_sample is None:
+            return
+        file, _ = QFileDialog.getSaveFileName(self, '导出报文样本', SAMPLE_FILENAME, '报文样本 (*.json)')
+        if not file:
+            return
+        path = Path(file)
+        try:
+            export_sample_file(path, *self.last_sample)
+        except (ValueError, OSError) as exc:
+            self.status.setText(str(exc))
+            return
+        row = self.last_sample[0]
+        self.exported_sample = (row['device_id'], _signature(row), path.name)
+        self.status.setText('样本已保存到本地。分享前可检查内容，再将样本、扫描诊断和提示词一起交给 Agent。')
 
     def export_profiles(self):
         file, _ = QFileDialog.getSaveFileName(self, '导出外设适配', CATALOG_FILE, '适配配置 (*.json)')
@@ -525,7 +679,9 @@ class PeripheralSettings(QDialog):
 
     def adaptation_prompt(self, filename=DIAGNOSTICS_FILENAME):
         row = self._selected()
-        return diagnostics_prompt(self.scanned, row['device_id'] if row else None, filename)
+        sample = self.exported_sample
+        sample_name = sample[2] if row and sample and (row['device_id'], _signature(row)) == sample[:2] else None
+        return diagnostics_prompt(self.scanned, row['device_id'] if row else None, filename, sample_name=sample_name)
 
     def copy_prompt(self):
         QApplication.clipboard().setText(self.adaptation_prompt())

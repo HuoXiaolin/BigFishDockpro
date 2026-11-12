@@ -2,7 +2,7 @@
 import re
 from screen_layout import valid_record
 
-METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'蓝牙电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
+METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'外设电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
          'gpu_temp':'GPU 温度','cpu_power':'CPU 功率','gpu_power':'GPU 功率','traffic':'流量统计'}
 METRICS.update(cpu_frequency='CPU 频率',cpu_voltage='CPU 电压',cpu_fan='CPU 风扇',cpu_pump='CPU 水泵',
                gpu_frequency='GPU 频率',gpu_fan='GPU 风扇',gpu_memory='显存占用',disk_temp='磁盘温度',
@@ -21,10 +21,9 @@ TASK_COLUMN_NAMES = {
 }
 COMPACT_METRICS=tuple(k for k in METRICS if k not in ('rank','system_status'))
 COMPACT_DEVICE={'battery':'电池电量','connection':'网卡名称','volume':'系统音量','brightness':'屏幕亮度'}
-COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth','peripherals')
+COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth')
 COMPACT_ROUTINES={'pomodoro':'番茄钟','water':'喝水进度','agenda':'下一项日程'}
-COMPACT_ITEMS={**{key:METRICS[key] for key in COMPACT_METRICS},**COMPACT_DEVICE,
-               'peripherals':'2.4G 外设电量',**COMPACT_ROUTINES}
+COMPACT_ITEMS={**{key:METRICS[key] for key in COMPACT_METRICS},**COMPACT_DEVICE,**COMPACT_ROUTINES}
 COMPACT_CONTENT={'ai':'resource_compact_ai','music':'resource_compact_music','weather':'resource_weather_compact'}
 PINNABLE={**{key:title for key,title in COMPACT_ITEMS.items() if key not in COMPACT_STATUS},
           'ai':'AI 额度','music':'音乐','weather':'天气'}
@@ -78,7 +77,7 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_news=False,resource_news_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
-                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=[*COMPACT_METRICS,'peripherals'],
+                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=list(COMPACT_METRICS),
                 resource_compact_auto_width=True,resource_compact_pinned=['cpu','memory','gpu','network'],resource_compact_order=[],
                 resource_compact_ai=True,resource_compact_music=True,
                 resource_compact_density='dense',
@@ -255,7 +254,9 @@ def normalize(cfg,strict=False):
                         ('resource_task_order',TASK_COLUMN_NAMES),('resource_compact_order',PINNABLE)]:
         value=cfg.get(key,DEFAULTS[key])
         if key in ('resource_compact_pinned', 'resource_compact_order') and isinstance(value, list):
-            value = [item for item in value if item not in (*COMPACT_STATUS,'notifications')]
+            value = [item for item in value if item not in (*COMPACT_STATUS,'peripherals','notifications')]
+        if key=='resource_compact_metrics' and isinstance(value,list):
+            value=['bluetooth' if item=='peripherals' else item for item in value]
         if not isinstance(value,list) or any(not isinstance(k,str) or k not in choices for k in value):
             if strict:raise ValueError('资源胶囊显示项目无效。')
             value=DEFAULTS[key]

@@ -144,6 +144,7 @@ internal static class BluetoothBattery {
             else if(args.Length==2 && args[0]=="--sensors") result=HardwareSensors.Read(args[1]);
             else if(args.Length==1 && args[0]=="--peripherals-scan") result=PeripheralBattery.Scan();
             else if(args.Length==1 && args[0]=="--peripherals-read") result=PeripheralBattery.Read();
+            else if(args.Length==1 && args[0]=="--peripherals-sample") result=PeripheralBattery.Sample();
             else if(args.Length==0) result=Scan().GetAwaiter().GetResult();
             else return 1;
             Console.OutputEncoding=new UTF8Encoding(false);
