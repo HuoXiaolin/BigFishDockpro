@@ -565,10 +565,10 @@ def run(output,checks):
             service.latest['traffic']=dict(day=(3*2**30,800*2**20),month=(30*2**30,8*2**30),year=(300*2**30,80*2**30))
             window.select_page('traffic');pump()
             assert window.traffic.summary.columns==1 and window.view('traffic').verticalScrollBar().maximum()>0
-            service.set_options(resource_expanded_width=520,resource_expanded_height=195);pump()
-            assert window.traffic.summary.columns==3 and window.view('traffic').verticalScrollBar().maximum()==0
+            service.set_options(resource_expanded_width=520,resource_expanded_height=310);pump()
+            assert window.traffic.summary.columns==2 and window.view('traffic').verticalScrollBar().maximum()==0
             summary=window.traffic.summary
-            gradient_pixels(summary,(summary.width()-2*summary.gap)//3)
+            gradient_pixels(summary,(summary.width()-summary.gap)//2)
             grab(window,'readme-traffic-cards')
             checks.append('Media and traffic use native card surfaces, retain controls and period totals, and fit without horizontal scrolling at 260 pixels.')
 
@@ -812,7 +812,7 @@ def run(output,checks):
             pump()
             assert runtime.notes.flush()
             grab(note,'readme-note-tabs')
-            component_card=dict(validate_card(draft),id='componentcard',visible=True,locked=False,layout={})
+            component_card=dict(validate_card(dict(draft,arrangement='grid')),id='componentcard',visible=True,locked=False,layout={})
             assert manager.save([component_card])
             assert service.set_options(resource_enabled=True,resource_collapsed=False,resource_ai=True,
                 resource_music=True,resource_weather=True,resource_pomodoro=True,resource_agenda=True,
@@ -848,7 +848,14 @@ def run(output,checks):
                     assert hosted.editor.toPlainText()==note_text and hosted.collapse_button.isHidden()
                     assert hosted.note_tabs.count()==2
                     paragraph_pixels(hosted.editor)
-                if key=='custom':assert {'cpu','memory'}<=service.active_keys()
+                if key=='custom':
+                    assert {'cpu','memory'}<=service.active_keys()
+                    previous=window.size()
+                    for width in (360,361,360):
+                        window.resize(width,previous.height());pump()
+                        first,second=(row[1] for row in hosted.row_boxes[:2])
+                        assert (first.top()==second.top())==(width>360),(width,first,second)
+                    window.resize(previous);pump()
             service.set_options(resource_expanded_height=304)
             for key in ('clock','calendar'):
                 window.select_page(key);pump()

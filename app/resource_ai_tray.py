@@ -7,29 +7,33 @@ from flash_view import palette_for
 from resource_options import background
 from resource_pages import SCROLL_STYLE
 from resource_quota import amount_text, quota_color, remaining_percent, used_percent
+from resource_status import TRAY_RING_SIZES, ring_dimensions
 
 
 def quota_icon(used,light=False):
-    """Draw the same rounded Q silhouette at Windows tray resolutions."""
+    """Draw the quota Q with the peripheral battery ring's diameter and stroke."""
     remaining = remaining_percent(used)
     ink = QColor(quota_color(remaining, light))
     track = QColor(ink)
     track.setAlpha(115)
     icon = QIcon()
-    for size in (16, 20, 24, 32, 48, 64):
+    for size in TRAY_RING_SIZES:
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.scale(size / 32, size / 32)
-        circle = QRectF(4.5, 4, 22, 22)
+        radius, stroke, _ = ring_dimensions(size)
+        center = size / 2
+        circle = QRectF(center - radius, center - radius, 2 * radius, 2 * radius)
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(track, 4.8, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(track, stroke, Qt.SolidLine, Qt.RoundCap))
         painter.drawEllipse(circle)
-        painter.setPen(QPen(ink, 4.8, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(ink, stroke, Qt.SolidLine, Qt.RoundCap))
         if remaining:
             painter.drawArc(circle, 90 * 16, -round(remaining * 57.6))
-        painter.drawLine(QPointF(19, 21), QPointF(27.5, 28.5))
+        start = center + radius * .30
+        end = center + radius * .82
+        painter.drawLine(QPointF(start, start), QPointF(end, end))
         painter.end()
         icon.addPixmap(pixmap)
     return icon
@@ -74,7 +78,7 @@ class AiTray(QObject):
     def open(self,page='stats'):
         if self.popup is None:self.popup=AiPopup(self.service)
         self.popup.select_page(page);point=self.tray.geometry().center() if not self.tray.geometry().isEmpty() else QCursor.pos()
-        screen=QApplication.screenAt(point) or QApplication.primaryScreen();area=screen.availableGeometry();width=min(360,area.width());height=min(360,area.height())
+        screen=QApplication.screenAt(point) or QApplication.primaryScreen();area=screen.availableGeometry();width=min(360,area.width());height=min(540,area.height())
         self.popup.resize(width,height);self.popup.move(max(area.left(),min(point.x()-width//2,area.right()-width+1)),max(area.top(),min(point.y()-height-5,area.bottom()-height+1)))
         self.popup.show();self.popup.raise_()
     def close(self):

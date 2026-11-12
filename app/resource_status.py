@@ -1,4 +1,4 @@
-"""Numeric color ramps shared by resource, quota and device indicators."""
+"""Color ramps and ring dimensions shared by resource, quota and device indicators."""
 import math
 
 
@@ -14,6 +14,14 @@ COLOR_RAMPS = {
     'maroon': ((0x96435f, 0x6f2046), (0xf2abc3, 0xe17da3)),
 }
 BATTERY_WARNING_LEVEL = 15
+TRAY_RING_SIZES = (16, 20, 24, 32, 48, 64)
+
+
+def ring_dimensions(diameter, count=1):
+    pitch = diameter / (2 * max(1, count) + 1)
+    stroke = max(1., pitch * .64)
+    radius = (diameter - stroke) / 2 - .6
+    return radius, stroke, pitch
 
 
 def band_ink(value, soft_at, strong_at, hue, light):

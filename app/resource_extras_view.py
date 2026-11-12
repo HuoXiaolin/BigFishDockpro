@@ -6,10 +6,11 @@ from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton
 from ui_style import ModernComboBox
 from resource_compact import text
+from resource_options import content_columns
 from resource_status import band_ink
 from resource_weather import moon_phase,weather_time
 from resource_weather_style import (AIR_HUES,AIR_SURFACES,FORECAST_TONES,air_quality_style,
-                                    paint_card,paint_weather,solar_tone,weather_accent)
+                                    paint_card,paint_weather,paint_weather_icon,solar_tone,weather_accent)
 
 
 def degrees(value):return '—' if value is None else f'{value:.0f}°'
@@ -36,7 +37,7 @@ class WeatherCards(QWidget):
         self.owner=owner
         self.rows=[]
         self.city_index=0
-        self.columns=2
+        self.layout_cards()
         self.sun_clock=QTimer(self)
         self.sun_clock.setInterval(60_000)
         self.sun_clock.timeout.connect(self.update)
@@ -55,7 +56,7 @@ class WeatherCards(QWidget):
         self.layout_cards();self.update()
 
     def layout_cards(self):
-        self.columns=2 if self.width()>=420 else 1
+        self.columns=content_columns(self.owner.width())
         count=4//self.columns
         height=count*self.card_height+(count-1)*self.gap
         if self.height()!=height:self.setFixedHeight(height)
@@ -93,11 +94,18 @@ class WeatherCards(QWidget):
         text(p,QRectF(10,4,width-20,15),row['name']+'  '+row.get('condition',''),c['ink'],11,True)
         temperature=row.get('temperature')
         text(p,QRectF(10,20,71,35),degrees(temperature),c['ink'],30,True)
+        tight=width<220
+        left=66 if tight else 82
         info=('体感 '+degrees(row.get('feels'))) if temperature is not None else row.get('error','等待天气')
-        text(p,QRectF(82,20,width-92,16),info,c['muted'],10)
+        text(p,QRectF(left,17 if tight else 20,width-left-10,15),info,c['muted'],10)
         humidity,wind=row.get('humidity'),row.get('wind')
-        details='湿度 '+('—' if humidity is None else f'{humidity:.0f}%')+'   风 '+('—' if wind is None else f'{wind:.0f} km/h')
-        text(p,QRectF(82,36,width-92,16),details,c['muted'],10)
+        humidity_text='湿度 '+('—' if humidity is None else f'{humidity:.0f}%')
+        wind_text='风 '+('—' if wind is None else f'{wind:.0f} km/h')
+        if tight:
+            text(p,QRectF(left,31,width-left-10,13),humidity_text,c['muted'],9)
+            text(p,QRectF(left,44,width-left-10,13),wind_text,c['muted'],9)
+        else:
+            text(p,QRectF(left,36,width-left-10,16),humidity_text+'   '+wind_text,c['muted'],10)
         hours=[('现在',temperature),*row.get('hours',[])]
         values=[value for _,value in hours if value is not None]
         if not values:
@@ -109,6 +117,7 @@ class WeatherCards(QWidget):
         path=QPainterPath();previous=False;markers=[]
         for i,(name,value) in enumerate(hours):
             x=8+(i+.5)*step
+            if step<26 and ':' in name:name=name.split(':',1)[0]+'时'
             text(p,QRectF(x-step/2,91,step,16),name,c['muted'],9,False,Qt.AlignHCenter)
             if value is None:previous=False;continue
             y=86-(value-low)/max(2,high-low)*15
@@ -131,7 +140,11 @@ class WeatherCards(QWidget):
             x=6+i*step
             def center(top,value,size=10,muted=False):
                 text(p,QRectF(x,top,step,14),value,c['muted' if muted else 'ink'],size,False,Qt.AlignHCenter)
-            center(22,name,9);center(36,day['condition'],9,True)
+            center(22,name,9)
+            if step<25 and day['condition']!='—':
+                paint_weather_icon(p,QRectF(x+step/2-6,36,12,12),day,c['light'])
+            else:
+                center(36,day['condition'],9,True)
             center(50,degrees(day['high']),10)
             if day['high'] is not None and day['low'] is not None:
                 scale=16/max(1,high-low)
@@ -152,11 +165,19 @@ class WeatherCards(QWidget):
         index,color=air_quality_style(aqi,c['light']) if aqi is not None else (-1,c['muted'])
         source=data.get('source','')
         source_label='上次读数' if data.get('stale') else '小时数据' if data.get('hourly') else source
-        text(p,QRectF(10,4,width-86,16),'空气质量 · '+scale,c['ink'],11,True)
-        text(p,QRectF(width-74,4,64,16),source_label,c['muted'],8,False,Qt.AlignRight)
+        tight=width<220
+        if tight:
+            text(p,QRectF(10,4,width-72,16),'空气质量',c['ink'],11,True)
+            text(p,QRectF(width-62,4,52,16),scale,c['muted'],9,False,Qt.AlignRight)
+        else:
+            text(p,QRectF(10,4,width-86,16),'空气质量 · '+scale,c['ink'],11,True)
+            text(p,QRectF(width-74,4,64,16),source_label,c['muted'],8,False,Qt.AlignRight)
         text(p,QRectF(10,21,65,34),'—' if aqi is None else f'{aqi:.0f}',color,27,True)
         status=names[index] if aqi is not None else row.get('air_error','等待空气质量')
-        text(p,QRectF(78,27,width-88,20),status,color,10)
+        left=65 if tight else 78
+        text(p,QRectF(left,23 if tight else 27,width-left-10,20),status,color,10)
+        if tight:
+            text(p,QRectF(left,42,width-left-10,14),source_label,c['muted'],8)
         step=(width-20)/len(AIR_HUES)
         for i,hue in enumerate(AIR_HUES):
             ink=QColor(color if i==index else band_ink(.5,0,1,hue,c['light']));ink.setAlpha(230 if i==index else 70)
@@ -166,7 +187,11 @@ class WeatherCards(QWidget):
             x=10+i*step;value=data.get(key);unit='μg/m³'
             if 'pollutants' in data:value,unit=data['pollutants'].get(key) or (None,'')
             text(p,QRectF(x,70,step,14),label,c['muted'],10)
-            text(p,QRectF(x,85,step,16),'—' if value is None else f'{value:g} {unit}',c['ink'],10,True)
+            if tight and value is not None:
+                text(p,QRectF(x,82,step,14),f'{value:g}',c['ink'],10,True)
+                text(p,QRectF(x,96,step,12),unit,c['muted'],8)
+            else:
+                text(p,QRectF(x,85,step,16),'—' if value is None else f'{value:g} {unit}',c['ink'],10,True)
 
     def draw_sun(self,p,width,data,c,opacity):
         now,today=data
@@ -201,7 +226,8 @@ class WeatherCards(QWidget):
         else:
             text(p,QRectF(10,39,width-20,22),'暂无日照数据',c['muted'],10,False,Qt.AlignHCenter)
         length=today.get('daylight')
-        length_text='—' if length is None else f'{int(length)//3600}小时 {int(length)%3600//60:02d}分'
+        hour_label='时' if width<220 else '小时 '
+        length_text='—' if length is None else f'{int(length)//3600}{hour_label}{int(length)%3600//60:02d}分'
         step=(width-20)/3
         for i,(label,value) in enumerate((('日出',sunrise.strftime('%H:%M') if sunrise else '—'),
                                            ('白昼',length_text),('日落',sunset.strftime('%H:%M') if sunset else '—'))):
@@ -230,6 +256,7 @@ class WeatherAction(QToolButton):
 class WeatherView(QWidget):
     def __init__(self,owner):
         super().__init__();self.owner=owner;box=QVBoxLayout(self);box.setContentsMargins(0,0,0,0);box.setSpacing(4)
+        box.setAlignment(Qt.AlignTop)
         self.weather_head=QWidget();head=QHBoxLayout(self.weather_head);head.setContentsMargins(0,0,0,0);head.setSpacing(5)
         self.city=ModernComboBox();self.city.setAccessibleName('天气城市');self.city.setProperty('glassField',True)
         self.city.setMinimumWidth(94);self.city.setMaximumWidth(144);self.city.setFixedHeight(22)

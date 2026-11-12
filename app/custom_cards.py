@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QApplication, QWidget
 from custom_card_data import SAMPLERS
 from card_design import paint_capsule_card,paint_design
 from resource_compact import text
+from resource_options import content_columns
 from screen_layout import capture, project, screen_records
 
 
@@ -207,7 +208,10 @@ class CustomCard(QWidget):
                 row_width-=photo_width+gap
                 if mode=='image_left':left+=photo_width+gap
             else:top=self.photo_rect.bottom()+gap
-        grid=mode=='grid';columns=2 if grid else 1
+        grid=mode=='grid'
+        columns=1
+        if grid:
+            columns=content_columns(self.window().width()) if self.embedded else 2
         cell=(row_width-gap*(columns-1))/columns
         label_height=(fonts['label']+3)*factor;value_height=(fonts['body']+5)*factor
         font=QFont(self.font());font.setPixelSize(max(1,round(fonts['body']*factor)))

@@ -1,7 +1,7 @@
 """Date selection and local agenda in the capsule's card layout."""
 from datetime import date
 from PyQt5.QtCore import QDate, QDateTime, QRectF, QSize, Qt
-from PyQt5.QtGui import QColor, QPainter, QPalette, QPen
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette, QPen
 from PyQt5.QtWidgets import (QAbstractItemView, QBoxLayout, QCalendarWidget, QDateTimeEdit, QDialog, QFormLayout,
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                              QSizePolicy, QStyle, QStyledItemDelegate, QToolButton, QVBoxLayout, QWidget)
@@ -10,6 +10,7 @@ from calendar_markers import MARKER_TONES,countdowns,countdown_on,event_last_sec
 from resource_agenda import SOURCES
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import text
+from resource_options import content_columns
 from flash_view import icon
 
 
@@ -84,7 +85,8 @@ class AgendaCalendar(QCalendarWidget):
             tint.setAlpha(32 if selected else 12)
             painter.setBrush(tint)
             painter.setPen(Qt.NoPen if selected else QPen(QColor(colors['muted']), .75))
-            highlight = QRectF(cell.center().x() - 12, cell.top() + 1, 24, cell.height() - 2)
+            width = min(24, cell.width() - 2)
+            highlight = QRectF(cell.center().x() - width / 2, cell.top() + 1, width, cell.height() - 2)
             painter.drawRoundedRect(highlight, 6, 6)
         ink = colors['ink'] if selected or day.month() == self.monthShown() else colors['muted']
         digits = cell.adjusted(0, 1, 0, -5)
@@ -119,7 +121,8 @@ class AgendaRows(QStyledItemDelegate):
                 p.drawRoundedRect(QRectF(rect.left()+2,top+4,2,25),1,1)
             text(p,QRectF(left,top,width,18),title,c['ink'],13,True)
             source_text=DISPLAY_SOURCES[source]
-            source_width=14+len(source_text)*10
+            font=QFont(p.font());font.setPixelSize(9);font.setWeight(QFont.Bold)
+            source_width=10+QFontMetrics(font).horizontalAdvance(source_text)
             tag=QRectF(rect.right()-source_width-8,top+19,source_width,15)
             fill=QColor(color);fill.setAlpha(25 if c['light'] else 47)
             p.setPen(Qt.NoPen);p.setBrush(fill);p.drawRoundedRect(tag,5,5)
@@ -136,7 +139,6 @@ class AgendaView(QWidget):
         self.layout_=QBoxLayout(QBoxLayout.LeftToRight,self)
         self.layout_.setContentsMargins(0,0,0,0);self.layout_.setSpacing(7)
         month=DashboardCard(window,'mint')
-        month.setMinimumWidth(174)
         month_body=QVBoxLayout(month);month_body.setContentsMargins(8,6,8,7);month_body.setSpacing(3)
         self.calendar=AgendaCalendar(window)
         navigation = QHBoxLayout()
@@ -154,7 +156,7 @@ class AgendaView(QWidget):
                                      (self.next_month, '下个月', self.calendar.showNextMonth)):
             control.setAccessibleName(label)
             control.setToolTip(label)
-            control.setFixedSize(23, 24)
+            control.setFixedSize(20, 24)
             control.clicked.connect(slot)
             navigation.addWidget(control)
         month_body.addLayout(navigation)
@@ -189,12 +191,13 @@ class AgendaView(QWidget):
         listing=DashboardCard(window,'ice')
         body=QVBoxLayout(listing);body.setContentsMargins(10,6,10,7);body.setSpacing(4)
         header=QHBoxLayout();header.setSpacing(4)
-        self.day=QLabel();self.day.setObjectName('AgendaDay');header.addWidget(self.day,1)
+        self.day=QLabel();self.day.setObjectName('AgendaDay');self.day.setWordWrap(True);header.addWidget(self.day,1)
         self.add_button=QToolButton();self.add_button.setText('+ 新增');self.add_button.clicked.connect(lambda:self.edit())
         header.addWidget(self.add_button);body.addLayout(header)
         self.count=QLabel();self.count.setObjectName('Subtle');body.addWidget(self.count)
         self.rows=QListWidget();self.rows.setAccessibleName('所选日期的日程')
         self.rows.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.rows.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.rows.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.rows.setUniformItemSizes(True)
         self.rows.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Preferred)
@@ -217,6 +220,21 @@ class AgendaView(QWidget):
 
     def update_month(self, year, month):
         self.month.setText(f'{year}年{month}月')
+
+    def update_day_heading(self):
+        day=self.calendar.selectedDate()
+        date_text=day.toString('M月d日')
+        weekday='周'+WEEKDAYS[day.dayOfWeek()-1]
+        today=day==QDate.currentDate()
+        compact=self.layout_.direction()==QBoxLayout.LeftToRight and self.width()<400
+        if compact:
+            title=date_text+'\n'+('今天 · ' if today else '')+weekday
+        else:
+            title=('今天  ' if today else '')+date_text+'  '+weekday
+        self.day.setText(title)
+        if self.day.property('compactHeading')!=compact:
+            self.day.setProperty('compactHeading',compact)
+            self.day.setStyleSheet(f'font-size: {12 if compact else 14}px; font-weight: 600;')
 
     def select_today(self):
         self.calendar.setSelectedDate(QDate.currentDate())
@@ -248,7 +266,7 @@ class AgendaView(QWidget):
         if signature==self.signature:
             self.refresh_actions();return
         self.signature=signature
-        self.day.setText(('今天  ' if day==today else '')+day.toString('M月d日')+'  周'+WEEKDAYS[day.dayOfWeek()-1])
+        self.update_day_heading()
         selected=self.selected()
         self.rows.clear()
         for event in events:
@@ -300,7 +318,6 @@ class AgendaView(QWidget):
         self.calendar_style=style
         self.rows.viewport().update()
         self.calendar.updateCells()
-        self.day.setStyleSheet('font-size: 14px; font-weight: 600;')
         for control, symbol in ((self.previous_month, 'back'), (self.next_month, 'fold')):
             control.setIcon(icon(symbol, colors['ink'], 13))
             control.setIconSize(QSize(13, 13))
@@ -313,7 +330,8 @@ class AgendaView(QWidget):
             self.model.set_reminder(event['id'],enabled=event['ack']);self.refresh()
 
     def resizeEvent(self,event):
-        self.layout_.setDirection(QBoxLayout.LeftToRight if event.size().width()>=425 else QBoxLayout.TopToBottom)
+        self.layout_.setDirection(QBoxLayout.LeftToRight if content_columns(self.owner.width())==2 else QBoxLayout.TopToBottom)
+        if event.size().width()!=event.oldSize().width():self.update_day_heading()
         super().resizeEvent(event)
 
     def edit(self,key=None):

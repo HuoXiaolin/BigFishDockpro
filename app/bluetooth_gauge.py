@@ -8,7 +8,7 @@ from PyQt5.QtCore import QObject,QProcess,QTimer,Qt,QRectF,QPointF
 from PyQt5.QtGui import QPainter,QPen,QColor,QPixmap,QIcon,QPainterPath
 from PyQt5.QtWidgets import QApplication,QSystemTrayIcon
 from ui_style import AlignedMenu
-from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
+from resource_status import BATTERY_WARNING_LEVEL, TRAY_RING_SIZES, low_battery_ink, ring_dimensions
 from probe_lifecycle import allowed, start as start_probe
 
 HUES=('#5b8def','#41b66a','#8297c9','#ac81e2','#e99d36','#35adb3')
@@ -41,8 +41,8 @@ def devices(raw):
 
 def draw_rings(painter,rect,rows,dark=False):
     painter.save();painter.setRenderHint(QPainter.Antialiasing)
-    n=max(1,len(rows));diam=min(rect.width(),rect.height());center=rect.center()
-    pitch=diam/(2*n+1);width=max(1.,pitch*.64);radius=diam/2-width/2-0.6
+    center=rect.center()
+    radius,width,pitch=ring_dimensions(min(rect.width(),rect.height()),len(rows))
     for index,row in enumerate(rows or [{'level':None,'ink':'#8795a1'}]):
         r=max(.55,radius-index*pitch);circle=QRectF(center.x()-r,center.y()-r,2*r,2*r)
         value=row['level']
@@ -76,7 +76,7 @@ def draw_peripheral_rings(painter,rect,rows,dark=False):
 
 def tray_icon(rows,dark):
     result=QIcon()
-    for side in (16,20,24,32,48,64):
+    for side in TRAY_RING_SIZES:
         pm=QPixmap(side,side);pm.fill(Qt.transparent);p=QPainter(pm)
         draw_peripheral_rings(p,QRectF(0,0,side,side),rows,dark);p.end();result.addPixmap(pm)
     return result

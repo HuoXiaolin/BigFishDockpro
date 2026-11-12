@@ -11,7 +11,7 @@ from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
 from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
-                              background,component_available,component_location)
+                              background,component_available,component_location,content_columns)
 from flash_view import palette_for,icon
 
 
@@ -308,7 +308,7 @@ class ResourceContentHost(QWidget):
     def layout_dashboard(self):
         groups = ((self.graph, self.rank_section), (self.sensor_columns, self.battery_section))
         visible = tuple(tuple(panel for panel in group if not panel.isHidden()) for group in groups)
-        wide = self.width() >= 500
+        wide = content_columns(self.width()) == 2
         key = (wide, visible)
         if key == self.dashboard_layout_key:
             return

@@ -49,11 +49,13 @@ def aggregation(checks):
 def run(api,runtime,app,output,checks):
     from PyQt5.QtCore import QRectF,QTimer
     from PyQt5.QtGui import QColor,QFontMetrics
+    from PyQt5.QtWidgets import QSystemTrayIcon
     from resource_options import DEFAULTS,SENSOR_UNITS
     from resource_compact import plan
     from resource_ai_tray import quota_icon
     from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, quota_text, used_percent
-    from resource_status import band_ink
+    from resource_status import TRAY_RING_SIZES, band_ink
+    from bluetooth_gauge import tray_icon as battery_icon
     from resource_settings import ResourceOptions
     import resource_compact
     import resource_statistics
@@ -176,8 +178,10 @@ def run(api,runtime,app,output,checks):
         assert service.ai_tray and service.deck and not service.window and not service.strip
         assert not service.signature and not service.job and not service.sensors and not service.fps
         assert service.deck.signature[0] is True and service.deck.signature[2] is False
-        tray=service.ai_tray;tray.open('stats');app.processEvents();popup=tray.popup;popup.stats_view.set_period('month');popup.grab().save(str(output/'redesign-ai-tray-statistics.png'));geometry=popup.geometry()
-        assert popup.width() == 360, popup.width()
+        tray=service.ai_tray;tray.tray.activated.emit(QSystemTrayIcon.Trigger);app.processEvents()
+        popup=tray.popup;popup.stats_view.set_period('month');popup.grab().save(str(output/'redesign-ai-tray-statistics.png'));geometry=popup.geometry()
+        assert (popup.width(),popup.height()) == (360,540), geometry
+        assert popup.screen().availableGeometry().contains(geometry), geometry
         tray.open('ai');app.processEvents();assert popup.geometry()==geometry
         popup.grab().save(str(output/'redesign-ai-tray-quota.png'))
         # The same popup must preserve every returned period and distinguish a real zero from missing data.
@@ -188,7 +192,7 @@ def run(api,runtime,app,output,checks):
         bridge = service.deck
         bridge.accept(dict(type='ai',providers=[providers[0],multi]))
         overview = popup.stats_view.quotas
-        for width in (180,360):
+        for width,columns in ((180,1),(360,1),(361,2),(360,1)):
             popup.resize(width,420);app.processEvents()
             assert popup.width() == width, (width, popup.width())
             assert popup.stats_view.scroll.widget().width() == popup.stats_view.scroll.viewport().width()
@@ -198,7 +202,7 @@ def run(api,runtime,app,output,checks):
             labels = {value for value,_ in painted}
             assert {'Pro 100','5 小时额度','每周额度','每月额度','80%','0%','—','¥12.48'} <= labels
             assert overview.rect().contains(overview.reset_buttons[0].geometry())
-            assert overview.cards[-1][2] == (1 if width == 180 else 2)
+            assert overview.cards[-1][2] == popup.stats_view.summary.columns == popup.stats_view.charts.columns == columns
             assert (overview.reset_buttons[0].height() > 25) == (width == 180)
         selector = popup.stats_view.period_selector
         selector.setCurrentIndex(selector.findData('week'))
@@ -206,7 +210,7 @@ def run(api,runtime,app,output,checks):
         popup.setGeometry(geometry)
         popup.hide()
         app.processEvents()
-        checks.append('Quota cards: automatic Codex plans in capsule and tray, 360 px tray opening, 180/360 px single/double columns, hour/week/month metrics, zero, unavailable, and currency balance.')
+        checks.append('Quota cards: automatic Codex plans in capsule and tray, 360 × 540 logical px on tray click, single column at 180 and 360 px, two at 361 px, hour/week/month metrics, zero, unavailable, and currency balance.')
         icons=[quota_icon(used).pixmap(32,32).toImage() for used in (None,0,60,80,100)]
         assert all(a!=b for i,a in enumerate(icons) for b in icons[i+1:])
         for i,pix in enumerate(icons):pix.save(str(output/f'redesign-tray-icon-{i}.png'))
@@ -226,10 +230,20 @@ def run(api,runtime,app,output,checks):
             for remaining in (10,5,0):
                 icon=quota_icon(100-remaining,light).pixmap(32,32).toImage()
                 assert icon.pixelColor(23,25).name()==quota_color(remaining,light)
-        assert {s.width() for s in quota_icon(30).availableSizes()} >= {16, 20, 24, 32}
+        for light in (True,False):
+            quota=quota_icon(0,light)
+            battery=battery_icon([dict(level=100,ink=quota_color(100,light))],not light)
+            assert [s.width() for s in quota.availableSizes()]==[s.width() for s in battery.availableSizes()]==list(TRAY_RING_SIZES)
+            for side in TRAY_RING_SIZES:
+                a=quota.pixmap(side,side).toImage();b=battery.pixmap(side,side).toImage()
+                center=side//2
+                for axis in (lambda i:(center,i),lambda i:(i,center)):
+                    q=[i for i in range(center) if a.pixelColor(*axis(i)).alpha()>128]
+                    p=[i for i in range(center) if b.pixelColor(*axis(i)).alpha()>128]
+                    assert q and q==p,(light,side,q,p)
         cfg['resource_ai_tray']=False;service.sync();app.processEvents();assert not service.deck and not service.ai_tray and not service.signature
         (output/'resource-page-sizes.json').write_text(json.dumps(sizes),encoding='utf-8')
         checks.append('Reported UI regressions: identical page geometry, long mixed-language title in bounded lines, no aggregate hover popup, all compact values/AI/media reachable at 220–800 widths without overlapping or dropped cells, persisted custom pinned metrics, automatic width shrink, independent AI tray with hardware/music stopped, quota icons and complete shutdown.')
-        checks.append('AI quota shades deepen within all four existing ranges in both themes. The tray tail uses the same red ramp at 10%, 5% and 0% remaining.')
+        checks.append('AI quota tray ring matches the single-device battery ring diameter and stroke at all six icon sizes. Quota shades and the Q tail retain their color ramps.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

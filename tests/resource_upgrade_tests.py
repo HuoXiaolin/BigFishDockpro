@@ -37,6 +37,46 @@ def ledger_checks(checks):
     checks.append('Traffic: per-adapter deltas, new adapter/reset baselines, midnight/month/year split, restart persistence, disabled/suspend gaps and corrupt-file preservation. Resource thresholds retain 60/80 boundaries and deepen inside each band in both themes.')
 
 
+def content_column_checks(window,app,output,checks):
+    from PyQt5.QtWidgets import QBoxLayout
+
+    for key in ('resources','ai','traffic','weather','pomodoro','agenda','music','news'):
+        window.select_page(key)
+        for width,columns in ((360,1),(361,2),(360,1)):
+            window.resize(width,window.height())
+            for _ in range(3):app.processEvents()
+            assert window.width()==width,(key,width,window.width())
+            if key=='resources':
+                scroll=window.scroll
+                assert window.graph.load_columns==window.system_readout.columns==columns
+                first,second=window.graph.geometry(),window.rank_section.geometry()
+                assert (first.top()==second.top())==(columns==2),(width,first,second)
+            elif key=='ai':
+                stats=window.stats_view;scroll=stats.scroll
+                assert stats.summary.columns==stats.charts.columns==columns
+                multi=[card[2] for card in stats.quotas.cards if len(card[0].get('quotas',[]))>1]
+                assert multi and all(count==columns for count in multi),(width,multi)
+            else:
+                scroll=window.view(key)
+                if key=='traffic':assert scroll.content.summary.columns==columns
+                if key=='weather':
+                    weather=scroll.content
+                    assert weather.cards.columns==columns
+                    assert weather.weather_head.y()==0 and weather.cards.y()==weather.weather_head.height()+4
+                    assert weather.remarks_button.y()>=weather.cards.geometry().bottom()+1
+                    assert weather.cards.geometry().bottom()<weather.height()
+                if key in ('pomodoro','agenda'):
+                    layout=scroll.content.cards if key=='pomodoro' else scroll.content.layout_
+                    direction=QBoxLayout.LeftToRight if columns==2 else QBoxLayout.TopToBottom
+                    assert layout.direction()==direction,(key,width,layout.direction())
+                    first,second=(layout.itemAt(index).widget().geometry() for index in (0,1))
+                    assert (first.top()==second.top())==(columns==2),(key,width,first,second)
+                    assert second.right()<scroll.content.width(),(key,width,second,scroll.content.width())
+            assert scroll.widget().width()==scroll.viewport().width(),(key,width,scroll.widget().width(),scroll.viewport().width())
+            assert window.grab().save(str(output/f'capsule-columns-{key}-{width}.png'))
+    checks.append('Expanded capsule: live 360 → 361 → 360 logical px resize across resource, AI, traffic, weather, focus, agenda, music and news pages. Cards and quota metrics switch at 361; each scroll viewport retains its full width.')
+
+
 def run(api,runtime,root,app,output,checks):
     from PyQt5.QtCore import Qt,QRect,QRectF,QTimer
     from PyQt5.QtGui import QColor,QPixmap
@@ -49,7 +89,7 @@ def run(api,runtime,root,app,output,checks):
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources;dialog=None
     try:
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=False,
-            resource_ai=True,resource_music=True,resource_background='custom',
+            resource_ai=True,resource_music=True,resource_weather=True,resource_news=True,resource_background='custom',
             resource_appearance=dict(material='solid',theme='dark',color='#436d86',opacity=95,blur=8,highlight=45))
         for key in SENSOR_UNITS:cfg['resource_'+key]=True
         service.sync();w=service.window;assert service.deck and service.deck.process.state()==0
@@ -78,21 +118,22 @@ def run(api,runtime,root,app,output,checks):
         w.select_page('resources');service.display();app.processEvents();w.grab().save(str(output/'upgrade-resources.png'))
         assert w._traffic_view is None and w.animation.isActive()
         expanded = cfg['resource_expanded_width'], cfg['resource_expanded_height']
-        for width in (260, 500, 720):
+        for width in (260, 360, 361, 500, 720):
             cfg.update(resource_expanded_width=width, resource_expanded_height=321)
             w.sync_window();app.processEvents()
             readings = w.sensor_columns
             assert set(SENSOR_UNITS) <= {key for key, *_ in readings.cells}
-            assert readings.cells[0][3].top() == readings.cells[1][3].top(), (width, readings.width(), readings.cells[:2])
-            assert len({box.top() for _,_,_,box,_ in readings.cells}) < len(readings.cells)
+            assert (readings.cells[0][3].top() == readings.cells[1][3].top()) == (width>360), (width, readings.width(), readings.cells[:2])
             for _, label, value, label_area, value_area in readings.cells:
-                assert label and '…' not in value and label_area.right() < value_area.left()
+                assert label and '…' not in value and not label_area.intersects(value_area), (width,label,value,label_area,value_area)
                 assert QRectF(readings.rect()).contains(label_area.united(value_area))
             w.scroll.verticalScrollBar().setValue(w.scroll.verticalScrollBar().maximum())
             app.processEvents();w.grab().save(str(output/f'resource-sensor-grid-{width}.png'))
         cfg['resource_expanded_width'], cfg['resource_expanded_height'] = expanded
         w.sync_window();app.processEvents();w.scroll.verticalScrollBar().setValue(0)
-        checks.append('Sensor layout: all supported readings preserve their values and units, share rows at 260, 500 and 720 pixels, and stay inside the scrollable resource panel.')
+        checks.append('Sensor layout: all values and units stay visible at 260, 360, 361, 500 and 720 logical px. Readings share rows above 360 px.')
+        content_column_checks(w,app,output,checks)
+        w.select_page('resources');w.sync_window();app.processEvents()
         geometry=w.geometry();w.select_page('traffic');app.processEvents()
         assert w.traffic.isVisible() and w.geometry()==geometry
         w.grab().save(str(output/'upgrade-traffic.png'))

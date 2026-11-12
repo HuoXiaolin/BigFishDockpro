@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QWidget, QSizePolicy
 
 from flash_view import blend
 from card_design import paint_capsule_card
-from resource_options import TINTS
+from resource_options import TINTS,content_columns
 from resource_status import metric_ink,threshold
 
 
@@ -146,9 +146,7 @@ class MetricDisplay(DashboardCard):
         self.rows = {key:(label,value,tip) for key,label,value,tip in rows}
         self.basic = tuple(k for k in ('cpu','gpu','memory','network') if k in self.rows)
         self.extras = tuple(k for k in self.rows if k not in self.basic)
-        upper = self.load_height if 'cpu' in self.rows or 'gpu' in self.rows else 0
-        height = 2*self.inset + upper + 25*('memory' in self.rows) + 25*('network' in self.rows) + 25*math.ceil(len(self.extras)/2)
-        self.setMinimumHeight(max(1,height))
+        self.fit_height()
         self.setVisible(bool(rows))
         tips = [label+' · '+tip for _,label,_,tip in rows if tip]
         if 'cpu' in self.rows:
@@ -156,6 +154,18 @@ class MetricDisplay(DashboardCard):
         self.setToolTip('')
         self.setAccessibleName('，'.join(label+' '+value for _,label,value,_ in rows))
         self.update()
+
+    def fit_height(self):
+        self.load_columns = content_columns(self.owner.width())
+        loads = int('cpu' in self.rows) + int('gpu' in self.rows)
+        upper = self.load_height * math.ceil(loads / self.load_columns)
+        height = 2*self.inset + upper + 25*('memory' in self.rows) + 25*('network' in self.rows)
+        height += 25*math.ceil(len(self.extras)/self.load_columns)
+        self.setMinimumHeight(height)
+
+    def resizeEvent(self,event):
+        if event.oldSize().width()!=event.size().width():self.fit_height()
+        super().resizeEvent(event)
 
     def processors(self,p,area,values,history,now,inks,colors,track):
         box = QRectF(area)
@@ -209,16 +219,18 @@ class MetricDisplay(DashboardCard):
         y = 0
         if 'cpu' in self.rows or 'gpu' in self.rows:
             both = 'cpu' in self.rows and 'gpu' in self.rows
-            cpu_width = w-max(58,w*.30)-12 if both else w
+            paired = both and self.load_columns == 2
+            cpu_width = w-max(72,w*.30)-12 if paired else w
             if 'cpu' in self.rows:
                 self.processors(p,QRectF(0,0,cpu_width,self.load_height),service.latest.get('cpu_cores') or (),history,now,inks,cfg,track)
             if 'gpu' in self.rows:
-                x = cpu_width+12 if both else 0
-                if both:
+                x = cpu_width+12 if paired else 0
+                top = self.load_height if both and not paired else 0
+                if paired:
                     p.setPen(QPen(track,1))
                     p.drawLine(QPointF(x-6,3),QPointF(x-6,self.load_height-5))
-                self.gpu(p,QRectF(x,0,w-x,self.load_height),history,now,cfg,inks)
-            y = self.load_height
+                self.gpu(p,QRectF(x,top,w-x,self.load_height),history,now,cfg,inks)
+            y = self.load_height * (2 if both and not paired else 1)
         if 'memory' in self.rows:
             record = service.latest.get('memory')
             value = '—'
@@ -245,24 +257,24 @@ class MetricDisplay(DashboardCard):
                 values = series(history,'network',i)
                 trend(p,QRectF(pos+occupied,y+4,half-occupied-2,14),values,now,color,max((v for _,v in values),default=1))
             y += 25
+        cell_width = w/self.load_columns
         for i,key in enumerate(self.extras):
-            x = (i%2)*(w/2)
-            top = y+(i//2)*25
+            x = (i%self.load_columns)*cell_width
+            top = y+(i//self.load_columns)*25
             label,value,_ = self.rows[key]
             if key=='fps':
                 label='FPS'
-            area = QRectF(x+1,top,w/2-5,22)
+            area = QRectF(x+1,top,cell_width-5,22)
             text(p,area,label,cfg['muted'],10)
             label_width=p.fontMetrics().horizontalAdvance(label)+6
             text(p,area.adjusted(label_width,0,0,0),value,reading_ink(service,key,cfg,cfg['ink']),11,QFont.DemiBold)
 
 
 class SensorColumns(DashboardCard):
-    """Keep the hardware group title and several readings on the same row."""
+    """Group sensor readings by hardware and share the capsule's column rule."""
     group_width = 36
     row_height = 20
     column_gap = 7
-    minimum_cell_width = 81
     inset = 9
 
     def __init__(self,window):
@@ -284,31 +296,29 @@ class SensorColumns(DashboardCard):
         font.setWeight(QFont.DemiBold)
         values = QFontMetrics(font)
         gap = self.column_gap
-        available = max(1, self.width() - self.group_width - 2*self.inset)
-        columns = max(1, min(6, (available + gap) // (self.minimum_cell_width + gap)))
-        span = (available - (columns - 1) * gap) / columns
+        columns = content_columns(self.owner.width())
+        span = max(1, (self.width() - self.group_width - 2*self.inset - (columns - 1)*gap) / columns)
         y = self.inset+20
         for title, readings in self.groups:
             self.headings.append((QRectF(self.inset, y, self.group_width - 4, self.row_height), title))
-            column = 0
-            for key, label, value, _ in readings:
-                label = label.removeprefix('CPU ').removeprefix('GPU ').replace('帧率 FPS', '实时帧率')
-                value_width = values.horizontalAdvance(value) + 1
-                required = labels.horizontalAdvance(label) + 6 + value_width
-                slots = min(columns, max(1, math.ceil((required + gap) / (span + gap))))
-                if column + slots > columns:
-                    column = 0
-                    y += self.row_height
-                x = self.inset + self.group_width + column * (span + gap)
-                width = slots * (span + gap) - gap
-                value_width = min(width, value_width)
-                label_width = max(0, width - value_width - 5)
-                self.cells.append((key, labels.elidedText(label, Qt.ElideRight, int(label_width)),
-                                   values.elidedText(value, Qt.ElideRight, int(value_width)),
-                                   QRectF(x, y, label_width, self.row_height),
-                                   QRectF(x + width - value_width, y, value_width, self.row_height)))
-                column += slots
-            y += self.row_height + 3
+            for start in range(0,len(readings),columns):
+                row = [(key,label.removeprefix('CPU ').removeprefix('GPU ').replace('帧率 FPS','实时帧率'),value)
+                       for key,label,value,_ in readings[start:start+columns]]
+                stacked = any(labels.horizontalAdvance(label)+values.horizontalAdvance(value)+6>span
+                              for _,label,value in row)
+                for column,(key,label,value) in enumerate(row):
+                    x = self.inset + self.group_width + column*(span+gap)
+                    if stacked:
+                        label_area = QRectF(x,y,span,14)
+                        value_area = QRectF(x,y+14,span,16)
+                    else:
+                        value_width = values.horizontalAdvance(value)+1
+                        label_area = QRectF(x,y,span-value_width-5,self.row_height)
+                        value_area = QRectF(x+span-value_width,y,value_width,self.row_height)
+                    self.cells.append((key,labels.elidedText(label,Qt.ElideRight,int(label_area.width())),
+                                       values.elidedText(value,Qt.ElideRight,int(value_area.width())),label_area,value_area))
+                y += 32 if stacked else self.row_height
+            y += 3
         self.setMinimumHeight(y+self.inset-3 if self.groups else 1)
     def resizeEvent(self,event):
         if event.oldSize().width()!=event.size().width():self.fit_height()

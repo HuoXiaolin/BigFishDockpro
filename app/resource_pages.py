@@ -3,12 +3,13 @@ from datetime import datetime
 from PyQt5.QtCore import Qt,QDate,QRectF,QPointF,QSize
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics,QPalette
 from PyQt5.QtWidgets import (QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton,QSlider,
-    QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QDateEdit,QDialog,QScrollArea,QFrame,QSizePolicy,QMessageBox)
+    QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QDateEdit,QDialog,QScrollArea,QFrame,QSizePolicy,QMessageBox,QLayout)
 from ui_style import ModernComboBox,SettingsHeader,button,exec_dialog
 from resource_traffic import amount,totals
 from resource_compact import text
 from card_design import paint_capsule_card
 from resource_charts import DashboardCard,rate,sync_card_controls
+from resource_options import content_columns
 from resource_status import threshold
 
 SCROLL_STYLE='''
@@ -68,6 +69,7 @@ class InfoPage(CapsuleScrollArea):
     def __init__(self,window,key):
         super().__init__()
         body=QWidget();lay=QVBoxLayout(body);lay.setContentsMargins(3,2,3,1);lay.setSpacing(4)
+        lay.setSizeConstraint(QLayout.SetMinAndMaxSize)
         if key=='traffic':self.content=TrafficView(window)
         elif key=='weather':
             from resource_extras_view import WeatherView
@@ -274,12 +276,17 @@ class TrafficReadout(QWidget):
     periods=(('day','今日','ice'),('month','本月','lavender'),('year','本年','mint'))
 
     def __init__(self,window):
-        super().__init__();self.owner=window;self.columns=3;self.setFixedHeight(83)
+        super().__init__();self.owner=window
+        self.fit_cards()
+
+    def fit_cards(self):
+        self.columns=content_columns(self.owner.width())
+        pairs,unpaired=divmod(len(self.periods),2) if self.columns==2 else (0,len(self.periods))
+        rows=pairs+unpaired
+        self.setFixedHeight(pairs*83+unpaired*57+(rows-1)*self.gap)
 
     def resizeEvent(self,event):
-        self.columns=3 if event.size().width()>=345 else 1
-        height=83 if self.columns==3 else 3*57+2*self.gap
-        if height!=self.height():self.setFixedHeight(height)
+        self.fit_cards()
         super().resizeEvent(event)
 
     def paintEvent(self,event):
@@ -287,20 +294,21 @@ class TrafficReadout(QWidget):
         if not c:return
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         data=self.owner.service.latest.get('traffic') or {}
-        wide=self.columns==3
-        width=(self.width()-(self.columns-1)*self.gap)/self.columns
-        height=83 if wide else 57
         for i,(key,label,tint) in enumerate(self.periods):
-            x=(i%self.columns)*(width+self.gap)
-            y=(i//self.columns)*(height+self.gap)
+            row,column=divmod(i,self.columns)
+            paired=self.columns==2 and (row+1)*self.columns<=len(self.periods)
+            width=(self.width()-self.gap)/2 if paired else self.width()
+            height=83 if paired else 57
+            x=column*(width+self.gap)
+            y=row*((83 if self.columns==2 else 57)+self.gap)
             values=data.get(key)
             paint_capsule_card(p,QRectF(x,y,width,height),c,tint,self.owner.background)
             text(p,QRectF(x+10,y+5,width-20,16),label,c['muted'],10)
             total=amount(sum(values)) if values is not None else '—'
-            text(p,QRectF(x+10,y+21,width-20 if wide else width/2-12,25),total,c['ink'],18,True)
-            detail_x=x+10 if wide else x+width/2
+            text(p,QRectF(x+10,y+21,width-20 if paired else width/2-12,25),total,c['ink'],18,True)
+            detail_x=x+10 if paired else x+width/2
             detail_width=x+width-10-detail_x
-            detail_y=y+48 if wide else y+10
+            detail_y=y+48 if paired else y+10
             for j,title in enumerate(('下载','上传')):
                 top=detail_y+15*j
                 text(p,QRectF(detail_x,top,detail_width,14),title,c['muted'],10)

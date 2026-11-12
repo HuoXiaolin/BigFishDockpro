@@ -40,6 +40,7 @@ DESKTOP_COMPONENTS={'notes':'便签','picture':'每日图片','custom':'原生�
 PLACED_COMPONENTS={**RESOURCE_PAGES,**DESKTOP_COMPONENTS}
 CAPSULE_PAGES=PLACED_COMPONENTS
 OPEN_PAGES={'last':'上次查看的页面',**CAPSULE_PAGES}
+CONTENT_COLUMN_BREAKPOINT=360
 TASKBAR_LAYERS={'bottom':'置底','top':'置顶'}
 CAPSULE_TASKBAR_POSITIONS={'left':'靠左','center':'居中','right':'靠右','custom':'记住拖放位置'}
 HALO_SPEEDS={'slow':('慢速',12), 'medium':('中速',8), 'fast':('快速',4)}
@@ -58,6 +59,12 @@ REMINDER_OPTIONS={
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
 FACE_SWITCH_RANGE = (1, 1440)
 FACE_SWITCH_DEFAULT = 10
+
+
+def content_columns(window_width):
+    return 1 if window_width <= CONTENT_COLUMN_BREAKPOINT else 2
+
+
 DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,resource_air_source='auto',
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
               resource_capsule_taskbar=False,resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={},

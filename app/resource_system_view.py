@@ -4,6 +4,7 @@ from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import QWidget
 
 from resource_compact import ring, text
+from resource_options import content_columns
 from resource_status import BATTERY_WARNING_LEVEL, band_ink, low_battery_ink
 
 
@@ -42,7 +43,15 @@ class SystemReadout(QWidget):
     def __init__(self,owner):
         super().__init__()
         self.owner=owner
-        self.setFixedHeight(57)
+        self.fit_rows()
+
+    def fit_rows(self):
+        self.columns=content_columns(self.owner.width())
+        self.setFixedHeight(57 if self.columns==2 else 89)
+
+    def resizeEvent(self,event):
+        if event.oldSize().width()!=event.size().width():self.fit_rows()
+        super().resizeEvent(event)
 
     def values(self):
         service=self.owner.service
@@ -63,25 +72,36 @@ class SystemReadout(QWidget):
     def paintEvent(self,event):
         c=self.owner.colors
         level,state,volume,brightness,connection=self.values()
-        width=self.width();split=round(width*.53)
+        width=self.width()
+        paired=self.columns==2
+        split=width//2 if paired else 0
+        battery_width=split if paired else width
+        tight=paired and battery_width<86
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         ink=battery_ink(level,state,c['light'],c['muted'])
-        circle=QRectF(2,5,26,26)
+        circle=QRectF(1,2,22,22) if tight else QRectF(2,5,26,26)
         ring(p,circle,level,ink,c['hover'])
         if level==0:ring(p,circle,None,ink,ink)
         battery_icon(p,circle.center(),state,ink)
         label=f'{level}%' if level is not None else ('AC' if state=='ac' else '—')
-        text(p,QRectF(34,2,split-36,17),label,ink,14,True)
-        text(p,QRectF(34,19,split-36,15),BATTERY_STATES[state],c['muted'],10)
+        left=26 if tight else 34
+        text(p,QRectF(left,2,battery_width-left-2,21 if tight else 17),label,ink,11 if tight else 14,True)
+        state_rect=QRectF(0,24,battery_width-2,13) if tight else QRectF(left,19,battery_width-left-2,15)
+        text(p,state_rect,BATTERY_STATES[state],c['muted'],9 if tight else 10)
         volume_text='—' if volume is None else '静音' if volume[1] else f'{volume[0]}%'
         for i,(label,value) in enumerate((('音量',volume_text),('亮度','—' if brightness is None else f'{brightness:.0f}%'))):
-            top=3+16*i
+            top=(3 if paired else 35)+16*i
             level=brightness if i else volume[0] if volume and not volume[1] else None
             ring(p,QRectF(split,top+2,10,10),level,c['muted'],c['hover'])
-            text(p,QRectF(split+16,top,24,15),label,c['muted'],10)
-            text(p,QRectF(split+41,top,width-split-41,15),value,c['muted'] if value=='—' else c['ink'],11,True,Qt.AlignRight)
+            label_x=split+(13 if tight else 16)
+            label_width=20 if tight else 24
+            value_x=label_x+label_width+2
+            text(p,QRectF(label_x,top,label_width,15),label,c['muted'],9 if tight else 10)
+            text(p,QRectF(value_x,top,width-value_x,15),value,c['muted'] if value=='—' else c['ink'],
+                 9 if tight else 11,True,Qt.AlignRight)
+        bottom=self.height()-19
         p.setPen(QPen(QColor(c['hover']),1))
-        p.drawLine(QPointF(0,38),QPointF(width,38))
-        text(p,QRectF(0,40,28,16),'网卡',c['muted'],10)
+        p.drawLine(QPointF(0,bottom),QPointF(width,bottom))
+        text(p,QRectF(0,bottom+2,28,16),'网卡',c['muted'],10)
         connection_text='—' if connection is None else connection or '未连接'
-        text(p,QRectF(30,40,width-30,16),connection_text,c['ink'] if connection else c['muted'],11)
+        text(p,QRectF(30,bottom+2,width-30,16),connection_text,c['ink'] if connection else c['muted'],11)

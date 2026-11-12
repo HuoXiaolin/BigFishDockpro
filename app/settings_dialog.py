@@ -579,6 +579,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         info.addRow(label('Windows 桌面整理与美化工具，集成快捷启动、分类收纳、资源监控和桌面组件。', 'muted'))
         info.addRow('维护作者', label(AUTHOR))
         info.addRow('平台', label('Windows 10 / 11 · x64'))
+        info.addRow('项目许可', label('GPL-3.0-only · 正文见发行文件 LICENSE。'))
         info.addRow('第三方许可', label('PyQt5 GPLv3；Qt、Python 等许可见发行文件 licenses。'))
         self.project = label('')
         self.project.setOpenExternalLinks(False)

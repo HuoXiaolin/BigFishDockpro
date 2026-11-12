@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QBoxLayout, QDialog, QFormLayout, QHBoxLayout, QLab
 from flash_view import icon
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import ring, text
+from resource_options import content_columns
 from resource_pomodoro import duration_text, water_amount
 from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
 
@@ -75,7 +76,7 @@ class TimerSummary(QWidget):
     def paintEvent(self,event):
         c=self.owner.colors;width=self.width()
         if not c:return
-        tight=self.height()<60
+        tight=width<180 or self.height()<60
         diameter=40 if tight else 54
         top=(self.height()-diameter)/2-1
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
@@ -88,7 +89,7 @@ class TimerSummary(QWidget):
             percent=100*ml/goal
             value=water_amount(ml)
             mark=tone='water'
-            label=f'今日目标 {water_amount(goal)} · {percent:.0f}%'
+            label=f'{"目标" if width<180 else "今日目标"} {water_amount(goal)} · {percent:.0f}%'
             emphasized=due
         else:
             phase,status,left,total=self.model.focus()
@@ -189,7 +190,7 @@ class PomodoroView(QWidget):
         self.focus_summary.update();self.water_summary.update()
 
     def resizeEvent(self,event):
-        wide=event.size().width()>=385
+        wide=content_columns(self.owner.width())==2
         direction=QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
         if self.cards.direction()!=direction:self.cards.setDirection(direction)
         height=69 if wide else 51

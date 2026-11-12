@@ -1,9 +1,13 @@
 # Third-party notices
 
-The base BigFishDock source is MIT licensed (root LICENSE). Added code is MIT
-licensed. The combined binary distributed with GPL PyQt5 is provided under
-GPL v3; complete application source and build scripts accompany this release
-in the accompanying Fishdock source directory. Original MIT notices remain applicable.
+BigFishDockpro is distributed under the GNU General Public License version 3
+only (`GPL-3.0-only`). See the project root `LICENSE` for the license text.
+The corresponding application source and build scripts are included in the
+source distribution for [BigFishDockpro](https://github.com/HuoXiaolin/BigFishDockpro).
+
+The original iOS-style-Dock code retains its MIT copyright and permission
+notice in [iOS-style-Dock-MIT.txt](iOS-style-Dock-MIT.txt). The notices below
+apply to their respective third-party components.
 
 - PyQt5 5.15.11: Riverbank Computing Ltd, GPL v3; license texts included here.
   Source: https://pypi.org/project/PyQt5/5.15.11/#files

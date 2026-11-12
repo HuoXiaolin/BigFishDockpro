@@ -269,14 +269,14 @@ def run(api,runtime,root,app,output,checks):
         clear,_=surface_pixels(window.graph)
         assert clear.name()!=surfaces[0] and clear.alpha()==204
         cfg.update(old_style);window.sync_window()
-        narrow=window.geometry();window.resize(380,narrow.height());app.processEvents();window.body.activate()
+        narrow=window.geometry();window.resize(360,narrow.height());app.processEvents();window.body.activate()
         assert window.graph.geometry().bottom() < window.rank_section.y()
         assert window.rank_section.geometry().bottom() < window.sensor_columns.y()
         assert window.sensor_columns.geometry().bottom() < window.battery_section.y()
         scroll = window.scroll.verticalScrollBar()
         assert scroll.maximum() > 0
         scroll.setValue(scroll.maximum());app.processEvents()
-        assert window.grab().save(str(output/'resource-expanded-380.png'))
+        assert window.grab().save(str(output/'resource-expanded-360.png'))
         scroll.setValue(0)
         window.setGeometry(narrow);app.processEvents()
         options=ResourceOptions(service);options.show();app.processEvents()

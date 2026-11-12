@@ -80,8 +80,9 @@ def forecast(name,lookup=fetch_json,coordinates=None):
         def at(key, convert=number):
             values=daily.get(key) or []
             return convert(values[i]) if len(values)>i and values[i] is not None else None
+        code=at('weather_code')
         days.append(dict(date=str(day)[:10],low=at('temperature_2m_min'),high=at('temperature_2m_max'),
-                         condition=condition(at('weather_code')),rain=at('precipitation_probability_max'),
+                         code=code,condition=condition(code),rain=at('precipitation_probability_max'),
                          sunrise=at('sunrise',str),sunset=at('sunset',str),daylight=at('daylight_duration')))
     temp=number(current.get('temperature_2m'))
     if temp is None:raise ValueError('天气暂无读数')
