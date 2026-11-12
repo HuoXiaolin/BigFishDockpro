@@ -100,8 +100,9 @@ class Capture(BackgroundWorker):
     def run(self):
         process=None
         try:
+            # DWM and composed windows need display tracking to produce frame rows.
             args=[str(binary('PresentMon.exe')),'--session_name',self.session,
-                  '--v1_metrics','--output_stdout','--no_console_stats','--no_track_display','--no_track_gpu',
+                  '--v1_metrics','--output_stdout','--no_console_stats','--no_track_gpu',
                   '--no_track_input']
             if self.pid:args+=['--process_id',str(self.pid),'--terminate_on_proc_exit']
             process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
