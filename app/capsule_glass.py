@@ -12,6 +12,7 @@ from wallpaper_source import capture
 
 class CapsuleGlass:
     def __init__(self):
+        self.uses_wallpaper = False
         self.clear()
 
     def clear(self):
@@ -24,6 +25,7 @@ class CapsuleGlass:
         cfg = service.cfg
         style=appearance if appearance is not None else {k:cfg['panel_'+k] for k in ('material','theme','color','opacity','blur','highlight')}
         material=style['material']
+        self.uses_wallpaper = material not in ('clear', 'solid')
         if material == 'clear':
             self.clear()
             return

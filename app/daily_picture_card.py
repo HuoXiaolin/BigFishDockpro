@@ -157,6 +157,10 @@ class DailyPictureCard(QWidget):
         super().showEvent(event)
         if not self.embedded:restack(int(self.winId()),BOTTOM)
 
+    def hideEvent(self,event):
+        self.glass.clear()
+        super().hideEvent(event)
+
     def mousePressEvent(self,event):
         if event.button()==Qt.LeftButton and not self.embedded and not self.cfg['daily_picture_locked']:
             self.drag=(self.pos(),event.globalPos())

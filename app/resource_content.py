@@ -259,16 +259,21 @@ class ContentView(QWidget):
         item=self.items[self.index];url=item.get('original')
         if not url and not (wallpaper and self.is_local):return
         name='Bing-'+item.get('date','')+'.jpg'
-        runtime=self.owner.service.runtime
-        if wallpaper:
-            if runtime.dock.preview:return
-            path=Path(item['picture']) if self.is_local else Path(runtime.api.CONFIG_DIR)/'bing-wallpapers'/name
+        if wallpaper and self.owner.service.runtime.dock.preview:return
+        if wallpaper and self.is_local:
+            path=Path(item['picture'])
         else:
             folder=QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)
-            filename,_=QFileDialog.getSaveFileName(self,'保存必应原图',str(Path(folder)/name),'JPEG 图像 (*.jpg *.jpeg)')
-            if not filename:return
-            path=Path(filename)
-            if not path.suffix:path=path.with_suffix('.jpg')
+            if wallpaper:
+                if not folder:
+                    self.set_status('无法找到 Windows 图片文件夹')
+                    return
+                path=Path(folder)/'BigFishDock'/'bing-wallpapers'/name
+            else:
+                filename,_=QFileDialog.getSaveFileName(self,'保存必应原图',str(Path(folder)/name),'JPEG 图像 (*.jpg *.jpeg)')
+                if not filename:return
+                path=Path(filename)
+                if not path.suffix:path=path.with_suffix('.jpg')
         job=self.job=PictureExport(url,path,wallpaper)
         job.ready.connect(self.export_finished,Qt.QueuedConnection)
         job.finished.connect(self.finished,Qt.QueuedConnection)
@@ -277,10 +282,9 @@ class ContentView(QWidget):
     def export_finished(self,message,wallpaper_changed):
         if self.sender() is not self.job:return
         if wallpaper_changed:
-            from wallpaper_source import invalidate_source
-            invalidate_source()
-            self.owner.glass.clear();self.owner.update()
-            self.owner.service.runtime.dock.start_backdrop()
+            runtime=self.owner.service.runtime
+            runtime.wallpaper_changed()
+            runtime.dock.start_backdrop()
         self.set_status(message)
 
     def start(self,renew=False):

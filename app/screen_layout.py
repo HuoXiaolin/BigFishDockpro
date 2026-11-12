@@ -140,14 +140,7 @@ class DisplayEvents(QAbstractNativeEventFilter):
         elif msg.message==0x0016:self.layout.runtime.set_session_ending(bool(msg.wParam))  # WM_ENDSESSION, including cancellation.
         elif msg.message==0x001a and msg.wParam==20:  # SPI_SETDESKWALLPAPER
             if msg.hWnd==int(self.layout.dock.winId()):
-                from wallpaper_source import invalidate_source
-                invalidate_source()
-                resources=self.layout.runtime.resources.window
-                if resources:resources.glass.clear();resources.update()
-                flash=self.layout.runtime.flash.panel
-                if flash:
-                    for bar in (flash.toolbar,flash.filters_bar,flash.launch_shell,flash.composer):
-                        bar.material.clear();bar.update()
+                self.layout.runtime.wallpaper_changed()
         elif msg.message==0x001a and msg.wParam==0x002f:self.layout.changed()  # SPI_SETWORKAREA
         elif msg.message==0x007e:self.layout.changed()  # WM_DISPLAYCHANGE
         elif msg.message==0x02b1 and msg.hWnd==self.session_hwnd:  # WM_WTSSESSION_CHANGE

@@ -1,6 +1,6 @@
 """Manage desktop visibility, fullscreen pausing and background services."""
 from functools import cached_property
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import QApplication, QDialog
 from screen_corners import CornerManager
 from platform_services import foreground_fullscreen, fullscreen_window, set_priority
@@ -83,6 +83,12 @@ class RuntimeController:
         from interaction_motion import attach
         for window in (self.dock,self.clock,self.calendar):attach(window,lambda:self.dock.cfg)
         self.apply_settings()
+        self._wallpaper_keys={}
+        self.wallpaper_timer=QTimer(self.dock)
+        self.wallpaper_timer.setTimerType(Qt.VeryCoarseTimer)
+        self.wallpaper_timer.setInterval(5000)
+        self.wallpaper_timer.timeout.connect(self.check_wallpaper)
+        if not self.dock.preview:self.wallpaper_timer.start()
         from memory_budget import MemoryBudget
         self.memory_budget=MemoryBudget(self)
         from window_layers import ForegroundLayers
@@ -300,6 +306,48 @@ class RuntimeController:
         elif key=='custom':self.sync_custom_cards()
         else:getattr(self,key).sync()
 
+    def wallpaper_targets(self):
+        glass_windows=(self.resources.window,self.daily_picture,*self.resources.desktop_cards.values())
+        glass=[(window,window.glass) for window in glass_windows
+               if window is not None and window.isWindow() and window.isVisible()]
+        panel=self.flash.panel
+        if panel is not None:
+            glass.extend((bar,bar.material) for bar in (panel.toolbar,panel.filters_bar,panel.launch_shell,panel.composer)
+                         if bar.isVisible())
+        windows=(self.clock,self.calendar,*self.panels.windows.values(),*self.notes.windows.values())
+        captures=[window for window in windows if window.isWindow() and window.isVisible()]
+        return glass,captures
+
+    def refresh_wallpaper_targets(self,glass,captures):
+        for window,material in glass:
+            material.clear();window.update()
+        for window in captures:
+            window.refresh_timer.start()
+
+    def wallpaper_changed(self):
+        if self.closed or self.session_ending:return
+        from wallpaper_source import invalidate_source
+        invalidate_source()
+        self.refresh_wallpaper_targets(*self.wallpaper_targets())
+
+    def check_wallpaper(self):
+        if self.closed or self.session_ending or self.dock.preview:return
+        from wallpaper_source import wallpaper_key
+        glass,captures=self.wallpaper_targets()
+        # The main capsule and Dock already check their own wallpaper.
+        glass=[(window,material) for window,material in glass
+               if window is not self.resources.window and material.uses_wallpaper]
+        captures=[window for window in captures if window.backdrop is not None]
+        keys={}
+        for window in [widget for widget,_ in glass]+captures:
+            screen=QApplication.screenAt(window.frameGeometry().center()) or QApplication.primaryScreen()
+            if screen is None or screen.name() in keys:continue
+            try:keys[screen.name()]=wallpaper_key(window,screen)
+            except (OSError,ValueError,RuntimeError,AttributeError):continue
+        if any(self._wallpaper_keys.get(screen)!=key for screen,key in keys.items()):
+            self.refresh_wallpaper_targets(glass,captures)
+        self._wallpaper_keys=keys
+
     def set_daily_picture_options(self, **changes):
         from settings_effects import save_changes
         return save_changes(self.tray,self.api,changes)
@@ -367,6 +415,7 @@ class RuntimeController:
         if self.closed: return
         self.click_policy.close()
         self.closed = True
+        self.wallpaper_timer.stop()
         from probe_lifecycle import set_ending
         set_ending(True)
         if hasattr(self,'memory_budget'):self.memory_budget.close()

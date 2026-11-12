@@ -8,6 +8,88 @@ from PyQt5.QtGui import QContextMenuEvent,QMouseEvent,QImage,QPainter,QColor,QSc
 from PyQt5.QtWidgets import QApplication,QWidget
 
 
+def daily_picture_wallpaper_checks(runtime,app,output,wallpapers,checks):
+    from ctypes import addressof,wintypes
+    from io import BytesIO
+    from PyQt5.QtCore import QStandardPaths
+    from PyQt5.QtWidgets import QFileDialog
+    from daily_picture_card import DailyPictureCard
+    from desktop_panel_tests import wait_for
+    from resource_desktop_card import ResourceDesktopCard
+    import wallpaper_source as wallpaper
+
+    dock=runtime.dock
+    card=DailyPictureCard(runtime)
+    detached=ResourceDesktopCard(runtime.resources,'traffic')
+    content=card.content
+    current=wallpapers[0]
+    moment=0.0
+    picture_dir=output/'重定向的图片'
+    chosen=output/'自选原图.jpg'
+    sample=output/'wallpaper-download-fixture.jpg'
+    assert QImage(current).save(str(sample),'JPG')
+    data=sample.read_bytes()
+    url='https://www.bing.com/th?id=OHR.WallpaperTest_UHD.jpg'
+
+    class BingResponse(BytesIO):
+        headers={'Content-Length':str(len(data))}
+
+        def geturl(self):return url
+
+    def cache_colors():
+        colors=[]
+        for window in (card,detached):
+            window.grab()
+            image=window.glass.image.toImage()
+            colors.append(image.pixelColor(image.width()//2,image.height()//2))
+        return colors
+
+    try:
+        with patch.object(runtime,'daily_picture',card), patch.dict(runtime.resources.desktop_cards,{'traffic':detached}), \
+             patch.object(content,'refresh'), patch.object(dock,'start_backdrop'), \
+             patch.dict(dock.cfg,{'daily_picture_material':'liquid','panel_opacity':48,'resource_background':'global','panel_material':'liquid'}):
+            card.sync();detached.sync_window();app.processEvents()
+            screen=QApplication.screenAt(card.geometry().center()) or QApplication.primaryScreen()
+            monitor=screen.geometry()
+            with patch.object(dock,'preview',False), patch.object(runtime,'_wallpaper_keys',{}), \
+                 patch.object(wallpaper,'desktop_wallpaper',side_effect=lambda _: (current,2,QColor('white'),monitor,monitor)), \
+                 patch.object(wallpaper,'time',SimpleNamespace(monotonic=lambda:moment)):
+                runtime.wallpaper_changed()
+                red=cache_colors()
+                current=wallpapers[1]
+                msg=wintypes.MSG();msg.hWnd=int(dock.winId());msg.message=0x001a;msg.wParam=20
+                clock=runtime.clock
+                with patch.object(clock,'isVisible',return_value=True), patch.object(clock.refresh_timer,'start') as refresh_clock:
+                    runtime.layout.native_filter.nativeEventFilter(b'windows_generic_MSG',addressof(msg))
+                    refresh_clock.assert_called_once()
+                assert card.glass.image is None and detached.glass.image is None
+                blue=cache_colors()
+                assert all(first.red()>second.red() and first.blue()<second.blue() for first,second in zip(red,blue))
+                runtime.wallpaper_timer.timeout.emit();cache_colors()
+                cached=card.glass.image.cacheKey(),detached.glass.image.cacheKey()
+                moment+=6;runtime.wallpaper_timer.timeout.emit()
+                assert cached==(card.glass.image.cacheKey(),detached.glass.image.cacheKey())
+                current=wallpapers[0];moment+=6;runtime.wallpaper_timer.timeout.emit()
+                assert cache_colors()==red
+
+                content.items=[dict(date='20261112',original=url,story='')];content.update_controls()
+                with patch.object(QStandardPaths,'writableLocation',return_value=str(picture_dir)), \
+                     patch.object(QFileDialog,'getSaveFileName',return_value=(str(chosen),'')) as save, \
+                     patch('urllib.request.urlopen',side_effect=lambda *args,**kwargs:BingResponse(data)), \
+                     patch.object(wallpaper,'set_wallpaper') as setter:
+                    content.wallpaper.click();wait_for(app,lambda:content.job is None)
+                    saved_wallpaper=picture_dir/'BigFishDock'/'bing-wallpapers'/'Bing-20261112.jpg'
+                    setter.assert_called_once_with(saved_wallpaper)
+                    save.assert_not_called()
+                    assert saved_wallpaper.read_bytes()==data and content.status.text()=='已设为桌面壁纸'
+                    content.download.click();wait_for(app,lambda:content.job is None)
+                    save.assert_called_once()
+                    assert setter.call_count==1 and chosen.read_bytes()==data and content.status.text()=='原图已保存'
+    finally:
+        card.hide();card.deleteLater();detached.dispose();wallpaper.invalidate_source()
+    checks.append('Daily picture and detached resource glass refresh on WM_SETTINGCHANGE and silent wallpaper rotation, with unchanged sources reusing caches. Bing wallpaper saves under the redirected Pictures folder, and Download Original saves to the chosen file. OS wallpaper and HTTP are simulated.')
+
+
 def run(api,runtime,app,output,checks):
     from run_isolated_test import assert_isolated
     assert_isolated()
@@ -209,6 +291,7 @@ def run(api,runtime,app,output,checks):
                     assert image.pixelColor(width*3//4,height*3//4).alpha()>240
         finally:
             foreground.close();foreground.deleteLater();wallpaper.invalidate_source()
+        daily_picture_wallpaper_checks(runtime,app,output,wallpapers,checks)
         service.fold(True)
         folded_geometry=w.geometry();start=QPoint(w.width()//2,w.height()//2);point=w.mapToGlobal(start)
         event(w,QEvent.MouseButtonPress,start,point)
