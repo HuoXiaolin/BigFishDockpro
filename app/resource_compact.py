@@ -94,6 +94,12 @@ def status_values(service):
         group=service.bluetooth.group()
         label=' · '.join(row['name']+' '+('未报告' if row['level'] is None else f"{row['level']}%") for row in group)
         values.append(('bluetooth','蓝牙电量',label or service.bluetooth.status,group))
+    monitor=getattr(service,'peripherals',None)
+    if monitor and 'peripherals' in selected:
+        from resource_peripherals import format_reading
+        group=monitor.group()
+        label=' · '.join(row['name']+' '+format_reading(row) for row in group)
+        values.append(('peripherals','2.4G 外设',label or monitor.status,group))
     return values
 
 
@@ -417,6 +423,10 @@ def paint_status(p,rect,row,colors):
     if key=='bluetooth':
         from bluetooth_gauge import draw_rings
         draw_rings(p,circle,value,not colors['light'])
+        return
+    if key=='peripherals':
+        from bluetooth_gauge import draw_peripheral_rings
+        draw_peripheral_rings(p,circle,value,not colors['light'])
         return
     if key=='battery':
         from resource_system_view import battery_icon,battery_ink

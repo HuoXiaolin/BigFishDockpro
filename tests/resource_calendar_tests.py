@@ -229,6 +229,13 @@ def check_task_accounts(sync, agenda, finish, now):
 
 
 def run(app, output, checks):
+    from private_storage_fixture import private_storage
+
+    with private_storage(checks):
+        run_checks(app, output, checks)
+
+
+def run_checks(app, output, checks):
     import resource_calendar_api as api
     import resource_calendar_sync as calendar
     import resource_dingtalk_login as dingtalk
@@ -506,6 +513,6 @@ def run(app, output, checks):
     checks.extend([
         'DingTalk verified component reuse, download progress, cancellation and rejection of partial downloads. Three official authorization paths are exercised against fixture responses.',
         'Calendar sync works in standalone mode, preserves reminders across reschedules and incomplete pages, removes cancellations, and clears authorization on disconnect.',
-        'Dida and NextTodo sync dated tasks read-only, preserve good credentials after a failed replacement, reload encrypted snapshots, and follow NextTodo local address and CA rotation.',
+        'Dida and NextTodo sync dated tasks read-only, preserve good credentials after a failed replacement, reload protected snapshots, and follow NextTodo local address and CA rotation.',
         'Calendar account names and required authorization survive reload. Tencent renewal requests a new scan, and NextTodo sends its exact client name and distinguishes Cloudflare denial from an expired token.',
     ])

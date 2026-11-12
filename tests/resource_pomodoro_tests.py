@@ -79,6 +79,13 @@ def assert_single_caption(dialog):
 
 
 def calendar_account_ui(options, service, app, output, checks):
+    from private_storage_fixture import private_storage
+
+    with private_storage(checks):
+        check_calendar_account_ui(options, service, app, output, checks)
+
+
+def check_calendar_account_ui(options, service, app, output, checks):
     from traceback import format_exc
 
     from PyQt5.QtGui import QTextCursor

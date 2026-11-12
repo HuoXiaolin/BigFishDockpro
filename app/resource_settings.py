@@ -399,6 +399,14 @@ class ResourceOptions(QDialog):
 
         def build_5():
             layout=page(5)
+            peripherals=section(layout,'外设电量')
+            profiles=self.orders.get('resource_peripheral_profiles',cfg['resource_peripheral_profiles'])
+            device_row=QHBoxLayout()
+            count=QLabel(f'已添加 {len(profiles)} 台设备' if profiles else '尚未添加 2.4G 外设')
+            count.setWordWrap(True)
+            device_row.addWidget(count,1)
+            device_row.addWidget(button('管理 2.4G 设备…',lambda:self.edit_peripherals(count)))
+            peripherals.addLayout(device_row)
             readouts=section(layout,'资源读数')
             form=QFormLayout();readouts.addLayout(form)
             combo(form,'resource_interval','采样间隔',[(str(s)+' 秒',s) for s in (1,2,5)],cfg['resource_interval'],self.fields)
@@ -559,6 +567,25 @@ class ResourceOptions(QDialog):
     def agenda_connections(self):
         from resource_calendar_settings import show_connections
         show_connections(self,self.service)
+
+    def edit_peripherals(self,count):
+        from resource_peripheral_settings import PeripheralSettings
+        service=self.service
+        profiles=self.orders.get('resource_peripheral_profiles',service.cfg['resource_peripheral_profiles'])
+        service.peripheral_editing=True
+        service.sync_peripherals()
+        try:
+            dialog=PeripheralSettings(self,profiles)
+            try:
+                if dialog.exec_()==QDialog.Accepted:
+                    self.orders['resource_peripheral_profiles']=dialog.profiles
+                    n=len(dialog.profiles)
+                    count.setText(f'已添加 {n} 台设备' if n else '尚未添加 2.4G 外设')
+            finally:
+                dialog.deleteLater()
+        finally:
+            service.peripheral_editing=False
+            if not service.closed:service.sync_peripherals()
 
     def deleteLater(self):
         # Page builders close over the dialog and its placeholder widgets.

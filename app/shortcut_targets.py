@@ -5,8 +5,27 @@ import uuid
 from pathlib import Path
 
 
+_LINK_HEADER_PREFIX = bytes.fromhex('4c0000000114020000000000c000000000000046')
+_HAS_DARWIN_ID = 0x00001000
+
+
+def is_installer_shortcut(path):
+    """Read only the ShellLinkHeader. Leave advertised-link activation to Windows."""
+    if not os.fspath(path).lower().endswith('.lnk'):
+        return False
+    try:
+        with open(path, 'rb') as stream:
+            header = stream.read(76)
+    except (OSError, ValueError):
+        return False
+    return (len(header)==76 and header.startswith(_LINK_HEADER_PREFIX) and
+            bool(int.from_bytes(header[20:24], 'little') & _HAS_DARWIN_ID))
+
+
 def lnk_metadata(path):
     if os.name != 'nt': return None
+    if is_installer_shortcut(path):
+        return {'path':os.path.abspath(path), 'installer_shortcut':True}
     ole = ctypes.WinDLL('ole32')
     pointer = ctypes.c_void_p
     guid_type = ctypes.c_ubyte * 16
@@ -72,7 +91,7 @@ def lnk_metadata(path):
 
 def lnk_details(path):
     info=lnk_metadata(path)
-    return (info['path'],info['arguments']) if info else None
+    return (info['path'],info['arguments']) if info and not info.get('installer_shortcut') else None
 
 
 def lnk_target(path):

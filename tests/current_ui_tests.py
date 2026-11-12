@@ -439,6 +439,8 @@ def run(output):
         check_display_transition(api,runtime,root.name,app,output,checks)
         from resource_capsule_tests import run as check_resource_capsule
         check_resource_capsule(api,runtime,root.name,app,output,checks)
+        from resource_telemetry_tests import run as check_resource_telemetry
+        check_resource_telemetry(checks)
         from resource_upgrade_tests import run as check_resource_upgrade
         check_resource_upgrade(api,runtime,root.name,app,output,checks)
         from flash_capsule_tests import run as check_flash_capsule

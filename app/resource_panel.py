@@ -52,28 +52,37 @@ class BatteryRows(QWidget):
     name_x=46
     gap=7
 
-    def __init__(self,window):
+    def __init__(self,window,peripheral=False):
         super().__init__()
         self.owner_window=window
+        self.peripheral=peripheral
         self.legend=[]
         self.status=''
         self.name_width=0
         self.setFixedHeight(17)
 
     def refresh(self,gauge):
-        self.legend=gauge.group() if gauge else []
-        self.status=gauge.status if gauge else '正在读取蓝牙设备…'
+        rows=gauge.group() if gauge else []
+        status=gauge.status if gauge else ('正在读取 2.4G 外设…' if self.peripheral else '正在读取蓝牙设备…')
+        if rows==self.legend and status==self.status:return
+        self.legend=rows;self.status=status
         height=17*max(1,len(self.legend))
         if self.height()!=height:self.setFixedHeight(height)
-        summary='\\n'.join(row['name']+' · '+self.percentage(row) for row in self.legend) or self.status
-        self.setToolTip(summary);self.setAccessibleName(summary);self.update()
+        summary='\n'.join(row['name']+' · '+self.percentage(row) for row in self.legend) or self.status
+        if self.peripheral and rows:
+            from html import escape
+            self.setToolTip('<qt>'+escape(summary).replace('\n','<br>')+'</qt>')
+        else:self.setToolTip(summary)
+        self.setAccessibleName(summary);self.update()
 
-    @staticmethod
-    def percentage(row):
+    def percentage(self,row):
+        if self.peripheral:
+            from resource_peripherals import format_reading
+            return format_reading(row)
         return '未报告' if row['level'] is None else f"{row['level']}%"
 
     def paintEvent(self,event):
-        from bluetooth_gauge import draw_rings,ring_ink
+        from bluetooth_gauge import draw_rings,draw_peripheral_rings,ring_ink
         from resource_status import BATTERY_WARNING_LEVEL
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         c=self.owner_window.colors
@@ -91,14 +100,16 @@ class BatteryRows(QWidget):
                                   max(metrics.horizontalAdvance(row['name']) for row in self.legend)))
         self.value_x=name_x+self.name_width+gap
         p.setPen(QColor(c['muted']))
-        p.drawText(QRect(0,0,25,17),Qt.AlignVCenter,'蓝牙')
+        p.drawText(QRect(0,0,27,17),Qt.AlignVCenter,'2.4G' if self.peripheral else '蓝牙')
         for i,row in enumerate(self.legend):
             y=17*i
-            draw_rings(p,QRectF(28,y+1,14,14),[row],not c['light'])
+            draw=draw_peripheral_rings if self.peripheral else draw_rings
+            draw(p,QRectF(28,y+1,14,14),[row],not c['light'])
             p.setPen(QColor(c['ink']));p.setFont(font)
             p.drawText(QRect(name_x,y,self.name_width+1,17),Qt.AlignVCenter,metrics.elidedText(row['name'],Qt.ElideRight,self.name_width+1))
             low=row['level'] is not None and row['level']<BATTERY_WARNING_LEVEL
-            p.setPen(QColor(ring_ink(row,c['light']) if low else c['ink']))
+            tinted=low or self.peripheral and (row.get('state')=='charging' or row.get('stale'))
+            p.setPen(QColor(ring_ink(row,c['light']) if tinted else c['ink']))
             p.setFont(value_font);p.drawText(QRect(self.value_x,y,value_width,17),Qt.AlignRight|Qt.AlignVCenter,self.percentage(row))
 
 
@@ -189,6 +200,7 @@ class ResourceContentHost(QWidget):
         self.rank_labels=[]
         self.rank_icons={}
         self.dashboard=None
+        self.peripheral_ui=None
         self.colors={}
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -291,6 +303,7 @@ class ResourceContentHost(QWidget):
         top=QHBoxLayout();top.setSpacing(4)
         heading=QLabel('电脑状态');heading.setObjectName('RankTitle');top.addWidget(heading,1)
         top.addWidget(self.bt_head);battery_layout.addLayout(top)
+        self.battery_header=top
         from resource_system_view import SystemReadout
         self.system_readout=SystemReadout(self);battery_layout.addWidget(self.system_readout)
         self.rings=BatteryRows(self);battery_layout.addWidget(self.rings)
@@ -321,11 +334,12 @@ class ResourceContentHost(QWidget):
             return
         page = self.scroll.takeWidget()
         self.dashboard = None
+        self.peripheral_ui = None
         self.rank_labels = []
         self.rank_icons.clear()
         for name in ('columns','graph','rank_section','rank_head','rank_buttons','rank_widget',
                      'dashboard_layout_key','sensor_columns','no_readings','bt_head','bt_page',
-                     'bt_refresh','battery_section','system_readout','rings','body','page'):
+                     'bt_refresh','battery_section','battery_header','system_readout','rings','body','page'):
             self.__dict__.pop(name, None)
         if page is not None:
             page.deleteLater()
@@ -381,15 +395,60 @@ class ResourceContentHost(QWidget):
     def refresh_bt(self):
         if self.service.bluetooth:self.service.bluetooth.refresh()
 
+    def next_peripherals(self):
+        monitor=self.service.peripherals
+        if monitor:monitor.turn()
+
+    def read_peripherals(self):
+        monitor=self.service.peripherals
+        if monitor:monitor.refresh()
+
+    def build_peripherals(self):
+        header=QWidget(self.battery_section)
+        actions=QHBoxLayout(header);actions.setContentsMargins(0,0,0,0);actions.setSpacing(4)
+        page=QToolButton();page.setAccessibleName('下一组 2.4G 外设')
+        page.clicked.connect(self.next_peripherals);actions.addWidget(page)
+        refresh=QToolButton();refresh.setAccessibleName('刷新 2.4G 外设电量')
+        refresh.setToolTip('刷新 2.4G 外设电量')
+        refresh.clicked.connect(self.read_peripherals);actions.addWidget(refresh)
+        rings=BatteryRows(self,peripheral=True)
+        self.battery_header.insertWidget(1,header)
+        layout=self.battery_section.layout()
+        layout.insertWidget(layout.indexOf(self.rings)+1,rings)
+        self.peripheral_ui=(header,page,refresh,rings)
+        sync_card_controls(header,self.colors)
+
+    def refresh_peripherals(self):
+        if self.dashboard is None:return
+        enabled=bool(self.service.cfg.get('resource_peripheral_profiles'))
+        if not enabled:
+            if self.peripheral_ui:
+                header,_,_,rings=self.peripheral_ui
+                self.peripheral_ui=None
+                for layout,widget in ((self.battery_header,header),(self.battery_section.layout(),rings)):
+                    layout.removeWidget(widget);widget.hide();widget.deleteLater()
+            return
+        if self.peripheral_ui is None:self.build_peripherals()
+        _,page,refresh,rings=self.peripheral_ui
+        monitor=getattr(self.service,'peripherals',None)
+        page.setVisible(bool(monitor and monitor.pages()>1))
+        if monitor:page.setText(f'{monitor.page+1}/{monitor.pages()} ›')
+        ink=self.colors['muted']
+        if refresh.property('iconInk')!=ink:
+            refresh.setProperty('iconInk',ink)
+            refresh.setIcon(icon('refresh',ink,13));refresh.setIconSize(QSize(13,13))
+        rings.refresh(monitor)
+
     def refresh_dashboard(self):
         cfg=self.service.cfg
         if self.dashboard is None:
             self.build_dashboard()
         basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network')]
         self.graph.refresh(basics);self.sensor_columns.refresh([row for row in self.values if row not in basics])
-        self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth'] or cfg['resource_system_status']))
+        peripherals=bool(cfg.get('resource_peripheral_profiles'))
+        self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth'] or cfg['resource_system_status'] or peripherals))
         self.rank_section.setVisible(cfg['resource_rank'])
-        self.battery_section.setVisible(cfg['resource_bluetooth'] or cfg['resource_system_status'])
+        self.battery_section.setVisible(cfg['resource_bluetooth'] or cfg['resource_system_status'] or peripherals)
         self.system_readout.setVisible(cfg['resource_system_status'])
         if cfg['resource_system_status']:self.system_readout.refresh()
         self.layout_dashboard()
@@ -403,6 +462,7 @@ class ResourceContentHost(QWidget):
                 self.bt_refresh.setProperty('iconInk',ink)
                 self.bt_refresh.setIcon(icon('refresh',ink,13));self.bt_refresh.setIconSize(QSize(13,13))
             self.rings.refresh(bt)
+        self.refresh_peripherals()
         self.body.activate()
         wanted=self.body.minimumSize().height()
         if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)

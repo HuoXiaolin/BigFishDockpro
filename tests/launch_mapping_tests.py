@@ -1,7 +1,71 @@
 """Shortcut mappings and on-click activation with temporary native fixtures."""
-import os,sys,copy,json,base64,subprocess,ctypes
+import os,sys,copy,json,base64,subprocess,ctypes,struct
 from pathlib import Path
 from unittest.mock import patch
+
+
+def check_installer_shortcut(api,dock,folder,ordinary,mapped,checks):
+    from app_catalog import launch_identity,merge_items,path_key
+    from config_transfer import normalize
+    from shortcut_mapping import map_entry
+    from window_activation import activation_target
+
+    # Reuse a native Shell Link and add a synthetic installer descriptor. No
+    # product is installed or started; launch calls are mocked below.
+    contents=bytearray(ordinary.read_bytes())
+    assert int.from_bytes(contents[:4],'little')==0x4c and contents[-4:]==b'\0'*4
+    flags=int.from_bytes(contents[20:24],'little')
+    contents[20:24]=(flags|0x1000).to_bytes(4,'little')
+    descriptor='00000000000000000000Probe>11111111111111111111'
+    contents[-4:-4]=(struct.pack('<II',0x314,0xa0000006)+descriptor.encode('ascii').ljust(260,b'\0')
+                    +descriptor.encode('utf-16le').ljust(520,b'\0'))
+    link=folder/'Installer Entry.lnk'
+    link.write_bytes(contents)
+    path=str(link)
+    identify=ctypes.WinDLL('msi').MsiGetShortcutTargetW
+    identify.argtypes=[ctypes.c_wchar_p]*4
+    identify.restype=ctypes.c_uint
+    product,feature,component=(ctypes.create_unicode_buffer(256) for _ in range(3))
+    assert identify(path,product,feature,component)==0 and feature.value=='Probe'
+    flattened=dict(mapped,source_path=path,verb='runas',show_command=3,app_user_model_id='Test.Flattened')
+
+    entry=map_entry({'path':path})
+    assert entry and path_key(entry['path'])==path_key(path),entry
+    assert launch_identity(entry)!=launch_identity(mapped)
+    items,added,duplicates,invalid=merge_items([mapped],[{'path':path}])
+    assert (added,duplicates,invalid)==(1,0,0) and path_key(items[-1]['path'])==path_key(path)
+    assert merge_items(items,[{'path':path}])[1:]==(0,1,0)
+
+    snapshot=Path(api.CONFIG_PATH).read_bytes()
+    try:
+        cfg=copy.deepcopy(api.DEFAULT_CONFIG)
+        cfg['items']=[flattened]
+        assert api.save_config(cfg)
+        loaded=api.load_config()
+        restored=loaded['items'][0]
+        assert path_key(restored['path'])==path_key(path) and restored['name']==mapped['name']
+        assert not set(restored)&{'arguments','working_directory','verb','show_command','app_user_model_id'}
+        saved=json.loads(Path(api.CONFIG_PATH).read_text(encoding='utf-8'))
+        assert saved['items'][0]==restored and normalize(loaded,api)['items']==loaded['items']
+        assert activation_target(restored) is None
+
+        with patch('usage_stats.record'),patch('explorer_launch.launch') as shell:
+            dock.launch(restored)
+            shell.assert_called_once()
+            assert shell.call_args.args[0]==path and not shell.call_args.args[1],shell.call_args
+            assert not shell.call_args.kwargs.get('arguments'),shell.call_args
+        with (patch('usage_stats.record'),patch('explorer_launch.launch',side_effect=OSError('fixture')),
+              patch('external_launch.os.startfile') as fallback):
+            dock.launch(restored)
+            fallback.assert_called_once()
+            assert fallback.call_args.args[0]==path and not fallback.call_args.kwargs.get('cwd'),fallback.call_args
+            assert not fallback.call_args.kwargs.get('arguments'),fallback.call_args
+    finally:
+        Path(api.CONFIG_PATH).write_bytes(snapshot)
+        link.unlink()
+    assert map_entry(flattened)==flattened
+    checks.append('Installer shortcut fixture: preserves original .lnk through import and config migration, keeps separate identity, and sends the link to both Shell routes without overriding its launch details.')
+
 
 def run(api,runtime,root,output,checks):
     from PyQt5.QtWidgets import QApplication
@@ -38,6 +102,7 @@ def run(api,runtime,root,output,checks):
     assert path_key(migrated['items'][0]['path'])==path_key(str(program)) and migrated['items'][0]['arguments']==mapped['arguments']
     assert not migrated['reorder'] and json.loads(Path(api.CONFIG_PATH).read_text(encoding='utf-8'))['items'][0]['path']==migrated['items'][0]['path']
     Path(api.CONFIG_PATH).write_bytes(snapshot)
+    check_installer_shortcut(api,runtime.dock,folder,link,mapped,checks)
     link.unlink();normal.unlink()
     assert map_entry(mapped)==mapped and program.read_bytes()==original
     internet=folder/'web.url';internet.write_text('[InternetShortcut]\nURL=https://example.com/CaseSensitive\n',encoding='utf-8')

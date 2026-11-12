@@ -21,9 +21,10 @@ TASK_COLUMN_NAMES = {
 }
 COMPACT_METRICS=tuple(k for k in METRICS if k not in ('rank','system_status'))
 COMPACT_DEVICE={'battery':'电池电量','connection':'网卡名称','volume':'系统音量','brightness':'屏幕亮度'}
-COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth')
+COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth','peripherals')
 COMPACT_ROUTINES={'pomodoro':'番茄钟','water':'喝水进度','agenda':'下一项日程'}
-COMPACT_ITEMS={**{key:METRICS[key] for key in COMPACT_METRICS},**COMPACT_DEVICE,**COMPACT_ROUTINES}
+COMPACT_ITEMS={**{key:METRICS[key] for key in COMPACT_METRICS},**COMPACT_DEVICE,
+               'peripherals':'2.4G 外设电量',**COMPACT_ROUTINES}
 COMPACT_CONTENT={'ai':'resource_compact_ai','music':'resource_compact_music','weather':'resource_weather_compact'}
 PINNABLE={**{key:title for key,title in COMPACT_ITEMS.items() if key not in COMPACT_STATUS},
           'ai':'AI 额度','music':'音乐','weather':'天气'}
@@ -64,11 +65,11 @@ DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_thro
               resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_layer='bottom',
               resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
 DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank',*FAN_METRICS) for key in METRICS})
-DEFAULTS.update(resource_system_status=True,resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
+DEFAULTS.update(resource_system_status=True,resource_peripheral_profiles=[],resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
                 resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
 DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_agenda=True,resource_alert_focus=True,
                 resource_alert_water=True,resource_alert_battery=False,resource_reminder_sound=True)
-DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
+DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
                 resource_face_auto_switch=False,resource_face_switch_minutes=FACE_SWITCH_DEFAULT,
@@ -77,7 +78,7 @@ DEFAULTS.update(resource_traffic=True,resource_task_font=11,resource_task_thresh
                 resource_news=False,resource_news_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
-                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=list(COMPACT_METRICS),
+                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=[*COMPACT_METRICS,'peripherals'],
                 resource_compact_auto_width=True,resource_compact_pinned=['cpu','memory','gpu','network'],resource_compact_order=[],
                 resource_compact_ai=True,resource_compact_music=True,
                 resource_compact_density='dense',
@@ -156,6 +157,11 @@ def clean_weather_thresholds(raw,strict=False):
 
 
 def normalize(cfg,strict=False):
+    profiles=cfg.get('resource_peripheral_profiles',[])
+    if profiles!=[]:
+        from resource_peripherals import normalize_profiles
+        profiles=normalize_profiles(profiles,strict=strict)
+    cfg['resource_peripheral_profiles']=profiles
     from resource_weather import clean_cities
     from content_sources import clean_feeds
     role_id=cfg.get('resource_face_role','')
@@ -204,7 +210,7 @@ def normalize(cfg,strict=False):
         if cfg.get(key) not in allowed:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
-    for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar',
+    for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
                 'resource_face_auto_switch',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:

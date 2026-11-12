@@ -42,9 +42,17 @@ def run(checks):
     checks.append('wallpaper-only material source: six Windows positioning modes, negative monitor origin, spanning bounds and 150% DPR crop; foreground grab forbidden; bounded image thumbnail with preserved aspect and invalid-image fallback')
     from PyQt5.QtWidgets import QApplication
     native_window=next(widget for widget in QApplication.topLevelWidgets() if widget.__class__.__name__=='Dock')
-    metadata=source.desktop_wallpaper(native_window)
-    assert len(metadata)==5 and not metadata[3].isEmpty()
-    checks.append('native Windows wallpaper interface read on isolated desktop: monitor, image path, fit mode and desktop color returned without displaying or capturing foreground applications')
+    try:
+        metadata=source.desktop_wallpaper(native_window)
+    except source.WallpaperServiceError as error:
+        if error.hresult != 0x80070005:
+            raise
+        source.invalidate_source()
+        assert capture.capture_behind(native_window,[]) is None
+        checks.append('Wallpaper COM denied on the isolated desktop (0x80070005). No-backdrop fallback verified; native wallpaper metadata read unverified.')
+    else:
+        assert len(metadata)==5 and not metadata[3].isEmpty()
+        checks.append('native Windows wallpaper interface read on isolated desktop: monitor, image path, fit mode and desktop color returned without displaying or capturing foreground applications')
     # Explicit source rectangles are in physical pixels, not logical Qt units.
     # A half-width sample of a 200%-DPR gradient gives 64 instead of 128.
     from liquid_glass import paint_liquid_glass

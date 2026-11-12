@@ -7,18 +7,20 @@ import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 SOURCE=ROOT/'tools'/'BluetoothBattery.cs'
+PERIPHERALS=ROOT/'tools'/'PeripheralBattery.cs'
 SENSORS=ROOT/'tools'/'HardwareSensors.cs'
 CPU=ROOT/'tools'/'CpuSensors.cs'
 EXTENDED=ROOT/'tools'/'HardwareExtended.cs'
 FANS=ROOT/'tools'/'HardwareFans.cs'
 MODULES=[ROOT/'assets'/'pawnio'/(name+'.bin') for name in ('AMDFamily17','IntelMSR')]
 TASKBAR=ROOT/'tools'/'TaskbarSpace.cs'
+APP_TRAFFIC=ROOT/'tools'/'AppTraffic.cs'
 TARGET=ROOT/'artifacts'/'generated'/'DesktopResourceProbe.exe'
 SHARED_DOTNET=Path(r'D:\Agant\toolchain\dotnet\dotnet.exe')
 
 
 def prepare(dotnet: Path = SHARED_DOTNET):
-    sources=(SOURCE,SENSORS,CPU,EXTENDED,FANS,TASKBAR)
+    sources=(SOURCE,PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC)
     if TARGET.is_file() and TARGET.stat().st_mtime_ns>=max(p.stat().st_mtime_ns for p in (*sources,*MODULES,Path(__file__))):return TARGET
     dotnet=dotnet.resolve()
     env=dict(os.environ,DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_NOLOGO='1',

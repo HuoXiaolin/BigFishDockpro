@@ -138,10 +138,14 @@ internal static class BluetoothBattery {
     [MTAThread]
     static int Main(string[] args) {
         try {
+            if(args.Length==1 && args[0]=="--app-traffic") return AppTraffic.Run();
             object result;
             if(args.Length==2 && args[0]=="--taskbar") result=TaskbarSpace.Read(Int64.Parse(args[1]));
             else if(args.Length==2 && args[0]=="--sensors") result=HardwareSensors.Read(args[1]);
-            else result=Scan().GetAwaiter().GetResult();
+            else if(args.Length==1 && args[0]=="--peripherals-scan") result=PeripheralBattery.Scan();
+            else if(args.Length==1 && args[0]=="--peripherals-read") result=PeripheralBattery.Read();
+            else if(args.Length==0) result=Scan().GetAwaiter().GetResult();
+            else return 1;
             Console.OutputEncoding=new UTF8Encoding(false);
             Console.WriteLine(new JavaScriptSerializer().Serialize(result));return 0;
         } catch(Exception) { return 1; }

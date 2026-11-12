@@ -131,6 +131,11 @@ class DisplayEvents(QAbstractNativeEventFilter):
     def nativeEventFilter(self,event_type,message):
         if self.layout.closed or event_type not in (b'windows_generic_MSG',b'windows_dispatcher_MSG'):return False,0
         msg=wintypes.MSG.from_address(int(message))
+        if ((msg.message==0x0219 and msg.wParam==7) or
+                (msg.message==0x0218 and msg.wParam==18)):  # DBT_DEVNODES_CHANGED / PBT_APMRESUMEAUTOMATIC
+            resources=getattr(self.layout.runtime,'resources',None)
+            monitor=getattr(resources,'peripherals',None)
+            if monitor:monitor.device_changed()
         if msg.message==0x0016:self.layout.runtime.session_ending=bool(msg.wParam)  # WM_ENDSESSION, including cancellation.
         elif msg.message==0x001a and msg.wParam==20:  # SPI_SETDESKWALLPAPER
             if msg.hWnd==int(self.layout.dock.winId()):

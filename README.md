@@ -13,7 +13,7 @@
 ### 资源胶囊：监控、AI、音乐、天气与番茄钟
 
 - 桌面胶囊和任务栏监控可分别开启，独立选择 CPU、GPU、内存、网速、FPS、温度、频率、功耗、电压、水泵和显存等读数。主板、CPU 和 GPU 风扇仅在取得实测转速时显示。
-- 今日、本月、本年各有一张流量卡片，分别显示合计、下载与上传。可查看历史记录，数据保存在本机，重启后保留。
+- 今日、本月、本年各有一张流量卡片，分别显示合计、下载与上传。流量页可开启按应用采集，查看实时上下行速度及分时段历史排行。按应用采集需要 Windows ETW 权限，数据从启用时开始记录。历史窗口支持分别重置总流量和应用记录。
 - 任务栏支持 2–24 像素字号。缩小后文字、间距和音乐组件同步收紧，空间不足时使用单行或分页。资源读数按上限的 60% / 80% 分别变黄、变红，低于 60% 为绿色，各档色深随读数渐变。
 - 任务栏组件可选靠左、居中或靠右，自动避让 Windows 11 的开始菜单、应用按钮和托盘。默认置底，选择置顶可在浏览器或无边框应用全屏时保留已验证的显示位置。任务栏监控与桌面胶囊可分别开启「鼠标穿透」，并从托盘关闭。
 - 在「资源胶囊设置 → 胶囊行为」可开启「收起时固定到任务栏」，也可直接把胶囊拖到任务栏。胶囊可在可用空位内拖动、记住位置，点击后向屏幕内展开。胶囊与任务栏监控各自保存位置。
@@ -71,7 +71,9 @@ AI 与音乐组件采用流式读取，近期与全部历史共用一个缓存�
 
 ![音乐播放卡片，使用演示数据](docs/screenshots/readme-media-compact.png)
 
-![日、月、年流量卡片，使用演示数据](docs/screenshots/readme-traffic-cards.png)
+![日、月、年流量卡片和应用实时排行，使用演示数据](docs/screenshots/readme-traffic-live.png)
+
+![深色模式下的应用流量历史排行，使用演示数据](docs/screenshots/readme-traffic-history.png)
 
 ![按自定义顺序排列的胶囊栏目与内嵌日历](docs/screenshots/readme-capsule-components.png)
 
@@ -142,6 +144,8 @@ AI 与音乐组件采用流式读取，近期与全部历史共用一个缓存�
 - 闪念逐条悬浮在桌面。点开一条可编辑、置顶、设提醒或移到回收站，也可把选中的文字拖到贴边入口。入口支持贴边隐藏，闲置时只留细边、悬停滑出，可独立关闭；拖动可切换左右边缘并记住位置。操作栏按需展开，配色可跟随整体主题，也可选用「活力原色」。
 - 桌面资源胶囊可置顶、置底、移动和收起。任务栏双行监控可独立开启，两处共用采样。展开后左侧显示核心负载、显卡、内存和网速，右侧按 CPU 或内存排列进程。背景可跟随整体主题，也可单独设置。支持帧率、温度和功率，两种发行包均内置 PawnIO 离线安装程序。
 - 蓝牙电量可独立放在托盘。每个圆环代表一台设备，低于 15% 变红；桌面和托盘共用一次查询。
+- 在资源胶囊设置「资源与阈值 → 外设电量」可扫描、试读、添加 2.4G 外设并设置别名。电脑状态显示电量及设备回报的充电、休眠状态，收起显示可选外设电量徽标。休眠或暂不可读时标明上次读数。
+- 未收录的 2.4G 型号可通过「导出扫描诊断与提示词」获得脱敏诊断 JSON 和提示词。把两份文件交给 Agent，生成 `peripheral-profiles.json`，再回到向导导入、试读并保存。全新私有协议仍需要先增加探测器适配。
 
 ### 时钟与日历：时间之外，看见进度
 
@@ -258,6 +262,7 @@ AI／音乐组件复用本机的 **.NET 10 Desktop Runtime（x64）**。首次�
 | Uiverse · SelfMadeSystem | Dock 启动动画的流动描边参考 | [You.com Animated](https://uiverse.io/SelfMadeSystem/pretty-treefrog-77) |
 | Freesound | 六段自然提醒音的录音来源 | [录音及 CC0 许可](licenses/THIRD-PARTY-NOTICES.md#natural-reminder-sounds) |
 | BlueGauge | 蓝牙设备电量与独立托盘显示的功能参考 | [iKineticate/BlueGauge](https://github.com/iKineticate/BlueGauge)；本应用使用自己的设备读取与环形绘制 |
+| HaloBattery、ChargeDock | 2.4G 外设电量协议及接收器兼容信息参考 | [HaloBattery](https://github.com/HeyOkay/HaloBattery) · [ChargeDock](https://github.com/SgZincanya/ChargeDock) |
 | LiteMonitor | 硬件读数与任务栏监控的功能参考 | [Diorser/LiteMonitor](https://github.com/Diorser/LiteMonitor)；本应用保留自己的监控架构 |
 | PresentMon | 读取应用实际呈现帧，计算 FPS | [Intel PresentMon](https://github.com/GameTechDev/PresentMon)，[许可](licenses/PresentMon-LICENSE.txt) |
 | PawnIO / PawnIO Modules | 支持的 CPU 温度与封装功率读取 | [PawnIO](https://github.com/namazso/PawnIO)，[模块](https://github.com/namazso/PawnIO.Modules)，[本地许可与说明](licenses/PawnIO-Modules-NOTICE.txt) |

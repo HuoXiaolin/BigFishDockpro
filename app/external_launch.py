@@ -50,11 +50,13 @@ def clean_environment():
 
 def startfile(path,arguments='',working_directory='',verb='',show_command=1):
     target=Path(path)
-    directory=str(target.parent) if target.is_absolute() and target.exists() else str(Path(sys.executable).parent)
-    directory=working_directory or directory
+    directory=working_directory
+    if not directory and target.suffix.lower()!='.lnk':
+        directory=str(target.parent) if target.is_absolute() and target.exists() else str(Path(sys.executable).parent)
+    options={'cwd':directory} if directory else {}
     with clean_environment():
-        if arguments or verb or show_command!=1:os.startfile(str(path),operation=verb or 'open',arguments=arguments,cwd=directory,show_cmd=show_command)
-        else:os.startfile(str(path),cwd=directory)
+        if arguments or verb or show_command!=1:os.startfile(str(path),operation=verb or 'open',arguments=arguments,show_cmd=show_command,**options)
+        else:os.startfile(str(path),**options)
 
 
 def launch_direct(path):
@@ -70,8 +72,9 @@ def launch_direct(path):
 
 def launch(path,arguments='',working_directory='',verb='',show_command=1):
     target=Path(path)
-    directory=str(target.resolve().parent) if target.is_absolute() and target.exists() else str(Path(sys.executable).parent)
-    directory=working_directory or directory
+    directory=working_directory
+    if not directory and target.suffix.lower()!='.lnk':
+        directory=str(target.resolve().parent) if target.is_absolute() and target.exists() else str(Path(sys.executable).parent)
     try:
         from explorer_launch import launch as explorer_launch
         # Explorer owns the child and its environment; no app-group/DLL inheritance.

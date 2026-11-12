@@ -10,6 +10,12 @@ _metadata={}
 MAX_WALLPAPER_PIXELS=256*1024  # Shared blurred texture, at most 1 MiB; retain original screen coordinates.
 
 
+class WallpaperServiceError(OSError):
+    def __init__(self,hresult):
+        self.hresult=hresult & 0xffffffff
+        super().__init__(f'Wallpaper service unavailable (HRESULT 0x{self.hresult:08X})')
+
+
 @contextmanager
 def wallpaper_service():
     from native_file_menu import GUID,release
@@ -18,7 +24,8 @@ def wallpaper_service():
     ole.CoTaskMemFree.argtypes=[ctypes.c_void_p];ole.CoCreateInstance.argtypes=[ctypes.POINTER(GUID),ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(GUID),ctypes.POINTER(ctypes.c_void_p)];ole.CoCreateInstance.restype=ctypes.c_long
     try:
         clsid=GUID('C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD');iid=GUID('B92B56A9-8B55-4E14-9A89-0199BBB6F93B')
-        if ole.CoCreateInstance(ctypes.byref(clsid),None,23,ctypes.byref(iid),ctypes.byref(pointer))<0:raise OSError('Wallpaper service unavailable')
+        result=ole.CoCreateInstance(ctypes.byref(clsid),None,23,ctypes.byref(iid),ctypes.byref(pointer))
+        if result<0:raise WallpaperServiceError(result)
         yield pointer,ole
     finally:
         release(pointer)

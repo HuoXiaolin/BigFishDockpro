@@ -28,9 +28,29 @@ def is_reference(path):
         return bool(parsed.scheme and len(parsed.scheme)>1 and not parsed.scheme.startswith('\\'))
     except ValueError:return False
 
+
+def retained_link(item,path,migrated=False):
+    result=dict(item,path=os.path.abspath(path))
+    result.setdefault('name',Path(path).stem)
+    clean=metadata(result)
+    for key in TEXT_FIELDS+('icon_index','show_command'):
+        result.pop(key,None)
+    # Remove values copied from the old flattened target. The .lnk owns them.
+    if migrated:
+        for key in ('source_path','arguments','working_directory','verb','show_command','app_user_model_id'):
+            clean.pop(key,None)
+    result.update(clean)
+    return result
+
+
 def map_entry(item,validate=True):
     path=str(item.get('path','')).strip()
     if not path:return None
+    source=item.get('source_path')
+    if isinstance(source,str) and source!=path and source.lower().endswith('.lnk'):
+        from shortcut_targets import is_installer_shortcut
+        if is_installer_shortcut(source):
+            return retained_link(item,source,migrated=True)
     original=path;info={};seen=set()
     for _ in range(8):
         if is_reference(path) or not path.lower().endswith('.lnk'):break
@@ -40,6 +60,8 @@ def map_entry(item,validate=True):
         from shortcut_targets import lnk_metadata
         details=lnk_metadata(path)
         if not details:return None
+        if details.get('installer_shortcut'):
+            return retained_link(item,original)
         target=details['path']
         if not is_reference(target) and not os.path.isabs(target):target=os.path.abspath(os.path.join(os.path.dirname(path),target))
         info['arguments']=(details.get('arguments','')+' '+info.get('arguments','')).strip()

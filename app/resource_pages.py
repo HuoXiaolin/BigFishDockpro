@@ -1,14 +1,14 @@
 """Native app-styled traffic, AI usage and music views."""
 from datetime import datetime
 from PyQt5.QtCore import Qt,QDate,QRectF,QPointF,QSize
-from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics
+from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics,QPalette
 from PyQt5.QtWidgets import (QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton,QSlider,
-    QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QDateEdit,QDialog,QScrollArea,QFrame,QSizePolicy)
-from ui_style import ModernComboBox,button
+    QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QDateEdit,QDialog,QScrollArea,QFrame,QSizePolicy,QMessageBox)
+from ui_style import ModernComboBox,SettingsHeader,button,exec_dialog
 from resource_traffic import amount,totals
 from resource_compact import text
 from card_design import paint_capsule_card
-from resource_charts import DashboardCard,sync_card_controls
+from resource_charts import DashboardCard,rate,sync_card_controls
 from resource_status import threshold
 
 SCROLL_STYLE='''
@@ -28,11 +28,17 @@ def table(headings):
 
 
 def set_rows(view,rows):
-    view.setRowCount(len(rows))
+    if view.rowCount()!=len(rows):view.setRowCount(len(rows))
     for i,row in enumerate(rows):
         for j,value in enumerate(row):
-            item=QTableWidgetItem(str(value));item.setTextAlignment(Qt.AlignVCenter|(Qt.AlignLeft if j==0 else Qt.AlignRight))
-            view.setItem(i,j,item)
+            value=str(value);item=view.item(i,j)
+            if item is None:
+                item=QTableWidgetItem(value);item.setTextAlignment(Qt.AlignVCenter|(Qt.AlignLeft if j==0 else Qt.AlignRight))
+                if j==0:item.setToolTip(value)
+                view.setItem(i,j,item)
+            elif item.text()!=value:
+                item.setText(value)
+                if j==0:item.setToolTip(value)
 
 
 class CapsuleScrollArea(QScrollArea):
@@ -85,24 +91,182 @@ class TrafficView(QWidget):
         head=QHBoxLayout();title=QLabel('流量统计');title.setObjectName('RankTitle');head.addWidget(title,1)
         history=QToolButton();history.setText('历史记录');history.clicked.connect(self.history);head.addWidget(history);lay.addLayout(head)
         self.summary=TrafficReadout(window);lay.addWidget(self.summary)
+        self.apps=DashboardCard(window,'ice',self);lay.addWidget(self.apps)
+        app_lay=QVBoxLayout(self.apps);app_lay.setContentsMargins(8,5,8,6);app_lay.setSpacing(3)
+        app_head=QHBoxLayout();app_title=QLabel('应用实时流量');app_title.setObjectName('RankTitle')
+        app_head.addWidget(app_title,1)
+        self.record=QToolButton();self.record.clicked.connect(self.toggle_recording);app_head.addWidget(self.record)
+        ranking=QToolButton();ranking.setText('应用历史');ranking.clicked.connect(lambda:self.history(True));app_head.addWidget(ranking)
+        app_lay.addLayout(app_head)
+        self.live=None
+        self.app_status=QLabel();self.app_status.setObjectName('Subtle')
+        self.app_status.setWordWrap(True);app_lay.addWidget(self.app_status)
         self.note=QLabel();self.note.setObjectName('Subtle');self.note.setWordWrap(True);lay.addWidget(self.note)
         self.remarks=QToolButton();self.remarks.setText('备注');self.remarks.setCheckable(True);lay.addWidget(self.remarks,0,Qt.AlignLeft)
         self.remarks.toggled.connect(self.note.setVisible);self.note.hide()
+        self._live_signature=None
+        signal=getattr(window.service,'app_traffic_updated',None)
+        if signal is not None:signal.connect(self.refresh)
+        totals_signal=getattr(window.service,'traffic_updated',None)
+        if totals_signal is not None:totals_signal.connect(self.refresh_totals)
+
+    def live_table(self):
+        view=table(['应用','下载','上传'])
+        view.setAccessibleName('应用实时流量排行')
+        view.setSelectionMode(QAbstractItemView.NoSelection)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.verticalHeader().setDefaultSectionSize(22)
+        view.horizontalHeader().setMinimumHeight(21)
+        view.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
+        for col in (1,2):view.horizontalHeader().setSectionResizeMode(col,QHeaderView.ResizeToContents)
+        layout=self.apps.layout()
+        layout.insertWidget(layout.indexOf(self.app_status),view)
+        self._table_style=None
+        return view
+
+    def toggle_recording(self):
+        service=self.owner.service
+        service.set_options(resource_app_traffic=not service.cfg.get('resource_app_traffic',False))
+        self.refresh()
+
     def refresh(self):
+        service=self.owner.service
+        colors=self.owner.colors
+        active=service.cfg.get('resource_app_traffic',False)
+        snapshot=service.app_traffic_snapshot(None) if active and hasattr(service,'app_traffic_snapshot') else {}
+        rows=tuple(snapshot.get('live',())[:5])
+        if rows and self.live is None:self.live=self.live_table()
+        elif not active and self.live is not None:
+            view,self.live=self.live,None
+            self.apps.layout().removeWidget(view)
+            view.hide();view.deleteLater()
+        if colors:
+            sync_card_controls(self,colors)
+            table_style=(colors['ink'],colors['muted'],colors['hover'])
+            if self.live is not None and table_style!=self._table_style:
+                self._table_style=table_style
+                self.live.setStyleSheet('QTableWidget{background:transparent;border:0;color:%s}'
+                    'QHeaderView::section{background:%s;color:%s;border:0;padding:2px 4px}'
+                    %(table_style[0],table_style[2],table_style[1]))
+        self.refresh_totals()
+        self.record.setText('停止记录' if active else '开始记录')
+        if rows!=self._live_signature:
+            self._live_signature=rows
+            if self.live is not None:
+                set_rows(self.live,[(name,rate(down),rate(up)) for name,down,up in rows])
+                self.live.setFixedHeight(24+22*len(rows))
+                self.live.setVisible(bool(rows))
+        status=snapshot.get('error') or snapshot.get('status')
+        if not status:
+            status=('等待应用产生网络流量…' if active else '开启后记录本机应用的上传和下载量。') if not rows else ''
+        if self.app_status.text()!=status:self.app_status.setText(status)
+        self.app_status.setVisible(bool(status))
+
+    def refresh_totals(self):
         data=self.owner.service.latest.get('traffic') or {}
-        sync_card_controls(self,self.owner.colors)
-        self.summary.update();self.note.setText(data.get('error') or '统计开启期间的累计流量');self.note.setToolTip('按本机日历累计下载与上传；暂停监控期间不累计。')
-    def history(self):
-        from ui_style import exec_dialog
-        dialog=QDialog(self.owner);dialog.setWindowTitle('流量历史');dialog.resize(610,440);lay=QVBoxLayout(dialog)
-        mode=ModernComboBox();mode.addItems(['按日','按月','按年']);lay.addWidget(mode)
-        view=table(['日期','下载','上传','合计']);lay.addWidget(view)
-        def refresh():
-            days=(self.owner.service.latest.get('traffic') or {}).get('days',{});group={};size=(10,7,4)[mode.currentIndex()]
-            for date,value in days.items():
-                row=group.setdefault(date[:size],[0,0]);row[0]+=value[0];row[1]+=value[1]
-            set_rows(view,[(k,amount(v[0]),amount(v[1]),amount(sum(v))) for k,v in sorted(group.items(),reverse=True)])
-        mode.currentIndexChanged.connect(refresh);refresh();exec_dialog(dialog)
+        self.summary.update()
+        self.note.setText(data.get('error') or '按本机日历累计下载与上传。应用记录从开启时开始。')
+
+    def history(self,apps=False):
+        exec_dialog(TrafficHistory(self.owner,apps))
+
+
+class TrafficHistory(QDialog):
+    def __init__(self,owner,apps):
+        super().__init__(owner,Qt.Dialog|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
+        self.owner=owner;self.apps=apps;self.service=owner.service
+        self.setWindowTitle('应用流量历史' if apps else '流量历史')
+        self.setObjectName('TrafficHistory')
+        self.setProperty('compactDialog',True)
+        self.resize(590,402);self.setMinimumSize(360,250);self.setSizeGripEnabled(True)
+        layout=QVBoxLayout(self);layout.setContentsMargins(14,12,14,12);layout.setSpacing(9)
+        layout.addWidget(SettingsHeader(self,self.windowTitle()))
+        filters=QHBoxLayout();filters.setSpacing(8)
+        filters.addWidget(QLabel('统计范围' if apps else '分组方式'))
+        self.mode=ModernComboBox();filters.addWidget(self.mode);filters.addStretch(1)
+        periods=(('今日','day'),('本月','month'),('本年','year'),('全部','all')) if apps else (
+            ('按日',10),('按月',7),('按年',4))
+        for title,value in periods:self.mode.addItem(title,value)
+        layout.addLayout(filters)
+        self.rows=table(['应用' if apps else '日期','下载','上传','合计'])
+        self.rows.setAccessibleName(self.windowTitle())
+        self.rows.setAlternatingRowColors(True)
+        self.rows.verticalHeader().setDefaultSectionSize(31)
+        self.rows.horizontalHeader().setMinimumHeight(31)
+        self.rows.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
+        for col in (1,2,3):self.rows.horizontalHeader().setSectionResizeMode(col,QHeaderView.ResizeToContents)
+        layout.addWidget(self.rows,1)
+        self.status=QLabel();self.status.setWordWrap(True);self.status.setProperty('role','muted');layout.addWidget(self.status)
+        footer=QHBoxLayout()
+        self.clear=button('清空应用历史' if apps else '清空流量历史',self.clear_history,'danger')
+        footer.addWidget(self.clear);footer.addStretch(1);footer.addWidget(button('关闭',self.reject))
+        layout.addLayout(footer)
+        self._group_key=None;self._grouped_rows=();self._rendered_rows=None
+        self.mode.currentIndexChanged.connect(self.refresh)
+        signal=getattr(self.service,'app_traffic_updated' if apps else 'traffic_updated',None)
+        if signal is not None:signal.connect(self.refresh)
+        self.apply_colors()
+        self.refresh()
+
+    def refresh_interface_style(self):self.apply_colors()
+
+    def apply_colors(self):
+        palette=QApplication.palette()
+        self.setPalette(palette)
+        style={key:palette.color(role).name() for key,role in (
+            ('window',QPalette.Window),('base',QPalette.Base),('text',QPalette.Text),
+            ('alternate',QPalette.AlternateBase),('selection',QPalette.Highlight),
+            ('selected',QPalette.HighlightedText),('muted',QPalette.PlaceholderText))}
+        self.setStyleSheet('''
+            QDialog#TrafficHistory {background:%(window)s;color:%(text)s;}
+            QDialog#TrafficHistory QLabel {background:transparent;color:%(text)s;}
+            QDialog#TrafficHistory QLabel[role="muted"] {color:%(muted)s;}
+            QDialog#TrafficHistory QTableWidget {background:%(base)s;alternate-background-color:%(alternate)s;
+                color:%(text)s;selection-background-color:%(selection)s;selection-color:%(selected)s;border:0;}
+            QDialog#TrafficHistory QTableWidget::item {padding:0 6px;}
+            QDialog#TrafficHistory QHeaderView {background:%(alternate)s;}
+            QDialog#TrafficHistory QHeaderView::section {background:%(alternate)s;color:%(text)s;
+                border:0;padding:4px 8px;}
+            QDialog#TrafficHistory QComboBox {background:%(base)s;color:%(text)s;}
+        '''%style)
+
+    def refresh(self):
+        if self.apps:
+            data=self.service.app_traffic_snapshot(self.mode.currentData())
+            rows=data.get('history',())
+            status=data.get('error') or ('按应用合计流量排序。' if rows else '这个范围内还没有应用流量记录。')
+        else:
+            data=self.service.latest.get('traffic') or {}
+            days=data.get('days',{});width=self.mode.currentData()
+            key=(width,days)
+            if self._group_key!=key:
+                self._group_key=key
+                group={}
+                for date,value in days.items():
+                    row=group.setdefault(date[:width],[0,0]);row[0]+=value[0];row[1]+=value[1]
+                self._grouped_rows=tuple((date,down,up) for date,(down,up) in sorted(group.items(),reverse=True))
+            rows=self._grouped_rows
+            pending=getattr(self.service,'traffic_reset_pending',False)
+            self.clear.setEnabled(not pending)
+            status=('正在清空总流量记录…' if pending else
+                    getattr(self.service,'traffic_reset_error','') or data.get('error') or
+                    ('' if rows else '暂无流量记录。'))
+        rows=tuple(rows)
+        if rows!=self._rendered_rows:
+            self._rendered_rows=rows
+            set_rows(self.rows,[(name,amount(down),amount(up),amount(down+up)) for name,down,up in rows])
+        if self.status.text()!=status:self.status.setText(status)
+        self.status.setVisible(bool(status))
+
+    def clear_history(self):
+        title='清空应用流量历史' if self.apps else '清空总流量历史'
+        content=('清空所有日期的应用流量记录？总流量统计会保留。' if self.apps else
+                 '清空所有日期的总流量记录？应用流量历史会保留。')
+        if QMessageBox.question(self,title,content,QMessageBox.Yes|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Yes:return
+        if not self.service.reset_traffic(self.apps):
+            self.status.setText('暂时无法清空流量记录，请稍后重试。');self.status.show()
+        else:self.refresh()
 
 
 class TrafficReadout(QWidget):

@@ -70,6 +70,18 @@ class TrafficLedger:
     def snapshot(self,now=None):
         return dict(totals(self.days,now),days={k:list(v) for k,v in self.days.items()},error=self.error)
 
+    def reset(self):
+        """Reset the on-disk ledger before replacing its current baseline."""
+        if self.path:
+            from config_store import _atomic
+            _atomic(self.path,b'{"version":1,"days":{}}')
+        self.days.clear()
+        self.previous=self.previous_at=None
+        self.blocked=self.dirty=False
+        self.error=''
+        self.saved_at=time.monotonic()
+        return self.snapshot()
+
     def flush(self):
         if not self.path or not self.dirty or self.blocked:return
         try:

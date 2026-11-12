@@ -4,8 +4,8 @@ import os
 import re
 import sys
 from pathlib import Path
-from PyQt5.QtCore import QObject,QProcess,QTimer,Qt,QRectF
-from PyQt5.QtGui import QPainter,QPen,QColor,QPixmap,QIcon
+from PyQt5.QtCore import QObject,QProcess,QTimer,Qt,QRectF,QPointF
+from PyQt5.QtGui import QPainter,QPen,QColor,QPixmap,QIcon,QPainterPath
 from PyQt5.QtWidgets import QApplication,QSystemTrayIcon
 from ui_style import AlignedMenu
 from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
@@ -15,6 +15,10 @@ GROUP=3
 
 
 def ring_ink(row,light=True):
+    state=row.get('state')
+    if state=='charging':return '#087b60' if light else '#6de3ba'
+    if row.get('stale') or state in ('sleeping','offline','unavailable','busy'):
+        return '#566b7b' if light else '#a8bac8'
     level=row['level']
     return low_battery_ink(level,light) if level is not None and level<BATTERY_WARNING_LEVEL else row['ink']
 
@@ -44,12 +48,29 @@ def draw_rings(painter,rect,rows,dark=False):
         track=QColor('#aab3bc' if dark else '#657581');track.setAlpha(105)
         if value==0:
             track=QColor(ring_ink(row,not dark));track.setAlpha(210)  # Warn without showing a filled battery.
-        pen=QPen(track,width,Qt.DotLine if row['level'] is None else Qt.SolidLine,Qt.RoundCap)
+        pen=QPen(track,width,Qt.DotLine if value is None or row.get('stale') else Qt.SolidLine,Qt.RoundCap)
         painter.setPen(pen);painter.setBrush(Qt.NoBrush);painter.drawEllipse(circle)
         if value is not None and value>0:
             pen=QPen(QColor(ring_ink(row,not dark)),width,Qt.SolidLine,Qt.RoundCap);painter.setPen(pen)
             painter.drawArc(circle,90*16,-round(value*360*16/100))
     painter.restore()
+
+
+def draw_peripheral_rings(painter,rect,rows,dark=False):
+    draw_rings(painter,rect,rows,dark)
+    mark=next((row for state in ('charging','sleeping') for row in rows if row.get('state')==state),None)
+    if not mark:return
+    center=rect.center();scale=min(rect.width(),rect.height())/20
+    painter.save();painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QPen(QColor(ring_ink(mark,not dark)),max(1.,1.25*scale),Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+    path=QPainterPath()
+    points=(((.6,-3.8),(-2.5,.3),(.5,.3),(-.6,3.8)) if mark['state']=='charging' else
+            ((-2.4,-2.1),(2.3,-2.1),(-2.3,2.1),(2.4,2.1)))
+    for index,(x,y) in enumerate(points):
+        point=QPointF(center.x()+x*scale,center.y()+y*scale)
+        if index==0:path.moveTo(point)
+        else:path.lineTo(point)
+    painter.drawPath(path);painter.restore()
 
 
 def tray_icon(rows,dark):

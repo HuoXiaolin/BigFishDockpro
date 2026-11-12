@@ -5,6 +5,13 @@ from urllib.parse import parse_qs,urlsplit
 
 
 def run(api,runtime,app,output,checks):
+    from private_storage_fixture import private_storage
+
+    with private_storage(checks):
+        run_checks(api,runtime,app,output,checks)
+
+
+def run_checks(api,runtime,app,output,checks):
     from PyQt5.QtWidgets import QLineEdit
     from resource_gateway import ENDPOINTS,UsageError,account_value,config_path,load_accounts,read_gateway
     from resource_gateway_settings import GatewaySettings

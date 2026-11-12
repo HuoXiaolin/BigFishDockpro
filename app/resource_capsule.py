@@ -11,17 +11,24 @@ from resource_status import BATTERY_WARNING_LEVEL
 
 class MonitorJob(BackgroundWorker):
     sample_ready=pyqtSignal(object)
+    traffic_reset=pyqtSignal(object,str)
     def __init__(self,keys,seconds,traffic_path=None):
         super().__init__()
         self.traffic_path=traffic_path
         self.signature=(frozenset(keys),seconds)
         self.lock=threading.Lock();self.wake=threading.Event()
+        self.reset_pending=False
 
     def reconfigure(self,signature):
         with self.lock:self.signature=signature;self.wake.set()
 
     def requestInterruption(self):
         super().requestInterruption();self.wake.set()
+
+    def reset_traffic(self):
+        with self.lock:
+            self.reset_pending=True
+            self.wake.set()
 
     def run(self):
         from resource_metrics import Sampler
@@ -35,6 +42,14 @@ class MonitorJob(BackgroundWorker):
                 with self.lock:
                     self.wake.clear()
                     keys,interval=self.signature
+                    reset,self.reset_pending=self.reset_pending,False
+                if reset:
+                    from resource_traffic import TrafficLedger
+                    try:
+                        ledger=reader.traffic or TrafficLedger(self.traffic_path)
+                        self.traffic_reset.emit(ledger.reset(),'')
+                    except OSError:
+                        self.traffic_reset.emit(None,'重置总流量历史失败，原记录已保留。')
                 now=time.monotonic()
                 if (keys,interval)!=previous_signature:
                     reader.configure(keys)
@@ -63,9 +78,17 @@ class MonitorJob(BackgroundWorker):
 
 
 class ResourceCapsule(QObject):
+    traffic_updated=pyqtSignal()
+    app_traffic_updated=pyqtSignal()
+
     def __init__(self,runtime):
         super().__init__(runtime.dock)
         self.runtime=runtime;self.window=self.strip=self.job=self.bluetooth=None
+        self.peripherals=None
+        self.peripheral_editing=False
+        self.app_traffic=None
+        self.traffic_reset_pending=False
+        self.traffic_reset_error=''
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
         self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
@@ -436,6 +459,13 @@ class ResourceCapsule(QObject):
             self.bluetooth.set_tray(self.cfg['resource_bt_tray'])
         elif self.bluetooth is not None:
             bt,self.bluetooth=self.bluetooth,None;bt.close()
+        self.sync_peripherals()
+        record_apps=(self.cfg.get('resource_app_traffic',False) and self.cfg['resource_traffic'] and
+                     not self.runtime.game_active)
+        if record_apps:
+            self.get_app_traffic().configure(True)
+        elif self.app_traffic:
+            self.app_traffic.configure(False)
         from resource_options import SENSOR_UNITS
         sensors=frozenset(demand & SENSOR_UNITS.keys())
         if 'system_status' in demand or 'brightness' in demand:sensors=sensors|{'brightness'}
@@ -516,12 +546,15 @@ class ResourceCapsule(QObject):
         from pathlib import Path
         self.job=MonitorJob(*self.signature,traffic_path=Path(self.runtime.api.CONFIG_DIR)/'network-traffic.json')
         self.job.sample_ready.connect(self.receive,Qt.QueuedConnection)
+        self.job.traffic_reset.connect(self.traffic_reset_finished,Qt.QueuedConnection)
         self.job.finished.connect(self.job_finished,Qt.QueuedConnection);self.job.start()
 
     def job_finished(self):
         job=self.sender()
         if job is not self.job:return
         self.job=None;job.deleteLater()
+        if self.traffic_reset_pending:
+            self.traffic_reset_finished(None,'重置被采集器停止打断，请重试。')
         if job.cancelled.is_set():self.start_job()
 
     def receive(self,data):
@@ -541,7 +574,9 @@ class ResourceCapsule(QObject):
                 card=self.detached('resources')
                 if card and card.dashboard is not None:card.show_ranking()
             return
+        traffic_before=self.latest.get('traffic')
         for key in keys:
+            if key=='traffic' and self.traffic_reset_pending:continue
             value=data.get(key)
             if value is not None and (key!='cpu_cores' or value):
                 self.latest[key]=value;self.observed[key]=now
@@ -552,6 +587,94 @@ class ResourceCapsule(QObject):
         while self.history and now-self.history[0]['time']>60:self.history.popleft()
         record={k:data[k] for k in ('cpu','memory','network','gpu') if k in keys and data.get(k) is not None}
         self.history.append(dict(record,time=now));self.display()
+        if self.latest.get('traffic')!=traffic_before:self.traffic_updated.emit()
+
+    def app_traffic_path(self):
+        from pathlib import Path
+        return Path(self.runtime.api.CONFIG_DIR)/'app-network-traffic.sqlite3'
+
+    def get_app_traffic(self):
+        if self.app_traffic is None:
+            from resource_app_traffic import AppTrafficMonitor
+            self.app_traffic=AppTrafficMonitor(self,self.app_traffic_path())
+        return self.app_traffic
+
+    def app_traffic_snapshot(self,period='day'):
+        if self.app_traffic:
+            return self.app_traffic.snapshot(period)
+        data=dict(live=[],history=[],status='',error='')
+        if period and (path:=self.app_traffic_path()).is_file():
+            from resource_app_traffic import AppTrafficHistory
+            ledger=AppTrafficHistory(path)
+            try:
+                data.update(history=ledger.history(period),error=ledger.error)
+            finally:
+                ledger.close()
+        return data
+
+    def reset_traffic(self,apps):
+        if apps:
+            if self.app_traffic:
+                return self.app_traffic.reset()
+            path=self.app_traffic_path()
+            if not path.exists():return True
+            from resource_app_traffic import AppTrafficHistory
+            ledger=AppTrafficHistory(path)
+            try:
+                ok=ledger.reset()
+            finally:
+                ledger.close()
+            self.app_traffic_updated.emit()
+            return ok
+        if self.traffic_reset_pending:return False
+        self.traffic_reset_error=''
+        if self.job:
+            if self.job.cancelled.is_set():
+                self.traffic_reset_error='采集正在停止，请稍后重试。'
+                return False
+            self.traffic_reset_pending=True
+            self.job.reset_traffic()
+            return True
+        from pathlib import Path
+        from resource_traffic import TrafficLedger
+        try:
+            snapshot=TrafficLedger(Path(self.runtime.api.CONFIG_DIR)/'network-traffic.json').reset()
+        except OSError:
+            self.traffic_reset_finished(None,'重置总流量历史失败，原记录已保留。')
+            return False
+        self.traffic_reset_finished(snapshot,'')
+        return True
+
+    def traffic_reset_finished(self,snapshot,error):
+        self.traffic_reset_pending=False
+        self.traffic_reset_error=error
+        if snapshot is not None:
+            self.latest['traffic']=snapshot
+            self.observed['traffic']=time.monotonic()
+        self.traffic_updated.emit()
+
+    def sync_peripherals(self):
+        profiles=self.cfg.get('resource_peripheral_profiles',[])
+        visible=(self.window and self.window.isVisible() or self.detached('resources'))
+        enabled=(profiles and visible and not self.runtime.game_active and
+                 not self.peripheral_editing and not self.runtime.dock.preview)
+        if self.peripherals and (not enabled or self.peripherals.profiles!=profiles):
+            monitor,self.peripherals=self.peripherals,None
+            monitor.close()
+        if enabled and self.peripherals is None:
+            from resource_peripheral_monitor import PeripheralMonitor
+            self.peripherals=PeripheralMonitor(self,profiles)
+
+    def peripherals_changed(self):
+        if self.closed:return
+        if self.window:
+            if self.compact and self.cfg['resource_fold']!='ball':
+                if 'peripherals' in self.cfg['resource_compact_metrics']:
+                    self.window.refresh()
+            elif self.window.page_key=='resources' and not self.compact:
+                self.window.refresh_peripherals()
+        card=self.desktop_cards.get('resources')
+        if card:card.refresh_peripherals()
 
     def display(self):
         if self.window:self.window.refresh()
@@ -575,6 +698,8 @@ class ResourceCapsule(QObject):
         if self.job:
             self.job.requestInterruption();self.job.deleteLater();self.job=None
         if self.bluetooth:self.bluetooth.close();self.bluetooth=None
+        if self.peripherals:self.peripherals.close();self.peripherals=None
+        if self.app_traffic:self.app_traffic.close();self.app_traffic=None
         if self.sensors:self.sensors.close();self.sensors=None
         if self.fps:self.fps.close();self.fps=None
         if self.window:self.window.dispose();self.window=None
