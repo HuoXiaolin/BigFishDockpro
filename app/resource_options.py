@@ -1,5 +1,6 @@
 """Portable resource display preferences; live measurements are never stored."""
 import re
+from content_sources import NEWS_FEED_PRESETS, clean_feeds
 from screen_layout import valid_record
 
 METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'外设电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
@@ -81,7 +82,7 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_face_auto_switch=False,resource_face_switch_minutes=FACE_SWITCH_DEFAULT,
                 resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
                 resource_weather_thresholds=list(WEATHER_THRESHOLDS),
-                resource_news=False,resource_news_feeds=[],
+                 resource_news=False,resource_news_feeds=[url for _,url in NEWS_FEED_PRESETS],resource_news_disabled_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
                 resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=list(COMPACT_METRICS),
@@ -169,7 +170,6 @@ def normalize(cfg,strict=False):
         profiles=normalize_profiles(profiles,strict=strict)
     cfg['resource_peripheral_profiles']=profiles
     from resource_weather import clean_cities
-    from content_sources import clean_feeds
     role_id=cfg.get('resource_face_role','')
     if role_id or not isinstance(role_id,str):
         from face_roles import clean_role_id
@@ -197,7 +197,9 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('空气质量来源无效。')
         cfg['resource_air_source']='auto'
     else:cfg.setdefault('resource_air_source','auto')
-    cfg['resource_news_feeds']=clean_feeds(cfg.get('resource_news_feeds',[]),strict)
+    cfg['resource_news_feeds']=clean_feeds(cfg.get('resource_news_feeds',DEFAULTS['resource_news_feeds']),strict)
+    disabled_feeds=clean_feeds(cfg.get('resource_news_disabled_feeds',[]),strict)
+    cfg['resource_news_disabled_feeds']=[url for url in cfg['resource_news_feeds'] if url in disabled_feeds]
     if type(cfg.get('resource_news')) is not bool:
         if strict:raise ValueError('资源胶囊设置无效：resource_news')
         cfg['resource_news']=False

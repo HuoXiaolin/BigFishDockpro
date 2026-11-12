@@ -6,11 +6,12 @@ from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushB
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
                              QAbstractItemView,QStyledItemDelegate)
 from appearance_presets import COLOR_MODES,material_choices
+from content_sources import MAX_NEWS_FEEDS, NEWS_FEED_PRESETS, clean_feeds, web_url
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from settings_design import NumericControl,SettingsNavigation
-from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
+from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
 PAGE_NAMES = ('胶囊行为','任务栏监控','收起显示','AI 与音乐','材质与配色','资源与阈值','表情与吸附','天气与订阅','组件布局','日程与提醒')
@@ -136,6 +137,8 @@ class ResourceOptions(QDialog):
             from ui_style import compact_widget_tree
             compact_widget_tree(root)
             apply_density(capture_density(root), float(self.property('interfaceScale') or .7))
+        if index == 7:
+            self.refresh_news_sources()
         if draft:
             self.tabs.widget(index).findChild(QScrollArea).verticalScrollBar().setValue(draft['scroll'])
 
@@ -174,6 +177,7 @@ class ResourceOptions(QDialog):
             elif previous == 7:
                 self.weather_cities = None
                 self.news_feeds = None
+                self.news_source_list = None
             self.loaded.remove(previous)
             scroll = self.tabs.widget(previous).layout().takeAt(0).widget()
             scroll.hide()
@@ -191,6 +195,7 @@ class ResourceOptions(QDialog):
         self.loaded=set();self.fields=OptionFields(self);self.tints=dict(cfg['resource_tints'])
         self.drafts = {}
         self.orders = {}
+        self.news_disabled_feeds=set(cfg['resource_news_disabled_feeds'])
         for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('ai_fields',3),('limit_fields',5),('weather_threshold_fields',5),('location_fields',8)]:
             setattr(self,name,PageFields(self,index))
         from copy import deepcopy
@@ -482,13 +487,37 @@ class ResourceOptions(QDialog):
             from weather_connection import edit_connection
             daily.addWidget(button('和风天气连接…',lambda:edit_connection(self,self.service)))
             daily=section(layout,'新闻订阅')
-            self.fields['resource_news']=check('显示新闻订阅',cfg['resource_news']);daily.addWidget(self.fields['resource_news'])
-            daily.addWidget(QLabel('RSS / Atom 订阅链接（每行一个，最多 5 个）'))
+            daily.setAlignment(Qt.AlignTop)
+            news_controls=QHBoxLayout()
+            self.fields['resource_news']=check('显示新闻订阅',cfg['resource_news'])
+            news_controls.addWidget(self.fields['resource_news']);news_controls.addStretch()
+            presets=QPushButton('添加内置源')
+            presets.setObjectName('NewsFeedPresets');presets.setAutoDefault(False)
+            menu=AlignedMenu(presets)
+            menu.addAction('添加全部内置源',lambda:self.add_news_sources([url for _,url in NEWS_FEED_PRESETS]))
+            menu.addSeparator()
+            for name,url in NEWS_FEED_PRESETS:
+                menu.addAction(name,lambda checked=False,url=url:self.add_news_sources([url]))
+            presets.setMenu(menu);news_controls.addWidget(presets)
+            edit_links=QPushButton('编辑链接');edit_links.setAutoDefault(False);edit_links.setCheckable(True)
+            news_controls.addWidget(edit_links);daily.addLayout(news_controls)
+            self.news_source_list=QListWidget()
+            self.news_source_list.setAccessibleName('订阅源开关')
+            self.news_source_list.setTextElideMode(Qt.ElideMiddle)
+            self.news_source_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.news_source_list.setStyleSheet('QListWidget{padding:2px;} QListWidget::item{min-height:22px;padding:2px 6px;}')
+            self.news_source_list.itemChanged.connect(self.toggle_news_source)
+            daily.addWidget(self.news_source_list)
+
             from PyQt5.QtWidgets import QPlainTextEdit
+            editor=QWidget();editor_layout=QVBoxLayout(editor);editor_layout.setContentsMargins(0,0,0,0)
+            editor_layout.addWidget(QLabel(f'RSS / Atom 订阅链接（每行一个，最多 {MAX_NEWS_FEEDS} 个）'))
             self.news_feeds=QPlainTextEdit('\n'.join(cfg['resource_news_feeds']))
             self.news_feeds.setAccessibleName('新闻订阅链接')
             self.news_feeds.setFixedHeight(82)
-            daily.addWidget(self.news_feeds)
+            self.news_feeds.textChanged.connect(self.refresh_news_sources)
+            editor_layout.addWidget(self.news_feeds);daily.addWidget(editor);editor.hide()
+            edit_links.toggled.connect(editor.setVisible)
             layout.addStretch()
 
         def build_8():
@@ -569,6 +598,43 @@ class ResourceOptions(QDialog):
     def agenda_connections(self):
         from resource_calendar_settings import show_connections
         show_connections(self,self.service)
+
+    def add_news_sources(self, urls):
+        current=self.news_feeds.toPlainText().split()
+        added=[url for url in urls if url not in current]
+        if not added:
+            self.status.setText('所选订阅源已在列表中。')
+            return
+        try:
+            feeds=clean_feeds(list(dict.fromkeys(current+added)),True)
+        except ValueError as error:
+            self.status.setText(str(error))
+            return
+        self.news_feeds.setPlainText('\n'.join(feeds))
+        self.status.setText(f'已添加 {len(added)} 个订阅源，保存后生效。')
+
+    def refresh_news_sources(self):
+        urls=list(dict.fromkeys(url for url in self.news_feeds.toPlainText().split() if web_url(url)))[:MAX_NEWS_FEEDS]
+        names={url:name for name,url in NEWS_FEED_PRESETS}
+        view=self.news_source_list
+        blocked=view.blockSignals(True)
+        view.clear()
+        for url in urls:
+            item=QListWidgetItem(names.get(url,url))
+            item.setData(Qt.UserRole,url)
+            item.setToolTip(url)
+            item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsSelectable|Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked if url in self.news_disabled_feeds else Qt.Checked)
+            view.addItem(item)
+        if not urls:
+            item=QListWidgetItem('暂无订阅源');item.setFlags(Qt.ItemIsEnabled);view.addItem(item)
+        view.blockSignals(blocked)
+        view.setFixedHeight(view.count()*max(24,view.sizeHintForRow(0))+8)
+
+    def toggle_news_source(self, item):
+        url=item.data(Qt.UserRole)
+        if item.checkState()==Qt.Checked:self.news_disabled_feeds.discard(url)
+        else:self.news_disabled_feeds.add(url)
 
     def edit_peripherals(self,count):
         from resource_peripheral_settings import PeripheralSettings
@@ -668,10 +734,11 @@ class ResourceOptions(QDialog):
         if 7 in self.drafts:
             import re
             from resource_weather import clean_cities
-            from content_sources import clean_feeds
             try:
                 changes['resource_weather_cities']=clean_cities([s.strip() for s in re.split('[,，;；]',self.drafts[7]['text']) if s.strip()],True)
-                changes['resource_news_feeds']=clean_feeds(self.drafts[7]['feeds'].split(),True)
+                feeds=clean_feeds(self.drafts[7]['feeds'].split(),True)
+                changes['resource_news_feeds']=feeds
+                changes['resource_news_disabled_feeds']=[url for url in feeds if url in self.news_disabled_feeds]
             except ValueError as error:self.status.setText(str(error));return False
         for index,key,name in [(1,'resource_task_metrics','task_fields'),(1,'resource_task_media_parts','task_media_fields'),
                                (2,'resource_compact_metrics','compact_fields'),
@@ -705,6 +772,8 @@ class ResourceOptions(QDialog):
         changes={k:v for k,v in changes.items() if v!=self.baseline.get(k)}
         if changes.get('resource_capsule_taskbar'):changes['resource_collapsed']=True
         ok=self.service.set_options(**changes) if changes else True
-        if ok:self.baseline.update(changes)
+        if ok:
+            self.baseline.update(changes)
+            self.news_disabled_feeds.intersection_update(self.baseline['resource_news_feeds'])
         self.status.setText('已保存。' if ok else '保存失败，请重试。')
         return ok

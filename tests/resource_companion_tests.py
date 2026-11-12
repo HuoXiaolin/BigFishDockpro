@@ -5,6 +5,66 @@ from PyQt5.QtCore import Qt,QEvent,QPointF,QRectF,QPoint
 from PyQt5.QtGui import QPainter,QImage,QColor,QCursor,QMouseEvent,QFontMetrics,QWheelEvent
 
 
+def check_news_presets(options):
+    from types import SimpleNamespace
+    from PyQt5.QtWidgets import QPushButton
+    from content_sources import MAX_NEWS_FEEDS, NEWS_FEED_PRESETS
+    from feature_config import normalize
+    from resource_content import ContentView
+
+    defaults=[url for _,url in NEWS_FEED_PRESETS]
+    custom='https://example.org/feed.xml'
+    assert normalize({})['resource_news_feeds']==defaults
+    assert normalize({'resource_news_feeds':[custom]})['resource_news_feeds']==[custom]
+    assert normalize({'resource_news_feeds':[]})['resource_news_feeds']==[]
+    assert normalize({'resource_news_feeds':[custom], 'resource_news_disabled_feeds':[custom,defaults[0]]})['resource_news_disabled_feeds']==[custom]
+
+    options.tabs.setCurrentIndex(7)
+    menu=options.tabs.widget(7).findChild(QPushButton,'NewsFeedPresets').menu()
+    actions={action.text():action for action in menu.actions() if not action.isSeparator()}
+    options.news_feeds.setPlainText(custom)
+    actions['IT之家'].trigger()
+    assert options.news_feeds.toPlainText().split()==[custom,defaults[1]]
+    actions['IT之家'].trigger()
+    assert '已在列表中' in options.status.text()
+    actions['添加全部内置源'].trigger()
+    merged=[custom,defaults[1],defaults[0],defaults[2]]
+    assert options.news_feeds.toPlainText().split()==merged
+
+    full='\n'.join(f'https://example.org/feed-{i}.xml' for i in range(MAX_NEWS_FEEDS))
+    options.news_feeds.setPlainText(full)
+    actions['添加全部内置源'].trigger()
+    assert options.news_feeds.toPlainText()==full and f'最多 {MAX_NEWS_FEEDS} 个' in options.status.text()
+    options.news_feeds.setPlainText('\n'.join(merged))
+    sources=options.news_source_list
+    sources.item(0).setCheckState(Qt.Unchecked)
+    sources.item(1).setCheckState(Qt.Unchecked)
+    sources.item(1).setCheckState(Qt.Checked)
+    sources.item(2).setCheckState(Qt.Unchecked)
+    disabled=[custom,defaults[0]]
+    options.tabs.setCurrentIndex(6)
+    options.tabs.setCurrentIndex(7)
+    assert options.news_feeds.toPlainText().split()==merged
+    sources=options.news_source_list
+    assert [sources.item(i).data(Qt.UserRole) for i in range(sources.count()) if sources.item(i).checkState()==Qt.Unchecked]==disabled
+
+    cfg={'resource_news_feeds':merged, 'resource_news_disabled_feeds':disabled}
+    view=ContentView(SimpleNamespace(service=SimpleNamespace(cfg=cfg)), 'news')
+    try:
+        with patch.object(view,'isVisible',return_value=True), patch.object(view,'start') as start:
+            view.refresh()
+            assert view.source==(defaults[1],defaults[2])
+            start.assert_called_once_with(renew=True)
+            start.reset_mock()
+            cfg['resource_news_disabled_feeds']=merged
+            view.refresh()
+            assert view.source==() and not view.reload.isEnabled()
+            start.assert_not_called()
+    finally:
+        view.deleteLater()
+    return merged,disabled
+
+
 def check_compact_scroll(window,app,output,checks):
     from resource_compact import plan
     from resource_panel import COMPACT_SCROLL_SECONDS
@@ -300,14 +360,16 @@ def run(api,runtime,app,output,checks):
         assert interval.isEnabled()
         interval.setValue(4)
         options.show_page(6)
-        options.show_page(7)
-        options.show_page(6)
+        news_feeds,disabled_feeds=check_news_presets(options)
+        options.tabs.setCurrentIndex(6)
         interval = options.fields['resource_face_switch_minutes']
         assert interval.isEnabled() and interval.value() == 4
         options.grab().save(str(output/'resource-face-options.png'))
         options.fields['resource_weather_days'].setCurrentIndex(options.fields['resource_weather_days'].findData(3))
         options.fields['resource_task_threshold'].setChecked(True);options.fields['resource_task_music_colorful'].setChecked(True)
         assert options.commit();saved=api.load_config()
+        assert saved['resource_news_feeds']==news_feeds and saved['resource_news_disabled_feeds']==disabled_feeds
+        checks.append('RSS presets and switches: defaults, existing and cleared profiles, individual and bulk additions, deduplication, limit feedback, saved enabled states, and refresh only for enabled feeds.')
         assert saved['resource_face_scale']==110 and saved['resource_task_threshold'] and saved['resource_task_music_colorful'] and saved['resource_weather_days']==3
         assert saved['resource_face_auto_switch'] and saved['resource_face_switch_minutes'] == 4
         assert w.liquid.rotation.isActive() and w.liquid.rotation.interval() == 240_000

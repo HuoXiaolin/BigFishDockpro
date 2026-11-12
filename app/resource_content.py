@@ -223,11 +223,13 @@ class ContentView(QWidget):
                 elif not self.job and self.next_fetch==0:self.start(renew=True)
                 return
         if self.kind=='news':
-            urls=tuple(self.owner.service.cfg['resource_news_feeds'])
+            cfg=self.owner.service.cfg
+            feeds=cfg['resource_news_feeds']
+            urls=tuple(url for url in feeds if url not in cfg['resource_news_disabled_feeds'])
             if self.source!=urls:
                 self.source=urls;self.cancel();self.set_headlines([]);self.next_fetch=0.
             if not urls:
-                self.status.setText('到资源胶囊设置「天气与订阅」添加 RSS 或 Atom 订阅。')
+                self.status.setText('订阅源已全部关闭。' if feeds else '在资源胶囊设置「天气与订阅」添加内置源，或填写 RSS / Atom 链接。')
                 self.update_controls()
                 return
         if not self.job and time.monotonic()>=self.next_fetch and (self.kind=='news' or self.index==0):

@@ -3,6 +3,12 @@ from urllib.parse import urljoin, urlsplit
 
 
 BING='https://www.bing.com'
+MAX_NEWS_FEEDS = 5
+NEWS_FEED_PRESETS = (
+    ('中新网要闻', 'https://www.chinanews.com.cn/rss/importnews.xml'),
+    ('IT之家', 'https://www.ithome.com/rss/'),
+    ('少数派', 'https://sspai.com/feed'),
+)
 
 
 def web_url(value):
@@ -16,9 +22,9 @@ def web_url(value):
 
 
 def clean_feeds(value,strict=False):
-    if isinstance(value,list) and len(value)<=5 and all(web_url(url) for url in value):
+    if isinstance(value,list) and len(value)<=MAX_NEWS_FEEDS and all(web_url(url) for url in value):
         return list(dict.fromkeys(value))
-    if strict:raise ValueError('新闻订阅最多 5 个，请使用 HTTP 或 HTTPS 订阅链接。')
+    if strict:raise ValueError(f'新闻订阅最多 {MAX_NEWS_FEEDS} 个，请使用 HTTP 或 HTTPS 订阅链接。')
     return []
 
 
