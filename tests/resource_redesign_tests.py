@@ -1,6 +1,6 @@
 """Regression cases from reported screenshots; only run on a private desktop."""
 import copy,json,time
-from datetime import date,timedelta
+from datetime import date,datetime,timedelta
 from unittest.mock import patch
 
 
@@ -52,7 +52,7 @@ def run(api,runtime,app,output,checks):
     from resource_options import DEFAULTS,SENSOR_UNITS
     from resource_compact import plan
     from resource_ai_tray import quota_icon
-    from resource_quota import amount_label, amount_text, quota_color, quota_text, used_percent
+    from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, quota_text, used_percent
     from resource_status import band_ink
     from resource_settings import ResourceOptions
     import resource_compact
@@ -71,7 +71,12 @@ def run(api,runtime,app,output,checks):
                 row=dict(id='quota-fixture',name='测试额度',quotas=[dict(percent=used,label='每周额度')])
                 bridge.accept(dict(type='ai',providers=[row]))
             assert [call.args for call in sound.call_args_list]==[('quota',),('quota',)]
-        bridge.accept(dict(type='ai',at='2026-11-07T12:00:00+08:00',providers=fixtures()));bridge.alert_until=0
+        providers = fixtures()
+        now = datetime.now().astimezone()
+        providers[0].update(plan='prolite', resetCredits=dict(available=2, status='ok',
+            expiries=[(now+timedelta(days=18)).isoformat(),(now+timedelta(days=19)).isoformat()]))
+        providers[0]['quotas'][0]['reset'] = (now+timedelta(days=6,hours=23)).isoformat()
+        bridge.accept(dict(type='ai',at='2026-11-07T12:00:00+08:00',providers=providers));bridge.alert_until=0
         assert 'Codex · 每周 剩余 61%' in w.accessibleName()
         painted = []
         draw_text = resource_compact.text
@@ -95,6 +100,12 @@ def run(api,runtime,app,output,checks):
             w.ai_view.summary.grab()
         assert ('61%', quota_color(61, True)) in painted
         assert ('100%', quota_color(100, True)) in painted
+        assert 'Pro 100' in {value for value, _ in painted}
+        assert len(w.ai_view.summary.reset_buttons) == 1
+        assert all(provider_plan_name(dict(id='Codex',plan=code)) == label for code,label in (
+            ('free','Free'),('go','Go'),('plus','Plus'),('prolite','Pro 100'),('pro','Pro 200'),('promax','Pro 500'),
+            ('Pro-500','Pro 500'),('unrecognized_internal_plan','套餐未识别'),('', '')))
+        assert provider_plan_name(dict(id='Claude',plan='pro')) == 'Pro'
         assert w.music_view.title.text()==title and w.music_view.title.height()<42
         font=w.music_view.title.font();font.setPixelSize(w.music_view.title.pixel_size)
         assert w.music_view.title.height()/2>=QFontMetrics(font).height()
@@ -166,8 +177,36 @@ def run(api,runtime,app,output,checks):
         assert not service.signature and not service.job and not service.sensors and not service.fps
         assert service.deck.signature[0] is True and service.deck.signature[2] is False
         tray=service.ai_tray;tray.open('stats');app.processEvents();popup=tray.popup;popup.stats_view.set_period('month');popup.grab().save(str(output/'redesign-ai-tray-statistics.png'));geometry=popup.geometry()
+        assert popup.width() == 360, popup.width()
         tray.open('ai');app.processEvents();assert popup.geometry()==geometry
         popup.grab().save(str(output/'redesign-ai-tray-quota.png'))
+        # The same popup must preserve every returned period and distinguish a real zero from missing data.
+        multi = dict(id='Kimi',name='Kimi',plan='会员版',status='已连接',
+                     quotas=[dict(label='5 小时额度',percent=20),dict(label='每周额度',percent=100),
+                             dict(label='每月额度',percent=None),dict(label='账户余额',kind='balance',value='¥12.48',
+                                 reset=(now+timedelta(days=7)).isoformat())])
+        bridge = service.deck
+        bridge.accept(dict(type='ai',providers=[providers[0],multi]))
+        overview = popup.stats_view.quotas
+        for width in (180,360):
+            popup.resize(width,420);app.processEvents()
+            assert popup.width() == width, (width, popup.width())
+            assert popup.stats_view.scroll.widget().width() == popup.stats_view.scroll.viewport().width()
+            painted.clear()
+            with patch.object(resource_statistics,'text',record_text):
+                overview.grab().save(str(output/f'quota-periods-{width}.png'))
+            labels = {value for value,_ in painted}
+            assert {'Pro 100','5 小时额度','每周额度','每月额度','80%','0%','—','¥12.48'} <= labels
+            assert overview.rect().contains(overview.reset_buttons[0].geometry())
+            assert overview.cards[-1][2] == (1 if width == 180 else 2)
+            assert (overview.reset_buttons[0].height() > 25) == (width == 180)
+        selector = popup.stats_view.period_selector
+        selector.setCurrentIndex(selector.findData('week'))
+        assert popup.stats_view.period == 'week'
+        popup.setGeometry(geometry)
+        popup.hide()
+        app.processEvents()
+        checks.append('Quota cards: automatic Codex plans in capsule and tray, 360 px tray opening, 180/360 px single/double columns, hour/week/month metrics, zero, unavailable, and currency balance.')
         icons=[quota_icon(used).pixmap(32,32).toImage() for used in (None,0,60,80,100)]
         assert all(a!=b for i,a in enumerate(icons) for b in icons[i+1:])
         for i,pix in enumerate(icons):pix.save(str(output/f'redesign-tray-icon-{i}.png'))

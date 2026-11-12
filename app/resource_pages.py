@@ -309,11 +309,23 @@ class TrafficReadout(QWidget):
 
 
 def reset_text(value):
-    if not value:return ''
+    if not isinstance(value, str) or not value:
+        return ''
     try:
-        seconds=max(0,int((datetime.fromisoformat(value.replace('Z','+00:00'))-datetime.now().astimezone()).total_seconds()))
-        return f'{seconds//86400}天 {(seconds%86400)//3600}小时后重置' if seconds>=86400 else f'{seconds//3600}小时 {(seconds%3600)//60}分后重置'
-    except (ValueError,TypeError):return ''
+        reset_at = datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone()
+        seconds = (reset_at - datetime.now().astimezone()).total_seconds()
+    except (ValueError, OverflowError, OSError):
+        return ''
+    if seconds <= 0:
+        return '已到恢复时间'
+    minutes = int(seconds) // 60
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f'{days} 天 {hours} 小时后恢复'
+    if hours:
+        return f'{hours} 小时 {minutes} 分钟后恢复'
+    return f'{minutes} 分钟后恢复' if minutes else '不到 1 分钟后恢复'
 
 
 def token_text(value):
@@ -353,17 +365,26 @@ class AiView(QWidget):
     def models(self):self.ensure_details();return self._models
     def ensure_details(self):
         if self._detail_dialog is not None:return
-        self._detail_dialog=QDialog(self);self._detail_dialog.setWindowTitle('AI 用量明细');self._detail_dialog.resize(700,430)
-        detail_lay=QVBoxLayout(self._detail_dialog)
+        self._detail_dialog=QDialog(self);self._detail_dialog.setWindowTitle('AI 用量明细');self._detail_dialog.resize(720,390)
+        self._detail_dialog.setMinimumSize(620,300)
+        self._detail_dialog.setWindowFlags(self._detail_dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        detail_lay=QVBoxLayout(self._detail_dialog);detail_lay.setContentsMargins(16,12,16,12);detail_lay.setSpacing(10)
         filters=QHBoxLayout();self._provider=ModernComboBox();self._provider.addItem('全部工具','')
+        self._provider.setMinimumWidth(156);self._provider.setMaximumWidth(220)
         start,end=self.detail_dates or (QDate.currentDate().addDays(-6),QDate.currentDate())
         self.start=QDateEdit(start);self.end=QDateEdit(end)
         for date in (self.start,self.end):
             date.setCalendarPopup(True);date.setDisplayFormat('yyyy-MM-dd');date.setMinimumDate(QDate(2000,1,1));date.setMaximumDate(QDate.currentDate());date.dateChanged.connect(self.details)
-        filters.addWidget(self._provider);filters.addWidget(self.start);filters.addWidget(QLabel('至'));filters.addWidget(self.end);detail_lay.addLayout(filters)
+        for date in (self.start,self.end):date.setFixedWidth(142)
+        filters.addWidget(self._provider,1);filters.addStretch();filters.addWidget(self.start);filters.addWidget(QLabel('至'));filters.addWidget(self.end);detail_lay.addLayout(filters)
         self._models=table(['工具 / 模型','Token','费用（USD）','计价情况']);detail_lay.addWidget(self._models,1)
+        self._models.setAlternatingRowColors(True);self._models.verticalHeader().setDefaultSectionSize(34)
+        self._models.horizontalHeader().setMinimumSectionSize(90)
+        for index in range(4):self._models.horizontalHeaderItem(index).setTextAlignment(Qt.AlignVCenter|(Qt.AlignRight if index in (1,2) else Qt.AlignLeft))
         for index in (1,2,3):self._models.horizontalHeader().setSectionResizeMode(index,QHeaderView.ResizeToContents)
-        note=QLabel('费用包含已计价记录。估算与未定价记录在「计价情况」中标注。');note.setWordWrap(True);detail_lay.addWidget(note)
+        self.detail_note=QLabel();self.detail_note.setProperty('role','muted');self.detail_note.setWordWrap(True);detail_lay.addWidget(self.detail_note)
+        from popup_style import prepare_popup
+        prepare_popup(self._detail_dialog)
         self._provider.currentIndexChanged.connect(self.details)
         self.refresh()
     def show_details(self,provider='',period=None):
@@ -372,7 +393,6 @@ class AiView(QWidget):
         if period:
             from resource_usage import bounds
             start,end=bounds(period);self.start.setDate(QDate(start.year,start.month,start.day) if start else self.start.minimumDate());self.end.setDate(QDate(end.year,end.month,end.day))
-        self.detail_dialog.setStyleSheet('QDialog{background:%s}'%self.owner.colors['surface'])
         self.details();self.detail_dialog.exec_()
     def refresh_request(self):
         if self.owner.service.deck:self.owner.service.deck.refresh()
@@ -402,6 +422,12 @@ class AiView(QWidget):
         set_rows(self.models,[(name,f"{row['tokens']:,}" if row['tokens'] is not None else '—',
                               cost_text(row,currency=False),cost_note(row) or '—')
                              for name,row in sorted(summaries.items(),key=lambda item:item[1]['tokens'] or 0,reverse=True)])
+        self.detail_note.setText('开始日期不能晚于结束日期。' if start>end else
+            '估算和未定价记录在「计价情况」中标注。' if summaries else '当前日期范围内没有用量记录。')
+        for row in range(self.models.rowCount()):self.models.item(row,3).setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter)
+        if summaries and not getattr(self,'_details_sized',False):
+            self._details_sized=True
+            self.detail_dialog.resize(self.detail_dialog.width(),min(450,max(270,136+34*len(summaries))))
 
 
 class TransportButton(QToolButton):

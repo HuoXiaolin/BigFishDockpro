@@ -9,6 +9,7 @@ from PyQt5.QtGui import QPainter,QPen,QColor,QPixmap,QIcon,QPainterPath
 from PyQt5.QtWidgets import QApplication,QSystemTrayIcon
 from ui_style import AlignedMenu
 from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
+from probe_lifecycle import allowed, start as start_probe
 
 HUES=('#5b8def','#41b66a','#8297c9','#ac81e2','#e99d36','#35adb3')
 GROUP=3
@@ -100,14 +101,14 @@ class BluetoothGauge(QObject):
         self.deadline=QTimer(self);self.deadline.setSingleShot(True);self.deadline.setInterval(16000);self.deadline.timeout.connect(self.timed_out)
 
     def refresh(self):
-        if self.closed or self.busy or self.preview:return
+        if self.closed or self.busy or self.preview or not allowed():return
         root=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]))
         program=(root/'resource-probe'/'DesktopResourceProbe.exe' if getattr(sys,'frozen',False)
                  else root/'artifacts'/'generated'/'DesktopResourceProbe.exe')
         if not program.is_file():
             self.publish([], '蓝牙读取器尚未生成，请从完整发行包启动或运行开发构建。');return
         self.busy=True;self.next.stop();self.deadline.start()
-        self.process.start(str(program),[])
+        if not start_probe(self.process,program,[]):self.busy=False;self.deadline.stop()
 
     def process_error(self,error):
         if error==QProcess.FailedToStart and self.busy:self.publish([],'蓝牙读取器未能启动。')
@@ -125,7 +126,7 @@ class BluetoothGauge(QObject):
         self.publish(rows,'' if rows else '未发现已连接的蓝牙设备。')
 
     def publish(self,rows,status):
-        if self.closed:return
+        if self.closed or not allowed():return
         self.busy=False;self.deadline.stop();self.status=status
         # Keep colours for still-connected devices as others connect or leave.
         keys={r['id'] for r in rows}

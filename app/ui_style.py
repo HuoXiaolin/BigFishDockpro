@@ -679,6 +679,9 @@ class DialogChrome(QObject):
                     widget.style().polish(widget)
                     widget.update()
                 finally:self._polishing=False
+        if event.type() == QEvent.Show and isinstance(widget, QDialog):
+            from popup_style import prepare_popup
+            prepare_popup(widget)
         if event.type() == QEvent.Show and isinstance(widget, QDialog) and not widget.windowFlags() & Qt.FramelessWindowHint:
             import ctypes
             from ctypes import wintypes
@@ -727,6 +730,7 @@ def apply_theme(app, light):
     for role in (QPalette.Text, QPalette.WindowText, QPalette.ButtonText):
         p.setColor(QPalette.Disabled, role, QColor(colors['muted']))
     p.setColor(QPalette.Mid, QColor('#7a808a' if light else '#858b95'))
+    p.setColor(QPalette.Midlight,QColor(colors['line']))
     p.setColor(QPalette.Link, QColor('#225eaa' if light else '#8fc2ff'))
     p.setColor(QPalette.LinkVisited, QColor('#225eaa' if light else '#8fc2ff'))
     app.setPalette(p)
@@ -813,7 +817,12 @@ def apply_theme(app, light):
     app._base_stylesheet=stylesheet
     app.setStyleSheet(stylesheet + density_stylesheet(stylesheet))
     app._fish_theme_light=bool(light)
+    from PyQt5 import sip
     for window in app.topLevelWidgets():
+        if sip.isdeleted(window):continue
+        if isinstance(window,QDialog):
+            from popup_style import prepare_popup
+            prepare_popup(window)
         if window.isVisible() and hasattr(window,'refresh_interface_style'):window.refresh_interface_style()
     if not hasattr(app, '_chrome_filter'):
         app._chrome_filter = DialogChrome(app)

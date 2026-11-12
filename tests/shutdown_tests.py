@@ -35,13 +35,30 @@ def run(api,runtime,root,app,output,checks):
         assert next(row for row in recovered['notes'] if row['id']==note_id)['text']=='写入失败时仍需恢复的正文'
         assert save_state(runtime) and not runtime.notes.recovery.exists()
         assert next(row for row in api.load_config()['sticky_notes'] if row['id']==note_id)['text']=='写入失败时仍需恢复的正文'
-        msg=wintypes.MSG();msg.message=0x16;msg.hWnd=int(runtime.dock.winId());msg.wParam=1
+        from probe_lifecycle import allowed,start as start_probe
+        registered=MagicMock();registered.state.return_value=QProcess.Running
+        unregistered=MagicMock();unregistered.state.return_value=QProcess.Running
+        assert start_probe(registered,'mock-owned-probe.exe',[])
+        msg=wintypes.MSG();msg.message=0x11;msg.hWnd=int(runtime.dock.winId());msg.wParam=0
+        fake=MagicMock()
+        assert runtime.layout.native_filter.nativeEventFilter(b'windows_generic_MSG',ctypes.addressof(msg))==(False,0) and runtime.session_ending
+        assert not allowed() and not start_probe(fake,'must-not-launch.exe',[])
+        fake.start.assert_not_called()
+        registered.kill.assert_called_once();unregistered.kill.assert_not_called()
+        assert all(getattr(runtime.resources,key) is None for key in ('sensors','bluetooth','peripherals','app_traffic','fps','deck'))
+        runtime.set_session_ending(True)  # Repeated top-level query notifications.
+        msg.message=0x16;msg.wParam=1
         assert runtime.layout.native_filter.nativeEventFilter(b'windows_generic_MSG',ctypes.addressof(msg))==(False,0) and runtime.session_ending
         panel=runtime.panels.windows[runtime.panels.active_window];collapsed=panel.collapsed
         note.close();panel.close();runtime.dock.close()
         assert runtime.notes.row(note_id)['visible'] and panel.collapsed==collapsed and cfg['dock_visible']
         msg.wParam=0;runtime.layout.native_filter.nativeEventFilter(b'windows_generic_MSG',ctypes.addressof(msg));assert not runtime.session_ending
         runtime.apply_settings();app.processEvents()
+        assert allowed()
+        with patch('probe_lifecycle.system_ending',return_value=True):
+            assert not start_probe(fake,'must-not-launch.exe',[])
+        fake.start.assert_not_called()
+        checks.append('probe shutdown guard: WM_QUERYENDSESSION stops collectors before DLL teardown, rejects new children and retries idempotently; cancelled session restores demand-driven collection; OS shutdown metric also blocks launches without a native message')
         checks.append('session save: one config commit captures pending body, unfinished title, clock geometry and visibility; failed save rolls back in-memory state and writes a note recovery file without dialogs; successful retry clears recovery; cancelled WM_ENDSESSION restores ordinary exit mode')
         # Both catalog jobs can be stuck in native I/O; closing the editor must
         # neither wait for them nor destroy a running QThread.

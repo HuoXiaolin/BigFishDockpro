@@ -58,7 +58,9 @@ class RuntimeController:
         self._session_signals=[]
         for name in ('commitDataRequest','saveStateRequest'):
             signal=getattr(app,name,None)
-            if signal is not None:signal.connect(self.checkpoint_session);self._session_signals.append(signal)
+            if signal is not None:
+                callback=self.commit_session if name=='commitDataRequest' else self.checkpoint_session
+                signal.connect(callback);self._session_signals.append((signal,callback))
         from screen_layout import DisplayLayout
         from sticky_notes import NotesManager
         self.notes=NotesManager(self)
@@ -328,6 +330,30 @@ class RuntimeController:
         from session_state import save_state
         return save_state(self)
 
+    def set_session_ending(self,ending):
+        if self.closed or self.session_ending==bool(ending):return
+        self.session_ending=bool(ending)
+        from probe_lifecycle import set_ending
+        set_ending(ending)
+        if ending:
+            self.resources.suspend_session()
+        else:
+            # Windows can cancel shutdown. Recreate demand-driven collectors
+            # after the native callback, with the user's existing preferences.
+            QTimer.singleShot(0,self.resume_session)
+
+    def resume_session(self):
+        if self.closed or self.session_ending:return
+        from probe_lifecycle import allowed
+        if not allowed():
+            QTimer.singleShot(250,self.resume_session)
+            return
+        self.resources.sync()
+
+    def commit_session(self,*args):
+        self.set_session_ending(True)
+        return self.checkpoint_session()
+
     def request_exit(self):
         if not self.flash.save_draft(): return False
         if not self.notes.flush() and not self.notes.backup():
@@ -341,6 +367,8 @@ class RuntimeController:
         if self.closed: return
         self.click_policy.close()
         self.closed = True
+        from probe_lifecycle import set_ending
+        set_ending(True)
         if hasattr(self,'memory_budget'):self.memory_budget.close()
         shutdown=self.session_ending or QApplication.instance().isSavingSession()
         importer=getattr(self.tray,'importer',None)
@@ -368,8 +396,8 @@ class RuntimeController:
         self.dock.extras.close()
         self.desktop_shortcut.close()
         self.usage.close()
-        for signal in self._session_signals:
-            try:signal.disconnect(self.checkpoint_session)
+        for signal,callback in self._session_signals:
+            try:signal.disconnect(callback)
             except (TypeError,RuntimeError):pass
         self._session_signals.clear()
         self.notes.close(save=False)

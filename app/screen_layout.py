@@ -136,7 +136,8 @@ class DisplayEvents(QAbstractNativeEventFilter):
             resources=getattr(self.layout.runtime,'resources',None)
             monitor=getattr(resources,'peripherals',None)
             if monitor:monitor.device_changed()
-        if msg.message==0x0016:self.layout.runtime.session_ending=bool(msg.wParam)  # WM_ENDSESSION, including cancellation.
+        if msg.message==0x0011:self.layout.runtime.set_session_ending(True)  # WM_QUERYENDSESSION: block retries immediately.
+        elif msg.message==0x0016:self.layout.runtime.set_session_ending(bool(msg.wParam))  # WM_ENDSESSION, including cancellation.
         elif msg.message==0x001a and msg.wParam==20:  # SPI_SETDESKWALLPAPER
             if msg.hWnd==int(self.layout.dock.winId()):
                 from wallpaper_source import invalidate_source

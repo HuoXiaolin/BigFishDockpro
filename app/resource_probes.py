@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from PyQt5.QtCore import QObject,QProcess,QTimer
 from PyQt5.QtWidgets import QApplication
+from probe_lifecycle import allowed, start as start_probe
 
 
 def binary(name):
@@ -23,16 +24,16 @@ class SensorRead(QObject):
         self.deadline=QTimer(self);self.deadline.setSingleShot(True);self.deadline.setInterval(9500);self.deadline.timeout.connect(self.process.kill)
         if not owner.runtime.dock.preview:self.read()
     def read(self):
-        if self.closed or self.process.state()!=QProcess.NotRunning:return
+        if self.closed or not allowed() or self.process.state()!=QProcess.NotRunning:return
         self.next.stop();self.requested=self.keys
         self.deadline.start()
-        self.process.start(str(binary('DesktopResourceProbe.exe')),['--sensors',','.join(sorted(self.requested))])
+        if not start_probe(self.process,binary('DesktopResourceProbe.exe'),['--sensors',','.join(sorted(self.requested))]):self.deadline.stop()
     def reconfigure(self,keys):
         added=keys-self.keys;self.keys=frozenset(keys)
         self.values={k:v for k,v in self.values.items() if k in self.keys}
         if added and not self.owner.runtime.dock.preview:self.read()
     def finished(self,code,status):
-        if self.closed:return
+        if self.closed or not allowed():return
         self.deadline.stop()
         try:
             raw=bytes(self.process.readAllStandardOutput())

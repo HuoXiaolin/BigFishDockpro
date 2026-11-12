@@ -74,7 +74,7 @@ class AiTray(QObject):
     def open(self,page='stats'):
         if self.popup is None:self.popup=AiPopup(self.service)
         self.popup.select_page(page);point=self.tray.geometry().center() if not self.tray.geometry().isEmpty() else QCursor.pos()
-        screen=QApplication.screenAt(point) or QApplication.primaryScreen();area=screen.availableGeometry();width=min(540,area.width());height=min(360,area.height())
+        screen=QApplication.screenAt(point) or QApplication.primaryScreen();area=screen.availableGeometry();width=min(360,area.width());height=min(360,area.height())
         self.popup.resize(width,height);self.popup.move(max(area.left(),min(point.x()-width//2,area.right()-width+1)),max(area.top(),min(point.y()-height-5,area.bottom()-height+1)))
         self.popup.show();self.popup.raise_()
     def close(self):

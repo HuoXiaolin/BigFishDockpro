@@ -1,69 +1,224 @@
 """Compact, theme-aware cost distribution and usage history from real aggregates."""
-from PyQt5.QtCore import Qt,QRectF,QPointF
-from PyQt5.QtGui import QColor,QPainter,QPen
-from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButton,QLabel
+from PyQt5.QtCore import Qt,QRect,QRectF,QPointF
+from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPen
+from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButton,QLabel,QSizePolicy
 from ui_style import ModernComboBox
 from resource_compact import text
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,reset_text
 from resource_usage import aggregate
-from resource_quota import amount_label, amount_text, quota_color, remaining_percent, used_percent
+from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, used_percent
+import reset_credits
 from card_design import paint_capsule_card
 
 COLORS=('#13a58b','#428fe2','#b28a49','#897fb6','#d57480','#59a9b5','#8a9d71')
 
 
+class ResetCreditButton(QToolButton):
+    def __init__(self, overview):
+        super().__init__(overview)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.clicked.connect(lambda: reset_credits.show_details(overview, self.provider))
+
+    def refresh(self, provider, colors):
+        self.provider = provider
+        self.setText('重置卡 ' + reset_credits.badge_text(provider))
+        summary = reset_credits.summary(provider)
+        self.setAccessibleName(f"{provider['name']} {summary}，查看重置卡详情")
+        self.setToolTip(summary + '\n' + (reset_credits.expiry_note(provider) or '查看重置卡详情'))
+        if colors:
+            self.setIcon(reset_credits.card_icon(colors['muted']))
+        self.show()
+
+    def row_height(self, width):
+        font = self.font()
+        font.setPixelSize(11)
+        fits = QFontMetrics(font).horizontalAdvance(self.text()) <= width - 45
+        return 25 if fits else 39
+
+    def paintEvent(self, event):
+        colors = self.parentWidget().view.owner.colors
+        if not colors:
+            return
+        p = QPainter(self)
+        p.setFont(self.font())
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        if self.underMouse() or self.isDown() or self.hasFocus():
+            p.setBrush(QColor(colors['hover']))
+            p.setPen(QPen(QColor(colors['muted']), 1) if self.hasFocus() else Qt.NoPen)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
+        center = 11 if self.height() > 25 else self.height() // 2
+        width = max(0, self.width() - 45)
+        if self.height() > 25:
+            label, separator, expiry = self.text().partition(' · ')
+            if not separator:
+                label, _, expiry = self.text().partition(' ')
+            self.icon().paint(p, QRect(4, 3, 16, 16))
+            text(p, QRectF(25, 1, width, 18), label, colors['ink'], 11)
+            text(p, QRectF(25, 19, self.width() - 30, 17), expiry, colors['muted'], 11)
+        else:
+            self.icon().paint(p, QRect(4, center - 8, 16, 16))
+            text(p, QRectF(25, 0, width, self.height()), self.text(), colors['ink'], 11)
+        x = self.width() - 12
+        p.setPen(QPen(QColor(colors['muted']), 1.35, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(x - 2, center - 3), QPointF(x + 1, center))
+        p.drawLine(QPointF(x + 1, center), QPointF(x - 2, center + 3))
+
+
 class QuotaOverview(QWidget):
-    """Compact quota rows above the usage summary, sharing its provider filter."""
-    def __init__(self,view):super().__init__();self.view=view;self.rows=[]
-    def refresh(self,rows):
-        self.rows=rows;self.fit_rows();self.update()
+    """The same quota cards fit the capsule, desktop card and tray popup."""
+
+    inset = 12
+    header_height = 32
+    metric_gap = 16
+    card_gap = 6
+
+    def __init__(self, view):
+        super().__init__()
+        self.view = view
+        self.rows = []
+        self.cards = []
+        self.reset_buttons = []
+
+    def refresh(self, rows):
+        self.rows = rows
+        credits = [row for row in rows if reset_credits.applicable(row)]
+        while len(self.reset_buttons) > len(credits):
+            button = self.reset_buttons.pop()
+            button.hide()
+            button.deleteLater()
+        while len(self.reset_buttons) < len(credits):
+            self.reset_buttons.append(ResetCreditButton(self))
+        for button, row in zip(self.reset_buttons, credits):
+            button.refresh(row, self.view.owner.colors)
+        self.fit_rows()
+        self.update()
+
     def fit_rows(self):
-        columns=1 if self.width()<340 else 2
-        self.setFixedHeight(sum(24+45*max(1,(len(r.get('quotas',[]))+columns-1)//columns) for r in self.rows) if self.rows else 38)
-    def resizeEvent(self,event):self.fit_rows();super().resizeEvent(event)
-    def paintEvent(self,event):
-        p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.view.owner.colors
-        if not c:return
-        if not self.rows:
-            bridge=self.view.owner.service.deck
-            text(p,QRectF(10,4,self.width()-20,30),bridge.ai_status if bridge else '等待 AI 额度',c['muted'],10);return
-        y=0
+        self.cards = []
+        y = 0
+        buttons = iter(self.reset_buttons)
         for row in self.rows:
-            quotas=row.get('quotas',[]);columns=min(1 if self.width()<340 else 2,max(1,len(quotas)));height=24+45*max(1,(len(quotas)+columns-1)//columns)
-            surface(p,QRectF(0,y,self.width(),height-4),self.view.owner,'lavender')
-            name_width = min(175, self.width() * .62)
-            text(p,QRectF(10,y+3,name_width,18),row['name'],c['ink'],11,True)
-            status=row.get('status','') if row.get('stale') else row.get('plan') or row.get('status','')
-            text(p,QRectF(14+name_width,y+3,self.width()-24-name_width,18),status,c['muted'],9,False,Qt.AlignRight)
-            if not quotas:text(p,QRectF(10,y+25,self.width()-20,26),row.get('status') or '等待额度读数',c['muted'],10)
-            width=(self.width()-20-10*(columns-1))/columns
-            for i,q in enumerate(quotas):
-                x=10+(i%columns)*(width+10);top=y+23+(i//columns)*45
-                money = amount_text(q)
-                if money is not None:
-                    text(p,QRectF(x,top,width,16),amount_label(q),c['muted'],9)
-                    text(p,QRectF(x,top+15,width,23),money,c['ink'],15,True)
-                    continue
-                remaining = remaining_percent(used_percent(q))
-                ink = quota_color(remaining, c['light'])
-                text(p,QRectF(x,top,width-53,16),q['label'].replace(' · 已用',''),c['muted'],9)
-                text(p,QRectF(x,top+18,width-53,15),reset_text(q.get('reset')) or '重置时间未提供',c['muted'],8)
-                circle=QRectF(x+width-36,top-1,31,31);p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(c['hover']),3));p.drawEllipse(circle)
-                if remaining is not None:
-                    p.setPen(QPen(QColor(ink),3,Qt.SolidLine,Qt.RoundCap));p.drawArc(circle,90*16,-round(remaining*3.6*16))
-                    text(p,circle,f'{remaining:.0f}%',ink,9,True,Qt.AlignCenter)
-                else:text(p,circle,'—',ink,10,False,Qt.AlignCenter)
-                text(p,QRectF(circle.x()-3,top+30,37,12),'剩余',c['muted'],8,False,Qt.AlignCenter)
-            y+=height
+            quotas = row.get('quotas', [])
+            columns = 2 if len(quotas) > 1 and self.width() >= 312 else 1
+            cell_width = (self.width() - 2 * self.inset - self.metric_gap * (columns - 1)) / columns
+            metric_height = 64 if cell_width < 168 else 48
+            metric_rows = (len(quotas) + columns - 1) // columns
+            body_height = metric_rows * metric_height if quotas else 28
+            footer_y = y + self.header_height + body_height
+            button = next(buttons) if reset_credits.applicable(row) else None
+            height = self.header_height + body_height + 2
+            if button:
+                button_width = max(0, self.width() - 2 * self.inset + 8)
+                button_height = button.row_height(button_width)
+                button.setGeometry(self.inset - 4, footer_y + 2, button_width, button_height)
+                height += button_height + 3
+            self.cards.append((row, QRectF(0, y, self.width(), height), columns, metric_height, footer_y if button else None))
+            y += height + self.card_gap
+        self.setFixedHeight(y - self.card_gap if self.cards else 38)
+
+    def resizeEvent(self, event):
+        self.fit_rows()
+        super().resizeEvent(event)
+
+    def paintEvent(self, event):
+        colors = self.view.owner.colors
+        if not colors:
+            return
+        p = QPainter(self)
+        p.setFont(self.font())
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        if not self.cards:
+            bridge = self.view.owner.service.deck
+            text(p, QRectF(10, 4, self.width() - 20, 30), bridge.ai_status if bridge else '等待 AI 额度', colors['muted'])
+            return
+        for row, rect, columns, metric_height, footer_y in self.cards:
+            self.paint_card(p, colors, row, rect, columns, metric_height, footer_y)
+
+    def paint_card(self, p, colors, row, rect, columns, metric_height, footer_y):
+        surface(p, rect, self.view.owner, 'sky', base=colors['field'])
+        left = self.inset
+        right = rect.width() - left
+        width = max(0, right - left)
+        quotas = row.get('quotas', [])
+        plan = provider_plan_name(row)
+        if row.get('stale'):
+            plan = f'{plan} · 上次读数' if plan else '上次读数'
+        elif not plan and quotas:
+            plan = row.get('status') or ''
+        title_width = width * .55 if plan else width
+        text(p, QRectF(left, rect.top() + 6, title_width, 21), row['name'], colors['ink'], 14, True)
+        if plan:
+            text(p, QRectF(left + title_width, rect.top() + 6, width - title_width, 21),
+                 plan, colors['muted'], 11, True, Qt.AlignRight)
+
+        top = rect.top() + self.header_height
+        if not quotas:
+            status = row.get('status') or '等待读取额度'
+            text(p, QRectF(left, top, width, 22), '暂无额度数据' if status == '已连接' else status, colors['muted'])
+        gap = self.metric_gap
+        cell_width = (width - gap * (columns - 1)) / columns
+        for index, metric in enumerate(quotas):
+            x = left + (index % columns) * (cell_width + gap)
+            y = top + (index // columns) * metric_height
+            self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64)
+
+        if footer_y is not None:
+            line = QColor(colors['ink'])
+            line.setAlpha(28)
+            p.setPen(QPen(line, 1))
+            p.drawLine(QPointF(left, footer_y), QPointF(right, footer_y))
+
+    @staticmethod
+    def paint_metric(p, colors, metric, x, y, width, narrow):
+        money = amount_text(metric)
+        value_y = y + 16 if narrow else y
+        if money is not None:
+            label_width = width if narrow else width * .47
+            label_height = 16 if narrow else 28
+            text(p, QRectF(x, y, label_width, label_height), amount_label(metric), colors['muted'], 12)
+            value_left = x if narrow else x + label_width
+            text(p, QRectF(value_left, value_y, x + width - value_left, 28),
+                 money, colors['ink'], 18, True, Qt.AlignRight)
+            if reset := reset_text(metric.get('reset')):
+                text(p, QRectF(x, value_y + 31, width, 16), reset, colors['muted'])
+            return
+
+        remaining = remaining_percent(used_percent(metric))
+        ink = quota_color(remaining, colors['light'])
+        label = metric['label'].replace(' · 已用', '')
+        value = '—' if remaining is None else f'{remaining:.0f}%'
+        value_font = QFont(p.font())
+        value_font.setPixelSize(20)
+        value_font.setWeight(QFont.DemiBold)
+        value_width = QFontMetrics(value_font).horizontalAdvance(value) + 2
+        value_x = x + width - value_width
+        label_width = width if narrow else max(0, width - value_width - 40)
+        text(p, QRectF(x, y, label_width, 16 if narrow else 23), label, colors['ink'], 12, True)
+        text(p, QRectF(value_x - 32, value_y, 26, 23), '剩余', colors['muted'])
+        text(p, QRectF(value_x, value_y - 2, value_width, 25), value, ink, 20, True, Qt.AlignRight)
+
+        track = QRectF(x, value_y + 25, width, 4)
+        track_color = QColor(colors['ink'])
+        track_color.setAlpha(30 if colors['light'] else 45)
+        p.setPen(Qt.NoPen)
+        p.setBrush(track_color)
+        p.drawRoundedRect(track, 2, 2)
+        if remaining:
+            track.setWidth(width * remaining / 100)
+            p.setBrush(QColor(ink))
+            p.drawRoundedRect(track, 2, 2)
+        text(p, QRectF(x, value_y + 31, width, 16),
+             reset_text(metric.get('reset')) or '未提供恢复时间', colors['muted'])
 
 
 def number(value):return '—' if value is None else token_text(value)
 
 
-def surface(p,rect,owner,tone):
+def surface(p,rect,owner,tone,*,base=None):
     colors=owner.colors
     if hasattr(owner,'background'):
-        paint_capsule_card(p,rect,colors,tone,owner.background)
+        paint_capsule_card(p,rect,colors,tone,owner.background,base=base)
         return
     color=QColor(colors['field']);color.setAlpha(170 if colors['light'] else 155)
     p.setBrush(color);p.setPen(Qt.NoPen);p.drawRoundedRect(rect,9,9)
@@ -167,33 +322,80 @@ class StatisticsView(QWidget):
     def __init__(self,owner):
         super().__init__();self.owner=owner;self.period='today';self.metric='cost';self.signature=None;self.data=aggregate([])
         lay=QVBoxLayout(self);lay.setContentsMargins(4,0,4,0);lay.setSpacing(5)
-        self.filter_box=QBoxLayout(QBoxLayout.LeftToRight);lay.addLayout(self.filter_box)
-        filters=QHBoxLayout();filters.setContentsMargins(0,0,0,0);filters.setSpacing(1);self.ranges={}
-        ranges=QWidget();ranges.setLayout(filters);self.filter_box.addWidget(ranges)
+        filter_bar = QWidget()
+        filter_bar.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.filter_box = QBoxLayout(QBoxLayout.LeftToRight, filter_bar)
+        self.filter_box.setContentsMargins(0, 0, 0, 0)
+        self.filter_box.setSpacing(4)
+        lay.addWidget(filter_bar)
+        self.range_tabs = QWidget()
+        filters = QHBoxLayout(self.range_tabs)
+        filters.setContentsMargins(0, 0, 0, 0)
+        filters.setSpacing(1)
+        self.ranges = {}
+        field_style = 'QComboBox{min-height:0;padding:1px 28px 1px 5px;font-size:10px;border:0}'
+        self.period_selector = ModernComboBox()
+        self.period_selector.setAccessibleName('用量时间范围')
+        self.period_selector.setFixedSize(76, 24)
+        self.period_selector.setStyleSheet(field_style)
+        self.period_selector.setProperty('glassField', True)
         for key,label in [('today','今天'),('yesterday','昨天'),('week','7 天'),('month','30 天'),('all','全部')]:
             b=QToolButton();b.setText(label);b.setCheckable(True);b.clicked.connect(lambda checked=False,key=key:self.set_period(key));self.ranges[key]=b;filters.addWidget(b)
-        filters.addStretch();tools=QHBoxLayout();tools.setContentsMargins(0,0,0,0);tool_row=QWidget();tool_row.setLayout(tools);self.filter_box.addWidget(tool_row)
-        self.provider=ModernComboBox();self.provider.setMinimumWidth(70);self.provider.setMaximumWidth(124);self.provider.setFixedHeight(24);self.provider.setStyleSheet('QComboBox{min-height:0;padding:1px 28px 1px 5px;font-size:10px;border:0}')
+            self.period_selector.addItem(label, key)
+        self.period_selector.currentIndexChanged.connect(lambda: self.set_period(self.period_selector.currentData()))
+        filters.addStretch()
+        self.filter_box.addWidget(self.range_tabs, 1)
+        self.filter_box.addWidget(self.period_selector)
+        self.filter_box.addStretch(1)
+        tool_row = QWidget()
+        tools = QHBoxLayout(tool_row)
+        tools.setContentsMargins(0, 0, 0, 0)
+        tools.setSpacing(4)
+        tools.addStretch()
+        self.filter_box.addWidget(tool_row)
+        self.provider=ModernComboBox();self.provider.setMinimumWidth(70);self.provider.setMaximumWidth(124);self.provider.setFixedHeight(24);self.provider.setStyleSheet(field_style)
         self.provider.setProperty('glassField',True)
-        self.provider.addItem('全部工具','');self.provider.currentIndexChanged.connect(self.recalculate);tools.addWidget(self.provider);tools.addStretch()
+        self.provider.setAccessibleName('额度服务商')
+        self.provider.addItem('全部工具','');self.provider.currentIndexChanged.connect(self.recalculate);tools.addWidget(self.provider)
         refresh=QToolButton();refresh.setText('刷新');refresh.clicked.connect(self.refresh_request);tools.addWidget(refresh)
         scroll=self.scroll=CapsuleScrollArea()
         body=QWidget();scroll.setWidget(body);stack=QVBoxLayout(body);stack.setContentsMargins(0,0,3,0);stack.setSpacing(6);lay.addWidget(scroll,1)
         self.quotas=QuotaOverview(self);stack.addWidget(self.quotas)
         self.summary=UsageSummary(self);stack.addWidget(self.summary)
-        modes=QHBoxLayout();self.trend_title=QLabel('用量趋势');modes.addWidget(self.trend_title,1);self.modes={}
+        self.mode_box = QBoxLayout(QBoxLayout.LeftToRight)
+        self.mode_box.setSpacing(3)
+        self.trend_title = QLabel('用量趋势')
+        self.mode_box.addWidget(self.trend_title, 1)
+        mode_row = QWidget()
+        modes = QHBoxLayout(mode_row)
+        modes.setContentsMargins(0, 0, 0, 0)
+        modes.setSpacing(3)
+        self.modes = {}
         for key,label in [('tokens','Token'),('cost','费用'),('records','记录')]:
             b=QToolButton();b.setText(label);b.setCheckable(True);b.clicked.connect(lambda checked=False,key=key:self.set_metric(key));modes.addWidget(b);self.modes[key]=b
-        detail=self.detail_button=QToolButton();detail.setText('模型明细');detail.clicked.connect(self.show_details);modes.addWidget(detail);stack.addLayout(modes)
+            b.setStyleSheet('padding:3px 5px;')
+        self.mode_box.addWidget(mode_row)
+        detail=self.detail_button=QToolButton();detail.setText('模型明细');detail.clicked.connect(self.show_details)
+        self.mode_box.addWidget(detail, 0, Qt.AlignRight)
+        stack.addLayout(self.mode_box)
         self.charts=UsageCharts(self);stack.addWidget(self.charts);self.providers=UsageProviders(self);stack.addWidget(self.providers)
         stack.addStretch(1)
         self.note=QLabel();self.note.setWordWrap(True);self.note.setObjectName('Subtle');self.note.hide();lay.addWidget(self.note)
         footer=QHBoxLayout();self.notes_button=QToolButton();self.notes_button.setText('备注');self.notes_button.setCheckable(True);self.notes_button.toggled.connect(self.note.setVisible)
         footer.addWidget(self.notes_button);footer.addStretch();lay.addLayout(footer);self.recalculate()
+    def layout_controls(self):
+        small = self.width() < 420
+        narrow = self.width() < 220
+        self.range_tabs.setVisible(not small)
+        self.period_selector.setVisible(small)
+        stacked_filters = narrow and not self.provider.isHidden()
+        self.filter_box.setDirection(QBoxLayout.TopToBottom if stacked_filters else QBoxLayout.LeftToRight)
+        self.mode_box.setDirection(QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight)
+        self.trend_title.setVisible(not small)
+        self.detail_button.setText('明细' if small else '模型明细')
+
     def resizeEvent(self,event):
-        small=self.width()<420
-        self.filter_box.setDirection(QBoxLayout.TopToBottom if small else QBoxLayout.LeftToRight)
-        self.trend_title.setVisible(not small);self.detail_button.setText('明细' if small else '模型明细')
+        self.layout_controls()
         super().resizeEvent(event)
     def set_period(self,key):
         self.period=key
@@ -211,6 +413,7 @@ class StatisticsView(QWidget):
             for row in rows:self.provider.addItem(row['name'],row['id'])
             self.provider.setCurrentIndex(max(0,self.provider.findData(old)));self.provider.blockSignals(False);self.signature=signature
         self.provider.setVisible(len(rows)>1)
+        self.layout_controls()
         self.recalculate()
     def recalculate(self):
         from datetime import date
@@ -218,6 +421,9 @@ class StatisticsView(QWidget):
         if key!=getattr(self,'data_key',None):self.data=aggregate(rows,self.period,key[2]);self.data_key=key
         selected=self.provider.currentData() or '';self.quotas.refresh([r for r in rows if not selected or r['id']==selected])
         for key,b in self.ranges.items():b.setChecked(key==self.period)
+        self.period_selector.blockSignals(True)
+        self.period_selector.setCurrentIndex(self.period_selector.findData(self.period))
+        self.period_selector.blockSignals(False)
         for key,b in self.modes.items():b.setChecked(key==self.metric)
         self.summary.update();self.charts.update();self.providers.refresh()
         note=(bridge.ai_status+'。 ' if bridge else '')+'费用为记录金额或估算，未定价部分单列；调用记录不等同于 HTTP 请求数。'

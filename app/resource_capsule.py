@@ -320,7 +320,7 @@ class ResourceCapsule(QObject):
             if card and card.isVisible():card.refresh()
 
     def play_reminder_sound(self,kind):
-        if self.closed or not self.cfg['resource_reminder_sound'] or self.runtime.dock.preview or self.runtime.game_active:return
+        if self.closed or self.runtime.session_ending or not self.cfg['resource_reminder_sound'] or self.runtime.dock.preview or self.runtime.game_active:return
         if self.reminder_audio is None:
             from resource_reminder_audio import ReminderAudio
             self.reminder_audio=ReminderAudio(self)
@@ -408,7 +408,7 @@ class ResourceCapsule(QObject):
         self.set_options(**changes)
 
     def sync(self):
-        if self.closed:return
+        if self.closed or self.runtime.session_ending:return
         if self.reminder_audio and (self.runtime.game_active or not self.cfg['resource_reminder_sound']):
             self.reminder_audio.stop()
         visible=self.cfg['resource_enabled'] and not self.runtime.game_active
@@ -543,7 +543,7 @@ class ResourceCapsule(QObject):
         if self.dependency_prompts:self.dependency_prompts.request(dotnet,pawnio)
 
     def start_job(self):
-        if self.closed or not self.signature or self.runtime.dock.preview:return
+        if self.closed or self.runtime.session_ending or not self.signature or self.runtime.dock.preview:return
         from pathlib import Path
         self.job=MonitorJob(*self.signature,traffic_path=Path(self.runtime.api.CONFIG_DIR)/'network-traffic.json')
         self.job.sample_ready.connect(self.receive,Qt.QueuedConnection)
@@ -714,6 +714,18 @@ class ResourceCapsule(QObject):
             self.window.sync_taskbar();self.window.reposition()
         for card in self.desktop_cards.values():card.reposition()
         if self.strip:self.strip.placement.restore();self.strip.reposition()
+    def suspend_session(self):
+        """Release collectors early; settings and desktop geometry remain intact."""
+        self.signature=None
+        if self.job:
+            job,self.job=self.job,None
+            job.requestInterruption();job.deleteLater()
+        for key in ('sensors','bluetooth','peripherals','app_traffic','fps','deck'):
+            reader=getattr(self,key)
+            setattr(self,key,None)
+            if reader:reader.close()
+        if self.reminder_audio:self.reminder_audio.stop()
+
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
         if self.reminder_audio:self.reminder_audio.stop()

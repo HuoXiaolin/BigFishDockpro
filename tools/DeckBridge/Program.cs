@@ -170,7 +170,11 @@ internal static class Program
             try { await Prices.RefreshAsync(cancellation: cancellation); } catch (Exception) { }
             if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
             var columns = DashboardUsage.Columns(Settings, snapshots);
-            Emit(new { type = "ai", at = DateTimeOffset.Now, providers = columns.Select(c => Provider(c, DateTime.Today)).ToArray() });
+            (ResetCreditReading? Credits, string Plan) codexAccount = (null, "");
+            if (columns.FirstOrDefault(c => c.Entry.Id == ProviderId.Codex) is { } codex)
+                codexAccount = await CodexResetCredits.ReadAsync(cancellation, !codex.Quota.LiveQuota || string.IsNullOrWhiteSpace(codex.Quota.Plan));
+            if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
+            Emit(new { type = "ai", at = DateTimeOffset.Now, providers = columns.Select(c => Provider(c, DateTime.Today, codexAccount.Credits, codexAccount.Plan)).ToArray() });
         }
         catch (OperationCanceledException) { }
         catch (OutOfMemoryException)
@@ -183,7 +187,7 @@ internal static class Program
         finally { Busy = false; }
     }
 
-    static object Provider(DashboardColumn c, DateTime today)
+    static object Provider(DashboardColumn c, DateTime today, ResetCreditReading? resetCredits = null, string codexPlan = "")
     {
         object Summary(IEnumerable<TokenEntry> entries)
         {
@@ -193,8 +197,12 @@ internal static class Program
                 cost = list.Count == 0 ? 0m : cost?.HasValue == true ? cost.Amount : list.Any(t => t.ReportedCostUsd.HasValue) ? list.Sum(t => t.ReportedCostUsd ?? 0) : (decimal?)null,
                 estimated = cost?.IsEstimate ?? false, unpriced = cost?.Unpriced ?? list.Count(t => !t.ReportedCostUsd.HasValue) };
         }
-        return new { id = c.Entry.Id.ToString(), name = c.Entry.Name, plan = c.Quota.Plan, status = c.Quota.StatusLabel, note = c.Quota.Status,
-            stale = c.Quota.IsStale, source = c.Quota.Source, usageNote = c.Usage.UsageNote, usageAvailable = c.Usage.UsageAvailable, usageComplete = c.Usage.UsageComplete, historyStart = c.Usage.UsageStart?.ToString("yyyy-MM-dd"), allHistory = AllHistory,
+        var isCodex = c.Entry.Id == ProviderId.Codex;
+        var plan = isCodex && !string.IsNullOrWhiteSpace(codexPlan) ? codexPlan : c.Quota.Plan;
+        var stale = c.Quota.IsStale || (isCodex && !c.Quota.LiveQuota && c.Quota.Quotas.Count > 0);
+        return new { id = c.Entry.Id.ToString(), name = c.Entry.Name, plan, status = c.Quota.StatusLabel, note = c.Quota.Status,
+            stale, source = c.Quota.Source, usageNote = c.Usage.UsageNote, usageAvailable = c.Usage.UsageAvailable, usageComplete = c.Usage.UsageComplete, historyStart = c.Usage.UsageStart?.ToString("yyyy-MM-dd"), allHistory = AllHistory,
+            resetCredits = isCodex ? resetCredits : null,
             quotas = c.Quota.Metrics.Select(m => new { label = m.Label, kind = m.Kind.ToString().ToLowerInvariant(), percent = m.UsedPercent, value = m.ValueText, reset = m.ResetAt, detail = m.Description }),
             today = Summary(c.Usage.Entries.Where(t => t.Time.LocalDateTime.Date == today)), week = Summary(c.Usage.Entries.Where(t => t.Time.LocalDateTime.Date >= today.AddDays(-6))),
             hours = c.Usage.Entries.Where(t => t.Time.LocalDateTime.Date >= today.AddDays(-1)).GroupBy(t => t.Time.LocalDateTime.ToString("yyyy-MM-dd'T'HH")).Select(g => new { date = g.Key, summary = Summary(g) }).ToArray(),
@@ -269,6 +277,7 @@ internal static class Program
 
     static void SelfTest()
     {
+        CodexResetCredits.SelfTest();
         var live = new MediaTrack { Id = "system:fixture", State = MediaState.Playing, PositionKnown = false };
         var owner = new MediaAppOwner(null, "chrome", "Chrome");
         if (!LiveAudio.CanPause(live, owner) || LiveAudio.CanPause(live, null) ||
@@ -277,8 +286,14 @@ internal static class Program
         var lines = Lyrics.Parse("[00:01.00]第一行\n[00:03.00]第二行", null, 10, "fixture");
         if (lines.At(2).Current != "第一行") throw new Exception("lyric");
         var sample = new ProviderSnapshot(ProviderId.Codex) { Quotas = [q], Entries = [new("fixture", DateTimeOffset.Now, "fixture", 10, 2, 0, 0, 3)] };
-        var result = JsonSerializer.Serialize(Provider(new(new AppEntry { QuotaSource = ProviderId.Codex }, sample, sample), DateTime.Today), Json);
+        var entry = new AppEntry { QuotaSource = ProviderId.Codex };
+        var result = JsonSerializer.Serialize(Provider(new(entry, sample, sample), DateTime.Today), Json);
         if (!result.Contains("\"tokens\":15") || !result.Contains("\"cacheRead\":2") || !result.Contains("\"records\":1")) throw new Exception("usage");
+        var planOnly = JsonSerializer.Serialize(Provider(new(entry, new(ProviderId.Codex), sample), DateTime.Today, codexPlan: "go"), Json);
+        if (!planOnly.Contains("\"plan\":\"go\"") || !planOnly.Contains("\"quotas\":[]")) throw new Exception("account plan without quota windows");
+        using var periods = JsonDocument.Parse("""{"rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":3600},"secondary_window":{"used_percent":20,"limit_window_seconds":2592000}}}""");
+        if (!QuotaParser.Codex(periods.RootElement, DateTimeOffset.Now, true).Select(item => item.Label).SequenceEqual(new[] { "每小时额度", "30 天额度" }))
+            throw new Exception("quota window labels");
         if (MemoryBudget.InstalledLimit() != MemoryBudget.Bytes) throw new Exception("memory limit");
         if (WerGetFlags(GetCurrentProcess(), out uint faultFlags) != 0 || (faultFlags & NoErrorUi) == 0)
             throw new Exception("headless error reporting");
@@ -293,6 +308,6 @@ internal static class Program
         GC.KeepAlive(buffers);
         Emit(new { passed = true, workingSetLimit = MemoryBudget.InstalledLimit(), managedHeapLimit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, processErrorMode = GetErrorMode(),
             gcRegionSize = GC.GetConfigurationVariables().GetValueOrDefault("GCRegionSize"),
-            checks = new[] { "quota", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB", "bridge fault reporting runs without UI", "repeated large-object allocation under the managed heap limit" } });
+            checks = new[] { "quota", "read-only reset credits: quantity, sorted expiries, embedded fallback, zero versus unavailable", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB", "bridge fault reporting runs without UI", "repeated large-object allocation under the managed heap limit" } });
     }
 }

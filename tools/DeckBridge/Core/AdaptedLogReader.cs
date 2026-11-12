@@ -245,7 +245,16 @@ public static class QuotaParser
                 (window.Get("window_minutes").Number() is { } mins ? (int)mins : null);
             var reset = window.Get(online ? "reset_at" : "resets_at").Date();
             if (reset is null && window.Get("reset_after_seconds").Number() is { } after && after is >= 0 and < 31536000) reset = now.AddSeconds(after);
-            string label = minutes switch { 300 => "5 小时额度", 10080 => "每周额度", > 0 => $"{minutes} 分钟额度", _ => field.StartsWith("primary") ? "主要额度" : "次要额度" };
+            string label = minutes switch
+            {
+                60 => "每小时额度",
+                1440 => "每日额度",
+                10080 => "每周额度",
+                int duration when duration > 0 && duration % 1440 == 0 => $"{duration / 1440} 天额度",
+                int duration when duration > 0 && duration % 60 == 0 => $"{duration / 60} 小时额度",
+                > 0 => $"{minutes} 分钟额度",
+                _ => field.StartsWith("primary") ? "主要额度" : "次要额度"
+            };
             result.Add(new(label, Math.Clamp(used, 0, 100), reset, minutes));
         }
         return result;

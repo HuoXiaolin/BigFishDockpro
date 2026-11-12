@@ -23,11 +23,13 @@ def run_checks(api,runtime,app,output,checks):
 
     def go(url,token):
         assert url==ENDPOINTS['opencode'] and token==key
-        return dict(usage=dict(rolling=dict(percent=25,resetsAt='2026-11-10T09:30:00Z'),
-                               weekly=dict(percent=71),monthly=dict(percent=12)))
+        return dict(planType='go',usage=dict(hourly=dict(percent=0),rolling=dict(percent=25,resetsAt='2026-11-10T09:30:00Z'),
+                                             weekly=dict(percent=71),monthly=dict(percent=12)))
 
     code=read_gateway(account('https://opencode.ai/zen/go/v1/chat/completions'),go)
-    assert [q['percent'] for q in code['quotas']]==[25,71,12] and not code['usageAvailable']
+    assert code['plan']=='go' and not code['usageAvailable']
+    assert [(q['label'],q['percent']) for q in code['quotas']]==[
+        ('每小时额度',0),('5 小时额度',25),('每周额度',71),('每月额度',12)]
 
     def command_code(url,token):
         parts=urlsplit(url);assert parts.netloc=='api.commandcode.ai' and token==key

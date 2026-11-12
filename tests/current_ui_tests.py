@@ -460,6 +460,8 @@ def run(output):
         check_gateway(api,runtime,app,output,checks)
         from shutdown_tests import run as check_shutdown
         check_shutdown(api,runtime,root.name,app,output,checks)
+        from popup_style_tests import run as check_popups
+        check_popups(app,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.
         # Keep it last so later tests retain a working native event loop.
         from dock_extension_tests import run as run_dock_extensions

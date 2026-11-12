@@ -197,7 +197,8 @@ class AppTrafficMonitor(QObject):
             self.deleteLater()
 
     def start(self):
-        if self.preview or self.process.state() != QProcess.NotRunning:
+        from probe_lifecycle import allowed, start as start_probe
+        if self.closed or not allowed() or self.preview or self.process.state() != QProcess.NotRunning:
             return
         program = binary('DesktopResourceProbe.exe')
         self.error = ''
@@ -211,7 +212,7 @@ class AppTrafficMonitor(QObject):
             return
         self.status = '正在启动应用流量采集…'
         self.watchdog.start(12000)
-        self.process.start(str(program), ['--app-traffic'])
+        if not start_probe(self.process,program,['--app-traffic']):self.watchdog.stop()
         self.owner.app_traffic_updated.emit()
 
     def started(self):

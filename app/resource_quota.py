@@ -1,7 +1,42 @@
 """Keep currency amounts separate from rate-limited AI quota windows."""
 from math import isfinite
+import re
 
 from resource_status import band_ink
+
+
+_COMMON_PLAN_NAMES = {
+    'free': 'Free',
+    'go': 'Go',
+    'plus': 'Plus',
+    'pro': 'Pro',
+    'max': 'Max',
+    'team': '团队版',
+    'business': '商业版',
+    'enterprise': '企业版',
+    'edu': '教育版',
+    'education': '教育版',
+}
+_CODEX_PLAN_NAMES = {
+    **_COMMON_PLAN_NAMES,
+    'prolite': 'Pro 100',
+    'pro100': 'Pro 100',
+    'pro': 'Pro 200',
+    'pro200': 'Pro 200',
+    'promax': 'Pro 500',
+    'pro500': 'Pro 500',
+}
+
+
+def provider_plan_name(provider):
+    plan = provider.get('plan')
+    if not isinstance(plan, str) or not (plan := plan.strip()):
+        return ''
+    if provider.get('id', '').casefold() != 'codex':
+        return _COMMON_PLAN_NAMES.get(plan.casefold(), plan)
+    # The account usage response supplies the plan code independently of the quota windows.
+    code = re.sub(r'[\s_-]+', '', plan.casefold())
+    return _CODEX_PLAN_NAMES.get(code, '套餐未识别')
 
 
 def amount_text(metric):

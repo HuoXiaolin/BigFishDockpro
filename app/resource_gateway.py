@@ -162,10 +162,10 @@ def quota(label,source):
 
 def windows(data):
     quotas=[]
-    for label,keys in (('小时额度',('rolling','fiveHour','hourly','hour')),
-                       ('每周额度',('weekly','week')),('月度额度',('monthly','month'))):
+    for label,keys in (('每小时额度',('hourly','hour')),('5 小时额度',('rolling','fiveHour')),
+                       ('每周额度',('weekly','week')),('每月额度',('monthly','month'))):
         for key in keys:
-            row=quota('5 小时额度' if key in ('rolling','fiveHour') else label,data.get(key))
+            row=quota(label,data.get(key))
             if row:
                 quotas.append(row);break
     return quotas
@@ -216,7 +216,9 @@ def decode_gateway(account,data):
         value=summary(row.get('summary') or row)
         if value is not None:days.append(dict(date=stamp,model=str(row.get('model') or '网关汇总')[:96],summary=value))
     if not quotas and not periods and not days:raise UsageError('接口未提供可识别的额度或用量字段。')
-    return provider(account,'已连接',quotas=quotas,periods=periods,days=days,usageAvailable=bool(periods or days),
+    plan = data.get('plan') or data.get('planType') or data.get('plan_type')
+    plan = plan.strip()[:48] if isinstance(plan, str) else ''
+    return provider(account,'已连接',plan=plan,quotas=quotas,periods=periods,days=days,usageAvailable=bool(periods or days),
                     usageComplete=bool(days))
 
 
@@ -287,7 +289,7 @@ def read_command_code(account,fetch,cancelled):
     reset=iso_time(subscription.get('currentPeriodEnd'))
     if monthly is not None:
         if monthly_limit and monthly<=monthly_limit:
-            quotas.append(dict(label='月度额度',percent=100*(1-monthly/monthly_limit),reset=reset))
+            quotas.append(dict(label='每月额度',percent=100*(1-monthly/monthly_limit),reset=reset))
         else:quotas.append(dict(label='本月套餐余额',kind='balance',value=f'${monthly:,.2f}',reset=reset))
     elif (limit:=next((row for row in (identity.get('orgLimits') or ()) if isinstance(row,dict) and row.get('resetInterval')=='monthly'),None)):
         if row:=quota('组织月度额度',limit):quotas.append(row)

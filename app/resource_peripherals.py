@@ -483,7 +483,8 @@ class PeripheralProbe(QObject):
         return self._start('sample', payload, (length, mode, report_id))
 
     def _start(self, operation, payload, sample_contract=None):
-        if self._closed or self.busy or self.process.state() != QProcess.NotRunning:
+        from probe_lifecycle import allowed, start as start_probe
+        if self._closed or not allowed() or self.busy or self.process.state() != QProcess.NotRunning:
             return False
         self._operation = operation
         self._message = ''
@@ -495,7 +496,10 @@ class PeripheralProbe(QObject):
             QTimer.singleShot(0, self._missing)
             return True
         self._deadline.start(14000 if operation == 'read' else 6000)
-        self.process.start(str(path), ['--peripherals-' + operation])
+        if not start_probe(self.process,path,['--peripherals-' + operation]):
+            self._operation=''
+            self._deadline.stop()
+            return False
         return True
 
     def _missing(self):

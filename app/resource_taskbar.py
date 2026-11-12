@@ -153,7 +153,8 @@ class Placement(QObject):
     def check(self):
         if self.target and not self.proposal and not self.shell_missing and not self.suppressed():self.query(self.target,self.ratio)
     def query(self,bar,ratio):
-        if self.closed:return
+        from probe_lifecycle import allowed, start as start_probe
+        if self.closed or not allowed():return
         request=(bar,ratio)
         if self.process is not None:
             self.waiting=request if request != self.request else None
@@ -169,14 +170,16 @@ class Placement(QObject):
                 data=json.loads(raw.decode('utf-8-sig')) if ok and len(raw)<131072 else None
             except (TypeError,ValueError):data=None
             process.deleteLater()
-            if self.closed:return
+            if self.closed or not allowed():return
             if self.waiting is not None:
                 latest=self.waiting;self.waiting=None;self.query(*latest);return
             if self.target!=bar:return
             self.accept_probe(bar,ratio,data)
         process.errorOccurred.connect(lambda error:finish(False) if error==QProcess.FailedToStart else None)
         process.finished.connect(lambda code,status:finish(code==0 and status==QProcess.NormalExit))
-        deadline.start();process.start(str(binary('DesktopResourceProbe.exe')),['--taskbar',str(bar['hwnd'])])
+        deadline.start()
+        if not start_probe(process,binary('DesktopResourceProbe.exe'),['--taskbar',str(bar['hwnd'])]):
+            self.process=None;deadline.stop();process.deleteLater()
     def accept_probe(self, bar, ratio, data):
         try:
             if not isinstance(data, dict) or data.get('ok') is not True:
