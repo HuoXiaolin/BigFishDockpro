@@ -6,37 +6,56 @@ from contextlib import contextmanager
 from weakref import proxy
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QWidget,
     QFormLayout, QSpinBox, QCheckBox, QComboBox, QScrollArea, QApplication, QLineEdit, QColorDialog,
     QStackedWidget, QSizePolicy, QFileDialog)
 from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
+from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, DATA, PAGE_GROUPS,
+                              PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
+                              WIDGETS, field_catalog)
 from settings_design import SettingsNavigation
 
 
 class SettingsPages(QWidget):
-    NAV_SYMBOLS = ('palette', 'panels', 'apps', 'startup', 'update', 'size', 'info')
     def __init__(self):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         self.nav = SettingsNavigation()
+        self.nav.setAccessibleName('总设置分类')
         self.pages = QStackedWidget()
+        self.nav_items = {}
+        for _ in PAGES:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            self.pages.addWidget(scroll)
+        for group, indices in PAGE_GROUPS:
+            self.nav.add_group(group)
+            for index in indices:
+                self.nav_items[index] = self.nav.add_page(PAGES[index], PAGE_SYMBOLS[index], index)
         layout.addWidget(self.nav)
         layout.addWidget(self.pages, 1)
-        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.nav.currentItemChanged.connect(self.navigate)
+        self.pages.currentChanged.connect(self.select_nav_item)
+        self.select_nav_item(APPEARANCE)
 
-    def addTab(self, page, name):
-        index = self.pages.addWidget(page)
-        self.nav.add_page(name,self.NAV_SYMBOLS[index])
-        if self.nav.currentRow() < 0: self.nav.setCurrentRow(0)
+    def navigate(self, item, _previous):
+        index = item.data(Qt.UserRole) if item is not None else None
+        if index is not None:
+            self.pages.setCurrentIndex(index)
+
+    def select_nav_item(self, index):
+        item = self.nav_items[index]
+        if self.nav.currentItem() is not item:
+            self.nav.setCurrentItem(item)
 
     def count(self): return self.pages.count()
-    def currentIndex(self): return self.nav.currentRow()
-    def setCurrentIndex(self, index): self.nav.setCurrentRow(index)
+    def currentIndex(self): return self.pages.currentIndex()
+    def setCurrentIndex(self, index): self.pages.setCurrentIndex(index)
 
     def resizeEvent(self, event):
         self.nav.fit_density()
@@ -61,26 +80,30 @@ class SettingsFields(dict):
 
 class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     PAGE_ATTRIBUTES = {
-        'dock_preset': 0,
-        'dock_preview': 0,
-        'overall_style': 0,
-        'restore_style': 0,
-        'taskbar_text_status': 0,
-        'panel_preset': 1,
-        'current_startup_path': 3,
-        'startup_check': 3,
-        'startup_path': 3,
-        'startup_repair': 3,
-        'startup_status': 3,
-        'update_link': 4,
-        'update_status': 4,
-        'usage_page': 5,
-        'config_recovery': 6,
-        'config_status': 6,
-        'project': 6,
-        'transfer_status': 6,
+        'dock_preset': APPEARANCE,
+        'dock_preview': APPEARANCE,
+        'overall_style': APPEARANCE,
+        'restore_style': APPEARANCE,
+        'taskbar_text_status': TASKBAR,
+        'panel_preset': COLLECTION,
+        'current_startup_path': RUNNING,
+        'startup_check': RUNNING,
+        'startup_path': RUNNING,
+        'startup_repair': RUNNING,
+        'startup_status': RUNNING,
+        'update_link': UPDATES,
+        'update_status': UPDATES,
+        'usage_page': USAGE,
+        'config_recovery': DATA,
+        'config_status': DATA,
+        'project': ABOUT,
+        'transfer_status': DATA,
     }
-    PAGE_BUILDERS = ('build_appearance', 'build_panel', 'build_apps', 'build_running', 'build_updates', 'build_usage', 'build_info')
+    PAGE_BUILDERS = {
+        APPEARANCE: 'build_appearance', COLLECTION: 'build_panel', APPS: 'build_apps', RUNNING: 'build_running',
+        UPDATES: 'build_updates', USAGE: 'build_usage', ABOUT: 'build_info', TASKBAR: 'build_taskbar',
+        WIDGETS: 'build_widgets', CAPSULES: 'build_capsules', DATA: 'build_data',
+    }
 
     def __init__(self, tray, api):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
@@ -108,19 +131,15 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         search_row.addWidget(self.setting_query,1);search_row.addWidget(button('搜索',self.search_settings));body.addLayout(search_row)
         self.tabs = SettingsPages()
         body.addWidget(self.tabs, 1)
-        from settings_catalog import PAGES, field_catalog
         self.catalog = field_catalog(api, tray.cfg)
         self._draft = {key: tray.cfg[key] for key in self.catalog}
         self._mounted = {}
         self._page_density = {}
         self._scroll_positions = {}
+        self._usage_view_state = (7, 'period')
         self._suspended = False
         self.transfer_help = '导出已保存的应用、卡片、便签正文和偏好；导入先预览，保存后替换当前配置并保留一份导入前备份。应用和桌面文件仅保存路径引用。便签正文包含在导出文件中，请妥善保管。'
         self._transfer_message = self.transfer_help
-        for name in PAGES:
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            self.tabs.addTab(scroll, name)
         self.status = label('修改后保存，关闭不保存。', 'muted')
         actions = QHBoxLayout()
         actions.setSpacing(10)
@@ -143,8 +162,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         from idle_resources import watch
         watch(self)
         self.initialize_size_behavior()
-        self.tabs.nav.currentRowChanged.connect(self.show_page)
-        self.ensure_page(0)
+        self.tabs.pages.currentChanged.connect(self.show_page)
+        self.ensure_page(APPEARANCE)
 
     def __getattr__(self, name):
         page = self.PAGE_ATTRIBUTES.get(name)
@@ -168,16 +187,16 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self._mounted[index] = keys
         self.set_draft_values({key: self._draft[key] for key in keys})
         self.connect_profile_fields(keys)
-        if index == 0:
+        if index == APPEARANCE:
             self.position_changed()
             self.sync_profile_selector()
-        elif index == 3:
+        elif index == RUNNING:
             self.check_startup()
-        elif index == 4:
+        elif index == UPDATES:
             runtime = getattr(self.tray, 'runtime', None)
             if runtime:
                 self.update_changed(runtime.updater.message)
-        elif index == 6:
+        elif index == DATA:
             self.refresh_config_status()
         self.refresh_preset_names(self._draft)
         group_form(form, self)
@@ -190,6 +209,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         scroll.verticalScrollBar().setValue(self._scroll_positions.get(index, 0))
 
     def unmount_page(self, index):
+        if index == USAGE:
+            self._usage_view_state = self.usage_page.view_state()
         keys = self._mounted.pop(index)
         for key in keys:
             field = self.fields.pop(key)
@@ -212,9 +233,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             if previous != index:
                 self.unmount_page(previous)
         self.ensure_page(index)
-        page = self.__dict__.get('usage_page')
-        if page is not None:
-            page.refresh()
 
     @contextmanager
     def suspend_page(self):
@@ -299,7 +317,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             getattr(self, kind)(form, key, title)
 
     def build_appearance(self, appearance):
-        tray, api = self.tray, self.api
         from settings_design import section_marker
         section_marker(appearance, '默认设置')
         defaults = QHBoxLayout()
@@ -347,21 +364,38 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(layout, 'screen_corners')
         self.fields['screen_corners'].setToolTip('手动暂停桌面组件时隐藏，圆角区域允许鼠标穿透。')
         self.add_field(layout, 'corner_radius')
+        self.fields['position'].currentIndexChanged.connect(self.position_changed)
+        self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
+        self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
+        for key in DOCK_PRESETS[0][1]:
+            self.change_signal(self.fields[key]).connect(self.customize_dock)
+        from settings_design import DockPreview
+        self.dock_preview = DockPreview(self)
+        appearance.insertRow(4, self.dock_preview)
 
-        section_marker(appearance, 'Windows 任务栏')
-        self.add_field(appearance, 'taskbar_mode')
-        self.add_field(appearance, 'taskbar_text_mode')
+    def build_taskbar(self, form):
+        from settings_design import section_marker
+        runtime = getattr(self.tray, 'runtime', None)
+        section_marker(form, '任务栏监控')
+        if runtime:
+            self.component_row(form, 'resource_taskbar', self.catalog['resource_taskbar'][1],
+                               button('监控设置…', lambda: runtime.resources.settings(page=1)))
+        else:
+            self.add_field(form, 'resource_taskbar')
+        section_marker(form, '效果与文字')
+        self.add_field(form, 'taskbar_mode')
+        self.add_field(form, 'taskbar_text_mode')
         self.taskbar_text_status=label('文字明暗联动 Windows 模式，开始菜单等系统区域也会改变；普通应用配色保留。退出后恢复原设置。','muted')
-        appearance.addRow(self.taskbar_text_status)
-        self.add_field(appearance, 'taskbar_color')
-        self.add_field(appearance, 'taskbar_opacity')
-        self.add_field(appearance, 'taskbar_blur')
-        taskbar = getattr(getattr(tray, 'runtime', None), 'taskbar', None)
+        form.addRow(self.taskbar_text_status)
+        self.add_field(form, 'taskbar_color')
+        self.add_field(form, 'taskbar_opacity')
+        self.add_field(form, 'taskbar_blur')
+        taskbar = getattr(runtime, 'taskbar', None)
         if taskbar:
             taskbar_status = label(taskbar.status, 'muted')
-            appearance.addRow(taskbar_status)
+            form.addRow(taskbar_status)
             taskbar.changed.connect(taskbar_status.setText)
-            self.action_row(appearance,'应用状态',button('重试任务栏效果',taskbar.retry))
+            self.action_row(form,'应用状态',button('重试任务栏效果',taskbar.retry))
             if taskbar.payload:
                 def installed(success, message):
                     from PyQt5 import sip
@@ -379,28 +413,18 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                         taskbar_status.setText('正在安装任务栏组件和缺失的依赖…')
 
                 setup = button('安装或修复离线组件', install_taskbar)
-                appearance.addRow(setup)
+                form.addRow(setup)
             if taskbar.backend is None:
                 import sys
                 if sys.platform == 'win32' and sys.getwindowsversion().build >= 22000:
                     from update_sources import DEFAULT_SOURCE
                     download = label(f'<a href="{DEFAULT_SOURCE}">下载完整安装包并安装任务栏效果组件</a>', 'muted')
                     download.setOpenExternalLinks(True)
-                    appearance.addRow(download)
+                    form.addRow(download)
                 for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
                     self.fields[key].setEnabled(False)
 
-        self.fields['position'].currentIndexChanged.connect(self.position_changed)
-        self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
-        self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
-        for key in DOCK_PRESETS[0][1]:
-            self.change_signal(self.fields[key]).connect(self.customize_dock)
-        from settings_design import DockPreview
-        self.dock_preview = DockPreview(self)
-        appearance.insertRow(4, self.dock_preview)
-
     def build_panel(self, panel):
-        tray, api = self.tray, self.api
         from settings_design import section_marker
         panel.addRow(label('外观与收起选项应用到全部卡片，位置和内容分别保存。', 'muted'))
         section_marker(panel,'显示与分类')
@@ -449,13 +473,19 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         scale=ModernSpinBox();scale.setRange(50,150);scale.setAccessibleName('卡片整体缩放（%）');self.fields['card_scale']=scale
         self.action_row(panel,'卡片缩放（%）',scale,button('尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
         panel.addRow(label('标题字号同步；便签正文单独设置。宽高可自由拖动，同一合并组共用尺寸。','muted'))
-        section_marker(panel,'桌面组件')
+        self.fields['panel_material'].currentIndexChanged.connect(self.panel_material_changed)
+
+    def build_widgets(self, panel):
+        from settings_design import section_marker
+        section_marker(panel,'时钟与日历')
         self.component_row(panel, 'clock_enabled', '桌面时钟', button('时钟设置', lambda:self.tray.runtime.clock.open_settings()))
         self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
+        section_marker(panel,'音乐频谱')
         self.add_field(panel, 'spectrum_enabled')
         self.add_field(panel, 'spectrum_style')
         self.add_field(panel, 'spectrum_color_mode')
         self.add_field(panel, 'spectrum_mono_color')
+        section_marker(panel,'每日图片')
         self.add_field(panel, 'daily_picture_enabled')
         self.add_field(panel, 'daily_picture_material')
         self.add_field(panel, 'daily_picture_color')
@@ -463,16 +493,24 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'daily_picture_interval')
         def choose_picture(folder=False):
             from daily_picture_card import choose_local
-            choose_local(tray.runtime,folder=folder)
+            choose_local(self.tray.runtime,folder=folder)
         self.action_row(panel,'本地图片',button('选择图片…',lambda:choose_picture()),
                         button('选择文件夹…',lambda:choose_picture(True)))
         self.fields['spectrum_enabled'].setToolTip('跟随默认播放设备的声音。拖动频谱移动，拖右下角调整大小，右键可切换样式或锁定。')
-        self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
+        section_marker(panel,'便签与原生卡片')
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
         self.add_field(panel, 'note_style')
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
+        self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
 
+    def build_capsules(self, panel):
         from flash_data import COLORS
+        from settings_design import section_marker
+        section_marker(panel,'资源胶囊')
+        self.component_row(panel,'resource_enabled','显示资源胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
+        self.add_field(panel, 'resource_bt_tray')
+        self.add_field(panel, 'resource_ai_tray')
+
         section_marker(panel,'闪念胶囊')
         self.component_row(panel,'flash_enabled','显示贴边胶囊',button('记一条',lambda:self.tray.runtime.flash.open(compose=True)),button('查看闪念',lambda:self.tray.runtime.flash.open()))
         self.add_field(panel, 'flash_palette')
@@ -484,14 +522,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'flash_drop')
         self.add_field(panel, 'flash_auto_hide')
         self.add_field(panel, 'flash_delay')
-
-        section_marker(panel,'资源胶囊')
-        self.component_row(panel,'resource_enabled','显示资源胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
-        self.add_field(panel, 'resource_taskbar')
-        self.add_field(panel, 'resource_bt_tray')
-        self.add_field(panel, 'resource_ai_tray')
-
-        self.fields['panel_material'].currentIndexChanged.connect(self.panel_material_changed)
 
     def build_apps(self, apps):
         tray, api = self.tray, self.api
@@ -566,14 +596,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.action_row(updates,'更新操作',button('检查更新',self.check_update),self.update_link)
 
     def build_usage(self, usage):
-        tray, api = self.tray, self.api
-        from settings_design import section_marker
-        from usage_stats import UsagePage
-        self.usage_page = UsagePage(self, usage)
-        self.usage_page.refresh()
+        from usage_stats_view import UsagePage
+        self.usage_page = UsagePage(self, usage, self._usage_view_state)
 
     def build_info(self, info):
-        tray, api = self.tray, self.api
         from settings_design import section_marker
         info.addRow(label('大肥鱼Dock  ' + VERSION, 'section'))
         info.addRow(label('Windows 桌面整理与美化工具，集成快捷启动、分类收纳、资源监控和桌面组件。', 'muted'))
@@ -584,29 +610,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.project = label('')
         self.project.setOpenExternalLinks(False)
         self.project.linkActivated.connect(lambda url: self.tray.dock.launch(url))
-        info.addRow('项目地址', self.project)
-        section_marker(info, '整理工具')
-        runtime=getattr(tray,'runtime',None)
-        if runtime:
-            self.action_row(info,'桌面整理',button('撤销上次整理',runtime.productivity.undo),button('布局方案…',runtime.productivity.open_layouts))
-            self.action_row(info,'查找与修复',button('统一搜索…',runtime.productivity.open_search),button('失效入口检查…',runtime.productivity.open_references))
-        section_marker(info, '本机数据与迁移')
-        path = label(api.CONFIG_DIR)
-        path.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        path.setWordWrap(True)
-        data_actions=QHBoxLayout();data_actions.addWidget(path,1);data_actions.addWidget(button('打开目录',self.open_data))
-        info.addRow(self.field_label('数据目录'),data_actions)
-        info.addRow(label('config.json 保存 Dock、桌面收纳记录与面板布局；dock.log 为日志。desktop_visibility.json 等保存桌面显示恢复记录，正常退出会清除。卸载默认保留个人配置。', 'muted'))
-        transfer=QHBoxLayout()
-        transfer.addWidget(button('导入配置…',self.import_configuration))
-        transfer.addWidget(button('导出配置…',self.export_configuration))
-        info.addRow('配置迁移',transfer)
         self.project.setText('<a href="%s">BigFishDockpro</a>' % PROJECT_URL)
-        self.transfer_status=label(self._transfer_message,'muted')
-        info.addRow(self.transfer_status)
-        self.config_status=label('','muted');info.addRow(self.config_status)
-        self.config_recovery=button('恢复默认配置…',self.recover_configuration)
-        info.addRow(self.config_recovery)
+        info.addRow('项目地址', self.project)
         section_marker(info, '开源致谢')
         links = (
             '<a href="https://github.com/WKaleXD/iOS-style-Dock">iOS-style-Dock</a>',
@@ -619,6 +624,31 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         credits.setOpenExternalLinks(False)
         credits.linkActivated.connect(lambda url: self.tray.dock.launch(url))
         info.addRow(credits)
+
+    def build_data(self, form):
+        from settings_design import section_marker
+        section_marker(form, '本机数据与迁移')
+        path = label(self.api.CONFIG_DIR)
+        path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        data_actions = QHBoxLayout()
+        data_actions.addWidget(path, 1)
+        data_actions.addWidget(button('打开目录', self.open_data))
+        form.addRow(self.field_label('数据目录'), data_actions)
+        form.addRow(label('config.json 保存 Dock、桌面收纳记录与面板布局。卸载默认保留个人配置。', 'muted'))
+        self.action_row(form, '配置迁移', button('导入配置…', self.import_configuration), button('导出配置…', self.export_configuration))
+        self.transfer_status = label(self._transfer_message, 'muted')
+        form.addRow(self.transfer_status)
+        self.config_status = label('', 'muted')
+        form.addRow(self.config_status)
+        self.config_recovery = button('恢复默认配置…', self.recover_configuration)
+        form.addRow(self.config_recovery)
+        runtime = getattr(self.tray, 'runtime', None)
+        if runtime:
+            section_marker(form, '整理工具')
+            self.action_row(form, '桌面整理', button('撤销上次整理', runtime.productivity.undo),
+                            button('布局方案…', runtime.productivity.open_layouts))
+            self.action_row(form, '查找与修复', button('统一搜索…', runtime.productivity.open_search),
+                            button('失效入口检查…', runtime.productivity.open_references))
 
     def release_idle_resources(self):
         if self.isVisible() or self._suspended:return False
@@ -646,7 +676,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         form.addRow(container)
 
     def section(self, index):
-        from settings_catalog import PAGES
         scroll = self.tabs.pages.widget(index)
         page = QWidget()
         form = QFormLayout(page)
@@ -787,6 +816,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.check_startup()
         self.status.setText('未保存的修改会在关闭时放弃。')
         self.refresh_config_status()
+        usage = self.__dict__.get('usage_page')
+        if usage is not None:
+            usage.refresh()
         self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
         self.showNormal() if self.isMinimized() else self.show()
         self.raise_()
@@ -1033,6 +1065,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         dialog.scope.setCurrentIndex(dialog.scope.findData('settings'));dialog.query.setText(self.setting_query.text());dialog.refresh();dialog.query.setFocus()
 
     def focus_setting(self,key):
+        if key in PAGE_TARGETS:
+            self.tabs.setCurrentIndex(PAGE_TARGETS[key])
+            self.tabs.nav.setFocus(Qt.ShortcutFocusReason)
+            return
         runtime=self.tray.runtime
         actions={'@clock':runtime.clock.open_settings,'@calendar':runtime.calendar.open_settings,'@notes':runtime.notes.manage,'@groups':runtime.panels.manage_groups,'@layouts':runtime.productivity.open_layouts,'@references':runtime.productivity.open_references}
         if key in actions:actions[key]();return

@@ -1,6 +1,6 @@
 # Dock 快捷设置与倒影
 
-Dock 新增图标倒影、时间日期、九宫格和＋添加入口，默认开启。在「设置 → 外观设置 → Dock 扩展」分别关闭。
+Dock 新增图标倒影、时间日期、九宫格和＋添加入口，默认开启。在「设置 → Dock 外观 → Dock 扩展」分别关闭。
 
 ![Dock 倒影与时间](screenshots/dock-reflections-clock.png)
 

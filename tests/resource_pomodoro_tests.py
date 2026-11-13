@@ -78,6 +78,102 @@ def assert_single_caption(dialog):
     return headers[0]
 
 
+def check_agenda_order(page, checks):
+    from resource_agenda import normalize_events
+    from ui_test_events import Events
+
+    agenda = page.model
+    now = int(agenda.clock())
+    clock = [now]
+    fixtures = (
+        ('结束', -180, -60, False),
+        ('进行', -60, 90, True),
+        ('即将开始', 120, 360, True),
+        ('提醒', 150, 420, False),
+        ('稍后开始', 600, 720, True),
+    )
+    rows = normalize_events([dict(id=f'{index:032x}', title=title, start=now+start, end=now+end, ack=ack)
+                             for index, (title, start, end, ack) in enumerate(fixtures)], strict=True)
+
+    def titles():
+        return [page.rows.item(i).data(Qt.UserRole+1)[0] for i in range(page.rows.count())]
+
+    with patch.object(agenda, 'clock', lambda: clock[0]), patch.dict(agenda.owner.cfg, resource_agenda_events=rows):
+        page.calendar.setSelectedDate(QDateTime.fromSecsSinceEpoch(now).date())
+        page.refresh()
+        assert titles() == ['提醒', '进行', '即将开始', '稍后开始', '结束'], titles()
+        assert page.rows.item(0).data(Qt.UserRole+1)[-1] == ' · 提醒中'
+        page.rows.setCurrentRow(2)
+        selected = page.selected()
+        agenda.owner.cfg['resource_alert_agenda'] = False
+        page.order_timer.stop()
+        clock[0] = now+89.95
+        page.refresh()
+        assert titles() == ['进行', '即将开始', '提醒', '稍后开始', '结束'], titles()
+        assert 0 < page.order_timer.interval() <= 60
+        clock[0] = now+90
+        Events.qWait(100)
+        assert titles() == ['即将开始', '提醒', '稍后开始', '结束', '进行'], titles()
+        assert page.selected() == selected and page.order_timer.isActive()
+        page.hide()
+        assert not page.order_timer.isActive()
+        page.show()
+        assert page.order_timer.isActive()
+    page.refresh()
+    checks.append('Agenda orders reminders, ongoing, upcoming, and ended events. Visible rows re-sort at their time boundaries with reminders disabled, retain selection, and stop timing when hidden.')
+
+
+def check_synced_agenda_editor(page, app, output, checks):
+    from private_storage_fixture import private_storage
+    from resource_task_calendars import task_events, token_account
+    from ui_style import ModernSpinBox, apply_theme
+
+    agenda = page.model
+    sync = agenda.owner.get_calendar_sync()
+    now = int(agenda.clock())
+    day = QDateTime.fromSecsSinceEpoch(now).date().toString('yyyy-MM-dd')
+    row, = task_events('nexttodo', [dict(id='date-fixture', title='完成交付检查', due=dict(date=day))],
+                       now-86400, now+86400)
+    errors = []
+    original_theme = app._fish_theme_light
+
+    def submit(light, minutes):
+        modal = QApplication.activeModalWidget()
+        try:
+            assert modal.windowTitle() == '日程提醒设置'
+            assert_single_caption(modal)
+            assert not modal.findChildren(QDateTimeEdit)
+            fields = {field.accessibleName(): field for field in modal.findChildren(QLineEdit)}
+            for name, value in (('标题', row['title']), ('日期', day)):
+                field = fields[name]
+                assert field.isReadOnly() and field.text() == value and not field.hasSelectedText()
+                assert field.visibleRegion().boundingRect().height() == field.height()
+            modal.findChild(ModernSpinBox).setValue(minutes)
+            save = next(button for button in modal.findChildren(QPushButton) if button.text() == '保存')
+            assert modal.childAt(save.mapTo(modal, save.rect().center())) is save
+            assert modal.grab().save(str(output/('agenda-reminder-light.png' if light else 'agenda-reminder-dark.png')))
+            save.click()
+        except Exception as error:
+            errors.append(error)
+        finally:
+            if modal and modal.isVisible():modal.reject()
+
+    with private_storage(checks):
+        try:
+            account = token_account('nexttodo', 'fixture-token', 'local')
+            assert sync.store('nexttodo', dict(account=account, updated=now, events=[row], truncated=False))
+            for light, minutes in ((True, 10), (False, 15)):
+                apply_theme(app, light)
+                QTimer.singleShot(50, lambda: submit(light, minutes))
+                page.edit(row['id'])
+                assert not errors, errors
+                assert sync.states['nexttodo']['events'] == [dict(row, lead=minutes, ack=False)]
+        finally:
+            sync.forget('nexttodo')
+            apply_theme(app, original_theme)
+    checks.append('Synced NextTodo reminder editor has one caption and a readable, control-free date in both themes. Save persists only the reminder settings.')
+
+
 def calendar_account_ui(options, service, app, output, checks):
     from private_storage_fixture import private_storage
 
@@ -395,15 +491,19 @@ def run(api,runtime,app,output,checks):
             agenda=service.get_agenda();agenda.clock=lambda:clock[0]
             window.select_page('agenda');app.processEvents()
             agenda_page=window.view('agenda').content
+            check_agenda_order(agenda_page, checks)
+            check_synced_agenda_editor(agenda_page, app, output, checks)
             start=int(clock[0]+300);end=start+3600
             errors=[]
             def fill_agenda():
                 modal=QApplication.activeModalWidget()
                 try:
                     assert modal.windowTitle()=='新增日程'
+                    assert_single_caption(modal)
                     title=next(field for field in modal.findChildren(QLineEdit) if field.accessibleName()=='标题')
                     title.setText('项目周会')
                     starts,ends=modal.findChildren(QDateTimeEdit)
+                    assert starts.calendarPopup() and ends.calendarPopup()
                     starts.setDateTime(QDateTime.fromSecsSinceEpoch(start))
                     ends.setDateTime(QDateTime.fromSecsSinceEpoch(end))
                     save=next(b for b in modal.findChildren(QPushButton) if b.text()=='保存')

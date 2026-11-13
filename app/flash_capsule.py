@@ -58,6 +58,8 @@ class FlashCapsule(QObject):
             self.message(str(error));return None
         rows=[row, *self.cfg['flash_entries']]
         if not self.commit_rows(rows,clear_draft): return None
+        from usage_stats import record
+        record(self.runtime, 'flash_new')
         self.message('已记下闪念')
         return row['id']
 

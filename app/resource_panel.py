@@ -1145,8 +1145,13 @@ class ResourceWindow(ResourceContentHost):
         if target and self.service.detached(target):
             if not automatic:self.service.open_component(target)
             return
-        if self.service.fold(False,automatic=automatic) and not self.service.compact and target and self.page_enabled(target):
-            self.select_page(target)
+        was_compact = self.service.compact
+        if self.service.fold(False,automatic=automatic) and not self.service.compact:
+            if was_compact and not automatic:
+                from usage_stats import record
+                record(self.service.runtime, 'resource_open')
+            if target and self.page_enabled(target):
+                self.select_page(target)
     def leaveEvent(self,event):
         self.enter_timer.stop()
         super().leaveEvent(event)

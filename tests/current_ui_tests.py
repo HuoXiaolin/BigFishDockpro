@@ -302,10 +302,12 @@ def run(output):
         checks.append('note editing: compact title is read-only until double-click; Escape cancels and Enter persists; body autosave preserves uncommitted title; header settings button opens actual modal; body 22px differs from title 16px, remains after global change/reload, follow/reset and failed-save retention verified')
 
         from settings_dialog import SettingsDialog
+        from settings_catalog import COLLECTION, WIDGETS
         settings=SettingsDialog(tray,api);settings.reveal();settings.tabs.setCurrentIndex(1);app.processEvents()
         modes=settings.fields['desktop_icon_mode'];assert [modes.itemData(i) for i in range(modes.count())]==['both','hide_all']
-        controls={b.text():b for b in settings.findChildren(QPushButton)}
-        for left,right in [('新建便签','管理与搜索'),('新建面板','分组与合并')]:
+        for page_index,left,right in [(COLLECTION,'新建面板','分组与合并'), (WIDGETS,'新建便签','管理与搜索')]:
+            settings.tabs.setCurrentIndex(page_index);app.processEvents()
+            controls={b.text():b for b in settings.tabs.pages.currentWidget().findChildren(QPushButton)}
             a,b=controls[left],controls[right]
             assert a.parentWidget() is b.parentWidget() and a.geometry().y()==b.geometry().y(),(left,right)
             assert not a.geometry().intersects(b.geometry())

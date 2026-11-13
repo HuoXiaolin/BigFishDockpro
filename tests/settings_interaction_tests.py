@@ -24,15 +24,13 @@ def click_at(widget, point):
 
 def check_wheel(main, runtime, checks):
     from card_sizing import CardSizingDialog
+    from settings_catalog import APPEARANCE
     from settings_design import NumericControl
-    page = main.tabs.pages.widget(0)
-    main.tabs.setCurrentIndex(0)
+    page = main.tabs.pages.widget(APPEARANCE)
+    main.tabs.setCurrentIndex(APPEARANCE)
     bar = page.verticalScrollBar()
-    combo = main.fields['taskbar_mode']
-    spin = main.fields['taskbar_opacity']
-    # The optional backend can be absent. Exercise its UI without invoking it.
-    combo.setEnabled(True)
-    spin.setEnabled(True)
+    combo = main.fields['dock_material']
+    spin = main.fields['dock_highlight']
     slider = next(control.slider for control in main.findChildren(NumericControl) if control.spin is spin)
     spin.setValue(32)
     combo.setCurrentIndex(1)

@@ -77,7 +77,7 @@ def run(output):
                     item=capsule_options.nav_items[index]
                     nav.scrollToItem(item);settle(app)
                     rect=nav.visualItemRect(item)
-                    assert rect.height()==main.tabs.nav.visualItemRect(main.tabs.nav.item(0)).height()
+                    assert rect.height()==main.tabs.nav.visualItemRect(main.tabs.nav_items[0]).height()
                     point=rect.bottomRight()
                     point.setX(point.x()-8);point.setY(point.y()-4)
                     assert nav.itemAt(point) is item
@@ -154,7 +154,7 @@ def run(output):
             capsule_options.reject();capsule_options.deleteLater()
             for name,dialog in dialogs[:2]:
                 dialog.show();settle(app);dialog.grab().save(str(output/f'{name}-dark.png'));dialog.reject()
-            checks.append('main seven pages, clock/calendar, sizing, new-card, grouping and application manager rendered; light/dark theme remains readable')
+            checks.append('main grouped pages, clock/calendar, sizing, new-card, grouping and application manager rendered; light/dark theme remains readable')
             main.reject();runtime.close();runtime=None;shutdown_ui(app)
         result={'passed':True,'checks':checks,'limits':['isolated Qt rendering and local controls only; no physical monitor/DPI switch or user configuration touched']}
     except Exception:

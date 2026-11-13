@@ -140,11 +140,15 @@ class ResourceCapsule(QObject):
 
     def open(self):
         if self.runtime.game_active:return
+        was_expanded = self.window and self.window.isVisible() and not self.compact
         self.preview_detail = self.editing
-        self.set_options(resource_enabled=True,resource_collapsed=False)
+        saved = self.set_options(resource_enabled=True,resource_collapsed=False)
         if self.window:
             self.window.sync_window()
             self.window.raise_if_top()
+            if saved and not was_expanded and self.window.isVisible() and not self.compact:
+                from usage_stats import record
+                record(self.runtime, 'resource_open')
 
     def fold(self,compact,automatic=False):
         if self.editing and not compact and not self.preview_detail:

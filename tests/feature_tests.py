@@ -326,7 +326,7 @@ def run(api, dock, tray, root, output, checks):
         assert spin.value() == original_value
         for index in range(settings.tabs.count()):
             settings.tabs.setCurrentIndex(index)
-            assert settings.tabs.pages.currentIndex() == settings.tabs.nav.currentRow() == index
+            assert settings.tabs.pages.currentIndex() == settings.tabs.nav.currentItem().data(Qt.UserRole) == index
             app.processEvents()
             settings.grab().save(str(output/('feature-settings-%s-%d.png' % (theme,index))))
             scroll = settings.tabs.pages.widget(index)

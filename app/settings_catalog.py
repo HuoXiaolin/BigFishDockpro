@@ -1,6 +1,16 @@
 """Settings navigation and searchable field definitions without Qt widgets."""
 
-PAGES = ('外观设置', '桌面收纳', '应用管理', '启动与运行', '更新设置', '使用统计', '关于与数据')
+APPEARANCE, COLLECTION, APPS, RUNNING, UPDATES, USAGE, ABOUT, TASKBAR, WIDGETS, CAPSULES, DATA = range(11)
+PAGES = ('Dock 外观', '桌面收纳', '应用管理', '启动与运行', '更新设置', '使用统计',
+         '关于', '任务栏', '桌面组件', '胶囊与监控', '数据与备份')
+PAGE_SYMBOLS = ('palette', 'panels', 'apps', 'startup', 'update', 'size', 'info',
+                'position', 'calendar', 'wave', 'notes')
+PAGE_GROUPS = (
+    ('外观与系统', (APPEARANCE, TASKBAR)),
+    ('收纳与组件', (COLLECTION, APPS, WIDGETS, CAPSULES)),
+    ('运行与数据', (RUNNING, UPDATES, USAGE, DATA, ABOUT)),
+)
+PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@capsules': CAPSULES, '@data': DATA}
 
 
 def field_catalog(api, cfg):
@@ -37,11 +47,11 @@ def field_catalog(api, cfg):
         'lang': (0, '原 Dock 菜单语言', 'combo', [(name, key) for name, key in api.LANGS]),
         'screen_corners': (0, '启用屏幕圆角', 'check', None),
         'corner_radius': (0, '屏幕圆角半径（像素）', 'number', (0, 120)),
-        'taskbar_mode': (0, '任务栏效果', 'combo', MODES),
-        'taskbar_text_mode': (0, '任务栏文字与系统图标', 'combo', TEXT_MODES),
-        'taskbar_color': (0, '任务栏颜色', 'color', None),
-        'taskbar_opacity': (0, '任务栏不透明度（%）', 'number', (0, 100)),
-        'taskbar_blur': (0, '任务栏模糊强度', 'number', (0, 50)),
+        'taskbar_mode': (TASKBAR, '任务栏效果', 'combo', MODES),
+        'taskbar_text_mode': (TASKBAR, '任务栏文字与系统图标', 'combo', TEXT_MODES),
+        'taskbar_color': (TASKBAR, '任务栏颜色', 'color', None),
+        'taskbar_opacity': (TASKBAR, '任务栏不透明度（%）', 'number', (0, 100)),
+        'taskbar_blur': (TASKBAR, '任务栏模糊强度', 'number', (0, 50)),
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
         'card_design': (1, '装饰样式', 'combo', DESIGNS),
@@ -67,31 +77,31 @@ def field_catalog(api, cfg):
         'panel_capsule_ratio': (1, '胶囊宽度比例（%）', 'number', (30, 100)),
         'desktop_icon_mode': (1, '桌面图标显示', 'combo', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')]),
         'desktop_middle_toggle': (1, '鼠标中键切换桌面图标', 'check', None),
-        'clock_enabled': (1, '桌面时钟', 'check', None),
-        'calendar_enabled': (1, '桌面日历', 'check', None),
-        'spectrum_enabled': (1, '桌面音乐频谱', 'check', None),
-        'spectrum_style': (1, '频谱样式', 'combo', SPECTRUM_STYLES),
-        'spectrum_color_mode': (1, '频谱配色', 'combo', [('炫彩','colorful'),('单色','mono')]),
-        'spectrum_mono_color': (1, '频谱单色', 'color', None),
-        'daily_picture_enabled': (1, '桌面每日图片', 'check', None),
-        'daily_picture_material': (1, '每日图片外框材质', 'combo', [('跟随应用','follow'), *MATERIALS]),
-        'daily_picture_color': (1, '每日图片外框颜色', 'color', None),
-        'daily_picture_source': (1, '每日图片来源', 'combo', [('必应每日图片','bing'),('本地图片轮播','local')]),
-        'daily_picture_interval': (1, '本地轮播间隔（秒）', 'number', (5,3600)),
-        'notes_enabled': (1, '便签卡片', 'check', None),
-        'note_style': (1, '新便签装饰样式', 'combo', STYLES),
-        'flash_enabled': (1, '显示贴边胶囊', 'check', None),
-        'flash_palette': (1, '胶囊配色', 'combo', PALETTES),
-        'flash_color': (1, '新闪念颜色', 'combo', [(name, key) for key, (name, _) in COLORS.items()]),
-        'flash_side': (1, '停靠边缘', 'combo', [('右侧', 'right'), ('左侧', 'left')]),
-        'flash_edge_hide': (1, '贴边隐藏入口，悬停时滑出', 'check', None),
-        'flash_drop': (1, '拖入选中文字生成闪念', 'check', None),
-        'flash_auto_hide': (1, '鼠标离开后自动收起', 'check', None),
-        'flash_delay': (1, '收起延迟（秒）', 'number', (1, 30)),
-        'resource_enabled': (1, '显示资源胶囊', 'check', None),
-        'resource_taskbar': (1, '显示任务栏监控', 'check', None),
-        'resource_bt_tray': (1, '外设电量托盘图标', 'check', None),
-        'resource_ai_tray': (1, 'AI 用量托盘图标', 'check', None),
+        'clock_enabled': (WIDGETS, '桌面时钟', 'check', None),
+        'calendar_enabled': (WIDGETS, '桌面日历', 'check', None),
+        'spectrum_enabled': (WIDGETS, '桌面音乐频谱', 'check', None),
+        'spectrum_style': (WIDGETS, '频谱样式', 'combo', SPECTRUM_STYLES),
+        'spectrum_color_mode': (WIDGETS, '频谱配色', 'combo', [('炫彩','colorful'),('单色','mono')]),
+        'spectrum_mono_color': (WIDGETS, '频谱单色', 'color', None),
+        'daily_picture_enabled': (WIDGETS, '桌面每日图片', 'check', None),
+        'daily_picture_material': (WIDGETS, '每日图片外框材质', 'combo', [('跟随应用','follow'), *MATERIALS]),
+        'daily_picture_color': (WIDGETS, '每日图片外框颜色', 'color', None),
+        'daily_picture_source': (WIDGETS, '每日图片来源', 'combo', [('必应每日图片','bing'),('本地图片轮播','local')]),
+        'daily_picture_interval': (WIDGETS, '本地轮播间隔（秒）', 'number', (5,3600)),
+        'notes_enabled': (WIDGETS, '便签卡片', 'check', None),
+        'note_style': (WIDGETS, '新便签装饰样式', 'combo', STYLES),
+        'flash_enabled': (CAPSULES, '显示贴边胶囊', 'check', None),
+        'flash_palette': (CAPSULES, '胶囊配色', 'combo', PALETTES),
+        'flash_color': (CAPSULES, '新闪念颜色', 'combo', [(name, key) for key, (name, _) in COLORS.items()]),
+        'flash_side': (CAPSULES, '停靠边缘', 'combo', [('右侧', 'right'), ('左侧', 'left')]),
+        'flash_edge_hide': (CAPSULES, '贴边隐藏入口，悬停时滑出', 'check', None),
+        'flash_drop': (CAPSULES, '拖入选中文字生成闪念', 'check', None),
+        'flash_auto_hide': (CAPSULES, '鼠标离开后自动收起', 'check', None),
+        'flash_delay': (CAPSULES, '收起延迟（秒）', 'number', (1, 30)),
+        'resource_enabled': (CAPSULES, '显示资源胶囊', 'check', None),
+        'resource_taskbar': (TASKBAR, '显示任务栏监控', 'check', None),
+        'resource_bt_tray': (CAPSULES, '外设电量托盘图标', 'check', None),
+        'resource_ai_tray': (CAPSULES, 'AI 用量托盘图标', 'check', None),
         'reorder': (2, '允许拖动 Dock 图标排序', 'check', None),
         'running_dots': (2, '显示 Dock 应用的运行标记', 'check', None),
         'hide_tray': (3, '隐藏托盘图标', 'check', None),
@@ -125,4 +135,9 @@ def targets(catalog):
                        ('@notes', '便签管理与搜索'), ('@groups', '卡片分组与合并'),
                        ('@layouts', '桌面布局方案'), ('@references', '失效入口检查')):
         result.append(dict(key=key, title=title, page='组件与整理', options=''))
+    for key, options in (('@usage', '操作趋势 功能排行 重置统计'), ('@taskbar', '任务栏效果 监控'),
+                         ('@widgets', '桌面时钟 日历 音乐频谱 每日图片'), ('@capsules', '资源胶囊 闪念胶囊'),
+                         ('@data', '导入配置 导出配置 恢复默认')):
+        name = PAGES[PAGE_TARGETS[key]]
+        result.append(dict(key=key, title=name, page='总设置', options=options))
     return result

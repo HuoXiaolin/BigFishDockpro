@@ -4,7 +4,19 @@ from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPalette, QIcon, QPixmap
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QLabel, QCheckBox, QSpinBox, QSlider, QLineEdit, QComboBox,
     QPlainTextEdit, QScrollArea, QSizePolicy, QApplication, QLayout, QStyle, QStyleOptionSlider,
-    QListWidget, QListWidgetItem)
+    QListWidget, QListWidgetItem, QStyledItemDelegate)
+
+
+class SettingsNavDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.data(Qt.UserRole) is not None:
+            return super().paint(painter, option, index)
+        rect = option.rect.adjusted(7, 3 if index.row() else 0, -5, 0)
+        painter.save()
+        painter.setPen(option.palette.color(QPalette.Disabled, QPalette.WindowText))
+        painter.setFont(index.data(Qt.FontRole) or option.font)
+        painter.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, index.data(Qt.DisplayRole))
+        painter.restore()
 
 
 class SettingsNavigation(QListWidget):
@@ -18,11 +30,17 @@ class SettingsNavigation(QListWidget):
         self.setIconSize(QSize(16,16))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(self.ScrollPerPixel)
+        self.setItemDelegate(SettingsNavDelegate(self))
 
-    def add_page(self, title, symbol, page=None):
+    def add_group(self, title):
+        heading = QListWidgetItem(title)
+        heading.setFlags(Qt.NoItemFlags)
+        self.addItem(heading)
+
+    def add_page(self, title, symbol, page):
         item = QListWidgetItem(title)
         item.setData(self.symbol_role, symbol)
-        if page is not None:item.setData(Qt.UserRole, page)
+        item.setData(Qt.UserRole, page)
         self.addItem(item)
         self.set_page_icon(item)
         return item
@@ -32,6 +50,14 @@ class SettingsNavigation(QListWidget):
         self.setFixedWidth(max(94,widget_px(self,132)))
         size = widget_px(self,16)
         self.setIconSize(QSize(size,size))
+        heading = QFont(self.font())
+        heading.setPixelSize(max(10, widget_px(self, 13)))
+        heading.setWeight(QFont.DemiBold)
+        for row in range(self.count()):
+            item = self.item(row)
+            if item.data(Qt.UserRole) is None:
+                item.setFont(heading)
+                item.setSizeHint(QSize(0, max(17, widget_px(self, 27 if row else 22))))
 
     def set_page_icon(self, item):
         from dock_extras import symbol
@@ -512,6 +538,12 @@ def stylesheet(colors):
     QDialog[designPopup="true"] QTableWidget, QDialog[designPopup="true"] QTreeWidget,
     QDialog[designPopup="true"] QListView#ComboPopup {font-size:14px;}
     QDialog[designPopup="true"] QLabel[role="setting-value"] {font-size:14px; font-weight:600;}
+    QDialog[designPopup="true"] QLabel[role="usage-value"] {font-size:22px; font-weight:600;}
+    QTabBar#UsageRange::tab {padding:4px 9px; border:1px solid transparent; margin-right:2px; border-radius:5px;}
+    QTabBar#UsageRange::tab:hover {background:%(hover)s;}
+    QTabBar#UsageRange::tab:selected {background:%(selection)s; border-color:%(line)s; color:%(text)s;}
+    QTabBar#UsageRange::tab:focus {border-color:%(text)s;}
+    QDialog[designPopup="true"] QComboBox#UsageRankingScope {padding-left:8px; padding-right:24px;}
     QDialog[designPopup="true"] QLineEdit, QDialog[designPopup="true"] QComboBox,
     QDialog[designPopup="true"] QSpinBox, QDialog[designPopup="true"] QPushButton {min-height:22px; padding-top:4px; padding-bottom:4px;}
     QDialog[designPopup="true"] QComboBox[modern="true"] {max-height:22px;}

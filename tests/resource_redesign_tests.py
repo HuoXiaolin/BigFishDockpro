@@ -231,19 +231,24 @@ def run(api,runtime,app,output,checks):
                 icon=quota_icon(100-remaining,light).pixmap(32,32).toImage()
                 assert icon.pixelColor(23,25).name()==quota_color(remaining,light)
         for light in (True,False):
-            quota=quota_icon(0,light)
-            battery=battery_icon([dict(level=100,ink=quota_color(100,light))],not light)
-            assert [s.width() for s in quota.availableSizes()]==[s.width() for s in battery.availableSizes()]==list(TRAY_RING_SIZES)
+            quotas=[quota_icon(used,light) for used in (None,0,10,45,85,100)]
+            battery=battery_icon([dict(level=100,ink='#5b8def')],not light)
+            for icon in [battery,*quotas]:
+                assert [s.width() for s in icon.availableSizes()]==list(TRAY_RING_SIZES)
             for side in TRAY_RING_SIZES:
-                a=quota.pixmap(side,side).toImage();b=battery.pixmap(side,side).toImage()
+                reference=battery.pixmap(side,side).toImage()
                 center=side//2
-                for axis in (lambda i:(center,i),lambda i:(i,center)):
-                    q=[i for i in range(center) if a.pixelColor(*axis(i)).alpha()>128]
-                    p=[i for i in range(center) if b.pixelColor(*axis(i)).alpha()>128]
-                    assert q and q==p,(light,side,q,p)
+                for quota in quotas:
+                    image=quota.pixmap(side,side).toImage()
+                    for axis in (lambda i:(center,i),lambda i:(i,center)):
+                        for segment in (range(center),range(center,side)):
+                            outer=[i for i in segment if reference.pixelColor(*axis(i)).alpha()>=128]
+                            visible=[i for i in segment if image.pixelColor(*axis(i)).alpha()>=128]
+                            assert outer and visible==outer,(light,side,visible,outer)
+                    assert image.pixelColor(center,center).alpha()<128,(light,side)
         cfg['resource_ai_tray']=False;service.sync();app.processEvents();assert not service.deck and not service.ai_tray and not service.signature
         (output/'resource-page-sizes.json').write_text(json.dumps(sizes),encoding='utf-8')
         checks.append('Reported UI regressions: identical page geometry, long mixed-language title in bounded lines, no aggregate hover popup, all compact values/AI/media reachable at 220–800 widths without overlapping or dropped cells, persisted custom pinned metrics, automatic width shrink, independent AI tray with hardware/music stopped, quota icons and complete shutdown.')
-        checks.append('AI quota tray ring matches the single-device battery ring diameter and stroke at all six icon sizes. Quota shades and the Q tail retain their color ramps.')
+        checks.append('AI quota tray retains the Bluetooth reference outer diameter and ring stroke at all six icon sizes in both themes, including empty, unavailable and partial quota states.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

@@ -14,8 +14,9 @@ def quota_icon(used,light=False):
     """Draw the quota Q with the peripheral battery ring's diameter and stroke."""
     remaining = remaining_percent(used)
     ink = QColor(quota_color(remaining, light))
-    track = QColor(ink)
-    track.setAlpha(115)
+    track = QColor('#738391')
+    tint = QColor(ink)
+    tint.setAlpha(96)
     icon = QIcon()
     for size in TRAY_RING_SIZES:
         pixmap = QPixmap(size, size)
@@ -28,11 +29,16 @@ def quota_icon(used,light=False):
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(track, stroke, Qt.SolidLine, Qt.RoundCap))
         painter.drawEllipse(circle)
-        painter.setPen(QPen(ink, stroke, Qt.SolidLine, Qt.RoundCap))
+        # Keep a neutral rim visible against both light and dark taskbars.
+        inner_stroke = stroke * .78
+        if remaining is not None:
+            painter.setPen(QPen(tint, inner_stroke))
+            painter.drawEllipse(circle)
+        painter.setPen(QPen(ink, inner_stroke, Qt.SolidLine, Qt.RoundCap))
         if remaining:
             painter.drawArc(circle, 90 * 16, -round(remaining * 57.6))
-        start = center + radius * .30
-        end = center + radius * .82
+        start = center + radius * .26
+        end = center + radius * .70
         painter.drawLine(QPointF(start, start), QPointF(end, end))
         painter.end()
         icon.addPixmap(pixmap)

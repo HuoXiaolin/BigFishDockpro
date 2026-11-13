@@ -1,6 +1,7 @@
 """Date selection and local agenda in the capsule's card layout."""
 from datetime import date
-from PyQt5.QtCore import QDate, QDateTime, QRectF, QSize, Qt
+from math import ceil
+from PyQt5.QtCore import QDate, QDateTime, QRectF, QSize, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette, QPen
 from PyQt5.QtWidgets import (QAbstractItemView, QBoxLayout, QCalendarWidget, QDateTimeEdit, QDialog, QFormLayout,
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -215,6 +216,11 @@ class AgendaView(QWidget):
         actions.addWidget(self.reminder);actions.addStretch()
         body.addLayout(actions);self.layout_.addWidget(listing,3)
         self.status=QLabel();self.status.setObjectName('Subtle');self.status.setWordWrap(True);body.addWidget(self.status)
+        self.order_deadline = None
+        self.order_timer = QTimer(self)
+        self.order_timer.setSingleShot(True)
+        self.order_timer.setTimerType(Qt.PreciseTimer)
+        self.order_timer.timeout.connect(self.refresh)
         self.calendar.selectionChanged.connect(self.refresh)
         self.refresh()
 
@@ -252,27 +258,70 @@ class AgendaView(QWidget):
         self.reminder.setText('恢复提醒' if event and event['ack'] else '取消提醒')
         self.reminder.setVisible(bool(event and event['end']>self.model.clock()))
 
+    def schedule_order_refresh(self, deadline, now):
+        if deadline is None or not self.isVisible():
+            self.order_timer.stop()
+        elif self.order_deadline != deadline or not self.order_timer.isActive():
+            delay = min(86400000, max(1, ceil((deadline - now) * 1000)))
+            self.order_timer.start(delay)
+        self.order_deadline = deadline
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh()
+
+    def hideEvent(self, event):
+        self.order_timer.stop()
+        super().hideEvent(event)
+
     def refresh(self):
         if not self.owner.colors:return
         colors=self.owner.colors
         sync_card_controls(self,colors)
         self.sync_calendar(colors)
-        day=self.calendar.selectedDate();due={event['id'] for event in self.model.due()}
+        day = self.calendar.selectedDate()
+        now = self.model.clock()
+        due = {event['id'] for event in self.model.due(now)}
         today=QDate.currentDate()
         events=self.model.events
         items=countdowns(self.owner.service.cfg)
         self.calendar.set_events(events,items)
-        signature=(day.toJulianDay(),today.toJulianDay(),events,items,due,self.model.error)
+        day_start = day.startOfDay().toSecsSinceEpoch()
+        day_end = day.endOfDay().toSecsSinceEpoch()
+        ranked = []
+        deadline = None
+        for event in events:
+            start = event['start']
+            if start > day_end or event_last_second(event) < day_start:
+                continue
+            end = start if event.get('timing') == 'deadline' else event['end']
+            if event['id'] in due:
+                priority = 0
+            elif now >= end:
+                priority = 3
+            elif now >= start:
+                priority = 1
+            else:
+                priority = 2
+            ranked.append((priority, event))
+            for boundary in (start, end):
+                if now < boundary and (deadline is None or boundary < deadline):
+                    deadline = boundary
+        self.schedule_order_refresh(deadline, now)
+        signature = (day.toJulianDay(), today.toJulianDay(), events, items,
+                     tuple(priority for priority, _ in ranked), self.model.error)
         if signature==self.signature:
             self.refresh_actions();return
+        scrollbar = self.rows.verticalScrollBar()
+        scroll_position = scrollbar.value() if self.signature and self.signature[0] == signature[0] else 0
         self.signature=signature
         self.update_day_heading()
         selected=self.selected()
         self.rows.clear()
-        for event in events:
+        ranked.sort(key=lambda row: (row[0], row[1]['start'], row[1]['id']))
+        for _, event in ranked:
             start=local_time(event['start'])
             last=local_time(event_last_second(event))
-            if not start.date()<=day<=last.date():continue
             flag=' · 提醒中' if event['id'] in due else ' · 提醒已取消' if event['ack'] else ''
             source=event['source']
             timing=event.get('timing')
@@ -309,6 +358,7 @@ class AgendaView(QWidget):
         self.rows.setMaximumHeight(ROW_HEIGHT*min(4,count))
         self.rows.setToolTip('滚动查看全部日程' if count > 3 else '')
         self.rows.setVisible(bool(self.rows.count()));self.empty.setVisible(not self.rows.count())
+        scrollbar.setValue(scroll_position)
         self.status.setText(self.model.error);self.status.setVisible(bool(self.model.error))
         self.refresh_actions()
 
@@ -335,43 +385,55 @@ class AgendaView(QWidget):
         super().resizeEvent(event)
 
     def edit(self,key=None):
-        from ui_style import ModernSpinBox, SettingsHeader, button, compact_dialog, exec_dialog
+        from ui_style import ModernSpinBox, SettingsHeader, button, compact_dialog, exec_dialog, label
         event=next((row for row in self.model.events if row['id']==key),None)
         if key and event is None:return
         synced=bool(event and event.get('synced'))
         initial=local_time(event['start']) if event else QDateTime(self.calendar.selectedDate(),QDateTime.currentDateTime().time())
-        dialog=QDialog(self.owner)
+        timing = event.get('timing') if event else None
+        dialog=QDialog(self.owner, Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         dialog.setWindowTitle('日程提醒设置' if synced else '编辑日程' if event else '新增日程')
-        dialog.resize(420,246)
         dialog.setProperty('simpleForms',True)
         layout=QVBoxLayout(dialog);layout.addWidget(SettingsHeader(dialog,dialog.windowTitle()))
         form=QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.DontWrapRows)
         layout.addLayout(form)
-        title=QLineEdit(event['title'] if event else '');title.setMaxLength(120)
+        title=QLineEdit(event['title'] if event else '');title.setMaxLength(120);title.setReadOnly(synced)
         title.setAccessibleName('标题');form.addRow('标题',title)
-        start=QDateTimeEdit(initial)
-        timing=event.get('timing') if event else None
-        if timing=='deadline':
-            times=(('截止',start),)
-        elif timing=='all_day':
-            end=QDateTimeEdit(local_time(event_last_second(event)))
-            times=(('日期',start),) if start.date()==end.date() else (('开始',start),('结束',end))
+
+        pattern = 'yyyy-MM-dd' if timing == 'all_day' else 'yyyy-MM-dd HH:mm'
+
+        def add_date_field(caption, value):
+            if synced:
+                field = QLineEdit(value.toString(pattern))
+                field.setReadOnly(True)
+            else:
+                field = QDateTimeEdit(value)
+                field.setDisplayFormat(pattern)
+                field.setCalendarPopup(True)
+            field.setAccessibleName(caption)
+            form.addRow(caption, field)
+            return field
+
+        end = None
+        if timing == 'deadline':
+            start = add_date_field('截止', initial)
+        elif timing == 'all_day':
+            last = local_time(event_last_second(event))
+            single_day = initial.date() == last.date()
+            start = add_date_field('日期' if single_day else '开始', initial)
+            if not single_day:
+                end = add_date_field('结束', last)
         else:
-            end=QDateTimeEdit(local_time(event['end']) if event else initial.addSecs(1800))
-            times=(('开始',start),('结束',end))
-        for label,field in times:
-            field.setCalendarPopup(not synced)
-            field.setDisplayFormat('yyyy-MM-dd' if timing=='all_day' else 'yyyy-MM-dd HH:mm')
-            field.setAccessibleName(label);field.setReadOnly(synced);form.addRow(label,field)
-        if synced:
-            title.setReadOnly(True)
-            hint=QLabel(f"标题和时间随{SOURCES[event['source']]}同步。")
-            hint.setWordWrap(True)
-            layout.addWidget(hint)
+            start = add_date_field('开始', initial)
+            end = add_date_field('结束', local_time(event['end']) if event else initial.addSecs(1800))
+        dialog.resize(420, 246 if end is not None else 220)
         lead=ModernSpinBox();lead.setRange(0,180);lead.setValue(event['lead'] if event else 5)
+        lead.setAccessibleName('提前提醒（分钟）')
         lead.setSpecialValueText('截止时' if timing=='deadline' else '开始时');form.addRow('提前提醒（分钟）',lead)
+        if synced:
+            layout.addWidget(label(f"标题和时间随 {SOURCES[event['source']]} 同步。", 'muted'))
         status=QLabel();status.setWordWrap(True);status.hide();layout.addWidget(status)
         actions=QHBoxLayout()
         def show_error():
@@ -381,8 +443,17 @@ class AgendaView(QWidget):
             if synced:
                 saved=self.model.synced_reminder(key,lead=lead.value())
             else:
-                saved=self.model.update_event(key,title=title.text().strip(),start=start.dateTime().toSecsSinceEpoch(),
-                                              end=end.dateTime().toSecsSinceEpoch(),lead=lead.value())
+                start_epoch = start.dateTime().toSecsSinceEpoch()
+                if timing == 'all_day':
+                    last_day = end.date() if end is not None else start.date()
+                    start_epoch = start.date().startOfDay().toSecsSinceEpoch()
+                    end_epoch = last_day.addDays(1).startOfDay().toSecsSinceEpoch()
+                elif timing == 'deadline':
+                    end_epoch = start_epoch + event['end'] - event['start']
+                else:
+                    end_epoch = end.dateTime().toSecsSinceEpoch()
+                saved=self.model.update_event(key,title=title.text().strip(),start=start_epoch,
+                                              end=end_epoch,lead=lead.value())
             if saved:
                 if not synced:self.calendar.setSelectedDate(start.date())
                 dialog.accept()

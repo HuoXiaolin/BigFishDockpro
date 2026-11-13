@@ -1,10 +1,10 @@
 """Preferences shared by the desktop monitor and the independent taskbar readout."""
 from weakref import proxy
-from PyQt5.QtCore import QSize,Qt
-from PyQt5.QtGui import QColor,QFont,QPalette
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
-                             QAbstractItemView,QStyledItemDelegate)
+                             QAbstractItemView)
 from appearance_presets import COLOR_MODES,material_choices
 from content_sources import MAX_NEWS_FEEDS, NEWS_FEED_PRESETS, clean_feeds, web_url
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
@@ -31,19 +31,6 @@ PLACEMENT_GROUPS = (
     ('日常内容', ('weather','pomodoro','agenda','news')),
     ('桌面组件', tuple(DESKTOP_COMPONENTS)),
 )
-
-
-class ResourceNavDelegate(QStyledItemDelegate):
-    def paint(self, painter, option, index):
-        if index.data(Qt.UserRole) is not None:
-            return super().paint(painter, option, index)
-        rect = option.rect.adjusted(7, 3 if index.row() else 0, -5, 0)
-        ink = option.palette.color(QPalette.Disabled,QPalette.WindowText)
-        painter.save()
-        painter.setPen(ink)
-        painter.setFont(index.data(Qt.FontRole) or option.font)
-        painter.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, index.data(Qt.DisplayRole))
-        painter.restore()
 
 
 def section(parent, title):
@@ -207,7 +194,6 @@ class ResourceOptions(QDialog):
         box.addLayout(content,1)
         self.nav = SettingsNavigation()
         self.nav.setAccessibleName('资源胶囊设置分类')
-        self.nav.setItemDelegate(ResourceNavDelegate(self.nav))
         content.addWidget(self.nav)
         self.tabs = QStackedWidget()
         content.addWidget(self.tabs,1)
@@ -215,9 +201,7 @@ class ResourceOptions(QDialog):
             self.tabs.addWidget(QWidget())
         self.nav_items = {}
         for group, indices in NAV_GROUPS:
-            heading = QListWidgetItem(group)
-            heading.setFlags(Qt.NoItemFlags)
-            self.nav.addItem(heading)
+            self.nav.add_group(group)
             for index in indices:
                 self.nav_items[index] = self.nav.add_page(PAGE_NAMES[index],NAV_SYMBOLS[index],index)
 
@@ -566,19 +550,7 @@ class ResourceOptions(QDialog):
         footer.addWidget(button('关闭',self.reject));footer.addWidget(button('保存设置',self.commit,'primary'));box.addLayout(footer)
         from ui_style import compact_dialog
         compact_dialog(self)
-        self.size_navigation()
-
-    def size_navigation(self):
-        scale = float(self.property('interfaceScale') or .7)
         self.nav.fit_density()
-        heading = QFont(self.nav.font())
-        heading.setPixelSize(max(10,round(13*scale)))
-        heading.setWeight(QFont.DemiBold)
-        for row in range(self.nav.count()):
-            item = self.nav.item(row)
-            if item.data(Qt.UserRole) is None:
-                item.setFont(heading)
-                item.setSizeHint(QSize(0,max(17,round((27 if row else 22)*scale))))
 
     def navigate(self, item, _previous):
         if item is not None:

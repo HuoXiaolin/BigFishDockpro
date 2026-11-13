@@ -105,9 +105,14 @@ class Agenda(QObject):
         return True
 
     def update_event(self,key,**details):
+        from usage_stats import record
         old=next((row for row in self.local_events if row['id']==key),{})
-        record=dict(old,**details);record.update(id=key or uuid.uuid4().hex,ack=False)
-        return self.save([row for row in self.local_events if row['id']!=key]+[record])
+        event=dict(old,**details);event.update(id=key or uuid.uuid4().hex,ack=False)
+        if not self.save([row for row in self.local_events if row['id']!=key]+[event]):
+            return False
+        if not key:
+            record(self.owner.runtime, 'agenda_new')
+        return True
 
     def synced_reminder(self,key,*,lead=None,ack=False):
         self.error=''
