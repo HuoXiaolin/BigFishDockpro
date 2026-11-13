@@ -234,6 +234,8 @@ class RuntimeController:
             self.flash.sync()
         if changed is None or any(key.startswith('taskbar_') for key in changed):
             self.taskbar.sync()
+            if self.resources.ai_tray and (changed is None or 'taskbar_text_mode' in changed):
+                self.resources.ai_tray.sync_taskbar_text()
         if changed is not None:
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
             if 'hide_tray' in changed or policy_changed:self.sync_tray_visibility()

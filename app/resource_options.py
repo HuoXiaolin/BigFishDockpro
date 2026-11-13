@@ -47,6 +47,7 @@ CAPSULE_TASKBAR_POSITIONS={'left':'靠左','center':'居中','right':'靠右','c
 HALO_SPEEDS={'slow':('慢速',12), 'medium':('中速',8), 'fast':('快速',4)}
 TASK_MEDIA_PARTS={'cover':'封面图标','title':'曲名','controls':'播放按钮','wave':'声音律动 / 频谱','progress':'进度细线'}
 AI_PROVIDERS=('Claude','Codex','Cursor','Antigravity','ZCode','Dsh','Kimi','OpenCode','Pi','GrokBot')
+AI_PROVIDER_NAMES={'Dsh':'DeepSeek Harness','GrokBot':'Grok Bot'}
 TINTS={'cpu':'#288bee','memory':'#22bba9','network':'#27b8c4','gpu':'#ec79a6'}
 TIMER_RANGES={
     'resource_focus_minutes':(1,120), 'resource_break_minutes':(1,60),
@@ -92,6 +93,7 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_expanded_width=500,resource_expanded_height=280,
                 resource_compact_rings=True,resource_clock=True,resource_clock_format='time',resource_compact_rotate=True,
                 resource_ai=False,resource_ai_tray=False,resource_ai_providers=['Claude','Codex','Cursor','Antigravity'],
+                resource_ai_tray_mode='auto',resource_ai_tray_provider='',resource_ai_tray_metric='',
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
                 resource_quota_alert=True)
 DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={},
@@ -203,9 +205,18 @@ def normalize(cfg,strict=False):
     if type(cfg.get('resource_news')) is not bool:
         if strict:raise ValueError('资源胶囊设置无效：resource_news')
         cfg['resource_news']=False
+    for key, limit in (('resource_ai_tray_provider', 96), ('resource_ai_tray_metric', 512)):
+        value = cfg.get(key, '')
+        if not isinstance(value, str) or len(value) > limit or (value and not value.isprintable()):
+            if strict:
+                raise ValueError('AI 托盘固定项无效。')
+            value = ''
+        cfg[key] = value
+    cfg.setdefault('resource_ai_tray_mode', 'auto')
     options={'resource_background':('global','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
+             'resource_ai_tray_mode':('auto','fixed'),
              'resource_expand_mode':('hover','click'),'resource_open_page':tuple(OPEN_PAGES),
              'resource_face_mood':('random','default','happy','wink','love','star','shy','pout','squint'),
              'resource_compact_density':('auto','dense'),

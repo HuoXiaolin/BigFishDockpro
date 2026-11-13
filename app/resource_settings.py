@@ -1,15 +1,16 @@
 """Preferences shared by the desktop monitor and the independent taskbar readout."""
 from weakref import proxy
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSignalBlocker
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
                              QAbstractItemView)
 from appearance_presets import COLOR_MODES,material_choices
 from content_sources import MAX_NEWS_FEEDS, NEWS_FEED_PRESETS, clean_feeds, web_url
-from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
+from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,AI_PROVIDER_NAMES,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
+from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_metric_options
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -77,7 +78,8 @@ class ResourceOptions(QDialog):
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
-        {'resource_ai','resource_ai_tray','resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
+        {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
+         'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable'},
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
@@ -126,6 +128,8 @@ class ResourceOptions(QDialog):
             apply_density(capture_density(root), float(self.property('interfaceScale') or .7))
         if index == 7:
             self.refresh_news_sources()
+        elif index == 3:
+            self.sync_ai_tray_fields()
         if draft:
             self.tabs.widget(index).findChild(QScrollArea).verticalScrollBar().setValue(draft['scroll'])
 
@@ -333,13 +337,32 @@ class ResourceOptions(QDialog):
                 self.fields[key]=check(title,cfg[key]);deck.addWidget(self.fields[key])
             provider_grid=QGridLayout();deck.addLayout(provider_grid)
             for i,key in enumerate(AI_PROVIDERS):
-                field=check(key,key in cfg['resource_ai_providers']);self.ai_fields[key]=field;provider_grid.addWidget(field,i//3,i%3)
+                field=check(AI_PROVIDER_NAMES.get(key,key),key in cfg['resource_ai_providers'])
+                self.ai_fields[key]=field;provider_grid.addWidget(field,i//3,i%3)
             info=QLabel('最多选择 7 个工具。读取本机已登录账号和用量记录；未连接时显示实际状态。');info.setWordWrap(True);deck.addWidget(info)
             from deck_runtime import installed_runtime,RUNTIME_URL
             runtime_note=QLabel('已检测到 .NET 10 桌面运行库' if installed_runtime() else 'AI / 音乐需要安装 .NET 10 桌面运行库（x64）');runtime_note.setWordWrap(True);deck.addWidget(runtime_note)
             from PyQt5.QtGui import QDesktopServices
             from PyQt5.QtCore import QUrl
             deck.addWidget(button('打开运行库下载页',lambda:QDesktopServices.openUrl(QUrl(RUNTIME_URL))))
+            tray=section(layout,'托盘显示')
+            tray_form=QFormLayout();tray.addLayout(tray_form)
+            draft=self.drafts.get(3, {}).get('stores', {})
+            values=draft.get('fields', cfg)
+            mode=combo(tray_form,'resource_ai_tray_mode','显示方式',[('自动 · 最多三环','auto'),('固定 · 单项','fixed')],
+                       values['resource_ai_tray_mode'],self.fields)
+            provider=combo(tray_form,'resource_ai_tray_provider','固定工具',[],'',self.fields)
+            combo(tray_form,'resource_ai_tray_metric','固定额度',[],'',self.fields)
+            note=QLabel('自动优先显示最短周期的额度。没有可显示的额度环时，直接显示余额。')
+            note.setProperty('role','muted');note.setWordWrap(True);tray.addWidget(note)
+            for key, checked in draft.get('ai_fields', {}).items():
+                self.ai_fields[key].setChecked(checked)
+            self.refresh_ai_tray_choices(values['resource_ai_tray_provider'], values['resource_ai_tray_metric'])
+            provider.currentIndexChanged.connect(self.choose_ai_tray_provider)
+            mode.currentIndexChanged.connect(self.sync_ai_tray_fields)
+            self.fields['resource_ai_tray'].toggled.connect(self.sync_ai_tray_fields)
+            for field in self.ai_fields.values():
+                field.toggled.connect(self.refresh_ai_tray_choices)
             music=section(layout,'音乐与歌词')
             for key,title in [('resource_music','音乐预览与控制'),('resource_lyrics','同步歌词（允许联网匹配）')]:
                 self.fields[key]=check(title,cfg[key]);music.addWidget(self.fields[key])
@@ -544,6 +567,7 @@ class ResourceOptions(QDialog):
         self.builders=[build_0,build_1,build_2,build_3,build_4,build_5,build_6,build_7,build_8,build_9]
         self.tabs.currentChanged.connect(self.show_page)
         self.nav.currentItemChanged.connect(self.navigate)
+        self.service.ai_data_changed.connect(self.refresh_ai_tray_choices)
         self.show_page(0)
 
         footer=QHBoxLayout();self.status=QLabel();self.status.setWordWrap(True);footer.addWidget(self.status,1)
@@ -566,6 +590,69 @@ class ResourceOptions(QDialog):
     def gateway_connections(self):
         from resource_gateway_settings import edit_gateways
         edit_gateways(self.service,self)
+        self.refresh_ai_tray_choices()
+
+    @staticmethod
+    def fill_ai_tray_choices(combo, choices, selected):
+        with QSignalBlocker(combo):
+            if [(combo.itemData(i), combo.itemText(i)) for i in range(combo.count())] != list(choices.items()):
+                combo.clear()
+                for key, label in choices.items():
+                    combo.addItem(label, key)
+            combo.setCurrentIndex(max(0, combo.findData(selected)))
+
+    def refresh_ai_tray_choices(self, provider=None, metric=None):
+        if 3 not in self.loaded:
+            return
+        field = self.fields['resource_ai_tray_provider']
+        selected = provider if isinstance(provider, str) else field.currentData()
+        bridge = self.service.deck
+        rows = {row['id']: row for row in bridge.providers} if bridge else {}
+        choices = {'': '请选择工具'}
+        choices.update((key, AI_PROVIDER_NAMES.get(key, key)) for key in AI_PROVIDERS if self.ai_fields[key].isChecked())
+        if bridge and bridge.gateway:
+            choices.update(('gateway-' + account['id'], account['name']) for account in bridge.gateway.accounts)
+        elif bridge is None:
+            from resource_gateway import load_accounts
+            try:
+                accounts = load_accounts(self.service.runtime.api.CONFIG_DIR)
+            except (OSError, ValueError):
+                accounts = []
+            choices.update(('gateway-' + account['id'], account['name']) for account in accounts)
+        if selected and selected not in choices:
+            choices[selected] = ('原连接（未启用）' if selected.startswith('gateway-')
+                                 else f'{AI_PROVIDER_NAMES.get(selected, selected)}（未启用）')
+        for key in choices.keys() & rows.keys():
+            row = rows[key]
+            choices[key] = ' '.join(filter(None, (row['name'], provider_plan_name(row))))
+        self.fill_ai_tray_choices(field, choices, selected or '')
+        self.fill_ai_tray_metrics(rows.get(selected, {}), metric)
+        self.sync_ai_tray_fields()
+
+    def fill_ai_tray_metrics(self, row, metric=None):
+        field = self.fields['resource_ai_tray_metric']
+        selected = field.currentData() if metric is None else metric
+        choices = {'': '请选择额度'}
+        if self.fields['resource_ai_tray_provider'].currentData():
+            choices.update(tray_metric_options(row) or TRAY_PERIODS)
+            if selected and selected not in choices:
+                choices[selected] = tray_label(selected) or '上次选择'
+        self.fill_ai_tray_choices(field, choices, selected or '')
+
+    def choose_ai_tray_provider(self):
+        provider = self.fields['resource_ai_tray_provider'].currentData()
+        bridge = self.service.deck
+        row = next((row for row in bridge.providers if row['id'] == provider), {}) if bridge else {}
+        self.fill_ai_tray_metrics(row, '')
+        self.sync_ai_tray_fields()
+
+    def sync_ai_tray_fields(self):
+        tray_on = self.fields['resource_ai_tray'].isChecked()
+        mode = self.fields['resource_ai_tray_mode']
+        mode.setEnabled(tray_on)
+        provider = self.fields['resource_ai_tray_provider']
+        provider.setEnabled(tray_on and mode.currentData() == 'fixed')
+        self.fields['resource_ai_tray_metric'].setEnabled(provider.isEnabled() and bool(provider.currentData()))
 
     def agenda_connections(self):
         from resource_calendar_settings import show_connections
@@ -630,6 +717,8 @@ class ResourceOptions(QDialog):
     def deleteLater(self):
         # Page builders close over the dialog and its placeholder widgets.
         # Break that Python cycle while the Qt parent tree is still alive.
+        if self.builders:
+            self.service.ai_data_changed.disconnect(self.refresh_ai_tray_choices)
         self.builders.clear()
         self.fields.clear()
         for names in self.page_stores.values():
@@ -734,6 +823,10 @@ class ResourceOptions(QDialog):
             try:changes['resource_weather_thresholds']=clean_weather_thresholds([thresholds['weather_threshold_fields'][i] for i in range(4)],True)
             except ValueError as error:self.status.setText(str(error));return False
         if len(changes.get('resource_ai_providers',[]))>7:self.status.setText('最多同时显示 7 个 AI 工具。');return False
+        if changes.get('resource_ai_tray') and changes.get('resource_ai_tray_mode') == 'fixed':
+            if not changes['resource_ai_tray_provider'] or not changes['resource_ai_tray_metric']:
+                self.status.setText('请选择固定显示的 AI 工具和额度。')
+                return False
         if 4 in self.drafts:
             changes['resource_tints']=dict(self.tints)
             custom=dict(self.drafts[4]['stores']['custom_fields'], color=self.drafts[4]['text'].strip().lower())

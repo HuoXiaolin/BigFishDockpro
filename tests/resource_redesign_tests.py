@@ -46,6 +46,181 @@ def aggregation(checks):
     checks.append('AI statistics: day/yesterday/7-day/30-day/all/provider filters, hourly totals, weighted cache hit rate, unknown pricing and record counts, historical binning without losing totals. No HTTP request count invented.')
 
 
+def ai_tray_modes(service, app, output, checks):
+    import ctypes
+    from ctypes import wintypes
+    from PyQt5.QtWidgets import QSystemTrayIcon
+    from resource_ai_tray import amount_icon
+    from resource_quota import tray_balance_text, tray_readings
+    from resource_settings import ResourceOptions
+
+    bridge, tray = service.deck, service.ai_tray
+    cfg = service.cfg
+    reset = (datetime.now().astimezone() + timedelta(days=5, minutes=10)).isoformat()
+    week = dict(label='每周额度', percent=78, reset=reset)
+    hour = dict(id='session', label='每小时额度', percent=15, window=60)
+    codex = dict(id='Codex', name='Codex', plan='prolite', quotas=[week, hour])
+    claude = dict(id='Claude', name='Claude', quotas=[dict(week, percent=45)])
+    cursor = dict(id='Cursor', name='Cursor', stale=True, quotas=[dict(week, percent=92)])
+    dsh = dict(id='Dsh', name='DeepSeek Harness', quotas=[
+        dict(id='spend:CNY', label='累计消费', kind='spend', value='¥40.00'),
+        dict(id='total:CNY', label='账户余额', kind='balance', value='¥20.12', percent=80)])
+    rows = [cursor, dsh, claude, codex]
+    cfg.update(resource_ai_providers=['Claude','Codex','Cursor','Dsh'],
+               resource_quota_alert=False)
+    bridge.accept(dict(type='ai', providers=rows))
+    assert [(r.provider, r.remaining) for r in tray.readings] == [('Codex',85),('Claude',55),('Cursor',8)]
+    assert tray.balance is None
+    assert 'Codex Pro 100 · 小时额度剩余 85%' in tray.tray.toolTip()
+    assert 'Cursor · 周额度剩余 8% · 上次读数' in tray.tray.toolTip()
+    tray.tray.icon().pixmap(32,32).save(str(output/'ai-tray-auto.png'))
+    tray.tray.activated.emit(QSystemTrayIcon.Trigger)
+    app.processEvents()
+    popup = tray.popup
+    assert [r['id'] for r in popup.stats_view.quotas.rows] == ['Codex','Cursor','Dsh','Claude']
+    assert popup.stats_view.quotas.rows[0]['quotas'][0] == hour
+    assert codex['quotas'][0] == week
+    assert popup.stats_view.provider.findData('Claude') >= 0
+    popup.grab().save(str(output/'ai-tray-priority.png'))
+    popup.hide()
+
+    with patch.object(tray, 'refresh', wraps=tray.refresh) as refresh:
+        for _ in range(4):
+            service.display()
+        refresh.assert_not_called()
+    with patch.object(tray.tray, 'setIcon', wraps=tray.tray.setIcon) as icon, \
+            patch.object(tray.tray, 'setToolTip', wraps=tray.tray.setToolTip) as tip:
+        bridge.accept(dict(type='ai', providers=rows))
+        icon.assert_not_called()
+        tip.assert_not_called()
+        with patch.object(service.runtime.dock, 'is_light', return_value=not service.runtime.dock.is_light()), \
+                patch('resource_ai_tray.tray_readings', wraps=tray_readings) as select:
+            tray.refresh()
+            icon.assert_called_once()
+            select.assert_not_called()
+            tip.assert_not_called()
+    tray.refresh()
+    dock = service.runtime.dock
+    theme, system_light = cfg['theme'], dock._sys_light
+    cfg['theme'] = 'auto'
+    try:
+        send = ctypes.WinDLL('user32').SendMessageW
+        send.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        with patch.object(service.runtime.api, 'system_is_light', return_value=not system_light):
+            send(int(dock.winId()), 0x031a, 0, 0)
+            app.processEvents()
+            assert dock._sys_light != system_light and tray.key[0] == dock._sys_light
+    finally:
+        cfg['theme'], dock._sys_light = theme, system_light
+        tray.refresh()
+
+    pro = dict(codex, quotas=[week])
+    bridge.accept(dict(type='ai', providers=[cursor,dsh,claude,pro]))
+    assert [r.remaining for r in tray.readings] == [22,55,8]
+    assert tray.tray.toolTip().startswith('Codex Pro 100 · 周额度剩余 22% · 5 天后恢复')
+    fourth = dict(id='Pi', name='Pi', quotas=[dict(week, percent=5)])
+    assert [r.provider for r in tray_readings([*rows, fourth], 'auto','','')] == ['Codex','Claude','Pi']
+    assert tray_readings([claude], 'fixed','Codex','week') == ()
+    bridge.accept(dict(type='ai_error', message='离线测试'))
+    assert all(r.stale for r in tray.readings) and all(row['stale'] for row in bridge.providers)
+    bridge.accept(dict(type='ai', providers=rows))
+
+    options = ResourceOptions(service)
+    try:
+        options.tabs.setCurrentIndex(3)
+        mode, provider, metric = (options.fields['resource_ai_tray_' + key] for key in ('mode','provider','metric'))
+        mode.setCurrentIndex(mode.findData('fixed'))
+        provider.setCurrentIndex(provider.findData('Dsh'))
+        assert metric.findData('id:spend:CNY') == -1
+        metric.setCurrentIndex(metric.findData('id:total:CNY'))
+        options.tabs.setCurrentIndex(0)
+        options.tabs.setCurrentIndex(3)
+        assert options.fields['resource_ai_tray_provider'].currentData() == 'Dsh'
+        assert options.fields['resource_ai_tray_metric'].currentData() == 'id:total:CNY'
+        assert options.commit()
+    finally:
+        options.deleteLater()
+    assert '账户余额 ¥20.12' in tray.tray.toolTip()
+    assert len(tray.readings) == 1 and tray.readings[0].remaining is None
+    assert tray.balance == '¥20'
+    for value, expected in [('¥20.99','¥20'),('$1,234.75','$1234'),('JPY 2500','JPY 2500'),
+                            ('−¥5.12','−¥5'),('¥0.20','¥0'),('—',None)]:
+        assert tray_balance_text(value) == expected
+    from resource_status import TRAY_RING_SIZES
+    from taskbar_text import foreground_ink
+    for shell_mode in (0, 1):
+        with patch('taskbar_text.read_mode', return_value=shell_mode), \
+                patch('resource_ai_tray.tray_readings', wraps=tray_readings) as select:
+            # The application theme can stay the same while the shell changes.
+            send(int(dock.winId()), 0x001a, 0, 0)
+            app.processEvents()
+            select.assert_not_called()
+        ink = foreground_ink(shell_mode)
+        assert tray.taskbar_ink == ink
+        icon = tray.tray.icon()
+        for size in TRAY_RING_SIZES:
+            current = icon.pixmap(size,size).toImage()
+            assert current == amount_icon('¥20',ink).pixmap(size,size).toImage()
+            assert current != amount_icon('¥0',ink).pixmap(size,size).toImage()
+            pixels = [[current.pixelColor(x,y) for x in range(current.width())] for y in range(current.height())]
+            assert all(p.name() == ink for row in pixels for p in row if p.alpha() > 0)
+            assert not any(p.alpha() for row in (pixels[0],pixels[-1]) for p in row)
+            rows_with_text = sum(any(p.alpha() for p in row) for row in pixels)
+            assert 0 < rows_with_text <= round(current.height() * .62) + 2, (size, current.size(), rows_with_text)
+            current.save(str(output/f'ai-tray-balance-{shell_mode}-{size}.png'))
+    old_mode = cfg['taskbar_text_mode']
+    try:
+        cfg['taskbar_text_mode'] = 'light'
+        with patch('taskbar_text.read_mode', return_value=0):
+            service.runtime.apply_settings({'taskbar_text_mode'})
+            assert tray.taskbar_ink == '#ffffff'
+    finally:
+        cfg['taskbar_text_mode'] = old_mode
+        service.runtime.apply_settings({'taskbar_text_mode'})
+    tray.tray.activated.emit(QSystemTrayIcon.Trigger)
+    app.processEvents()
+    assert popup.stats_view.quotas.rows[0]['id'] == 'Dsh'
+    assert popup.stats_view.quotas.rows[0]['quotas'][0]['value'] == '¥20.12'
+    popup.hide()
+
+    cfg.update(resource_ai_tray_mode='auto', resource_ai_providers=['Dsh'])
+    service.sync()
+    assert tray.balance == '¥20' and '账户余额 ¥20.12' in tray.tray.toolTip()
+    cfg['resource_ai_providers'] = ['Claude','Dsh']
+    service.sync()
+    waiting = dict(claude, quotas=[dict(week, percent=None)])
+    bridge.accept(dict(type='ai', providers=[waiting,dsh]))
+    assert tray.balance == '¥20' and tray.readings[0].provider == 'Dsh'
+    exhausted = dict(claude, quotas=[dict(week, percent=100)])
+    bridge.accept(dict(type='ai', providers=[dsh,exhausted]))
+    assert tray.balance is None and tray.readings[0].remaining == 0
+    bridge.accept(dict(type='ai', providers=[waiting,dsh]))
+    assert tray.balance == '¥20'
+    with patch.object(tray.tray, 'setIcon', wraps=tray.tray.setIcon) as icon:
+        revised = dict(dsh, quotas=[dict(dsh['quotas'][1], value='¥20.99')])
+        bridge.accept(dict(type='ai', providers=[waiting,revised]))
+        assert tray.balance == '¥20' and '账户余额 ¥20.99' in tray.tray.toolTip()
+        icon.assert_not_called()
+    bridge.accept(dict(type='ai', providers=[dict(dsh, quotas=[dict(dsh['quotas'][1], value='¥0.00')])]))
+    assert tray.balance == '¥0' and '账户余额 ¥0.00' in tray.tray.toolTip()
+    tray.tray.activated.emit(QSystemTrayIcon.Trigger)
+    app.processEvents()
+    assert popup.stats_view.quotas.rows[0]['id'] == 'Dsh'
+    popup.hide()
+    cfg.update(resource_ai_providers=['Claude','Codex','Cursor','Dsh'])
+    service.sync()
+    bridge.accept(dict(type='ai', providers=rows))
+    assert tray.balance is None and tray.readings[0].provider == 'Codex'
+    cfg.update(resource_ai_tray_mode='fixed',resource_ai_tray_provider='Codex',
+               resource_ai_tray_metric='label:每周额度')
+    service.sync()
+    assert tray.readings[0].remaining == 22
+    cfg['resource_ai_tray_metric']='id:session'
+    service.sync()
+    assert tray.readings[0].remaining == 85
+    checks.append('AI tray: hourly quota precedence, weekly fallback, live values before stale, up to three rings, saved fixed metric, integer balance in auto and fixed modes, exact amounts in the tooltip and details, single-line digits in both taskbar colors, click-to-prioritize and no refresh for cent-only changes or resource samples.')
+
+
 def run(api,runtime,app,output,checks):
     from PyQt5.QtCore import QRectF,QTimer
     from PyQt5.QtGui import QColor,QFontMetrics
@@ -211,7 +386,8 @@ def run(api,runtime,app,output,checks):
         popup.hide()
         app.processEvents()
         checks.append('Quota cards: automatic Codex plans in capsule and tray, 360 × 540 logical px on tray click, single column at 180 and 360 px, two at 361 px, hour/week/month metrics, zero, unavailable, and currency balance.')
-        icons=[quota_icon(used).pixmap(32,32).toImage() for used in (None,0,60,80,100)]
+        icons=[quota_icon([(level,False)] if level is not None else [],False).pixmap(32,32).toImage()
+               for level in (None,100,40,20,0)]
         assert all(a!=b for i,a in enumerate(icons) for b in icons[i+1:])
         for i,pix in enumerate(icons):pix.save(str(output/f'redesign-tray-icon-{i}.png'))
         balance = dict(kind='balance', label='账户余额', value='¥12.48', percent=87.52)
@@ -227,28 +403,23 @@ def run(api,runtime,app,output,checks):
             assert quota_color(40,light)==band_ink(40,70,40,'yellow',light)
             assert quota_color(10.1,light)==band_ink(10.1,40,10,'orange',light)
             assert quota_color(10,light)==band_ink(10,10,0,'red',light)
-            for remaining in (10,5,0):
-                icon=quota_icon(100-remaining,light).pixmap(32,32).toImage()
-                assert icon.pixelColor(23,25).name()==quota_color(remaining,light)
         for light in (True,False):
-            quotas=[quota_icon(used,light) for used in (None,0,10,45,85,100)]
-            battery=battery_icon([dict(level=100,ink='#5b8def')],not light)
-            for icon in [battery,*quotas]:
-                assert [s.width() for s in icon.availableSizes()]==list(TRAY_RING_SIZES)
-            for side in TRAY_RING_SIZES:
-                reference=battery.pixmap(side,side).toImage()
-                center=side//2
-                for quota in quotas:
-                    image=quota.pixmap(side,side).toImage()
-                    for axis in (lambda i:(center,i),lambda i:(i,center)):
-                        for segment in (range(center),range(center,side)):
-                            outer=[i for i in segment if reference.pixelColor(*axis(i)).alpha()>=128]
-                            visible=[i for i in segment if image.pixelColor(*axis(i)).alpha()>=128]
-                            assert outer and visible==outer,(light,side,visible,outer)
-                    assert image.pixelColor(center,center).alpha()<128,(light,side)
+            for levels in ((),((25,False),),((100,False),),((40,False),(85,False),(8,True))):
+                quota=quota_icon(levels,light)
+                battery=battery_icon([dict(level=level,ink=quota_color(level,light),stale=stale)
+                                     for level,stale in levels],not light)
+                assert [s.width() for s in quota.availableSizes()]==list(TRAY_RING_SIZES)
+                for side in TRAY_RING_SIZES:
+                    ai = quota.pixmap(side,side).toImage()
+                    bt = battery.pixmap(side,side).toImage()
+                    changed = [(x,y) for y in range(side) for x in range(side)
+                               if ai.pixel(x,y) != bt.pixel(x,y)]
+                    assert changed and all(x >= side // 2 and y >= side // 2 for x,y in changed), (light,side,levels)
+                    assert any(ai.pixelColor(x,y).alpha() > bt.pixelColor(x,y).alpha() for x,y in changed)
+        ai_tray_modes(service,app,output,checks)
         cfg['resource_ai_tray']=False;service.sync();app.processEvents();assert not service.deck and not service.ai_tray and not service.signature
         (output/'resource-page-sizes.json').write_text(json.dumps(sizes),encoding='utf-8')
         checks.append('Reported UI regressions: identical page geometry, long mixed-language title in bounded lines, no aggregate hover popup, all compact values/AI/media reachable at 220–800 widths without overlapping or dropped cells, persisted custom pinned metrics, automatic width shrink, independent AI tray with hardware/music stopped, quota icons and complete shutdown.')
-        checks.append('AI quota tray retains the Bluetooth reference outer diameter and ring stroke at all six icon sizes in both themes, including empty, unavailable and partial quota states.')
+        checks.append('AI tray rings retain the peripheral arc geometry at all six sizes in both themes, with a Q tail only in the lower-right quadrant, including multi-ring, full, partial and stale readings.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

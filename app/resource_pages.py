@@ -316,7 +316,7 @@ class TrafficReadout(QWidget):
                      c['ink'],10,True,Qt.AlignRight)
 
 
-def reset_text(value):
+def reset_text(value, *, compact=False):
     if not isinstance(value, str) or not value:
         return ''
     try:
@@ -330,8 +330,12 @@ def reset_text(value):
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     if days:
+        if compact:
+            return f'{days} 天后恢复'
         return f'{days} 天 {hours} 小时后恢复'
     if hours:
+        if compact:
+            return f'{hours} 小时后恢复'
         return f'{hours} 小时 {minutes} 分钟后恢复'
     return f'{minutes} 分钟后恢复' if minutes else '不到 1 分钟后恢复'
 

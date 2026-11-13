@@ -884,7 +884,17 @@ class Dock(QWidget):
             runtime = getattr(self.tray,'runtime',None)
             QTimer.singleShot(0,runtime.show_settings if runtime else self.tray.show_settings)
             return True, 0
+        if msg.message in (0x031a,0x0320) or (msg.message == 0x001a and msg.wParam == 0):
+            runtime = getattr(self.tray, 'runtime', None)
+            if runtime and not runtime.closed and runtime.resources.ai_tray:
+                QTimer.singleShot(0, self.refresh_tray_theme)
         return super().nativeEvent(event_type,message)
+
+    def refresh_tray_theme(self):
+        self.apply_theme_follow()
+        runtime = getattr(self.tray, 'runtime', None)
+        if runtime and (tray := runtime.resources.ai_tray):
+            tray.sync_taskbar_text()
 
     def is_light(self):
         """当前是不是浅色系（文字/小圆点用深色）。光感模式也算浅色系。"""
@@ -988,6 +998,7 @@ class Dock(QWidget):
             if runtime:
                 for panel in runtime.panels.windows.values(): panel.apply_options()
                 if runtime.resources.window:runtime.resources.window.sync_window()
+                if runtime.resources.ai_tray:runtime.resources.ai_tray.refresh()
                 for component in (runtime.clock,runtime.calendar):
                     if component.isVisible() and component.isWindow() and component.option('appearance')['theme']=='auto':
                         component.sync()
@@ -2571,6 +2582,9 @@ class DockTray(QSystemTrayIcon):
         from ui_style import apply_theme
         apply_theme(QApplication.instance(), self.dock.is_light())
         self.dock.update()
+        runtime = getattr(self, 'runtime', None)
+        if runtime and runtime.resources.ai_tray:
+            runtime.resources.ai_tray.refresh()
 
     def set_layer(self, val):
         self.cfg["layer"] = val

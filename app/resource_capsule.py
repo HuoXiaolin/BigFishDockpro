@@ -81,6 +81,7 @@ class MonitorJob(BackgroundWorker):
 class ResourceCapsule(QObject):
     traffic_updated=pyqtSignal()
     app_traffic_updated=pyqtSignal()
+    ai_data_changed=pyqtSignal()
 
     def __init__(self,runtime):
         super().__init__(runtime.dock)
@@ -455,6 +456,7 @@ class ResourceCapsule(QObject):
             from resource_ai_tray import AiTray
             self.ai_tray=AiTray(self)
         elif not want_tray and self.ai_tray:self.ai_tray.close();self.ai_tray=None
+        elif self.ai_tray:self.ai_tray.refresh()
         bt_visible='bluetooth' in demand
         use_bt=bt_visible or self.cfg['resource_bt_tray']
         if use_bt and self.bluetooth is None:
@@ -710,7 +712,6 @@ class ResourceCapsule(QObject):
         if self.window:self.window.refresh()
         for card in self.desktop_cards.values():card.refresh()
         if self.strip:self.strip.refresh()
-        if self.ai_tray:self.ai_tray.refresh()
         custom=getattr(self.runtime,'custom_cards',None)
         if custom:custom.redraw(metrics_only=True)
     def reposition(self):

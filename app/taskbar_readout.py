@@ -7,6 +7,7 @@ from resource_taskbar import Placement
 from ui_style import AlignedMenu
 from resource_options import FAN_METRICS,SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES,TASKBAR_LAYERS
 from component_passthrough import enabled as passthrough_enabled
+from taskbar_text import foreground_ink, system_mode
 
 
 def transfer(value):
@@ -169,7 +170,7 @@ class TaskbarReadout(QWidget):
         font,single=self.readout_font()
         p.setFont(font);fm=QFontMetrics(font)
         self.effective_font=font.pixelSize();self.single_line=single
-        ink=QColor('#ffffff' if getattr(self,'system_mode',1)==0 else '#000000')
+        ink=QColor(foreground_ink(getattr(self,'system_mode',None)))
         self.foreground_ink=ink.name()
         from resource_status import default_limit,threshold
         cfg=self.service.cfg;colored=cfg.get('resource_task_threshold',False)
@@ -222,9 +223,7 @@ class TaskbarReadout(QWidget):
             x+=w+gap
 
     def sync_style(self):
-        from taskbar_text import read_mode
-        try:self.system_mode=read_mode()
-        except OSError:self.system_mode=1
+        self.system_mode=system_mode()
         self.refresh()
 
     def nativeEvent(self,event_type,message):

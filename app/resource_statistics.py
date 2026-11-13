@@ -1,5 +1,5 @@
 """Compact, theme-aware cost distribution and usage history from real aggregates."""
-from PyQt5.QtCore import Qt,QRect,QRectF,QPointF
+from PyQt5.QtCore import Qt,QRect,QRectF,QPointF,QSignalBlocker
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPen
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButton,QLabel,QSizePolicy
 from ui_style import ModernComboBox
@@ -7,7 +7,7 @@ from resource_compact import text
 from resource_options import content_columns
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,reset_text
 from resource_usage import aggregate
-from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, used_percent
+from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, tray_metric_key, used_percent
 import reset_credits
 from card_design import paint_capsule_card
 
@@ -163,7 +163,7 @@ class QuotaOverview(QWidget):
         for index, metric in enumerate(quotas):
             x = left + (index % columns) * (cell_width + gap)
             y = top + (index // columns) * metric_height
-            self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64)
+            self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64, stale=bool(row.get('stale')))
 
         if footer_y is not None:
             line = QColor(colors['ink'])
@@ -172,7 +172,7 @@ class QuotaOverview(QWidget):
             p.drawLine(QPointF(left, footer_y), QPointF(right, footer_y))
 
     @staticmethod
-    def paint_metric(p, colors, metric, x, y, width, narrow):
+    def paint_metric(p, colors, metric, x, y, width, narrow, *, stale=False):
         money = amount_text(metric)
         value_y = y + 16 if narrow else y
         if money is not None:
@@ -181,13 +181,13 @@ class QuotaOverview(QWidget):
             text(p, QRectF(x, y, label_width, label_height), amount_label(metric), colors['muted'], 12)
             value_left = x if narrow else x + label_width
             text(p, QRectF(value_left, value_y, x + width - value_left, 28),
-                 money, colors['ink'], 18, True, Qt.AlignRight)
+                 money, colors['muted' if stale else 'ink'], 18, True, Qt.AlignRight)
             if reset := reset_text(metric.get('reset')):
                 text(p, QRectF(x, value_y + 31, width, 16), reset, colors['muted'])
             return
 
         remaining = remaining_percent(used_percent(metric))
-        ink = quota_color(remaining, colors['light'])
+        ink = colors['muted'] if stale else quota_color(remaining, colors['light'])
         label = metric['label'].replace(' · 已用', '')
         value = '—' if remaining is None else f'{remaining:.0f}%'
         value_font = QFont(p.font())
@@ -349,6 +349,7 @@ class UsageProviders(QWidget):
 class StatisticsView(QWidget):
     def __init__(self,owner):
         super().__init__();self.owner=owner;self.period='today';self.metric='cost';self.signature=None;self.data=aggregate([])
+        self.quota_focus = None
         lay=QVBoxLayout(self);lay.setContentsMargins(4,0,4,0);lay.setSpacing(5)
         filter_bar = QWidget()
         filter_bar.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -434,6 +435,23 @@ class StatisticsView(QWidget):
         if self.owner.service.deck:self.owner.service.deck.refresh()
     def show_details(self,provider=None):
         self.owner.ai_view.show_details(provider if isinstance(provider,str) else self.provider.currentData() or '',self.period)
+    def focus_quota(self, focus):
+        self.quota_focus = focus
+        with QSignalBlocker(self.provider):
+            self.provider.setCurrentIndex(0)
+
+    def quota_rows(self, rows, selected):
+        visible = [row for row in rows if not selected or row['id'] == selected]
+        if self.quota_focus:
+            provider, metric = self.quota_focus
+            for index, row in enumerate(visible):
+                if row['id'] == provider:
+                    quotas = sorted(row.get('quotas', []), key=lambda q: tray_metric_key(q) != metric)
+                    visible.pop(index)
+                    visible.insert(0, dict(row, quotas=quotas))
+                    break
+        return visible
+
     def refresh(self):
         bridge=self.owner.service.deck;rows=bridge.providers if bridge else [];signature=tuple((r['id'],r['name']) for r in rows)
         if signature!=self.signature:
@@ -447,7 +465,7 @@ class StatisticsView(QWidget):
         from datetime import date
         bridge=self.owner.service.deck;rows=bridge.providers if bridge else [];key=(id(rows),self.period,self.provider.currentData() or '',date.today())
         if key!=getattr(self,'data_key',None):self.data=aggregate(rows,self.period,key[2]);self.data_key=key
-        selected=self.provider.currentData() or '';self.quotas.refresh([r for r in rows if not selected or r['id']==selected])
+        self.quotas.refresh(self.quota_rows(rows, key[2]))
         for key,b in self.ranges.items():b.setChecked(key==self.period)
         self.period_selector.blockSignals(True)
         self.period_selector.setCurrentIndex(self.period_selector.findData(self.period))

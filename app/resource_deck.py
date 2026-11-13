@@ -27,6 +27,7 @@ class DeckBridge(QObject):
         super().__init__(owner);self.owner=owner;self.signature=None;self.closed=False;self.buffer=bytearray()
         self.providers=[];self.media={};self.cover=QPixmap();self.levels=[0.]*8;self.status='正在连接…'
         self.local_providers=[];self.gateway=None;self.idling=False
+        self.ai_revision=0
         self.ai_status='正在读取…';self.alert='';self.alert_until=0.;self.previous_levels={}
         self.history_requested=False
         self.memory_blocked=False
@@ -41,35 +42,55 @@ class DeckBridge(QObject):
         self.launch_watch.timeout.connect(self.startup_timeout)
         if (Path(owner.runtime.api.CONFIG_DIR)/'resource-gateway-accounts.dat').is_file():
             from resource_gateway import load_accounts
-            try:self.load_gateways(load_accounts(owner.runtime.api.CONFIG_DIR))
+            try:self.load_gateways(load_accounts(owner.runtime.api.CONFIG_DIR), notify=False)
             except (ValueError,OSError):self.ai_status='用量连接读取失败，请检查设置'
 
-    def load_gateways(self,accounts):
+    def load_gateways(self,accounts, *, notify=True):
         if self.gateway:
             if accounts==self.gateway.accounts:return
             self.gateway.cancel();self.gateway.deleteLater();self.gateway=None
         if accounts:
             from resource_gateway import GatewayUsage
             self.gateway=GatewayUsage(self,accounts)
-        self.providers=self.local_providers
+        if notify:
+            self.publish_ai()
 
     def provider_rows_changed(self):
-        from resource_quota import remaining_percent,used_percent
-        self.providers=[*self.local_providers,*(self.gateway.rows if self.gateway else ())]
-        cfg=self.owner.cfg
+        self.publish_ai(check_alerts=True)
+
+    def publish_ai(self, *, check_alerts=False):
+        self.providers = [*self.local_providers, *(self.gateway.rows if self.gateway else ())]
+        if check_alerts:
+            self.check_quota_alerts()
+        self.notify_ai()
+
+    def check_quota_alerts(self):
+        from resource_quota import remaining_percent, used_percent
         for row in self.providers:
             if row.get('stale'):
                 continue
-            used=max((value for q in row.get('quotas',[]) if (value:=used_percent(q)) is not None),default=None)
-            if used is None:continue
-            level=2 if used>=80 else 1 if used>=60 else 0
+            used = max((value for q in row.get('quotas', []) if (value := used_percent(q)) is not None), default=None)
+            if used is None:
+                continue
+            level = 2 if used >= 80 else 1 if used >= 60 else 0
             previous = self.previous_levels.get(row['id'])
             self.previous_levels[row['id']] = level
-            if cfg['resource_quota_alert'] and level>(previous or 0):
-                self.alert=f"{row['name']}  额度剩余 {remaining_percent(used):.0f}%";self.alert_until=time.monotonic()+5
+            if self.owner.cfg['resource_quota_alert'] and level > (previous or 0):
+                self.alert = f"{row['name']}  额度剩余 {remaining_percent(used):.0f}%"
+                self.alert_until = time.monotonic() + 5
                 if previous is not None:
                     self.owner.play_reminder_sound('quota')
+
+    def notify_ai(self):
+        self.ai_revision += 1
+        changed = getattr(self.owner, 'ai_data_changed', None)
+        if changed is not None:
+            changed.emit()
         self.owner.display()
+
+    def stale_local_readings(self):
+        self.local_providers = [row if row.get('stale') else dict(row, stale=True) for row in self.local_providers]
+        self.publish_ai()
 
     def configure(self):
         if self.closed:return
@@ -102,8 +123,10 @@ class DeckBridge(QObject):
         if self.idling or self.memory_blocked or self.restart.isActive():return
         if signature==self.signature and (self.process.state()!=QProcess.NotRunning or self.owner.runtime.dock.preview):return
         self.signature=signature
-        if not signature[0] and self.local_providers:
-            self.local_providers=[];self.provider_rows_changed()
+        local = [row for row in self.local_providers if signature[0] and row['id'] in signature[1]]
+        if len(local) != len(self.local_providers):
+            self.local_providers = local
+            self.publish_ai()
         if not signature[2]:self.media={};self.cover=QPixmap();self.levels=[0.]*8
         if self.owner.runtime.dock.preview:return
         starting=self.process.state()==QProcess.NotRunning
@@ -168,9 +191,10 @@ class DeckBridge(QObject):
             self.provider_rows_changed();return
         elif kind=='memory_error':
             self.memory_blocked=True;self.restart.stop();self.launch_watch.stop();self.status=self.ai_status=data.get('message','无法启用内存限制')
+            self.stale_local_readings();return
         elif kind=='ai_error':
             self.ai_status=data.get('message','读取失败')
-            for row in self.local_providers:row['stale']=True
+            self.stale_local_readings();return
         elif kind=='media' and self.signature and self.signature[2]:
             self.media=data;self.status=data.get('status','')
             if data.get('pictureChanged'):
@@ -210,10 +234,10 @@ class DeckBridge(QObject):
         log=getattr(self.owner.runtime.api,'log',None)
         if log:log(f'AI / 音乐组件{reason}，稍后重试。')
         self.status=self.ai_status='组件连接中断，正在重试';self.signature=None;self.buffer.clear()
-        self.local_providers=[];self.media={};self.cover=QPixmap();self.levels=[0.]*8
+        self.media={};self.cover=QPixmap();self.levels=[0.]*8
         spectrum=getattr(self.owner.runtime,'spectrum',None)
         if spectrum:spectrum.set_levels([])
-        self.restart.start(min(60000,5000*2**(self.failures-1)));self.provider_rows_changed()
+        self.restart.start(min(60000,5000*2**(self.failures-1)));self.stale_local_readings()
     def close(self):
         self.closed=True;self.restart.stop();self.launch_watch.stop();p=self.process
         if self.gateway:self.gateway.cancel()

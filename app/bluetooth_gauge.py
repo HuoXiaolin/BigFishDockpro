@@ -8,7 +8,7 @@ from PyQt5.QtCore import QObject,QProcess,QTimer,Qt,QRectF,QPointF
 from PyQt5.QtGui import QPainter,QPen,QColor,QPixmap,QIcon,QPainterPath
 from PyQt5.QtWidgets import QApplication,QSystemTrayIcon
 from ui_style import AlignedMenu
-from resource_status import BATTERY_WARNING_LEVEL, TRAY_RING_SIZES, low_battery_ink, ring_dimensions
+from resource_status import BATTERY_WARNING_LEVEL, TRAY_RING_SIZES, draw_tray_rings, low_battery_ink
 from probe_lifecycle import allowed, start as start_probe
 
 HUES=('#5b8def','#41b66a','#8297c9','#ac81e2','#e99d36','#35adb3')
@@ -40,21 +40,8 @@ def devices(raw):
 
 
 def draw_rings(painter,rect,rows,dark=False):
-    painter.save();painter.setRenderHint(QPainter.Antialiasing)
-    center=rect.center()
-    radius,width,pitch=ring_dimensions(min(rect.width(),rect.height()),len(rows))
-    for index,row in enumerate(rows or [{'level':None,'ink':'#8795a1'}]):
-        r=max(.55,radius-index*pitch);circle=QRectF(center.x()-r,center.y()-r,2*r,2*r)
-        value=row['level']
-        track=QColor('#aab3bc' if dark else '#657581');track.setAlpha(105)
-        if value==0:
-            track=QColor(ring_ink(row,not dark));track.setAlpha(210)  # Warn without showing a filled battery.
-        pen=QPen(track,width,Qt.DotLine if value is None or row.get('stale') else Qt.SolidLine,Qt.RoundCap)
-        painter.setPen(pen);painter.setBrush(Qt.NoBrush);painter.drawEllipse(circle)
-        if value is not None and value>0:
-            pen=QPen(QColor(ring_ink(row,not dark)),width,Qt.SolidLine,Qt.RoundCap);painter.setPen(pen)
-            painter.drawArc(circle,90*16,-round(value*360*16/100))
-    painter.restore()
+    readings=[(row['level'],ring_ink(row,not dark),row.get('stale',False)) for row in rows]
+    draw_tray_rings(painter,rect,readings,dark)
 
 
 def draw_peripheral_rings(painter,rect,rows,dark=False):

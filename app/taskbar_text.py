@@ -16,6 +16,17 @@ def read_mode():
     if kind!=winreg.REG_DWORD or value not in (0,1):raise OSError('Windows 明暗模式值不受支持。')
     return value
 
+def system_mode():
+    try:
+        return read_mode()
+    except OSError:
+        return None
+
+
+def foreground_ink(mode):
+    return '#ffffff' if mode == 0 else '#000000'
+
+
 def write_mode(value):
     if os.environ.get('FISHDOCK_TEST_DESKTOP'):raise OSError('隔离测试不修改 Windows 配色。')
     import winreg
