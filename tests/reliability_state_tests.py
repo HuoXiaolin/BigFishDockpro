@@ -167,47 +167,113 @@ def check_taskbar_retries():
 
 def check_taskbar_shell_recovery(checks):
     from taskbar_xaml import XamlTaskbar
-    from unittest.mock import patch
     with tempfile.TemporaryDirectory(prefix='bfp-taskbar-boot-') as directory:
         dock=QObject()
         dock.cfg={'taskbar_mode':'clear','taskbar_color':'#85c6ed','taskbar_opacity':32,'taskbar_blur':12}
-        backend=XamlTaskbar(dock,Path(directory),Mock())
+        complete = Mock()
+        backend=XamlTaskbar(dock,Path(directory),Mock(),complete)
         backend.monitor_shell=True
         state=[QProcess.NotRunning]
         def start():
             state[0]=QProcess.Running
             backend.started()
-        with patch('taskbar_xaml.shell_handle',return_value=None) as shell, \
+        with patch('taskbar_xaml.shell_snapshot',return_value=None) as shell, \
+             patch('taskbar_xaml.monotonic',return_value=10) as clock, \
+             patch('taskbar_xaml.allowed',return_value=True) as allowed, \
+             patch('taskbar_xaml.request_refresh',side_effect=[False,True,True,True,True,True]) as refresh, \
              patch('taskbar_xaml.resident_program',return_value=None), \
              patch.object(backend.process,'state',side_effect=lambda:state[0]), \
-             patch.object(backend.process,'start',side_effect=start) as starts, \
-             patch.object(backend.process,'terminate'):
+             patch.object(backend.process,'processId',return_value=901), \
+             patch.object(backend.process,'start',side_effect=start) as starts:
+            def stop():
+                state[0] = QProcess.NotRunning
+                backend.finished()
+            def apply():
+                backend.apply_timer.stop()
+                backend.apply_desired()
+            def connect():
+                backend.refresh_timer.stop()
+                backend.refresh_backend()
             try:
                 backend.sync()
                 assert backend.shell_timer.isActive() and not starts.called
-                shell.return_value=10;backend.shell_changed()
+                shell.return_value=(10, 50, ())
+                backend.shell_changed()
+                clock.return_value=18
+                backend.shell_changed()
+                assert not backend.apply_timer.isActive()
+                apply()
+                assert not starts.called and not complete.called
+                # The same outer taskbar gets its XAML children later.
+                shell.return_value=(10, 50, (101,))
+                backend.shell_changed()
                 assert backend.apply_timer.isActive() and not starts.called
-                backend.apply_timer.stop();backend.apply_desired()
-                assert starts.call_count==1 and backend.configuration_matches(dock.cfg)
-                state[0]=QProcess.NotRunning;backend.finished(1,QProcess.CrashExit)
+                with patch.object(backend.process, 'start') as slow_start:
+                    apply()
+                    slow_start.assert_called_once()
+                backend.failed(QProcess.FailedToStart)
                 assert backend.apply_timer.isActive() and backend.retries==1
-                backend.apply_timer.stop();backend.apply_desired()
-                assert starts.call_count==2
-                shell.return_value=11;backend.shell_changed()
+                apply()
+                assert starts.call_count==1 and backend.configuration_matches(dock.cfg)
+                assert backend.refresh_timer.isActive() and not complete.call_args.args[1]
+                connect()
+                assert backend.refresh_timer.isActive() and not complete.call_args.args[1]
+                connect()
+                refresh.assert_called_with(backend.program, 901)
+                assert complete.call_args.args[1] and not backend.refresh_timer.isActive()
+                # Reload and refresh the same process after the visual tree is replaced.
+                shell.return_value=(10, 50, (102,))
+                backend.shell_changed()
                 assert backend.apply_timer.isActive()
-                with patch.object(backend,'write',wraps=backend.write) as write:
-                    backend.apply_timer.stop();backend.apply_desired()
-                    write.assert_called_once()
-                assert starts.call_count==2
-                dock.cfg['taskbar_mode']='system'
+                apply()
+                connect()
+                assert refresh.call_count==3 and starts.call_count==1
+                # Saving another mode during recovery uses the most recent config.
+                state[0]=QProcess.NotRunning;backend.finished(1,QProcess.CrashExit)
+                assert backend.apply_timer.isActive()
+                dock.cfg['taskbar_mode']='acrylic'
                 backend.sync()
-                assert not backend.shell_timer.isActive() and not backend.apply_timer.isActive()
-                state[0]=QProcess.NotRunning;backend.finished()
-                assert not backend.desired
+                apply()
+                assert starts.call_count==2
+                assert backend.configuration_matches(dock.cfg)
+                # Logout blocks an already queued callback; cancellation resumes recovery.
+                allowed.return_value=False
+                backend.suspend_session()
+                connect()
+                apply()
+                assert refresh.call_count==3 and starts.call_count==2
+                assert not backend.shell_timer.isActive() and not backend.refresh_timer.isActive()
+                allowed.return_value=True
+                backend.sync(force=True)
+                connect()
+                assert backend.shell_timer.isActive() and refresh.call_count==4
+                # Reused HWND with a different Explorer PID is a new shell.
+                shell.return_value=(10, 51, (102,))
+                backend.shell_changed()
+                assert backend.apply_timer.isActive()
+                apply()
+                connect()
+                assert refresh.call_count==5 and starts.call_count==2
+                dock.cfg['taskbar_mode']='system'
+                with patch.object(backend.process,'terminate',side_effect=stop):
+                    backend.sync()
+                assert not backend.desired and not backend.shell_timer.isActive()
+                assert not backend.apply_timer.isActive() and not backend.refresh_timer.isActive()
+                # Classic (or replaced) taskbars on Win11 may never have an island.
+                dock.cfg['taskbar_mode']='clear'
+                shell.return_value=(15, 52, ())
+                backend.sync()
+                assert not backend.apply_timer.isActive()
+                clock.return_value=45
+                backend.shell_changed()
+                assert backend.apply_timer.isActive()
+                apply()
+                connect()
+                assert starts.call_count==3 and complete.call_args.args[1]
             finally:
                 state[0]=QProcess.NotRunning
                 backend.close()
-    checks.append('Taskbar transparency waits for Explorer at login, reapplies after a new shell HWND, retries owned startup failure, and cancels retries in system mode.')
+    checks.append('Taskbar: late XAML on the same HWND, classic fallback, late worker, failed launch, pid/child rebuilding, latest mode and cancelled Windows logoff use bounded recovery without a second live backend.')
 
 
 def check_taskbar_effect_status(runtime, checks):

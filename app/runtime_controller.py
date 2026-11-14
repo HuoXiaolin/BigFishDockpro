@@ -386,6 +386,7 @@ class RuntimeController:
         from probe_lifecycle import set_ending
         set_ending(ending)
         if ending:
+            self.taskbar.suspend_session()
             self.resources.suspend_session()
         else:
             # Windows can cancel shutdown. Recreate demand-driven collectors
@@ -399,6 +400,7 @@ class RuntimeController:
             QTimer.singleShot(250,self.resume_session)
             return
         self.resources.sync()
+        self.taskbar.resume_session()
 
     def commit_session(self,*args):
         self.set_session_ending(True)

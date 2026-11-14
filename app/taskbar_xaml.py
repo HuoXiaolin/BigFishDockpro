@@ -1,18 +1,66 @@
 """Portable TranslucentTB adapter with owned process lifecycle."""
+import ctypes
 import json
 import os
+from ctypes import wintypes
+from functools import lru_cache
 from pathlib import Path
+from time import monotonic
 from PyQt5.QtCore import QProcess, QTimer
 from PyQt5.QtGui import QColor
+from probe_lifecycle import allowed
 
 
-def shell_handle():
-    import ctypes
-    from ctypes import wintypes
-    user=ctypes.windll.user32
-    user.FindWindowW.argtypes=[wintypes.LPCWSTR,wintypes.LPCWSTR]
-    user.FindWindowW.restype=wintypes.HWND
-    return user.FindWindowW('Shell_TrayWnd',None)
+_ENUM_CHILD = getattr(ctypes, 'WINFUNCTYPE', ctypes.CFUNCTYPE)(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+
+@lru_cache(maxsize=1)
+def user32():
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user.FindWindowW.restype = wintypes.HWND
+    user.EnumChildWindows.argtypes = [wintypes.HWND, _ENUM_CHILD, wintypes.LPARAM]
+    user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+    user.RegisterWindowMessageW.restype = wintypes.UINT
+    user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user.PostMessageW.restype = wintypes.BOOL
+    return user
+
+
+def window_pid(user, window):
+    pid = wintypes.DWORD()
+    user.GetWindowThreadProcessId(window, ctypes.byref(pid))
+    return pid.value
+
+
+def shell_snapshot():
+    user = user32()
+    hwnd = user.FindWindowW('Shell_TrayWnd', None)
+    pid = window_pid(user, hwnd) if hwnd else 0
+    if not pid:
+        return None
+    islands = []
+    label = ctypes.create_unicode_buffer(96)
+
+    # The pinned TranslucentTB backend detects these children too:
+    # https://github.com/TranslucentTB/TranslucentTB/blob/2026.2/TranslucentTB/taskbar/taskbarattributeworker.cpp#L1068-L1143
+    # The frame HWND can precede them.
+    @_ENUM_CHILD
+    def collect(child, _):
+        if (user.GetClassNameW(child, label, len(label))
+                and label.value == 'Windows.UI.Composition.DesktopWindowContentBridge'
+                and user.GetWindowTextW(child, label, len(label))
+                and label.value == 'DesktopWindowXamlSource'):
+            islands.append(child)
+        return True
+
+    user.EnumChildWindows(hwnd, collect, 0)
+    if user.FindWindowW('Shell_TrayWnd', None) == hwnd and window_pid(user, hwnd) == pid:
+        return hwnd, pid, tuple(sorted(islands))
+    return None
 
 
 def configuration(cfg):
@@ -40,26 +88,14 @@ def effect_key(cfg):
     return tuple(cfg.get(key) for key in EFFECT_KEYS)
 
 
-def resident_program():
-    """Identify the TranslucentTB control window on this desktop, including portable copies."""
-    import ctypes
-    from ctypes import wintypes
-    user = ctypes.WinDLL('user32', use_last_error=True)
-    user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-    user.FindWindowW.restype = wintypes.HWND
-    window = user.FindWindowW('TrayWindow', 'TranslucentTB')
-    if not window:
-        return None
-    pid = wintypes.DWORD()
-    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-    user.GetWindowThreadProcessId(window, ctypes.byref(pid))
+def program_path(pid):
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
                                                 ctypes.POINTER(wintypes.DWORD)]
-    process = kernel.OpenProcess(0x1000, False, pid.value)
+    process = kernel.OpenProcess(0x1000, False, pid)
     if process:
         try:
             path = ctypes.create_unicode_buffer(32768)
@@ -71,7 +107,38 @@ def resident_program():
     return None
 
 
+def resident_program():
+    """Identify the TranslucentTB control window on this desktop, including portable copies."""
+    user = user32()
+    window = user.FindWindowW('TrayWindow', 'TranslucentTB')
+    return program_path(window_pid(user, window)) if window else None
+
+
+def request_refresh(program, owned_pid):
+    """Ask our resident worker to rediscover taskbars using its existing handler."""
+    user = user32()
+    tray = user.FindWindowW('TrayWindow', 'TranslucentTB')
+    worker = user.FindWindowW('TTB_WorkerWindow', 'TTB_WorkerWindow')
+    if not (tray and worker):
+        return False
+    pid = window_pid(user, tray)
+    if not pid or window_pid(user, worker) != pid:
+        return False
+    if owned_pid is not None:
+        if owned_pid != pid:
+            return False
+    elif program_path(pid) != program:
+        return False
+    message = user.RegisterWindowMessageW('TaskbarCreated')
+    return bool(message and user.PostMessageW(worker, message, 0, 0))
+
+
 class XamlTaskbar:
+    SETTLE_MS = 1200
+    CLASSIC_GRACE_SECONDS = 12
+    RECOVERY_DELAYS = (2000, 5000, 10000, 20000)
+    REFRESH_DELAYS = (2500, 2000, 4000, 8000)
+
     def __init__(self, dock, directory, log, complete=None):
         self.dock, self.directory, self.log = dock, Path(directory), log
         self.process = QProcess(dock)
@@ -92,31 +159,98 @@ class XamlTaskbar:
         self.stop_timer.timeout.connect(self.process.kill)
         self.monitor_shell = not (getattr(dock,'preview',False) or os.environ.get('FISHDOCK_TEST_DESKTOP'))
         self.shell = None
+        self.shell_since = 0
+        self.waiting_for_shell = False
+        self.rebind = False
         self.desired = None
         self.retries = 0
         self.shell_timer = QTimer(dock);self.shell_timer.setInterval(2500)
         self.shell_timer.timeout.connect(self.shell_changed)
         self.apply_timer = QTimer(dock);self.apply_timer.setSingleShot(True)
         self.apply_timer.timeout.connect(self.apply_desired)
+        self.refresh_timer = QTimer(dock);self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.timeout.connect(self.refresh_backend)
+        self.refresh_attempt = 0
+
+    def shell_ready(self):
+        return self.shell is not None and (
+            len(self.shell[2]) in (1, 2) or monotonic() - self.shell_since >= self.CLASSIC_GRACE_SECONDS)
+
+    def observe_shell(self, current):
+        if current == self.shell:
+            return
+        self.shell = current
+        self.shell_since = monotonic()
+        self.retries = 0
+        self.waiting_for_shell = self.rebind = True
+        self.apply_timer.stop()
+        self.refresh_timer.stop()
 
     def shell_changed(self):
-        if self.closed or self.desired is None:return
-        current=shell_handle()
-        if current!=self.shell:
-            self.shell=current;self.retries=0
-            self.apply_timer.stop()
-            if current:self.apply_timer.start(750)
+        if self.closed or self.desired is None or not allowed():
+            return
+        self.observe_shell(shell_snapshot())
+        self.queue_apply()
+
+    def queue_apply(self):
+        if (self.waiting_for_shell and self.pending is None and self.shell_ready()
+                and not self.apply_timer.isActive()):
+            self.apply_timer.start(self.SETTLE_MS)
 
     def apply_desired(self):
-        if self.closed or self.pending is not None or self.desired is None:return
-        current=shell_handle()
-        if current and current==self.shell:self.apply(self.desired)
-        elif current!=self.shell:self.shell_changed()
+        if self.closed or self.pending is not None or self.desired is None or not allowed():
+            return
+        current = shell_snapshot()
+        if current != self.shell:
+            self.observe_shell(current)
+            self.queue_apply()
+        elif self.shell_ready():
+            self.waiting_for_shell = False
+            self.apply(self.desired)
 
     def schedule_recovery(self):
-        delays=(1000,2000,4000,8000)
-        if self.monitor_shell and self.desired is not None and self.shell and self.retries<len(delays):
-            self.apply_timer.start(delays[self.retries]);self.retries+=1
+        if (self.monitor_shell and self.desired is not None and self.shell_ready()
+                and self.retries < len(self.RECOVERY_DELAYS) and allowed()):
+            self.apply_timer.start(self.RECOVERY_DELAYS[self.retries])
+            self.retries += 1
+
+    def queue_refresh(self):
+        self.rebind = True
+        if not self.refresh_timer.isActive() and allowed():
+            self.refresh_attempt = 0
+            self.refresh_timer.start(self.REFRESH_DELAYS[0])
+
+    def refresh_backend(self):
+        cfg = self.starting or self.active
+        if (self.closed or self.pending is not None or self.desired is None or not self.rebind
+                or cfg != self.desired or not allowed()):
+            return
+        current = shell_snapshot()
+        if current != self.shell or not self.shell_ready():
+            self.observe_shell(current)
+            self.queue_apply()
+            return
+        state = self.process.state()
+        if state == QProcess.Running or self.shared:
+            pid = self.process.processId() if state == QProcess.Running else None
+            if request_refresh(self.program, pid):
+                self.active, self.starting = cfg, None
+                self.rebind = False
+                message = '任务栏组件已连接，已请求应用当前效果。'
+                self.log(message)
+                self.report(cfg, True, message)
+                return
+        if state == QProcess.NotRunning and self.shared and resident_program() is None:
+            self.shared = False
+            self.active = None
+            self.waiting_for_shell = True
+            self.queue_apply()
+            return
+        self.refresh_attempt += 1
+        if self.refresh_attempt < len(self.REFRESH_DELAYS):
+            self.refresh_timer.start(self.REFRESH_DELAYS[self.refresh_attempt])
+        else:
+            self.report(cfg, False, '任务栏组件未能连接到任务栏，可点击重新应用。')
 
     def write(self, cfg):
         path = self.directory / 'settings.json'
@@ -136,20 +270,29 @@ class XamlTaskbar:
         expected = configuration(cfg)
         return isinstance(actual, dict) and all(actual.get(key) == value for key, value in expected.items())
 
-    def confirmed(self, cfg):
-        return (cfg['taskbar_mode'] != 'system' and self.pending is None
+    def owns_configuration(self, cfg):
+        return (cfg['taskbar_mode'] != 'system'
                 and resident_program() == self.program and self.configuration_matches(cfg))
 
-    def sync(self):
+    def confirmed(self, cfg):
+        return self.pending is None and not self.rebind and self.owns_configuration(cfg)
+
+    def sync(self, force=False):
+        if self.closed or not allowed():
+            return
         cfg = {key:self.dock.cfg[key] for key in EFFECT_KEYS}
         self.apply_timer.stop()
         self.retries=0
         self.desired=None if cfg['taskbar_mode']=='system' else cfg
         if self.monitor_shell:
             if self.desired is None:
-                self.shell_timer.stop();self.shell=None
+                self.suspend_session()
+                self.shell = None
+                self.waiting_for_shell = self.rebind = False
             else:
-                self.shell=shell_handle()
+                self.observe_shell(shell_snapshot())
+                if force:
+                    self.rebind = True
                 if not self.shell_timer.isActive():self.shell_timer.start()
         if self.pending is not None:
             # The owned process is stopping. Only the most recent request should run next.
@@ -162,16 +305,23 @@ class XamlTaskbar:
             return
         self.apply_when_ready(cfg)
 
-    def apply_when_ready(self,cfg):
-        if self.monitor_shell and cfg['taskbar_mode']!='system' and self.process.state()==QProcess.NotRunning:
-            if self.shell:self.apply_timer.start(750)
-        else:self.apply(cfg)
+    def apply_when_ready(self, cfg):
+        if self.monitor_shell and cfg['taskbar_mode'] != 'system':
+            if self.waiting_for_shell or self.process.state() == QProcess.NotRunning:
+                self.waiting_for_shell = True
+                self.shell_changed()
+                return
+        self.apply(cfg)
 
     def apply(self, cfg):
+        if self.closed or not allowed():
+            return
         try:
             self.write(cfg)
         except OSError as error:
             self.report(cfg, False, '任务栏效果未应用：无法保存组件配置，'+str(error)+'；可点击重新应用。')
+            if getattr(error, 'winerror', None) in (32, 33):  # transient file sharing/lock
+                self.schedule_recovery()
             return
         state = self.process.state()
         if cfg['taskbar_mode'] == 'system':
@@ -182,15 +332,22 @@ class XamlTaskbar:
             self.starting = cfg
         elif state == QProcess.Running:
             # The portable backend watches settings.json, including atomic replacement.
-            self.starting = None
             self.active = cfg
-            self.report(cfg, True, '已更新运行中的任务栏组件配置。')
+            if self.starting is not None:
+                self.starting = cfg
+            if self.monitor_shell and self.rebind:
+                self.queue_refresh()
+            else:
+                self.report(cfg, True, '已更新运行中的任务栏组件配置。')
         else:
             resident = resident_program()
             if resident == self.program:
                 self.shared = True
                 self.active = cfg
-                self.report(cfg, True, '已更新运行中的任务栏组件配置。')
+                if self.monitor_shell and self.rebind:
+                    self.queue_refresh()
+                else:
+                    self.report(cfg, True, '已更新运行中的任务栏组件配置。')
             elif resident is not None:
                 self.report(cfg, False, '另一份 TranslucentTB 正在管理任务栏。退出该实例后可重新应用。')
             else:
@@ -207,6 +364,11 @@ class XamlTaskbar:
     def started(self):
         if self.closed or self.starting is None or self.pending is not None:
             return
+        if self.monitor_shell:
+            # QProcess.started only confirms Windows loaded the process. Give the
+            # worker and the taskbar visual tree time to initialise, then rebind.
+            self.queue_refresh()
+            return
         self.active, self.starting = self.starting, None
         self.report(self.active, True, '任务栏组件已启动。')
 
@@ -217,6 +379,8 @@ class XamlTaskbar:
             return
         if self.pending is not None:
             self.finished()
+        elif not allowed():
+            self.starting = None
         elif self.starting is not None:
             cfg, self.starting = self.starting, None
             self.report(cfg, False, '任务栏组件未能启动：'+self.process.errorString()+'；可点击重新应用。')
@@ -224,29 +388,39 @@ class XamlTaskbar:
 
     def finished(self, code=0, status=QProcess.NormalExit):
         self.stop_timer.stop()
+        self.refresh_timer.stop()
         if self.closed:
             return
-        previous = self.active or self.starting
+        previous = self.starting or self.active
         self.active = self.starting = None
+        if not allowed():
+            self.pending = None
+            return
         if self.pending is not None:
             cfg, self.pending = self.pending, None
             self.apply_when_ready(cfg)
         elif previous is not None:
             # A second TranslucentTB launcher exits normally after handing off to its resident.
-            if status == QProcess.NormalExit and code == 0 and self.confirmed(previous):
+            if status == QProcess.NormalExit and code == 0 and self.owns_configuration(previous):
                 self.active = previous
                 self.shared = True
-                self.report(previous, True, '任务栏效果由现有组件提供。')
+                if self.monitor_shell and self.rebind:
+                    self.queue_refresh()
+                else:
+                    self.report(previous, True, '任务栏效果由现有组件提供。')
             else:
                 self.report(previous, False, f'任务栏组件已退出（退出码 {code}），可点击重新应用。')
                 self.schedule_recovery()
 
-    def close(self,shutdown=False):
-        self.closed = True
-        for name in ('shell_timer','apply_timer'):
+    def suspend_session(self):
+        for name in ('shell_timer', 'apply_timer', 'refresh_timer'):
             timer=getattr(self,name,None)
             if timer is not None:timer.stop()
-        if getattr(self, 'shared', False) and self.active and self.confirmed(self.active):
+
+    def close(self,shutdown=False):
+        self.closed = True
+        self.suspend_session()
+        if getattr(self, 'shared', False) and self.active and self.owns_configuration(self.active):
             # Restore only our last configuration. The other process owns its lifecycle.
             try:
                 self.write(dict(self.active, taskbar_mode='system'))

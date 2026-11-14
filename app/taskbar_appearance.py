@@ -177,7 +177,8 @@ class TaskbarAppearance:
         self.set_status(message, '' if success else message)
 
     def reconcile_status(self):
-        if self.xaml is None or self._pending_effect is not None or not (self.error or self.xaml.shared):
+        if (self.closed or self.xaml is None or self._pending_effect is not None
+                or self.xaml.rebind or not (self.error or self.xaml.shared)):
             return
         cfg = self.dock.cfg
         if self.xaml.confirmed(cfg):
@@ -192,6 +193,8 @@ class TaskbarAppearance:
         return self.sync(force=True)
 
     def sync(self, force=False):
+        if getattr(self, 'closed', False):
+            return False
         self.text.sync(self.dock.cfg.get('taskbar_text_mode','system'))
         effect = effect_key(self.dock.cfg)
         pending = getattr(self, '_pending_effect', None)
@@ -201,7 +204,7 @@ class TaskbarAppearance:
             self._effect = None
             self._pending_effect = effect
             self.set_status('正在应用任务栏效果…')
-            self.xaml.sync()
+            self.xaml.sync(force=force)
             return not bool(getattr(self, 'error', ''))
         if self.backend is None:
             return False
@@ -247,6 +250,14 @@ class TaskbarAppearance:
             for hwnd, _ in self.active & windows():
                 restore(hwnd)
         self.active.clear()
+
+    def suspend_session(self):
+        if self.xaml is not None:
+            self.xaml.suspend_session()
+
+    def resume_session(self):
+        if self.xaml is not None and self.dock.cfg['taskbar_mode'] != 'system':
+            self.retry()
 
     def close(self,shutdown=False):
         if getattr(self,'closed',False):return

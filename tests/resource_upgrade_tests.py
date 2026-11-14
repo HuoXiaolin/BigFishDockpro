@@ -101,13 +101,15 @@ def run(api,runtime,root,app,output,checks):
         service.accept_sample(data)
         assert set(SENSOR_UNITS)<=set(row[0] for row in display_values(service))
         bridge=service.deck
+        # The detail dialog opens on the last seven days.
+        now=datetime.now().astimezone()
         providers=[dict(id=name,name=name,plan='测试套餐',status='已连接',source='fixture',note='隔离测试数据',usageNote='fixture',usageAvailable=True,
-                        quotas=[dict(label='5小时 · 已用',percent=value,value=f'{value}%',reset='2026-11-08T12:00:00+08:00'),
-                                dict(label='每周 · 已用',percent=max(0,value-18),value=f'{max(0,value-18)}%',reset='2026-11-12T12:00:00+08:00')],
+                         quotas=[dict(label='5小时 · 已用',percent=value,value=f'{value}%',reset=(now+timedelta(hours=4)).isoformat()),
+                                 dict(label='每周 · 已用',percent=max(0,value-18),value=f'{max(0,value-18)}%',reset=(now+timedelta(days=5)).isoformat())],
                         today=dict(tokens=12345,cost=None,unpriced=1),week=dict(tokens=654321,cost=1.23,unpriced=0),
-                        days=[dict(date='2026-11-07',model='fixture-model',summary=dict(tokens=12345,cost=None,unpriced=1))])
+                         days=[dict(date=now.date().isoformat(),model='fixture-model',summary=dict(tokens=12345,cost=None,unpriced=1))])
                    for name,value in [('Claude',34),('Codex',72),('Cursor',87),('Antigravity',51)]]
-        bridge.accept(dict(type='ai',at='2026-11-07T12:30:00+08:00',providers=providers))
+        bridge.accept(dict(type='ai',at=now.isoformat(),providers=providers))
         assert bridge.alert == 'Cursor  额度剩余 13%'
         bridge.alert_until=0
         bridge.accept(dict(type='media',tracks=[dict(id='fixture',source='测试播放器',title='午后的海风')],pinned=False,
