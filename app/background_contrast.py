@@ -1,0 +1,58 @@
+"""Choose a readable foreground against a solid or composited background."""
+from functools import lru_cache
+
+
+def rgb(color):
+    return tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+
+
+def _luminance(value):
+    linear = [v/255/12.92 if v/255 <= .04045 else ((v/255+.055)/1.055)**2.4 for v in value]
+    return sum(v*w for v, w in zip(linear, (.2126, .7152, .0722)))
+
+
+def blend(color, backdrop, opacity):
+    value = rgb(color) if isinstance(color, str) else color
+    if backdrop is None:
+        return value
+    opacity = max(0, min(1, opacity))
+    return tuple(a*opacity+b*(1-opacity) for a, b in zip(value, backdrop))
+
+
+def foreground(color, backdrop=None, opacity=1):
+    luminance = _luminance(blend(color, backdrop, opacity))
+    return '#000000' if (luminance+.05)/.05 >= 1.05/(luminance+.05) else '#ffffff'
+
+
+def contrast(color, ink):
+    light, dark = sorted((_luminance(color), _luminance(rgb(ink))), reverse=True)
+    return (light + .05) / (dark + .05)
+
+
+@lru_cache(maxsize=12)
+def _sample(key, rect):
+    from PyQt5.QtCore import QRect, QRectF, QSize
+    from PyQt5.QtGui import QColor, QImage
+    from wallpaper_source import image_file, render
+    path, stamp, position, color, monitor, bounds = key
+    source = image_file(path, stamp) if path and stamp is not None else QImage()
+    sample = render(source, position, QColor.fromRgba(color), QRect(*monitor), QRect(*bounds), QRectF(*rect), QSize(16, 16))
+    colors = [sample.pixelColor(x, y) for y in range(16) for x in range(16)]
+    return tuple(sum(getattr(c, part)() for c in colors)/len(colors) for part in ('red', 'green', 'blue'))
+
+
+def wallpaper_color(window):
+    """Read wallpaper files only; never capture foreground applications."""
+    from PyQt5.QtCore import QRectF
+    from wallpaper_source import wallpaper_key
+    screen = window.screen()
+    key = wallpaper_key(window, screen)
+    monitor = QRectF(*key[4]); scale = monitor.width()/max(1, screen.geometry().width())
+    from resource_taskbar import taskbars
+    bar = next((b['rect'] for b in taskbars() if b['screen'] == screen.name()), None)
+    if bar is not None:
+        logical = screen.geometry()
+        region = QRectF(monitor.x()+(bar.x()-logical.x())*scale, monitor.y()+(bar.y()-logical.y())*scale, bar.width()*scale, bar.height()*scale)
+    else:
+        region = QRectF(monitor.x(), monitor.bottom()-48*scale, monitor.width(), 48*scale)
+    return _sample(key, region.getRect())

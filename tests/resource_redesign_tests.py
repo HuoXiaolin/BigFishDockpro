@@ -21,7 +21,7 @@ def fixtures():
 
 
 def aggregation(checks):
-    from resource_pages import cost_note,cost_text
+    from resource_pages import cost_note,cost_text,cost_label
     from resource_usage import aggregate,combine
     rows=fixtures()
     result=aggregate(rows)
@@ -37,6 +37,8 @@ def aggregation(checks):
     estimate=dict(cost=10.37,estimated=True,unpriced=2)
     assert cost_text(estimate)=='$10.37' and cost_text(estimate,currency=False)=='10.37'
     assert cost_note(estimate)=='含估算 · 2 条未定价' and cost_note(unknown)=='1 条未定价'
+    assert cost_label(estimate)=='已计价费用' and cost_label(dict(cost=10,estimated=True))=='参考费用'
+    assert cost_label(dict(cost=10,estimated=False))=='费用'
     assert cost_text(dict(cost=None,unpriced=2))=='未定价' and cost_text(dict(cost=0))=='$0.00'
     assert cost_text(dict(cost=.000037))=='$0.000037'
     assert cost_text(dict(cost=.000000037))=='<$0.000001'

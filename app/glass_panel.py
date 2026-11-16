@@ -278,15 +278,15 @@ class DesktopPanel(QDialog):
         content.addWidget(self.list, 1)
         from flip_stack import ContentTransition
         self.page_transition=ContentTransition(self.list)
-        footer = self.footer = QHBoxLayout()
-        self.notice = label('拖入文件、文件夹或快捷方式', 'muted')
+        from page_footer import FooterLabel, PagePager
+        self.notice = FooterLabel('拖入文件、文件夹或快捷方式', self.content)
         self.notice.setObjectName('PanelLabel')
         self.notice.setStyleSheet('font-size:11px;')
-        footer.addWidget(self.notice, 1)
+        self.notice.setContentsMargins(0, 0, 4, 0)
         from ui_style import SubtleSizeGrip
-        self.grip = SubtleSizeGrip(self,lambda:self.colors().get('light',True))
-        footer.addWidget(self.grip)
-        content.addLayout(footer)
+        self.grip = SubtleSizeGrip(self.content,lambda:self.colors().get('light',True))
+        self.page_pager = PagePager(self.content, self.shift_merged_page, bottom=0, leading=self.notice, grip=self.grip)
+        self.page_pager.hide()
         body.addWidget(self.content, 1)
         self.query.textChanged.connect(self.render)
         self.setGeometry(*self.model.get('geometry', self.default_geometry))
@@ -307,8 +307,12 @@ class DesktopPanel(QDialog):
         for index,(identity,name) in enumerate(expected):
             if identity==self.identity and not self.tabs.pressing and self.tabs.currentIndex()!=index: self.tabs.setCurrentIndex(index)
         self.update_tab_icons()
-        self.tabs.setVisible(self.manager.is_merged(self.identity))
+        merged = self.manager.is_merged(self.identity)
+        self.tabs.setVisible(merged)
         self.tabs.blockSignals(False)
+        can_switch = merged and len(expected) > 1
+        self.page_pager.setVisible(can_switch)
+        self.page_pager.set_page(self.model['name'], can_switch)
 
     def update_tab_icons(self):
         size=metric(15,self.ui_factor,11);light=self.colors()['light'];dpr=self.devicePixelRatioF()
@@ -341,6 +345,14 @@ class DesktopPanel(QDialog):
             self.manager.select_page(identity)
             if self.manager.active_for(identity)!=identity: self.update_tabs(self.manager.merged_models(identity))
 
+    def shift_merged_page(self, step):
+        if self.tabs.pressing or not self.manager.is_merged(self.identity):
+            return
+        index = self.tabs.currentIndex()
+        count = self.tabs.count()
+        if index >= 0 and count > 1:
+            self.select_tab((index + step) % count)
+
     @property
     def model(self): return self.manager.model(self.identity)
 
@@ -350,15 +362,16 @@ class DesktopPanel(QDialog):
             return settings(self)['style' if key=='collapse_style' else 'ratio']
         return self.dock.cfg['panel_'+key]
 
-    def colors(self):
-        theme = self.option('theme')
-        color = self.option('color')
+    def colors(self, style=None):
+        from appearance_presets import panel_appearance
+        style = panel_appearance(self.dock.cfg) if style is None else style
+        theme, color = style['theme'], style['color']
         if theme == 'follow':
             theme = None
             color = color or self.dock.cfg.get('theme_color', '')
-        if self.dock.cfg.get('card_design') in ('gradient','paper','minimal'):theme='light'
+        if self.option('appearance_source') == 'custom' and self.dock.cfg.get('card_design') in ('gradient','paper','minimal'):theme='light'
         from liquid_glass import material_palette
-        return material_palette(tint_palette(self.dock.base_theme_colors(theme), color), self.option('material'))
+        return material_palette(tint_palette(self.dock.base_theme_colors(theme), color), style['material'])
 
     def apply_options(self):
         layout=getattr(self.runtime,'layout',None)
@@ -370,9 +383,9 @@ class DesktopPanel(QDialog):
         self.layout().setSpacing(metric(4,factor))
         self.header_layout.setSpacing(metric(5,factor))
         self.content.layout().setSpacing(metric(4,factor))
-        self.footer.setSpacing(metric(4,factor))
         self.grip.setFixedSize(metric(12,factor,6),metric(12,factor,6))
         self.notice.setStyleSheet('font-size:%dpx;'%metric(11,factor,6))
+        self.list.setViewportMargins(0, 0, 0, self.notice.sizeHint().height())
         view = self.model.get('view','small')
         self.list.setViewMode(QListWidget.ListMode if view=='list' else QListWidget.IconMode)
         icon=metric(22 if view=='list' else 54 if view=='large' else 34,factor,12)
@@ -401,6 +414,7 @@ class DesktopPanel(QDialog):
             if self.option('locked'):self.setFixedSize(self.size())
         colors = self.colors()
         ink = colors['fg'].name()
+        self.page_pager.sync_appearance(ink)
         content_ink='#000000' if colors['light'] else '#ffffff'
         self.list.setStyleSheet('QListWidget#PanelFiles {color:'+content_ink+';}')
         content_palette=self.list.palette()
@@ -1002,18 +1016,20 @@ class DesktopPanel(QDialog):
 
     def capture_backdrop(self):
         if self.dock.preview or not self.isVisible() or self.runtime.game_active: return
-        if self.option('material') in ('solid', 'clear'):
+        from appearance_presets import panel_appearance
+        style = panel_appearance(self.dock.cfg)
+        if style['material'] in ('solid', 'clear') or not style.get('blur_enabled', True):
             self.backdrop = None
             self.update()
             return
         from glass_capture import capture_behind,surface_windows,backdrop_key
-        key=backdrop_key(self,self.option('blur'),self.option('material'))
+        key=backdrop_key(self,style['blur'],style['material'])
         if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         image=capture_behind(self,surface_windows(self.dock))
         if image is not None:
             from liquid_glass import material_blur
             from glass_capture import smooth_backdrop
-            self.backdrop=smooth_backdrop(image,material_blur(self.option('blur'),self.option('material')))
+            self.backdrop=smooth_backdrop(image,material_blur(style['blur'],style['material']))
             self._backdrop_key=key
         self.update()
 
@@ -1025,21 +1041,27 @@ class DesktopPanel(QDialog):
         shape = QPainterPath()
         radius=self.surface_radius()
         shape.addRoundedRect(rect,radius,radius)
-        colors = self.colors()
-        highlight = self.option('highlight')/45
+        from appearance_presets import material_design, panel_appearance
+        style = panel_appearance(self.dock.cfg)
+        colors = self.colors(style)
+        highlight = style['highlight']/45
         colors['border'].setAlpha(min(255, round(colors['border'].alpha()*highlight)))
         colors['spec'] = min(255, round(colors['spec']*highlight))
         stops = [(position, min(255, round(alpha*highlight))) for position, alpha in self.dock.merged_grad_stops(colors)]
-        material = self.option('material')
-        alpha = self.option('opacity')*2.55
+        material = style['material']
+        alpha = style['opacity']*2.55
         if material == 'clear': alpha = min(alpha, 55)
         if material == 'mica': alpha = max(alpha, 210)
         if material == 'solid': alpha = 255
-        surface = SimpleNamespace(cfg={'glass': material not in ('clear','solid'), 'clear_background': self.is_clear(), 'dock_material': material}, backdrop=self.backdrop,
+        clear = self.is_clear(style)
+        surface = SimpleNamespace(cfg={'glass': style.get('blur_enabled', True) and material not in ('clear','solid'), 'clear_background': clear, 'dock_material': material}, backdrop=self.backdrop,
                                   spec_x=self.spec_x, spec_alpha=self.spec_alpha)
         paint_liquid_glass(surface, painter, shape, rect, rect, colors, int(alpha), stops)
         from card_design import paint_design
-        paint_design(painter,rect,self.dock.cfg,clear=self.is_clear(),
+        following = self.option('appearance_source') == 'app'
+        design = material_design(material, 'aurora') if following else None
+        design_cfg = {'theme_color': style['color']} if following else self.dock.cfg
+        paint_design(painter,rect,design_cfg,design,clear=clear,
                      body_top=self.design_body_top(),body_inset=metric(4,self.ui_factor),corner_radius=radius)
         if self.option('face'):
             badge=getattr(self,'fold_badge',None)
@@ -1061,8 +1083,10 @@ class DesktopPanel(QDialog):
         return self.query.mapTo(self,self.query.rect().topLeft()).y()-metric(4,self.ui_factor)
 
 
-    def is_clear(self):
-        return self.option('material') == 'clear' and self.option('opacity') == 0 and self.option('highlight') == 0
+    def is_clear(self, style=None):
+        from appearance_presets import panel_appearance
+        style = panel_appearance(self.dock.cfg) if style is None else style
+        return style['material'] == 'clear' and style['opacity'] == 0 and style['highlight'] == 0
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -1101,22 +1125,23 @@ class PanelOptions(QDialog):
     def __init__(self,panel):
         super().__init__(panel,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         from ui_style import SettingsHeader
-        from appearance_presets import material_choices,COLOR_MODES
+        from appearance_presets import APPEARANCE_SOURCES, material_choices, COLOR_MODES
         from resource_options import FACE_SWITCH_RANGE
         self.panel,self.fields=panel,{};self.applying_preset=True
         self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
-        self.preset=ModernComboBox();self.preset.addItem('自定义');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('主题预设',self.preset)
         def choice(key,title,options):
             field=ModernComboBox()
             for name,value in options:field.addItem(name,value)
             self.fields[key]=field;form.addRow(title,field)
         def number(key,title,low,high):
             field=ModernSpinBox();field.setRange(low,high);self.fields[key]=field;form.addRow(title,field)
+        choice('appearance_source','外观来源',APPEARANCE_SOURCES)
+        self.preset=ModernComboBox();self.preset.addItem('自定义');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('主题预设',self.preset)
         choice('material','材质',material_choices(panel.option('material')));choice('theme','明暗模式',COLOR_MODES)
-        self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');colors=QVBoxLayout();row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
+        self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');self.color_box=QWidget();colors=QVBoxLayout(self.color_box);colors.setContentsMargins(0,0,0,0);row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
         from ui_style import ThemeSwatches
-        colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',colors)
+        colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',self.color_box)
         number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',2,30)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
@@ -1141,6 +1166,7 @@ class PanelOptions(QDialog):
             signal=field.currentIndexChanged if isinstance(field,QComboBox) else field.valueChanged
             signal.connect(self.customized)
         self.color.textChanged.connect(self.customized);self.fields['material'].currentIndexChanged.connect(self.material_changed)
+        self.fields['appearance_source'].currentIndexChanged.connect(self.sync_source)
         panel.manager.shared_settings_changed.connect(self.refresh_shared)
         self.setAttribute(Qt.WA_DeleteOnClose)
         compact_dialog(self)
@@ -1164,6 +1190,13 @@ class PanelOptions(QDialog):
         matching=next((i for i,(_,values) in enumerate(PANEL_PRESETS,1) if all(self.panel.option(key)==value for key,value in values.items())),0)
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
         self.applying_preset=False
+        self.sync_source()
+    def sync_source(self):
+        custom = self.fields['appearance_source'].currentData() == 'custom'
+        self.preset.setEnabled(custom)
+        self.color_box.setEnabled(custom)
+        for key in ('material', 'theme', 'opacity', 'blur', 'highlight'):
+            self.fields[key].setEnabled(custom)
     def material_changed(self):
         if not self.applying_preset and self.fields['material'].currentData()=='clear':
             self.fields['opacity'].setValue(0);self.fields['highlight'].setValue(0)

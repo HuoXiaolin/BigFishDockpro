@@ -1,10 +1,12 @@
 """Precomposed icon reflections and lightweight, native Dock utility controls."""
 import math,datetime
 from PyQt5.QtCore import QObject,QTimer,Qt,QRectF,QPointF,QSize,QPoint,QMimeData,QEvent
-from PyQt5.QtGui import QPixmap,QPainter,QColor,QLinearGradient,QFont,QPen,QDrag
+from PyQt5.QtGui import QPixmap,QPainter,QColor,QLinearGradient,QFont,QPen,QDrag,QPainterPath
 from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QApplication,QStackedWidget,QWidget,QFrame
 
-from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,normalize_order
+from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,normalize_order
+from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
+from dock_icon_shape import circular_icon
 
 REFLECTION_BUDGET=2*1024*1024
 
@@ -41,6 +43,20 @@ def symbol(p,rect,kind,color):
     elif kind=='text_color':
         p.drawLine(5,17,11,4);p.drawLine(11,4,17,17);p.drawLine(8,12,14,12)
         p.drawLine(4,21,20,21);p.setBrush(color);p.drawEllipse(QRectF(18,5,4,4))
+    elif kind=='start_menu':
+        p.drawRoundedRect(QRectF(3,3,18,18),2,2)
+        p.drawLine(12,3,12,21)
+        p.drawLine(3,12,21,12)
+    elif kind=='bell':
+        outline = QPainterPath(QPointF(4,17))
+        outline.cubicTo(6,15,6,13,6,10)
+        outline.cubicTo(6,6,8.5,4,12,4)
+        outline.cubicTo(15.5,4,18,6,18,10)
+        outline.cubicTo(18,13,18,15,20,17)
+        outline.closeSubpath()
+        p.drawPath(outline)
+        p.drawArc(QRectF(9,17,6,5),180*16,180*16)
+        p.drawLine(12,2,12,4)
     elif kind=='panels':p.drawRoundedRect(QRectF(3,3,8,18),2,2);p.drawRoundedRect(QRectF(14,3,8,8),2,2);p.drawRoundedRect(QRectF(14,14,8,7),2,2)
     elif kind=='magnify':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21);p.drawLine(6,9,12,9);p.drawLine(9,6,9,12)
     elif kind=='search':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21)
@@ -54,7 +70,6 @@ def symbol(p,rect,kind,color):
     elif kind=='monitor':
         for x,y in ((4,13),(10,5),(16,10)):p.drawRoundedRect(QRectF(x,y,3,20-y),1,1)
     elif kind=='flash':
-        from PyQt5.QtGui import QPainterPath
         path=QPainterPath(QPointF(13,2));path.lineTo(5,14);path.lineTo(11,14);path.lineTo(10,22);path.lineTo(19,9);path.lineTo(13,9);path.closeSubpath();p.drawPath(path)
     elif kind=='notes':
         p.drawRoundedRect(QRectF(4,3,16,18),2,2);p.drawLine(8,8,16,8);p.drawLine(8,12,16,12);p.drawLine(8,16,13,16)
@@ -77,6 +92,7 @@ class QuickTile(QPushButton):
     def __init__(self,popup,key,title,kind):
         super().__init__(popup);self.popup=popup;self.key=key;self.title=title;self.kind=kind;self.value='';self.active=False
         self.setObjectName('QuickTile')
+        self.setAccessibleName(title)
         self.setMinimumSize(84,82)
         # Tooltips are parented to the hovered button. Keep tile sizing and
         # transparency off QTipLabel, which otherwise becomes a tall black box.
@@ -126,8 +142,9 @@ class QuickTile(QPushButton):
         background=QColor('#dceaf2' if colors['light'] else '#34434d') if self.active else QColor('#e9f0f5' if colors['light'] else '#28333b') if self.underMouse() else QColor('#f0f5f8' if colors['light'] else '#232b31')
         if self.isDown():background.setAlpha(65)
         p.setPen(Qt.NoPen);p.setBrush(background);p.drawRoundedRect(rect,8,8)
-        ink=accent if self.active else colors['ink'];symbol(p,QRectF((self.width()-25)/2,11,25,25),self.kind,ink)
-        font=QFont('Microsoft YaHei UI');font.setPixelSize(12);font.setWeight(QFont.DemiBold);p.setFont(font);p.setPen(colors['ink'])
+        title_ink = colors['ink'] if self.isEnabled() else colors['muted']
+        symbol(p,QRectF((self.width()-25)/2,11,25,25),self.kind,accent if self.active else title_ink)
+        font=QFont('Microsoft YaHei UI');font.setPixelSize(12);font.setWeight(QFont.DemiBold);p.setFont(font);p.setPen(title_ink)
         p.drawText(QRectF(3,42,self.width()-6,18),Qt.AlignCenter,self.title)
         font.setPixelSize(10);font.setWeight(QFont.Normal);p.setFont(font);p.setPen(colors['muted'])
         p.drawText(QRectF(3,62,self.width()-6,15),Qt.AlignCenter,self.value)
@@ -219,7 +236,8 @@ class DockQuickSettings(QDialog):
         self.editing=not self.editing;self.edit_button.setText('完成' if self.editing else '排序');self.reset_button.setVisible(self.editing)
         self.status.setText('拖动交换位置 · 拖到翻页按钮切页，或右键跨页移动' if self.editing else '更改即保存 · 点击「排序」可调整按钮位置')
         self.status.setWordWrap(self.editing)
-        for tile in self.tiles.values():tile.setCursor(Qt.OpenHandCursor if self.editing else Qt.PointingHandCursor);tile.update()
+        for tile in self.tiles.values():tile.setCursor(Qt.OpenHandCursor if self.editing else Qt.PointingHandCursor)
+        self.refresh()
     def valid_drag(self,event):
         source=event.source()
         return bool(self.editing and isinstance(source,QuickTile) and source.popup is self and event.mimeData().hasFormat(MIME) and bytes(event.mimeData().data(MIME))==source.key.encode('ascii'))
@@ -283,7 +301,23 @@ class DockQuickSettings(QDialog):
         from taskbar_appearance import MODES
         values['taskbar'] = dict((key, title) for title, key in MODES).get(cfg.get('taskbar_mode'), '跟随系统')
         values['taskbar_text'] = {'system':'跟随系统','light':'浅色文字 · 白字','dark':'深色文字 · 黑字'}.get(cfg.get('taskbar_text_mode'), '跟随系统')
-        self.tiles['taskbar_text'].setToolTip('点击循环切换：跟随系统 → 白字 → 黑字。\n联动 Windows 明暗模式及开始菜单，普通应用配色保留。')
+        if cfg.get('taskbar_text_auto'):values['taskbar_text'] = '随背景自动配色'
+        self.tiles['taskbar_text'].setToolTip('点击循环切换：跟随系统 → 白字 → 黑字 → 随背景自动配色。')
+        shell = getattr(runtime, 'shell_appearance', None)
+        shell_supported = shell is not None and shell.supported
+        for key in SHELL_ACTIONS:
+            tile = self.tiles[key]
+            tile.setEnabled(shell_supported or self.editing)
+            if shell_supported:
+                choices = SHELL_CYCLES[key]
+                selected = shell_cycle_index(cfg, key)
+                values[key] = choices[selected][0] if selected is not None else '跟随系统'
+                labels = [label for label, _ in choices]
+                tile.setToolTip('点击循环切换：' + ' → '.join(labels + labels[:1]))
+            else:
+                values[key] = '仅 Windows 11' if shell is not None else '暂不可用'
+                tile.setToolTip('系统面板美化需要 Windows 11。' if shell is not None else '')
+            tile.setAccessibleDescription(values[key])
         taskbar = getattr(runtime, 'taskbar', None)
         if taskbar is not self._bound_taskbar:
             old=getattr(self._bound_taskbar,'changed',None)
@@ -374,7 +408,6 @@ class DockQuickSettings(QDialog):
             notes = getattr(runtime, 'notes', None)
             if key == 'appearance' and notes and not notes.flush():
                 self.status.setText('便签保存失败，外观切换已取消。');return
-            from quick_cycles import next_cycle
             changes=next_cycle(cfg,key)
         elif key=='panels':changes={'panel_enabled':not cfg['panel_enabled'],'panels_visible':True}
         elif key=='magnify':changes={'magnify':not cfg['magnify']}
@@ -387,12 +420,18 @@ class DockQuickSettings(QDialog):
             modes=('auto','light','dark');changes={'theme':modes[(modes.index(cfg['theme'])+1)%3]}
         elif key=='blur':changes={'glass':not cfg['glass']}
         elif key=='panel_auto_hide':changes={'panel_auto_hide':not cfg['panel_auto_hide']}
+        elif key in SHELL_ACTIONS:
+            shell = getattr(runtime, 'shell_appearance', None)
+            if shell is None or not shell.supported:
+                return
+            changes = next_cycle(cfg, key)
         elif key=='taskbar_text':
             from taskbar_text import MODES
-            modes = [value for title, value in MODES]
-            current = cfg.get('taskbar_text_mode', 'system')
+            modes = [value for title, value in MODES] + ['auto']
+            current = 'auto' if cfg.get('taskbar_text_auto') else cfg.get('taskbar_text_mode', 'system')
             index = modes.index(current) if current in modes else 0
-            changes = {'taskbar_text_mode': modes[(index+1) % len(modes)]}
+            selected = modes[(index+1) % len(modes)]
+            changes = {'taskbar_text_auto': True} if selected == 'auto' else {'taskbar_text_mode': selected, 'taskbar_text_auto': False}
         elif key=='taskbar':
             taskbar = getattr(runtime, 'taskbar', None)
             if taskbar is None or taskbar.backend is None:
@@ -412,6 +451,8 @@ class DockQuickSettings(QDialog):
             notes=getattr(runtime,'notes',None)
             if notes and not notes.rows() and notes.new() is None:self.status.setText('便签已启用，但新建失败，请在便签管理中重试。')
         self.refresh();self.reanchor()
+        if key in SHELL_ACTIONS:
+            self.status.setText(f'{self.tiles[key].title}样式已保存。')
         if key=='taskbar':
             taskbar=getattr(runtime,'taskbar',None)
             self.taskbar_status_changed(getattr(taskbar,'status','任务栏效果配置已保存。'))
@@ -459,8 +500,21 @@ class DockExtras(QObject):
     def prepare(self,items):
         icons=[it for it in items if not it.get('sep') and it.get('pixmap') is not None]
         limit=min(128,max(24,int(math.sqrt(REFLECTION_BUDGET/max(1,len(icons))/5.6))))
+        circle = self.dock.cfg.get('dock_icon_shape') == 'circle'
+        edge = max(48, min(384, self.dock.icon_size * 2))
         for item in icons:
-            source=item['pixmap'];key=(source.cacheKey(),limit)
+            source = item['pixmap']
+            shape_key = (source.cacheKey(), edge) if circle else None
+            if item.get('_circle_key') != shape_key:
+                item.pop('_scaled', None)
+                if circle:
+                    item['_circle_icon'] = circular_icon(source, edge)
+                    item['_circle_key'] = shape_key
+                else:
+                    item.pop('_circle_icon', None)
+                    item.pop('_circle_key', None)
+            source = item.get('_circle_icon', source)
+            key = (source.cacheKey(), limit)
             if not self.dock.cfg.get('dock_reflections',True):item.pop('_reflected',None);item.pop('_reflection_key',None);continue
             if source.isNull():continue
             if item.get('_reflection_key')!=key:

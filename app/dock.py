@@ -996,12 +996,17 @@ class Dock(QWidget):
             self.update()
             runtime = getattr(getattr(self, 'tray', None), 'runtime', None)
             if runtime:
+                from clock_appearance import effective_appearance
                 for panel in runtime.panels.windows.values(): panel.apply_options()
                 if runtime.resources.window:runtime.resources.window.sync_window()
+                for card in runtime.resources.desktop_cards.values():card.sync_window()
                 if runtime.resources.ai_tray:runtime.resources.ai_tray.refresh()
                 for component in (runtime.clock,runtime.calendar):
-                    if component.isVisible() and component.isWindow() and component.option('appearance')['theme']=='auto':
+                    style=effective_appearance(component.option('appearance'),self.cfg)
+                    if component.isVisible() and component.isWindow() and style['theme']=='auto':
                         component.sync()
+                for note in runtime.notes.windows.values():
+                    if note.isVisible() and note.effective_appearance()['theme']=='auto':note.apply_style()
                 if runtime.flash.edge:runtime.flash.sync()
                 if runtime.spectrum:runtime.spectrum.update()
                 if runtime.daily_picture:runtime.daily_picture.update()
@@ -1177,7 +1182,7 @@ class Dock(QWidget):
                 **metadata(it),
             }
             if path in previous:
-                for key in ('_reflected','_reflection_ratio','_reflection_key'):
+                for key in ('_reflected','_reflection_ratio','_reflection_key','_circle_icon','_circle_key'):
                     if key in previous[path]:loaded[key]=previous[path][key]
             self.items.append(loaded)
         self.extras.prepare(self.items)
@@ -1835,7 +1840,8 @@ class Dock(QWidget):
                         if items is not None:
                             source = self.page_offset + self.drag_idx
                             destination = self.page_offset + target - int(source < self.page_offset + target)
-                            pixmap = self.items[self.drag_idx]['pixmap']
+                            item = self.items[self.drag_idx]
+                            pixmap = item.get('_circle_icon', item['pixmap'])
                             if self.commit_folder_items(items, save_config):
                                 animate_transfer(self, pixmap, e.globalPos(), destination, into_folder=True)
                             else:
@@ -2035,7 +2041,7 @@ class Dock(QWidget):
         pm = cache.get(q)
         if pm is not None:
             return pm
-        src = it.get("pixmap")
+        src = it.get('_circle_icon', it.get('pixmap'))
         if src is None or src.isNull():
             return None
         if q == src.width() and q == src.height():
@@ -2188,7 +2194,7 @@ class Dock(QWidget):
             if reflected is not None:rect.setHeight(rect.height()*(1+it['_reflection_ratio']))
             if pm is None:
                 pass
-            elif c.get("tile"):
+            elif c.get("tile") and '_circle_icon' not in it:
                 # 雾透模式：图标坐在一块白色圆角底板上（iOS 那种观感）
                 tile_r = dw * float(c.get("tile_radius", 0.30))
                 tile = QRectF(rect)
@@ -2849,8 +2855,11 @@ def main():
         # Start the animation after that work, so none of it holds a visible frame.
         QTimer.singleShot(0, complete_startup)
 
-    def schedule_startup_registration():
-        if probe or state.get('closing') or not cfg.get('autostart') or '--scheduled-startup' in args:
+    def finish_startup():
+        if probe or state.get('closing'):
+            return
+        state['runtime'].start_pawnio()
+        if not cfg.get('autostart') or '--scheduled-startup' in args:
             return
         from startup_service import set_enabled
         QTimer.singleShot(250, lambda: not state.get('closing') and cfg.get('autostart') and
@@ -2859,7 +2868,7 @@ def main():
     def animation_closed():
         state.pop('startup_animation', None)
         # Scheduler and registry calls can wait until the animation is gone.
-        schedule_startup_registration()
+        finish_startup()
 
     def complete_startup():
         if cfg['startup_animation']:
@@ -2868,7 +2877,7 @@ def main():
             animation.destroyed.connect(animation_closed)
             animation.play()
         else:
-            schedule_startup_registration()
+            finish_startup()
         if probe:
             QTimer.singleShot(200, lambda: probe.complete(state))
 

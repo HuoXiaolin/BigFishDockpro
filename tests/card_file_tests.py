@@ -23,7 +23,9 @@ def run(api,runtime,root,checks,output):
                                    {'id':'other','name':'其他','geometry':[600,80,320,260]}])
         assert api.save_config(cfg)
         manager=runtime.panels=DesktopPanels(runtime,roots=[str(fixture)]);manager.apply_settings()
-        assert manager.add_paths('documents',[str(first),str(conflict)]) and manager.add_paths('other',[str(first)])
+        for identity, paths in (('documents',[str(first),str(conflict)]),('other',[str(first)])):
+            assert manager.add_paths(identity,paths), (identity, manager.message,
+                [(path,Path(path).exists()) for path in paths], api.config_status())
         manager.pin_entries({path_key(str(first))},True,'documents')
         panel=manager.windows['documents']
         def select(path):

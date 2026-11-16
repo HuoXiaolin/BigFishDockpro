@@ -1,6 +1,6 @@
 """Native test events without bundling QtTest into the shipped application."""
-from PyQt5.QtCore import Qt,QEvent,QEventLoop,QPointF,QTimer
-from PyQt5.QtGui import QKeyEvent,QMouseEvent
+from PyQt5.QtCore import Qt,QEvent,QEventLoop,QPoint,QPointF,QTimer
+from PyQt5.QtGui import QKeyEvent,QMouseEvent,QWheelEvent
 from PyQt5.QtWidgets import QApplication
 
 class Events:
@@ -11,6 +11,14 @@ class Events:
     def keyClick(widget,key,modifier=Qt.NoModifier):
         for kind in (QEvent.KeyPress,QEvent.KeyRelease):
             QApplication.sendEvent(widget,QKeyEvent(kind,key,modifier))
+    @staticmethod
+    def wheel(widget, delta):
+        center = widget.rect().center()
+        event = QWheelEvent(QPointF(center), QPointF(widget.mapToGlobal(center)),
+                            QPoint(), QPoint(0, delta), Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+        event.ignore()
+        QApplication.sendEvent(widget, event)
+        return event.isAccepted()
     @staticmethod
     def drag(widget,point,delta):
         start=widget.mapToGlobal(point);end=start+delta

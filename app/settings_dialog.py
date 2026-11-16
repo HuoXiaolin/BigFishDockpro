@@ -15,7 +15,7 @@ from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
 from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, DATA, PAGE_GROUPS,
                               PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
-                              WIDGETS, field_catalog)
+                              WIDGETS, START_MENU, NOTIFICATIONS, field_catalog)
 from settings_design import SettingsNavigation
 
 
@@ -103,6 +103,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         APPEARANCE: 'build_appearance', COLLECTION: 'build_panel', APPS: 'build_apps', RUNNING: 'build_running',
         UPDATES: 'build_updates', USAGE: 'build_usage', ABOUT: 'build_info', TASKBAR: 'build_taskbar',
         WIDGETS: 'build_widgets', CAPSULES: 'build_capsules', DATA: 'build_data',
+        START_MENU: 'build_start_menu', NOTIFICATIONS: 'build_notifications',
     }
 
     def __init__(self, tray, api):
@@ -303,9 +304,17 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                 field.blockSignals(blocked)
         if 'panel_face_auto_switch' in changes and 'panel_face_auto_switch' in self.fields:
             self.fields['panel_face_switch_minutes'].setEnabled(self.fields['panel_face_auto_switch'].isChecked())
+        if 'taskbar_text_auto' in changes and 'taskbar_text_mode' in self.fields:
+            self.fields['taskbar_text_mode'].setEnabled(not changes['taskbar_text_auto'])
+        if any(key.endswith('_appearance_source') for key in changes):
+            self.sync_appearance_sources()
         from settings_design import NumericControl
         for control in self.findChildren(NumericControl):
             control.slider.setValue(control.spin.value())
+        if any(key.startswith('shell_') for key in changes):
+            from shell_appearance_settings import ShellPreview
+            for preview in self.findChildren(ShellPreview):
+                preview.refresh()
 
     def add_field(self, form, key, visible=True):
         _, title, kind, options = self.catalog[key]
@@ -315,6 +324,23 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.number(form, key, title, *options)
         else:
             getattr(self, kind)(form, key, title)
+
+    def sync_appearance_sources(self, *args):
+        for source, keys in (
+                ('panel_appearance_source', ('panel_material', 'panel_theme', 'panel_color', 'panel_highlight', 'panel_opacity', 'panel_blur')),
+                ('daily_picture_appearance_source', ('daily_picture_material', 'daily_picture_color')),
+                ('spectrum_appearance_source', ('spectrum_color_mode', 'spectrum_mono_color')),
+                ('flash_appearance_source', ('flash_palette',)),
+                ('note_appearance_source', ('note_style',))):
+            if source not in self.fields:
+                continue
+            custom = self.fields[source].currentData() == 'custom'
+            for key in keys:
+                field = self.fields.get(key)
+                if field is not None:
+                    (field.parentWidget() if key.endswith('_color') else field).setEnabled(custom)
+            if source == 'panel_appearance_source' and 'panel_preset' in self.__dict__:
+                self.panel_preset.setEnabled(custom)
 
     def build_appearance(self, appearance):
         from settings_design import section_marker
@@ -337,6 +363,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(appearance, 'transparency')
         self.add_field(appearance, 'blur_px')
         self.add_field(appearance, 'icon_size')
+        self.add_field(appearance, 'dock_icon_shape')
+        self.fields['dock_icon_shape'].setToolTip('圆形模式根据原图标的颜色填充背景。')
         self.add_field(appearance, 'glass')
         self.add_field(appearance, 'clear_background')
         self.fields['clear_background'].setToolTip('仅保留图标与文字，不绘制玻璃背景。')
@@ -373,6 +401,14 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.dock_preview = DockPreview(self)
         appearance.insertRow(4, self.dock_preview)
 
+    def build_start_menu(self, form):
+        from shell_appearance_settings import build_page
+        build_page(self, form, 'start')
+
+    def build_notifications(self, form):
+        from shell_appearance_settings import build_page
+        build_page(self, form, 'notifications')
+
     def build_taskbar(self, form):
         from settings_design import section_marker
         runtime = getattr(self.tray, 'runtime', None)
@@ -384,8 +420,12 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.add_field(form, 'resource_taskbar')
         section_marker(form, '效果与文字')
         self.add_field(form, 'taskbar_mode')
+        self.add_field(form, 'taskbar_text_auto')
         self.add_field(form, 'taskbar_text_mode')
-        self.taskbar_text_status=label('文字明暗联动 Windows 模式，开始菜单等系统区域也会改变；普通应用配色保留。退出后恢复原设置。','muted')
+        auto = self.fields['taskbar_text_auto']
+        auto.toggled.connect(lambda enabled: self.fields['taskbar_text_mode'].setEnabled(not enabled))
+        self.fields['taskbar_text_mode'].setEnabled(not auto.isChecked())
+        self.taskbar_text_status=label('自动配色读取任务栏实际底色，透明任务栏可随背后窗口切换黑白字。系统默认任务栏随 Windows；退出 Dock 恢复原配色。','muted')
         form.addRow(self.taskbar_text_status)
         self.add_field(form, 'taskbar_color')
         self.add_field(form, 'taskbar_opacity')
@@ -432,6 +472,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'desktop_auto_sort')
         section_marker(panel,'卡片材质与配色')
         from appearance_presets import PANEL_PRESETS
+        self.add_field(panel, 'panel_appearance_source')
         self.panel_preset=ModernComboBox();self.panel_preset.addItem('自定义')
         self.panel_preset.addItems([name for name,_ in PANEL_PRESETS])
         panel.addRow(self.field_label('主题预设'),self.panel_preset)
@@ -474,6 +515,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.action_row(panel,'卡片缩放（%）',scale,button('尺寸与文字…',lambda:self.tray.runtime.open_card_sizing()))
         panel.addRow(label('标题字号同步；便签正文单独设置。宽高可自由拖动，同一合并组共用尺寸。','muted'))
         self.fields['panel_material'].currentIndexChanged.connect(self.panel_material_changed)
+        self.fields['panel_appearance_source'].currentIndexChanged.connect(self.sync_appearance_sources)
 
     def build_widgets(self, panel):
         from settings_design import section_marker
@@ -483,10 +525,12 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(panel,'音乐频谱')
         self.add_field(panel, 'spectrum_enabled')
         self.add_field(panel, 'spectrum_style')
+        self.add_field(panel, 'spectrum_appearance_source')
         self.add_field(panel, 'spectrum_color_mode')
         self.add_field(panel, 'spectrum_mono_color')
         section_marker(panel,'每日图片')
         self.add_field(panel, 'daily_picture_enabled')
+        self.add_field(panel, 'daily_picture_appearance_source')
         self.add_field(panel, 'daily_picture_material')
         self.add_field(panel, 'daily_picture_color')
         self.add_field(panel, 'daily_picture_source')
@@ -499,7 +543,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fields['spectrum_enabled'].setToolTip('跟随默认播放设备的声音。拖动频谱移动，拖右下角调整大小，右键可切换样式或锁定。')
         section_marker(panel,'便签与原生卡片')
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
+        self.add_field(panel, 'note_appearance_source')
         self.add_field(panel, 'note_style')
+        for source in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source'):
+            self.fields[source].currentIndexChanged.connect(self.sync_appearance_sources)
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
         self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
 
@@ -513,7 +560,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
 
         section_marker(panel,'闪念胶囊')
         self.component_row(panel,'flash_enabled','显示贴边胶囊',button('记一条',lambda:self.tray.runtime.flash.open(compose=True)),button('查看闪念',lambda:self.tray.runtime.flash.open()))
+        self.add_field(panel, 'flash_appearance_source')
         self.add_field(panel, 'flash_palette')
+        self.fields['flash_appearance_source'].currentIndexChanged.connect(self.sync_appearance_sources)
         self.add_field(panel, 'flash_color')
         from flash_view import color_icon
         for index,key in enumerate(COLORS):self.fields['flash_color'].setItemIcon(index,color_icon(key))
@@ -718,7 +767,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         form.addRow(self.field_label(title), field)
 
     def color(self, form, key, title):
-        container = QVBoxLayout()
+        wrapper = QWidget()
+        container = QVBoxLayout(wrapper)
+        container.setContentsMargins(0, 0, 0, 0)
         container.setSpacing(4)
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -734,7 +785,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         row.addWidget(button('默认', field.clear))
         container.addLayout(row)
         container.addWidget(ThemeSwatches(field))
-        form.addRow(self.field_label(title), container)
+        form.addRow(self.field_label(title), wrapper)
 
     def face_role(self, form, key, title):
         from face_role_controls import add_role_controls
@@ -807,7 +858,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.default_candidate = None
         self.set_transfer_message(self.transfer_help)
         self._manual_dimensions=list(cfg.get('settings_manual_size',[]));self._custom_density=cfg.get('settings_custom_density',100)
-        self.fill_fields(cfg);self.adapt_interface()
+        self.fill_fields(dict(cfg,settings_size='medium'));self.adapt_interface()
         runtime = getattr(self.tray, 'runtime', None)
         if runtime:
             runtime.taskbar.reconcile_status()

@@ -4,8 +4,9 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPen
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButton,QLabel,QSizePolicy
 from ui_style import ModernComboBox
 from resource_compact import text
+from resource_charts import sync_note_controls
 from resource_options import content_columns
-from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,reset_text
+from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,cost_label,reset_text
 from resource_usage import aggregate
 from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, tray_metric_key, used_percent
 import reset_credits
@@ -246,7 +247,7 @@ class UsageSummary(QWidget):
         surface(p,QRectF(self.rect()),self.view.owner,'sky');data=self.view.data;total=data['total'];w=self.width()/self.columns
         fields=[('Token',number(total['tokens']),f"输入 {number(total['input'])} · 输出 {number(total['output'])}"),
                 ('调用记录',number(total['records']),'按来源计量记录'),
-                ('费用',cost_text(total),cost_note(total)),
+                (cost_label(total),cost_text(total),cost_note(total)),
                 ('缓存命中',f"{total['cacheRate']:.0f}%" if total['cacheRate'] is not None else '—','占输入 Token')]
         cost_ink=('#0a6f61' if c['light'] else '#70e2cc') if hasattr(self.view.owner,'background') else COLORS[0]
         for i,(label,value,note) in enumerate(fields):
@@ -283,7 +284,7 @@ class UsageCharts(QWidget):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.view.owner.colors
         if not c:return
         surface(p,QRectF(self.rect()),self.view.owner,'mint');data=self.view.data;total=data['total'];metric=self.view.metric
-        text(p,QRectF(12,7,140,18),'费用分布',c['ink'],10,True)
+        text(p,QRectF(12,7,140,18),'已计价费用分布' if total.get('unpriced') else '费用分布',c['ink'],10,True)
         narrow=self.columns==1;shift=(self.width()-126)/2 if narrow else 0;offset=134 if narrow else 0
         ring=QRectF(28+shift,31,70,70);p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(c['hover']),9));p.drawEllipse(ring)
         groups=[(i,g) for i,g in enumerate(data['groups']) if (g['summary']['cost'] or 0)>0]
@@ -347,7 +348,7 @@ class UsageProviders(QWidget):
 
 
 class StatisticsView(QWidget):
-    def __init__(self,owner):
+    def __init__(self,owner, *, notes_in_content=False):
         super().__init__();self.owner=owner;self.period='today';self.metric='cost';self.signature=None;self.data=aggregate([])
         self.quota_focus = None
         lay=QVBoxLayout(self);lay.setContentsMargins(4,0,4,0);lay.setSpacing(5)
@@ -408,10 +409,16 @@ class StatisticsView(QWidget):
         self.mode_box.addWidget(detail, 0, Qt.AlignRight)
         stack.addLayout(self.mode_box)
         self.charts=UsageCharts(self);stack.addWidget(self.charts);self.providers=UsageProviders(self);stack.addWidget(self.providers)
+        self.note=QLabel();self.note.setWordWrap(True);self.note.setObjectName('Subtle');self.note.hide()
+        self.notes_button=QToolButton();self.notes_button.setText('备注');self.notes_button.setCheckable(True);self.notes_button.toggled.connect(self.note.setVisible)
+        if notes_in_content:
+            stack.addWidget(self.notes_button, 0, Qt.AlignLeft)
+            stack.addWidget(self.note)
+        else:
+            lay.addWidget(self.note)
+            lay.addWidget(self.notes_button, 0, Qt.AlignLeft)
         stack.addStretch(1)
-        self.note=QLabel();self.note.setWordWrap(True);self.note.setObjectName('Subtle');self.note.hide();lay.addWidget(self.note)
-        footer=QHBoxLayout();self.notes_button=QToolButton();self.notes_button.setText('备注');self.notes_button.setCheckable(True);self.notes_button.toggled.connect(self.note.setVisible)
-        footer.addWidget(self.notes_button);footer.addStretch();lay.addLayout(footer);self.recalculate()
+        self.recalculate()
     def layout_controls(self):
         small = self.width() < 420
         narrow = self.width() < 220
@@ -472,7 +479,8 @@ class StatisticsView(QWidget):
         self.period_selector.blockSignals(False)
         for key,b in self.modes.items():b.setChecked(key==self.metric)
         self.summary.update();self.charts.update();self.providers.refresh()
-        note=(bridge.ai_status+'。 ' if bridge else '')+'费用为记录金额或估算，未定价部分单列；调用记录不等同于 HTTP 请求数。'
-        if self.period=='all':note+=' 全部为来源可读历史，线上明细可能仅有最近 30 天。'
-        if not self.data['complete']:note+=' 部分来源仍在补全。'
+        note='按时间和工具查看 Token、调用与参考费用。费用采用来源记录或模型单价估算，模型明细列出各模型的计价情况。'
+        if self.period=='all':note+='「全部」汇总各来源当前可读取的历史。'
+        sync_note_controls(self.notes_button, self.note, self.owner.colors)
         self.note.setText(note)
+        self.summary.setToolTip(note)

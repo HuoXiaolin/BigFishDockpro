@@ -649,6 +649,11 @@ def run(output,checks):
             daily.set_status('');pump();assert daily_card.height()==tight_height
             assert runtime.set_daily_picture_options(daily_picture_material='solid',daily_picture_color='#82a9c9')
             assert daily_card.appearance['material']=='solid' and daily_card.appearance['color']=='#82a9c9'
+            from appearance_presets import dock_appearance
+            assert runtime.set_daily_picture_options(daily_picture_appearance_source='app')
+            assert daily_card.appearance==dock_appearance(runtime.dock.cfg)
+            assert runtime.set_daily_picture_options(daily_picture_appearance_source='custom')
+            assert daily_card.appearance['material']=='solid' and daily_card.appearance['color']=='#82a9c9'
             gallery=Path(folder)/'gallery';gallery.mkdir()
             assert art.save(str(gallery/'a.png')) and image.save(str(gallery/'b.jpg'))
             from content_sources import download_bing_original
@@ -899,23 +904,20 @@ def run(output,checks):
 
             from dependency_prompts import DependencyPrompts, NET_INSTALLER
             reminder=DependencyPrompts(runtime)
-            with patch('dependency_prompts.installed_runtime',return_value=None),patch('dependency_prompts.installed_pawnio',return_value=''), \
-                 patch('dependency_prompts.QDesktopServices.openUrl',return_value=True) as open_installer,patch('pawnio_setup.launch') as launch:
-                reminder.request(True,True);pump()
+            with patch('dependency_prompts.installed_runtime',return_value=None), \
+                 patch('dependency_prompts.QDesktopServices.openUrl',return_value=True) as open_installer:
+                reminder.request(True);pump()
                 box=reminder.dialog
                 assert box and '.NET 10' in box.text()
                 next(button for button in box.buttons() if '下载' in button.text()).click();pump()
                 assert open_installer.call_args.args[0].toString()==NET_INSTALLER
-                box=reminder.dialog
-                assert box and 'PawnIO' in box.text()
-                next(button for button in box.buttons() if '安装' in button.text()).click();pump()
-                launch.assert_called_once_with()
+                assert reminder.dialog is None
                 again=DependencyPrompts(runtime)
-                again.request(True,True);pump()
-                assert again.dialog is None and again.seen=={'dotnet','pawnio'}
+                again.request(True);pump()
+                assert again.dialog is None and 'dotnet' in again.seen
                 again.close()
             reminder.close()
-            checks.append('First-use missing dependency prompts offer native install actions and stay dismissed across a fresh session.')
+            checks.append('The first-use .NET download prompt stays dismissed across a fresh session.')
             menu=tray.menu
             menu.popup(QPoint(12,12));pump()
             assert menu.isVisible() and menu.watcher.isActive()

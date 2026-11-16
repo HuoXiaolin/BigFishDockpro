@@ -6,6 +6,7 @@ from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton
 from ui_style import ModernComboBox
 from resource_compact import text
+from resource_charts import sync_note_controls
 from resource_options import content_columns
 from resource_status import band_ink
 from resource_weather import moon_phase,weather_time
@@ -290,7 +291,8 @@ class WeatherView(QWidget):
         self.week.setChecked(service.cfg['resource_weather_days']==7)
         self.cards.refresh()
         stamp=max((r.get('updated',0) for r in extra.weather),default=0) if extra else 0
-        self.notes.setText('天气由 <a href="https://open-meteo.com/">Open-Meteo</a> 提供，每 15 分钟刷新。'
-                           '空气质量可用 <a href="https://ads.atmosphere.copernicus.eu/">CAMS</a> 模型或 <a href="https://www.qweather.com/">和风天气</a>。卡片标明 AQI 口径。日出日落使用城市当地时间，月相为近似值。'
+        sync_note_controls(self.remarks_button, self.notes, self.owner.colors)
+        self.notes.setText('查看所选城市的天气、空气质量、日出日落和月相。天气来自 <a href="https://open-meteo.com/">Open-Meteo</a>，每 15 分钟刷新。'
+                           '空气质量卡标注来源和 AQI 口径，日出日落使用城市当地时间。'
                            +('更新于 '+time.strftime('%H:%M',time.localtime(stamp))+'。' if stamp else ''))
         self.notes.setVisible(self.remarks_button.isChecked())

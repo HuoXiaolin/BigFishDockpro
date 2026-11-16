@@ -29,6 +29,7 @@ class RuntimeController:
         self.usage=dock.usage=UsageStore(api.CONFIG_DIR,dock,api.log)
         self.closed = False
         self.session_ending=False
+        self.pawnio = None
         if from_logon:
             from time import monotonic
             self.bridge_start_after = monotonic() + 5
@@ -42,6 +43,8 @@ class RuntimeController:
         self.corners = CornerManager()
         from taskbar_appearance import TaskbarAppearance
         self.taskbar = TaskbarAppearance(dock, api.log)
+        from shell_appearance import ShellAppearance
+        self.shell_appearance = ShellAppearance(dock, api)
         from desktop_shortcut import DesktopMiddleShortcut
         import os
         self.desktop_shortcut=DesktopMiddleShortcut(dock,disabled=dock.preview or bool(os.environ.get('FISHDOCK_TEST_DESKTOP')))
@@ -193,6 +196,7 @@ class RuntimeController:
 
     def refresh_layers(self):
         if self.closed:return
+        self.shell_appearance.refresh_foreground()
         strip=self.resources.strip
         if strip:strip.placement.shell_changed()
         capsule=self.resources.window
@@ -210,6 +214,10 @@ class RuntimeController:
 
     def apply_settings(self,changed=None):
         if changed is not None:changed=set(changed)
+        from settings_effects import DOCK_GLASS
+        dock_appearance_changed = changed is None or bool(changed & DOCK_GLASS)
+        if dock_appearance_changed or any(key.startswith('shell_') for key in changed):
+            self.shell_appearance.sync()
         placement_changed=changed is None or 'resource_component_locations' in changed
         policy_keys={'passthrough_mode','component_passthrough','resource_click_through','resource_taskbar_click_through'}
         policy_changed=changed is None or bool(changed&policy_keys)
@@ -221,7 +229,7 @@ class RuntimeController:
             for window in [self.dock,self.clock,self.calendar,*self.panels.windows.values(),*self.notes.windows.values()]:
                 controller=getattr(window,'_interaction_motion',None)
                 if controller:controller.stop()
-        capsule_style={'theme','theme_color','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
+        capsule_style=DOCK_GLASS | {'panel_appearance_source','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
         if changed is None or any(key.startswith('spectrum_') for key in changed) or changed & {'theme','theme_color','card_scale'}:
             self.sync_spectrum()
         if placement_changed or any(key.startswith('daily_picture_') for key in changed) or changed & (capsule_style|{'card_scale'}):
@@ -234,16 +242,21 @@ class RuntimeController:
             self.flash.sync()
         if changed is None or any(key.startswith('taskbar_') for key in changed):
             self.taskbar.sync()
-            if self.resources.ai_tray and (changed is None or 'taskbar_text_mode' in changed):
+            if self.resources.ai_tray:
                 self.resources.ai_tray.sync_taskbar_text()
         if changed is not None:
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
             if 'hide_tray' in changed or policy_changed:self.sync_tray_visibility()
             panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
-            if panel_keys or changed&{'card_scale','card_sizing','display_layout','card_design'}:self.panels.apply_settings()
-            if placement_changed or changed&{'note_style','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'}:self.notes.sync()
-            if placement_changed or any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'}:self.clock.sync()
-            if placement_changed or any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'}:self.calendar.sync()
+            cfg=self.dock.cfg
+            if panel_keys or changed&{'card_scale','card_sizing','display_layout','card_design'} or (dock_appearance_changed and cfg['panel_appearance_source']=='app'):
+                self.panels.apply_settings()
+            if placement_changed or changed&{'note_style','note_appearance_source','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'} or (dock_appearance_changed and any(row.get('appearance_source')=='app' for row in cfg['sticky_notes'])):
+                self.notes.sync()
+            if placement_changed or any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'} or (dock_appearance_changed and cfg['clock_appearance'].get('source')=='app'):
+                self.clock.sync()
+            if placement_changed or any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'} or (dock_appearance_changed and cfg['calendar_appearance'].get('source')=='app'):
+                self.calendar.sync()
             if changed&{'clock_enabled','calendar_enabled','daily_picture_enabled','notes_enabled','notes_visible','sticky_notes','custom_cards'}:
                 self.resources.components_changed()
             if 'card_scale' in changed:
@@ -285,6 +298,8 @@ class RuntimeController:
 
     def set_spectrum_options(self, **changes):
         from settings_effects import save_changes
+        if {'spectrum_color_mode', 'spectrum_mono_color'} & changes.keys():
+            changes.setdefault('spectrum_appearance_source', 'custom')
         return save_changes(self.tray, self.api, changes)
 
     def sync_daily_picture(self):
@@ -309,7 +324,8 @@ class RuntimeController:
         else:getattr(self,key).sync()
 
     def wallpaper_targets(self):
-        glass_windows=(self.resources.window,self.daily_picture,*self.resources.desktop_cards.values())
+        native_cards=self.custom_cards.windows.values() if self.custom_cards else ()
+        glass_windows=(self.resources.window,self.daily_picture,*self.resources.desktop_cards.values(),*native_cards)
         glass=[(window,window.glass) for window in glass_windows
                if window is not None and window.isWindow() and window.isVisible()]
         panel=self.flash.panel
@@ -352,6 +368,8 @@ class RuntimeController:
 
     def set_daily_picture_options(self, **changes):
         from settings_effects import save_changes
+        if {'daily_picture_material', 'daily_picture_color'} & changes.keys():
+            changes.setdefault('daily_picture_appearance_source', 'custom')
         return save_changes(self.tray,self.api,changes)
 
     def custom_card_manager(self):
@@ -387,11 +405,22 @@ class RuntimeController:
         set_ending(ending)
         if ending:
             self.taskbar.suspend_session()
+            self.shell_appearance.suspend()
             self.resources.suspend_session()
         else:
             # Windows can cancel shutdown. Recreate demand-driven collectors
             # after the native callback, with the user's existing preferences.
             QTimer.singleShot(0,self.resume_session)
+
+    def start_pawnio(self):
+        import os
+
+        if (self.closed or self.session_ending or self.pawnio is not None
+                or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP')):
+            return
+        from pawnio_auto import AutoInstall
+        self.pawnio = AutoInstall(self)
+        self.pawnio.start()
 
     def resume_session(self):
         if self.closed or self.session_ending:return
@@ -401,6 +430,7 @@ class RuntimeController:
             return
         self.resources.sync()
         self.taskbar.resume_session()
+        self.shell_appearance.resume()
 
     def commit_session(self,*args):
         self.set_session_ending(True)
@@ -419,9 +449,12 @@ class RuntimeController:
         if self.closed: return
         self.click_policy.close()
         self.closed = True
+        self.shell_appearance.close()
         self.wallpaper_timer.stop()
         from probe_lifecycle import set_ending
         set_ending(True)
+        if self.pawnio is not None:
+            self.pawnio.close()
         if hasattr(self,'memory_budget'):self.memory_budget.close()
         shutdown=self.session_ending or QApplication.instance().isSavingSession()
         importer=getattr(self.tray,'importer',None)

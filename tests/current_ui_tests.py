@@ -55,6 +55,8 @@ def run(output):
         run_update_sources(api,runtime,output,checks)
         from usage_stats_tests import run as run_usage_stats
         run_usage_stats(api,runtime,root.name,output,checks)
+        from shell_appearance_tests import run as run_shell_appearance
+        run_shell_appearance(api,runtime,root.name,app,output,checks)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
         checks.append('private Windows desktop: '+desktop+'; temporary configuration and synthetic entries only')
         # Sample this test process before/after enabling one clock; this is not a power measurement.
@@ -472,7 +474,15 @@ def run(output):
         shutdown_ms=round((time.perf_counter()-shutdown_started)*1000,2)
         checks.append('simulated session-end controller cleanup persists configuration and closes owned windows/timers in %.2f ms; no OS shutdown performed'%shutdown_ms)
         result={'passed':True,'version':__import__('app_version').VERSION,'scope':'current-ui-runtime','checks':checks,'limits':['Qt mouse events and taskbar free space are simulated on a private desktop','no physical mouse/OLE drag, real monitor switching, user desktop changes or installer installation']}
-    except Exception:result={'passed':False,'scope':'current-ui-runtime','checks':checks,'error':traceback.format_exc()}
+    except Exception:
+        result={'passed':False,'scope':'current-ui-runtime','checks':checks,'error':traceback.format_exc()}
+        # Retain only the isolated fixture log before deleting its temporary data.
+        # This explains transient native/filesystem failures without exposing a user profile.
+        if root:
+            fixture_log=Path(root.name)/'dock.log'
+            if fixture_log.exists():
+                try:(output/'fixture-failure.log').write_bytes(fixture_log.read_bytes())
+                except OSError:pass
     finally:
         if runtime:
             try:runtime.close()

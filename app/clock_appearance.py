@@ -1,10 +1,10 @@
 """Independent, validated desktop clock appearance."""
 import re
-from appearance_presets import LIQUID_TINT, MATERIALS, PANEL_PRESETS, PRESET_IDS, preset_design, DEFAULT_PRESET_ID, THEME_INKS, THEME_GRADIENTS
+from appearance_presets import LIQUID_TINT, MATERIALS, PANEL_PRESETS, PRESET_IDS, preset_design, DEFAULT_PRESET_ID, THEME_INKS, THEME_GRADIENTS, dock_appearance, material_design
 
 ACCENT_VERSION=2
 LEGACY_ACCENTS={'crystal':'#ff755e','flowing':'#ff68a1','paper_glass':'#ffad37','vivid':'#5b8def'}
-DEFAULTS={'design':'follow','material':'liquid','theme':'light','color':LIQUID_TINT,'opacity':38,'blur':8,'highlight':45,
+DEFAULTS={'source':'custom','design':'follow','material':'liquid','theme':'light','color':LIQUID_TINT,'opacity':38,'blur':8,'highlight':45,
           'typography_version':2,'accent_version':ACCENT_VERSION,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
 DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_scale=100,font_weight=63,letter_spacing=100,
                 padding=7,accent_color='',text_opacity=100,shadow='none',auto_contrast=True,bar_width=8,ring_width=9,corner_radius=22,
@@ -22,6 +22,13 @@ def theme_family(appearance):
     return material if material in THEME_GRADIENTS else design
 
 
+def effective_appearance(options, cfg):
+    if options.get('source') != 'app':
+        return options
+    surface = dock_appearance(cfg)
+    return dict(options, **surface, design=material_design(surface['material'], 'aurora'))
+
+
 def normalize(value, cfg=None):
     result=dict(DEFAULTS)
     legacy_accent=isinstance(value,dict) and value.get('accent_version')!=ACCENT_VERSION
@@ -37,6 +44,8 @@ def normalize(value, cfg=None):
         elif value.get('typography_version')==1 and value.get('font')=='Bahnschrift' and value.get('font_scale')==110:
             result['font']='Segoe UI'
     result['typography_version']=2
+    if result['source'] not in ('app', 'custom'):
+        result['source'] = 'custom'
     from card_design import DESIGNS
     for key,allowed in [('design',{'follow'}|{value for _,value in DESIGNS}),('material',{v for _,v in MATERIALS}),('theme',{'auto','light','dark'}),('hour_format',{'12','24'}),('text_effect',{'glass','clear'}),('layout',{'auto','wide','portrait'}),('align',{'left','center'}),('shadow',{'none','soft'}),('ring_mode',{'day','work'})]:
         if not isinstance(result[key],str) or result[key] not in allowed:result[key]=DEFAULTS[key]

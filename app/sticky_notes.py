@@ -212,6 +212,13 @@ class NoteWindow(QWidget):
         if self.embedded:row.update(pinned=False,locked=False)
         return row
     def appearance(self):return normalize_note_appearance(self.row().get('appearance',self.dock.cfg.get('note_appearance')))
+
+    def effective_appearance(self):
+        from appearance_presets import dock_appearance
+        row=self.row()
+        if row.get('appearance_source')=='app':
+            return dict(dock_appearance(self.dock.cfg),style='glass')
+        return dict(self.appearance(),style=row['style'],color=row['color'])
     def changed(self):
         if self.loading or self.disposed or self.manager.closed:return
         if self.row().get('flipped') and not getattr(self,'_toggling_todo',False):self.rebuild_todos()
@@ -335,7 +342,8 @@ class NoteWindow(QWidget):
     def set_option(self,key,value):
         if key=='style':
             color={'glass':self.dock.cfg.get('theme_color') or '#cfe8fa','paper':'#fff1a8','plain':'#eef1f5'}[value]
-            self.manager.update(self.identity,style=value,color=color)
+            self.manager.update(self.identity,style=value,color=color,appearance_source='custom')
+        elif key=='color':self.manager.update(self.identity,color=value,appearance_source='custom')
         else:self.manager.update(self.identity,**{key:value})
         self.apply_style();self.manager.flush()
         if key=='auto_hide':
@@ -346,6 +354,11 @@ class NoteWindow(QWidget):
         menu.addAction('便签设置…').triggered.connect(self.open_settings)
         menu.addAction('卡片尺寸与文字…').triggered.connect(lambda:self.runtime.open_card_sizing('note',self.identity))
         menu.addAction('新建便签').triggered.connect(self.manager.new)
+        from appearance_presets import APPEARANCE_SOURCES
+        source=menu.addMenu('外观来源')
+        for title,key in APPEARANCE_SOURCES:
+            action=source.addAction(title);action.setCheckable(True);action.setChecked(self.row().get('appearance_source','custom')==key)
+            action.triggered.connect(lambda _,value=key:self.set_option('appearance_source',value))
         styles=menu.addMenu('外观样式')
         for title,key in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.row()['style']==key);action.triggered.connect(lambda checked=False,value=key:self.set_option('style',value))
@@ -445,12 +458,12 @@ class NoteWindow(QWidget):
         for widget in [self.flip_button,self.settings_button,self.more,self.collapse_button,self.retry]+list(self.format_buttons.values()):widget.setFixedSize(max(16,round(23*factor)),max(16,round(23*factor)))
         if row['locked']:self.setFixedSize(self.size())
         self.grip.setVisible(not self.embedded and not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
-        appearance=self.appearance()
-        glass=row['style']=='glass'
+        appearance=self.effective_appearance()
+        glass=appearance['style']=='glass'
         capsule=self.window() if self.embedded else None
         if capsule:content_light=capsule.colors['light']
         elif glass:content_light=self.dock.base_theme_colors(appearance['theme'])['light']
-        else:content_light=QColor(row['color']).lightness()>110
+        else:content_light=QColor(appearance['color']).lightness()>110
         self.content_light=content_light
         ink='#20252b' if content_light else '#f5f7fa'
         if capsule:ink=capsule.colors['ink']
@@ -459,14 +472,14 @@ class NoteWindow(QWidget):
             ink=THEME_INKS.get(appearance['material'],ink)
         from glass_panel import category_icon
         icon_size=max(12,round(17*factor));self.handle.setFixedSize(icon_size,icon_size)
-        icon_ink=note_icon_color(row['color']) if content_light else '#bccddd'
+        icon_ink=note_icon_color(appearance['color'] or '#cfe8fa') if content_light else '#bccddd'
         self.handle.setPixmap(category_icon('note',icon_ink,icon_size,self.devicePixelRatioF()))
         self.setStyleSheet('QWidget#StickyNote {background:transparent;} QLineEdit,QTextEdit,QLabel,QToolButton {background:transparent;color:'+ink+';border:0;font-family:"Microsoft YaHei UI";font-size:12px;} QLineEdit {font-weight:600;padding:0;min-height:20px;} QTextEdit {padding:3px;selection-background-color:rgba(90,140,180,80);} QToolButton {border-radius:5px;} QToolButton:hover {background:rgba(120,130,150,28);} QLabel {font-size:10px;}')
         from dpi_support import panel_css
         self.setStyleSheet(panel_css(self.styleSheet(),self.ui_factor))
         content_ink='#000000' if content_light else '#ffffff'
-        card_material=appearance if glass else {'material':row['style']}
-        style=capsule.background if capsule else dict(card_material,color=row['color'])
+        card_material=appearance if glass else dict(appearance,material=appearance['style'])
+        style=capsule.background if capsule else card_material
         self.editor.set_paragraph_theme(content_light,style,card_alpha=capsule.colors['card_alpha'] if capsule else None)
         self.note_tabs.setStyleSheet('QTabBar::tab{color:%s;border:1px solid transparent;border-radius:5px;padding:3px 7px;}'
                                     'QTabBar::tab:selected{background:rgba(110,150,185,60);border-color:rgba(115,145,168,100);}'
@@ -519,8 +532,8 @@ class NoteWindow(QWidget):
             self.fit_title()
     def capture_backdrop(self):
         if self.embedded:return
-        appearance=self.appearance()
-        if self.row()['style']!='glass' or appearance['material'] in ('clear','solid'):self.backdrop=None;self.update();return
+        appearance=self.effective_appearance()
+        if appearance['style']!='glass' or appearance['material'] in ('clear','solid') or not appearance.get('blur_enabled',True):self.backdrop=None;self.update();return
         if self.dock.preview or not self.isVisible():return
         from glass_capture import capture_behind,surface_windows,backdrop_key
         blur=material_blur(appearance['blur'],appearance['material'])
@@ -538,25 +551,30 @@ class NoteWindow(QWidget):
             capsule=self.window()
             paint_capsule_card(p,QRectF(self.rect()),capsule.colors,'sky',capsule.background,radius=11)
             return
-        row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.SmoothPixmapTransform);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor);color=QColor(row['color'])
-        appearance=self.appearance();clear=False
-        if row['style']=='glass':
-            material=appearance['material'];colors=material_palette(tint_palette(self.dock.base_theme_colors(appearance['theme']),row['color']),material)
+        row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.SmoothPixmapTransform);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor)
+        appearance=self.effective_appearance();clear=False
+        color=QColor(appearance['color'])
+        if appearance['style']=='glass':
+            material=appearance['material'];colors=material_palette(tint_palette(self.dock.base_theme_colors(appearance['theme']),appearance['color']),material)
             strength=appearance['highlight']/45
             colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)));colors['spec']=min(255,round(colors['spec']*strength))
             stops=[(position,min(255,round(alpha*strength))) for position,alpha in self.dock.merged_grad_stops(colors)]
             clear=material=='clear' and appearance['opacity']==0 and appearance['highlight']==0
-            surface=SimpleNamespace(cfg={'glass':material not in ('clear','solid'),'clear_background':clear,'dock_material':material},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
+            surface=SimpleNamespace(cfg={'glass':appearance.get('blur_enabled',True) and material not in ('clear','solid'),'clear_background':clear,'dock_material':material},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
             paint_liquid_glass(surface,p,shape,rect,rect,colors,round(appearance['opacity']*2.55),stops)
         else:
             p.setClipPath(shape)
-            if row['style']=='paper':
+            if appearance['style']=='paper':
                 fill=QLinearGradient(0,0,0,self.height());fill.setColorAt(0,color.lighter(108));fill.setColorAt(1,color);p.fillRect(rect,fill)
                 p.setPen(QPen(color.darker(118),1));p.drawLine(12,round(43*self.ui_factor),self.width()-12,round(43*self.ui_factor))
             else:p.fillRect(rect,color)
             p.setClipping(False);p.setBrush(Qt.NoBrush);p.setPen(QPen(color.darker(120),1));p.drawPath(shape)
         from card_design import paint_design
-        paint_design(p,rect,self.dock.cfg,clear=clear,corner_radius=self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,body_top=rect.bottom() if row['collapsed'] else None,header_separator=not row['collapsed'])
+        from appearance_presets import material_design
+        following=row.get('appearance_source')=='app'
+        design=material_design(appearance['material'],'aurora') if following else None
+        design_cfg={'theme_color':appearance['color']} if following else self.dock.cfg
+        paint_design(p,rect,design_cfg,design,clear=clear,corner_radius=self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,body_top=rect.bottom() if row['collapsed'] else None,header_separator=not row['collapsed'])
     def closeEvent(self,event):
         if self.disposed or QApplication.instance().isSavingSession() or getattr(self.runtime,'session_ending',False):event.accept()
         else:event.ignore();self.manager.update_and_save(self.identity,visible=False)
@@ -571,6 +589,11 @@ class NoteOptions(QDialog):
         self.note=note;self.manager=note.manager;self.loading=True;row=note.row();self.custom='body_font_size' in row
         self.setWindowTitle('便签设置 · 大肥鱼Dock');self.resize(570,400);self.setMinimumSize(480,340)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'便签设置'));form=QFormLayout();body.addLayout(form)
+        from appearance_presets import APPEARANCE_SOURCES
+        self.source=ModernComboBox()
+        for title,key in APPEARANCE_SOURCES:self.source.addItem(title,key)
+        self.source.setCurrentIndex(self.source.findData(row.get('appearance_source','custom')))
+        form.addRow('外观来源',self.source)
         self.style=ModernComboBox();self.color=ModernComboBox()
         for title,key in STYLES:self.style.addItem(title,key)
         self.style.setCurrentIndex(self.style.findData(row['style']))
@@ -587,6 +610,8 @@ class NoteOptions(QDialog):
         self.color.currentIndexChanged.connect(self.customize_theme)
         matched=next((i for i,(_,v) in enumerate(PANEL_PRESETS,1) if row['style']=='glass' and self.appearance==normalize_note_appearance(v) and row['color']==(v['color'] or '#b8d9ef')),0)
         self.preset.setCurrentIndex(matched)
+        self.source.currentIndexChanged.connect(self.sync_source)
+        self.sync_source()
         self.body_font=ModernSpinBox();self.body_font.setRange(8,72);self.body_font.setValue(note.text_pixels());self.body_font.setAccessibleName('便签正文字号')
         font_row=QHBoxLayout();font_row.addWidget(self.body_font,1);self.follow_button=button('跟随卡片',self.follow_font);font_row.addWidget(self.follow_button);form.addRow('正文字号（像素）',font_row)
         self.auto_hide=ModernCheckBox('鼠标离开后自动收起');self.auto_hide.setChecked(row['auto_hide']);form.addRow(self.auto_hide)
@@ -601,6 +626,9 @@ class NoteOptions(QDialog):
     def customize_theme(self,*args):
         if not self.loading:
             blocked=self.preset.blockSignals(True);self.preset.setCurrentIndex(0);self.preset.blockSignals(blocked)
+    def sync_source(self):
+        custom=self.source.currentData()=='custom'
+        for field in (self.preset,self.style,self.color):field.setEnabled(custom)
     def apply_theme_preset(self,index):
         if self.loading or index<=0:return
         self.loading=True;values=PANEL_PRESETS[index-1][1]
@@ -620,7 +648,7 @@ class NoteOptions(QDialog):
         if not self.manager.flush():self.status.setText('正文尚未保存，请重试。');return False
         rows=self.manager.rows();row=next((row for row in rows if row['id']==self.note.identity),None)
         if row is None:return False
-        row.update(style=self.style.currentData(),color=self.color.currentData(),appearance=copy.deepcopy(self.appearance),auto_hide=self.auto_hide.isChecked(),pinned=self.pinned.isChecked(),locked=self.locked.isChecked())
+        row.update(appearance_source=self.source.currentData(),style=self.style.currentData(),color=self.color.currentData(),appearance=copy.deepcopy(self.appearance),auto_hide=self.auto_hide.isChecked(),pinned=self.pinned.isChecked(),locked=self.locked.isChecked())
         if self.custom:row.update(body_font_size=self.body_font.value(),body_font_scale=self.note.ui_factor)
         else:row.pop('body_font_size',None);row.pop('body_font_scale',None)
         if not self.manager.persist(sticky_notes=rows):self.status.setText('保存失败，原设置保持不变。');return False

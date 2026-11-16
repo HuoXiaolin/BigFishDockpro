@@ -27,6 +27,23 @@ def foreground_ink(mode):
     return '#ffffff' if mode == 0 else '#000000'
 
 
+def background_mode(cfg, backdrop, *, surface=None, previous=None):
+    if not cfg.get('taskbar_text_auto'):
+        return cfg.get('taskbar_text_mode', 'system')
+    if cfg.get('taskbar_mode', 'system') == 'system':
+        return 'system'
+    from background_contrast import contrast, foreground
+    if surface is not None:
+        # Avoid switching back and forth when both colors remain readable.
+        previous_ink = {'light': '#ffffff', 'dark': '#000000'}.get(previous)
+        if previous_ink and contrast(surface, previous_ink) >= 4.5:
+            return previous
+        return 'dark' if foreground(surface) == '#000000' else 'light'
+    alpha = 0 if cfg.get('taskbar_mode') == 'clear' else cfg.get('taskbar_opacity', 32)/100
+    ink = foreground(cfg.get('taskbar_color', '#85c6ed'), backdrop, alpha)
+    return 'dark' if ink == '#000000' else 'light'
+
+
 def write_mode(value):
     if os.environ.get('FISHDOCK_TEST_DESKTOP'):raise OSError('隔离测试不修改 Windows 配色。')
     import winreg

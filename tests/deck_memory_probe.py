@@ -18,7 +18,8 @@ def main():
                     item=json.loads(line.decode('utf-8-sig'))
                     if item.get('type')=='ai':
                         rows=item.get('providers',[])
-                        messages.put({'available':all(r.get('usageAvailable') for r in rows),'complete':all(r.get('usageComplete') for r in rows),'groups':sum(len(r.get('days',[])) for r in rows),'records':sum(d['summary']['records'] for r in rows for d in r.get('days',[]))})
+                        messages.put({'available':bool(rows) and all(r.get('usageAvailable') for r in rows),'complete':all(r.get('usageComplete') for r in rows),'groups':sum(len(r.get('days',[])) for r in rows),'records':sum(d['summary']['records'] for r in rows for d in r.get('days',[])),
+                                      'diagnostics':[{k:r.get(k) for k in ('id','status','note','usageNote','historyStart')} for r in rows]})
                 except ValueError:pass
         threading.Thread(target=read,daemon=True).start()
         def send(**value):child.stdin.write((json.dumps(value)+'\n').encode());child.stdin.flush()
@@ -42,6 +43,7 @@ def main():
         except Exception as exc:result.update(passed=False,error=str(exc))
         finally:
             if child.poll() is None:child.kill();child.wait(timeout=5)
+            result['stderr']=child.stderr.read().decode('utf-8-sig',errors='replace')
     (out/'result.json').write_text(json.dumps(result,indent=2),encoding='utf-8');return 0 if result.get('passed') else 1
 
 if __name__=='__main__':sys.exit(main())

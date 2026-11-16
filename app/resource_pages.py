@@ -8,7 +8,7 @@ from ui_style import ModernComboBox,SettingsHeader,button,exec_dialog
 from resource_traffic import amount,totals
 from resource_compact import text
 from card_design import paint_capsule_card
-from resource_charts import DashboardCard,rate,sync_card_controls
+from resource_charts import DashboardCard,rate,sync_card_controls,sync_note_controls
 from resource_options import content_columns
 from resource_status import threshold
 
@@ -93,6 +93,8 @@ class TrafficView(QWidget):
         head=QHBoxLayout();title=QLabel('流量统计');title.setObjectName('RankTitle');head.addWidget(title,1)
         history=QToolButton();history.setText('历史记录');history.clicked.connect(self.history);head.addWidget(history);lay.addLayout(head)
         self.summary=TrafficReadout(window);lay.addWidget(self.summary)
+        self.total_status=QLabel();self.total_status.setObjectName('Subtle')
+        self.total_status.setWordWrap(True);lay.addWidget(self.total_status);self.total_status.hide()
         self.apps=DashboardCard(window,'ice',self);lay.addWidget(self.apps)
         app_lay=QVBoxLayout(self.apps);app_lay.setContentsMargins(8,5,8,6);app_lay.setSpacing(3)
         app_head=QHBoxLayout();app_title=QLabel('应用实时流量');app_title.setObjectName('RankTitle')
@@ -166,9 +168,12 @@ class TrafficView(QWidget):
         self.app_status.setVisible(bool(status))
 
     def refresh_totals(self):
-        data=self.owner.service.latest.get('traffic') or {}
         self.summary.update()
-        self.note.setText(data.get('error') or '按本机日历累计下载与上传。应用记录从开启时开始。')
+        sync_note_controls(self.remarks, self.note, self.owner.colors)
+        error = (self.owner.service.latest.get('traffic') or {}).get('error') or ''
+        self.total_status.setText(error)
+        self.total_status.setVisible(bool(error))
+        self.note.setText('按本机日历查看下载与上传量。开启应用记录后，可按应用查看实时速度与历史排行。')
 
     def history(self,apps=False):
         exec_dialog(TrafficHistory(self.owner,apps))
@@ -362,12 +367,18 @@ def cost_note(summary):
     return ' · '.join(notes)
 
 
+def cost_label(summary):
+    if summary.get('unpriced'):
+        return '已计价费用'
+    return '参考费用' if summary.get('estimated') else '费用'
+
+
 class AiView(QWidget):
-    def __init__(self,window):
+    def __init__(self,window, *, notes_in_content=False):
         super().__init__();self.owner=window;self.signature=None
         lay=QVBoxLayout(self);lay.setContentsMargins(3,0,3,0);lay.setSpacing(3)
         from resource_statistics import StatisticsView
-        self.statistics=StatisticsView(window);self.summary=self.statistics.quotas;lay.addWidget(self.statistics)
+        self.statistics=StatisticsView(window, notes_in_content=notes_in_content);self.summary=self.statistics.quotas;lay.addWidget(self.statistics)
         self._detail_dialog=None;self.detail_dates=None
     @property
     def detail_dialog(self):self.ensure_details();return self._detail_dialog
@@ -389,7 +400,7 @@ class AiView(QWidget):
             date.setCalendarPopup(True);date.setDisplayFormat('yyyy-MM-dd');date.setMinimumDate(QDate(2000,1,1));date.setMaximumDate(QDate.currentDate());date.dateChanged.connect(self.details)
         for date in (self.start,self.end):date.setFixedWidth(142)
         filters.addWidget(self._provider,1);filters.addStretch();filters.addWidget(self.start);filters.addWidget(QLabel('至'));filters.addWidget(self.end);detail_lay.addLayout(filters)
-        self._models=table(['工具 / 模型','Token','费用（USD）','计价情况']);detail_lay.addWidget(self._models,1)
+        self._models=table(['工具 / 模型','Token','参考费用（USD）','计价情况']);detail_lay.addWidget(self._models,1)
         self._models.setAlternatingRowColors(True);self._models.verticalHeader().setDefaultSectionSize(34)
         self._models.horizontalHeader().setMinimumSectionSize(90)
         for index in range(4):self._models.horizontalHeaderItem(index).setTextAlignment(Qt.AlignVCenter|(Qt.AlignRight if index in (1,2) else Qt.AlignLeft))

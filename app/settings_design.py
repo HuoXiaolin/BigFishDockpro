@@ -26,7 +26,7 @@ class SettingsNavigation(QListWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName('SettingsNav')
-        self.setFixedWidth(132)
+        self.setFixedWidth(158)
         self.setIconSize(QSize(16,16))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(self.ScrollPerPixel)
@@ -47,7 +47,7 @@ class SettingsNavigation(QListWidget):
 
     def fit_density(self):
         from ui_style import widget_px
-        self.setFixedWidth(max(94,widget_px(self,132)))
+        self.setFixedWidth(max(94,widget_px(self,158)))
         size = widget_px(self,16)
         self.setIconSize(QSize(size,size))
         heading = QFont(self.font())

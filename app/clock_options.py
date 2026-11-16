@@ -6,7 +6,7 @@ from PyQt5.QtGui import QPainter,QColor,QFontDatabase,QLinearGradient,QPixmap
 from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QScrollArea,QLineEdit,QColorDialog,QComboBox,QTabWidget,QGridLayout,QPlainTextEdit,QFileDialog
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ThemeSwatches,button,label,compact_dialog
 from clock_appearance import ACCENT_VERSION,STYLES,FONTS,PRESETS,DEFAULTS,normalize
-from appearance_presets import material_choices,COLOR_MODES
+from appearance_presets import APPEARANCE_SOURCES, material_choices, COLOR_MODES
 import work_schedule
 
 
@@ -86,7 +86,9 @@ class ClockOptions(QDialog):
         choice(typeform,'text_effect','文字效果',[('清晰实色','clear'),('细腻玻璃','glass')]);choice(typeform,'shadow','文字阴影',[('无阴影','none'),('轻柔阴影','soft')])
         def color(form,key,title):
             field=QLineEdit();field.setPlaceholderText('自动 / #RRGGBB');field.setAccessibleName(title);self.fields[key]=field
-            box=QVBoxLayout();row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,box)
+            container=QWidget();box=QVBoxLayout(container);box.setContentsMargins(0,0,0,0)
+            row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,container)
+            return container
         color(typeform,'text_color','主要文字');color(typeform,'accent_color','强调与进度');number(typeform,'text_opacity','文字不透明度（%）',50,100)
         check(typeform,'auto_contrast','文字随背景自动配色（推荐）')
         self.fields['auto_contrast'].setToolTip('深色底用白字，浅色底用蓝灰字。强调与进度跟随主题配色，可单独指定。')
@@ -94,9 +96,10 @@ class ClockOptions(QDialog):
         self.fields['auto_contrast'].toggled.connect(self.automatic_color_changed)
         from card_design import DESIGNS
         if not clock.isWindow():material.addRow(label('收入资源胶囊时使用胶囊材质。下方设置用于独立显示。','muted'))
+        choice(material,'source','外观来源',APPEARANCE_SOURCES)
         choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS,False)
         choice(material,'material','材质',material_choices(clock.option('appearance')['material']));choice(material,'theme','明暗模式',COLOR_MODES)
-        color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
+        self.material_color=color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
         if not self.calendar:
             number(layout,'bar_width','进度条厚度',4,18);number(layout,'ring_width','圆环厚度',4,18)
             choice(layout,'ring_mode','进度圆环',[('今日进度','day'),('下班进度','work')])
@@ -186,7 +189,11 @@ class ClockOptions(QDialog):
     def changed(self,*args):
         if self.loading:return
         current=self.values()
-        for key in ('opacity','blur','highlight'):self.fields[key].setEnabled(current['material']!='clear')
+        custom=current['source']=='custom'
+        self.material_color.setEnabled(custom)
+        self.preset.setEnabled(custom)
+        for key in ('material','theme'):self.fields[key].setEnabled(custom)
+        for key in ('opacity','blur','highlight'):self.fields[key].setEnabled(custom and current['material']!='clear')
         matched=next((i for i,(_,v) in enumerate(PRESETS,1) if all(current[key]==value for key,value in v.items())),0)
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matched);self.preset.blockSignals(False)
         for item,value in self.style_buttons:item.setChecked(self.fields['style'].currentData()==value)

@@ -538,15 +538,12 @@ class ResourceCapsule(QObject):
     def check_dependencies(self,deck_needed):
         if self.runtime.dock.preview:return
         cfg=self.cfg
-        cpu_sensors={'cpu_temp','cpu_power'}
         taskbar=cfg['resource_taskbar'] and self.strip_allowed()
         dotnet=deck_needed or taskbar and cfg['resource_task_music']
-        pawnio=(self.feature_visible('resources') and any(cfg['resource_'+key] for key in cpu_sensors)
-                or taskbar and bool(cpu_sensors.intersection(cfg['resource_task_metrics'])))
-        if self.dependency_prompts is None and (dotnet or pawnio):
+        if self.dependency_prompts is None and dotnet:
             from dependency_prompts import DependencyPrompts
             self.dependency_prompts=DependencyPrompts(self.runtime)
-        if self.dependency_prompts:self.dependency_prompts.request(dotnet,pawnio)
+        if self.dependency_prompts:self.dependency_prompts.request(dotnet)
 
     def start_job(self):
         if self.closed or self.runtime.session_ending or not self.signature or self.runtime.dock.preview:return

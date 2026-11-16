@@ -50,6 +50,7 @@ def paint_ring_targets(painter, area):
 
 
 def add_menu_actions(menu, runtime):
+    from appearance_presets import APPEARANCE_SOURCES
     cfg = runtime.dock.cfg
     show = menu.addAction('显示桌面音乐频谱')
     show.setCheckable(True)
@@ -62,13 +63,17 @@ def add_menu_actions(menu, runtime):
         action.setChecked(cfg['spectrum_style'] == style)
         action.triggered.connect(lambda _, value=style: runtime.set_spectrum_options(spectrum_style=value))
     color=menu.addMenu('频谱配色')
+    for title,value in APPEARANCE_SOURCES:
+        action=color.addAction(title);action.setCheckable(True)
+        action.setChecked(cfg['spectrum_appearance_source']==value)
+        action.triggered.connect(lambda _,key=value:runtime.set_spectrum_options(spectrum_appearance_source=key))
+    color.addSeparator()
     for title,value in (('炫彩','colorful'),('单色','mono')):
         action=color.addAction(title)
         action.setCheckable(True)
         action.setChecked(cfg['spectrum_color_mode']==value)
         action.triggered.connect(lambda _,key=value:runtime.set_spectrum_options(spectrum_color_mode=key))
     color.addAction('选择单色…',lambda:choose_mono_color(runtime))
-    color.addAction('单色跟随应用主题',lambda:runtime.set_spectrum_options(spectrum_color_mode='mono',spectrum_mono_color=''))
     size=menu.addAction('恢复默认大小',lambda:runtime.set_spectrum_options(spectrum_manual_size=False))
     size.setEnabled(cfg['spectrum_manual_size'] and not cfg['spectrum_locked'])
     lock = menu.addAction('锁定位置')
@@ -262,13 +267,14 @@ class DesktopSpectrum(QWidget):
             if style=='ring':paint_ring_targets(painter,spectrum_area(self.rect(),style))
             else:paint_edge_targets(painter,self.rect())
         painter.setRenderHint(QPainter.Antialiasing)
-        accent = QColor(self.cfg['spectrum_mono_color'] or self.cfg['theme_color'])
+        following=self.cfg.get('spectrum_appearance_source')=='app'
+        accent = QColor(self.cfg['theme_color'] if following else self.cfg['spectrum_mono_color'] or self.cfg['theme_color'])
         if not accent.isValid():
             accent = QColor('#297bc9' if self.runtime.dock.is_light() else '#78c9ff')
         preview=self.ring_height_preview
         height=self.cfg['spectrum_ring_height'] if preview is None else preview
         draw_spectrum(painter,QRectF(self.rect()),self.levels,style,accent,
-                      self.cfg['spectrum_color_mode']=='colorful',self.peaks,ring_height=height,show_limit=preview is not None)
+                      not following and self.cfg['spectrum_color_mode']=='colorful',self.peaks,ring_height=height,show_limit=preview is not None)
         painter.end()
 
 

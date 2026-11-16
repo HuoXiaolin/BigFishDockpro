@@ -450,6 +450,9 @@ class ResourceWindow(ResourceContentHost):
         self.empty_page=QLabel('把桌面组件拖回胶囊，或在「组件布局」中选择栏目。')
         self.empty_page.setObjectName('Subtle');self.empty_page.setWordWrap(True)
         self.detail.layout().addWidget(self.empty_page);self.empty_page.hide()
+        from page_footer import PagePager
+        self.page_pager = PagePager(self.detail, self.shift_expanded_page)
+        self.page_pager.hide()
         self._saved_view_state = {}
         self.nav=QScrollArea(self);self.nav.setFrameShape(QFrame.NoFrame)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -515,6 +518,25 @@ class ResourceWindow(ResourceContentHost):
 
     def first_page(self):
         return next((key for key in self.service.cfg['resource_component_order'] if self.page_enabled(key)),None)
+
+    def shift_expanded_page(self, step):
+        if self.service.compact:
+            return
+        pages = self.enabled_pages()
+        if len(pages) > 1 and self.page_key in pages:
+            target = pages[(pages.index(self.page_key) + step) % len(pages)]
+            if target != self.page_key:
+                self.select_page(target)
+
+    def enabled_pages(self):
+        return [key for key in self.service.cfg['resource_component_order'] if self.page_enabled(key)]
+
+    def sync_pager(self):
+        key = self.page_key
+        visible = bool(key and not self.service.compact)
+        self.page_pager.setVisible(visible)
+        if visible:
+            self.page_pager.set_page(OPEN_PAGES[key], len(self.enabled_pages()) > 1)
 
     def tab_drop_slot(self,key,point):
         local=self.mapFromGlobal(point)
@@ -594,16 +616,18 @@ class ResourceWindow(ResourceContentHost):
             if key in DESKTOP_COMPONENTS:
                 from capsule_components import CapsuleComponentView
                 view=CapsuleComponentView(self,key)
-            else:view=AiView(self) if key=='ai' else MusicView(self) if key=='music' else InfoPage(self,key)
-            setattr(self,'_'+key+'_view',view);view.hide();self.detail.layout().addWidget(view)
+            else:view=AiView(self, notes_in_content=True) if key=='ai' else MusicView(self) if key=='music' else InfoPage(self,key)
+            setattr(self,'_'+key+'_view',view);view.hide()
+            self.detail.layout().addWidget(view, 1)
             state = self._saved_view_state.pop(key, None)
             if state and key == 'ai':
-                period, metric, provider, dates = state
+                period, metric, provider, dates, notes = state
                 view.statistics.period = period
                 view.statistics.metric = metric
                 view.statistics.refresh()
                 view.statistics.provider.setCurrentIndex(max(0, view.statistics.provider.findData(provider)))
                 view.detail_dates = dates
+                view.statistics.notes_button.setChecked(notes)
             elif state and key == 'weather':
                 city, remarks = state
                 view.content.refresh()
@@ -630,7 +654,8 @@ class ResourceWindow(ResourceContentHost):
                     continue
                 statistics = view.statistics
                 dates = (view.start.date(), view.end.date()) if view._detail_dialog is not None else view.detail_dates
-                self._saved_view_state[key] = (statistics.period, statistics.metric, statistics.provider.currentData(), dates)
+                self._saved_view_state[key] = (statistics.period, statistics.metric, statistics.provider.currentData(), dates,
+                                               statistics.notes_button.isChecked())
             elif key == 'weather':
                 self._saved_view_state[key] = (view.content.city.currentText(), view.content.remarks_button.isChecked())
             elif key == 'traffic':
@@ -828,6 +853,7 @@ class ResourceWindow(ResourceContentHost):
         if palette_changed:
             self.settings_button.setIcon(icon('settings',self.colors['ink']));self.fold_button.setIcon(icon('collapse',self.colors['ink']))
             for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
+            self.page_pager.sync_appearance(self.colors['ink'])
         compact = self.service.compact
         if not compact or cfg['resource_fold']=='ball':
             self._compact_surface=None
@@ -1027,11 +1053,15 @@ class ResourceWindow(ResourceContentHost):
             if not self.page_enabled(self.page_key):self.page_key=self.first_page()
             self.scroll.setVisible(self.page_key=='resources')
             self.empty_page.setVisible(self.page_key is None)
-            if self.page_key and self.page_key!='resources':self.view(self.page_key).show();self.view(self.page_key).refresh()
+            if self.page_key and self.page_key != 'resources':
+                view = self.view(self.page_key)
+                view.show()
+                view.refresh()
             for key in tuple(self.page_buttons)[1:]:
                 view=getattr(self,'_'+key+'_view')
                 if view and key!=self.page_key:view.hide()
         if not self.service.compact and self.page_key=='resources':self.refresh_dashboard()
+        self.sync_pager()
         for key,btn in self.page_buttons.items():
             enabled=self.page_enabled(key)
             btn.setVisible(not self.service.compact and enabled);btn.setChecked(key==self.page_key)

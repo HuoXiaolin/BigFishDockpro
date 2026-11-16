@@ -8,28 +8,29 @@ SPECTRUM_STYLES = (
 )
 RING_HEIGHT_MAX = 140
 STARTUP_ANIMATION_STYLES = (('流动描边', 'outline'), ('滚动文字', 'rolling'))
+DOCK_ICON_SHAPES = (('默认', 'default'), ('圆形', 'circle'))
 
 DEFAULTS = {
-    'flash_enabled':False, 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
+    'flash_enabled':False, 'flash_appearance_source':'custom', 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
     'flash_auto_hide':True, 'flash_edge_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
-    'taskbar_text_mode':'system', 'layout_profiles':[], 'motion_enabled':True,
+    'taskbar_text_mode':'system', 'taskbar_text_auto':False, 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
     'card_snap': True, 'card_snap_distance': 12,
     'passthrough_mode':'custom','component_passthrough':{},
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
-    'dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
+    'dock_icon_shape':'default','dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'medium', 'settings_manual_size':[], 'settings_custom_density':100,
     'calendar_enabled':False,'calendar_locked':False,'calendar_layout':{},'calendar_appearance':{},
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
-    'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
+    'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_appearance_source': 'custom', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
     'spectrum_locked': False, 'spectrum_layout': {}, 'spectrum_manual_size': False,
     'spectrum_ring_height': 100,
     'daily_picture_enabled': False, 'daily_picture_locked': False, 'daily_picture_layout': {},
-    'daily_picture_material': 'follow', 'daily_picture_color': '', 'daily_picture_source': 'bing',
+    'daily_picture_appearance_source': 'custom', 'daily_picture_material': 'follow', 'daily_picture_color': '', 'daily_picture_source': 'bing',
     'daily_picture_local_paths': [], 'daily_picture_interval': 30,
     'custom_cards': [],
-    'notes_enabled': False, 'notes_visible': True, 'notes_active': '', 'note_style': 'glass', 'sticky_notes': [], 'notes_trash': [],
+    'notes_enabled': False, 'notes_visible': True, 'notes_active': '', 'note_style': 'glass', 'note_appearance_source': 'custom', 'sticky_notes': [], 'notes_trash': [],
     'dock_visible': True, 'panels_visible': True, 'hide_tray': False,
     'merge_groups': [], 'merge_initialized': False,
     'dock_page': 0, 'merged_panels': True, 'merged_active': '', 'merged_geometry': [],
@@ -37,7 +38,7 @@ DEFAULTS = {
     'screen_corners': True, 'corner_radius': 16,
     'desktop_middle_toggle': True, 'desktop_icons_override': False,
     'desktop_icon_mode': 'hide_all', 'panel_enabled': True, 'panel_opacity': 38, 'panel_blur': 8,
-    'panel_highlight': 45, 'panel_material': 'liquid', 'panel_locked': False,
+    'panel_highlight': 45, 'panel_material': 'liquid', 'panel_appearance_source': 'custom', 'panel_locked': False,
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
     'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random', 'panel_face_role':'',
     'panel_face_scale':100, 'panel_expand_mode':'hover',
@@ -56,6 +57,8 @@ DEFAULTS = {
 
 from resource_options import DEFAULTS as RESOURCE_DEFAULTS, FACE_SWITCH_DEFAULT, FACE_SWITCH_RANGE
 DEFAULTS.update(RESOURCE_DEFAULTS, panel_face_switch_minutes=FACE_SWITCH_DEFAULT)
+from shell_appearance_model import DEFAULTS as SHELL_DEFAULTS, normalize as normalize_shell
+DEFAULTS.update(SHELL_DEFAULTS)
 
 # Missing style fields in existing configurations retain pre-1.1.3 defaults.
 LEGACY_STYLE_DEFAULTS={key:DEFAULTS[key] for key in ('card_design','appearance_mode','appearance_custom','appearance_applied','note_appearance','clock_appearance','calendar_appearance','panel_opacity','panel_blur','panel_highlight','panel_material','panel_theme','panel_color','theme_color','dock_highlight','dock_material','clear_background')}
@@ -71,7 +74,7 @@ DEFAULTS.update(card_design='crystal',note_appearance=dict(DEFAULT_NOTE_APPEARAN
 
 
 def normalize(cfg):
-    result = dict(cfg)
+    result = normalize_shell(dict(cfg))
     if 'resource_taskbar_position' not in result:
         anchor=result.get('resource_taskbar_anchor')
         ratio=anchor.get('ratio') if isinstance(anchor,dict) else None
@@ -85,6 +88,9 @@ def normalize(cfg):
         if result.get(theme) == 'follow': result[theme] = 'auto'
     for key, value in DEFAULTS.items():
         result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
+    if type(result['taskbar_text_auto']) is not bool:result['taskbar_text_auto'] = False
+    if result['dock_icon_shape'] not in tuple(value for _, value in DOCK_ICON_SHAPES):
+        result['dock_icon_shape'] = DEFAULTS['dock_icon_shape']
     from layout_profiles import normalize_profiles
     result['layout_profiles']=normalize_profiles(result.get('layout_profiles'))
     result['dock_quick_order']=normalize_order(result.get('dock_quick_order'))
@@ -106,6 +112,10 @@ def normalize(cfg):
     if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
         result['panel_face_switch_minutes'] = FACE_SWITCH_DEFAULT
     from appearance_presets import MATERIALS
+    for key in ('panel_appearance_source', 'note_appearance_source', 'daily_picture_appearance_source',
+                'flash_appearance_source', 'spectrum_appearance_source'):
+        if result[key] not in ('app', 'custom'):
+            result[key] = DEFAULTS[key]
     for key, allowed in [('panel_material', tuple(value for _,value in MATERIALS)),
                          ('taskbar_text_mode', ('system','light','dark')),
                          ('dock_material', tuple(value for _,value in MATERIALS)),

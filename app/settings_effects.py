@@ -15,9 +15,10 @@ def apply_changes(tray,api,previous):
         dock._sys_light=api.system_is_light()
         from ui_style import apply_theme
         apply_theme(QApplication.instance(),dock.is_light())
+    if changed&{'dock_icon_shape','dock_reflections'}:
+        dock.extras.prepare(dock.items)
     if changed&{'icon_size','items','dock_clock','dock_quick_settings','dock_add_button'}:dock.reload()
     elif changed&DOCK_LAYOUT:
-        if 'dock_reflections' in changed:dock.extras.prepare(dock.items)
         dock.refresh_geometry()
     elif changed&DOCK_GLASS:dock.start_backdrop();dock.update()
     elif 'magnify' in changed:dock._recalc();dock._kick()

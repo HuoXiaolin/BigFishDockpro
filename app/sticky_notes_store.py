@@ -12,7 +12,8 @@ def default_note_style(cfg):
     style = cfg['note_style']
     color = {'glass':cfg.get('theme_color') or '#cfe8fa', 'paper':'#fff1a8', 'plain':'#eef1f5'}[style]
     from appearance_presets import normalize_note_appearance
-    return {'style':style, 'color':color, 'appearance':normalize_note_appearance(cfg.get('note_appearance'))}
+    return {'style':style, 'color':color, 'appearance':normalize_note_appearance(cfg.get('note_appearance')),
+            'appearance_source':cfg.get('note_appearance_source','custom')}
 
 
 def normalize_notes(rows,strict=False,limit=64):
@@ -43,6 +44,11 @@ def normalize_notes(rows,strict=False,limit=64):
             style,color='glass','#cfe8fa'
         row={'id':identity,'title':str(raw.get('title') or '新便签')[:60],'html':html,'text':text,
              'style':style,'color':color.lower(),'updated':str(raw.get('updated',''))[:40]}
+        source=raw.get('appearance_source','custom')
+        if source not in ('app','custom'):
+            if strict:raise ValueError('便签外观来源无效。')
+            source='custom'
+        row['appearance_source']=source
         if isinstance(raw.get('appearance'),dict):
             from appearance_presets import normalize_note_appearance
             row['appearance']=normalize_note_appearance(raw['appearance'])

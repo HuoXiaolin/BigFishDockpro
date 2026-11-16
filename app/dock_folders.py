@@ -159,8 +159,12 @@ def show_folder(dock, folder, save):
             self.setText(self.fontMetrics().elidedText(name, Qt.ElideRight, tile_width - 8))
             self.setToolTip(name + '\n拖出文件夹可放回 Dock')
             icon = child.get('icon')
-            self.setIcon(QIcon(dock.icons.get(icon or child['path'], icon_size * 2, bool(icon),
-                                              icon_index=child.get('icon_index', 0))))
+            pixmap = dock.icons.get(icon or child['path'], icon_size * 2, bool(icon),
+                                    icon_index=child.get('icon_index', 0))
+            if dock.cfg.get('dock_icon_shape') == 'circle':
+                from dock_icon_shape import circular_icon
+                pixmap = circular_icon(pixmap, icon_size * 2)
+            self.setIcon(QIcon(pixmap))
             self.clicked.connect(self.open_app)
 
         def open_app(self):

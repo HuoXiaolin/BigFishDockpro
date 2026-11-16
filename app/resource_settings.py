@@ -111,6 +111,7 @@ class ResourceOptions(QDialog):
                     widget.blockSignals(blocked)
             if index == 4:
                 self.color.setText(draft['text'])
+                self.custom_box.setVisible(self.fields['resource_background'].currentData()=='custom')
             elif index == 2:
                 self.fields['resource_clock_format'].setEnabled(self.fields['resource_clock'].isChecked())
             elif index == 6:
@@ -375,7 +376,8 @@ class ResourceOptions(QDialog):
             layout=page(4)
             style=section(layout,'背景材质')
             style_form=QFormLayout();style.addLayout(style_form)
-            source=combo(style_form,'resource_background','背景',[('跟随整体','global'),('单独设置','custom')],cfg['resource_background'],self.fields)
+            from appearance_presets import APPEARANCE_SOURCES
+            source=combo(style_form,'resource_background','外观来源',[*APPEARANCE_SOURCES, ('跟随桌面收纳','global')],cfg['resource_background'],self.fields)
             transparency=ModernSpinBox();transparency.setRange(0,100);transparency.setSuffix('%')
             transparency.setValue(cfg['resource_card_transparency']);transparency.setAccessibleName('卡底透底')
             control=NumericControl(transparency)
@@ -432,9 +434,15 @@ class ResourceOptions(QDialog):
             fan_hint=QLabel('CPU、GPU 和主板风扇仅在读到实际转速时显示。')
             fan_hint.setWordWrap(True);readouts.addWidget(fan_hint)
             from pawnio_setup import installed
-            version=installed();driver=QHBoxLayout();readouts.addLayout(driver)
-            driver.addWidget(QLabel('PawnIO '+version if version else 'PawnIO 未安装'),1)
-            driver.addWidget(button('安装驱动…',self.install_driver))
+            version = installed()
+            driver = QHBoxLayout()
+            readouts.addLayout(driver)
+            driver.addWidget(QLabel(f'PawnIO {version} 已安装' if version else 'PawnIO 未安装（可选）'), 1)
+            driver.addWidget(button('保存离线安装包…', self.export_driver))
+            if not version:
+                hint = QLabel('监控继续显示可读取的数据。需要 PawnIO 时，可将离线安装包交给管理员。')
+                hint.setWordWrap(True)
+                readouts.addWidget(hint)
             thresholds=section(layout,'阈值与颜色')
             self.fields['resource_threshold']=check('按阈值改变读数颜色',cfg['resource_threshold'])
             thresholds.addWidget(self.fields['resource_threshold'])
@@ -582,10 +590,13 @@ class ResourceOptions(QDialog):
             if index is not None:
                 self.tabs.setCurrentIndex(index)
 
-    def install_driver(self):
-        from pawnio_setup import launch
-        try:launch();self.status.setText('已打开内置安装程序。')
-        except (OSError,ValueError) as error:self.status.setText(str(error))
+    def export_driver(self):
+        from pawnio_setup import export_installer
+        try:
+            if export_installer(self):
+                self.status.setText('PawnIO 离线安装包已保存。')
+        except (OSError, ValueError) as error:
+            self.status.setText(str(error))
 
     def gateway_connections(self):
         from resource_gateway_settings import edit_gateways
@@ -830,7 +841,8 @@ class ResourceOptions(QDialog):
         if 4 in self.drafts:
             changes['resource_tints']=dict(self.tints)
             custom=dict(self.drafts[4]['stores']['custom_fields'], color=self.drafts[4]['text'].strip().lower())
-            if changes['resource_background']=='custom' or self.service.cfg['resource_appearance'] or custom!=(self.baseline['resource_appearance'] or background(self.baseline)):
+            saved=self.baseline['resource_appearance'] or clean_background(background(self.baseline))
+            if changes['resource_background']=='custom' or self.service.cfg['resource_appearance'] or custom!=saved:
                 try:changes['resource_appearance']=clean_background(custom,True)
                 except ValueError:
                     self.status.setText('请输入 #RRGGBB 颜色值，或点击「默认」。');return False

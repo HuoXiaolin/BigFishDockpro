@@ -27,6 +27,25 @@ apply to their respective third-party components.
 
 No GlassDesk or GlassBoard source or proprietary assets are included.
 
+## Native Windows shell appearance
+
+- Windows 11 Start Menu Styler and Notification Center Styler by m417z and
+  contributors, https://github.com/ramensoftware/windhawk-mods, GPL v3.
+  Unmodified upstream sources, authors and SHA-256 pins are retained in
+  `references/ShellStyler`. BigFishDock's adapter, lifecycle, folder rail,
+  launcher and build-time transformations are in `tools/ShellAppearance` and
+  `tools/prepare_shell_appearance.py`. GPL text: ShellStyler-GPL-3.0.txt.
+- MinHook 1.3.4 by Tsuda Kageyu, including HDE by Vyacheslav Patkov,
+  https://github.com/TsudaKageyu/minhook/tree/v1.3.4, BSD-2-Clause.
+  Copyright and redistribution notices: MinHook-BSD.txt.
+- C++/WinRT headers by Microsoft Corporation,
+  https://github.com/microsoft/cppwinrt, MIT; notice: CppWinRT-MIT.txt.
+- LLVM-MinGW runtime components linked into the native shell backend, from
+  https://github.com/ramensoftware/windhawk-dependencies/releases/tag/v1.6.
+  License text and LLVM exceptions: LLVM-MinGW-LICENSE.txt.
+  Compiler packages and header versions/hashes are documented in
+  `tools/ShellAppearance/README.md` in the source distribution.
+
 ## Resource capsule AI and music adapter
 
 - BrimDeck by MoFeng2223 and contributors: Apache-2.0, pinned at

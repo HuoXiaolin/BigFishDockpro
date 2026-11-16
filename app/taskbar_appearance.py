@@ -46,7 +46,7 @@ class _TaskbarEvents(QObject):
 
 class TaskbarAppearance:
     def __init__(self, dock, log):
-        from PyQt5.QtCore import QTimer
+        from PyQt5.QtCore import QTimer, Qt
 
         self.dock = dock
         self.log = log
@@ -59,6 +59,10 @@ class TaskbarAppearance:
         self.timer = QTimer(dock)
         self.timer.setInterval(2500)
         self.timer.timeout.connect(self.refresh)
+        self.text_timer = QTimer(dock)
+        self.text_timer.setTimerType(Qt.VeryCoarseTimer)
+        self.text_timer.setInterval(2000)
+        self.text_timer.timeout.connect(self.sync_text)
         self.backend = None
         self.xaml = None
         self.payload = None
@@ -195,7 +199,7 @@ class TaskbarAppearance:
     def sync(self, force=False):
         if getattr(self, 'closed', False):
             return False
-        self.text.sync(self.dock.cfg.get('taskbar_text_mode','system'))
+        self.sync_text()
         effect = effect_key(self.dock.cfg)
         pending = getattr(self, '_pending_effect', None)
         if not force and (pending == effect or (pending is None and getattr(self, '_effect', None) == effect)):
@@ -217,6 +221,38 @@ class TaskbarAppearance:
         self._effect = effect if accepted else None
         self.timer.start()
         return accepted
+
+    def sync_text(self):
+        from taskbar_text import background_mode
+        cfg = self.dock.cfg
+        auto = cfg.get('taskbar_text_auto', False) and cfg.get('taskbar_mode', 'system') != 'system' and self.text.enabled
+        timer = getattr(self, 'text_timer', None)
+        backdrop = None
+        surface = None
+        if auto:
+            try:
+                from taskbar_surface import taskbar_color
+                surface = taskbar_color(self.dock)
+            except (OSError, ValueError, AttributeError):
+                pass
+            if surface is None:
+                try:
+                    from background_contrast import wallpaper_color
+                    backdrop = wallpaper_color(self.dock)
+                except (OSError, ValueError, AttributeError):
+                    pass
+        if timer is not None:
+            if auto and not timer.isActive():timer.start()
+            elif not auto:timer.stop()
+        previous = self.text.selection
+        self.text.sync(background_mode(cfg, backdrop, surface=surface, previous=previous))
+        if previous != self.text.selection:
+            runtime = getattr(getattr(self.dock, 'tray', None), 'runtime', None)
+            resources = getattr(runtime, 'resources', None)
+            tray = getattr(resources, 'ai_tray', None)
+            if tray:tray.sync_taskbar_text()
+            strip = getattr(resources, 'strip', None)
+            if strip:strip.sync_style()
 
     def refresh(self, force=False):
         windows, apply, _ = self.backend
@@ -252,16 +288,19 @@ class TaskbarAppearance:
         self.active.clear()
 
     def suspend_session(self):
+        self.text_timer.stop()
         if self.xaml is not None:
             self.xaml.suspend_session()
 
     def resume_session(self):
+        self.sync_text()
         if self.xaml is not None and self.dock.cfg['taskbar_mode'] != 'system':
             self.retry()
 
     def close(self,shutdown=False):
         if getattr(self,'closed',False):return
         self.timer.stop()
+        self.text_timer.stop()
         self.closed=True
         process=getattr(self,'install_process',None);self.install_process=None
         if process is not None:

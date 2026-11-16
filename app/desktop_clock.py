@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, QSize, QVariantAnim
 from PyQt5.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QPixmap, QIcon
 from PyQt5.QtWidgets import (QWidget, QSizeGrip, QApplication, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QScrollArea, QLineEdit, QColorDialog, QComboBox)
 from ui_style import (SettingsHeader, ModernComboBox, ModernSpinBox, ModernCheckBox, ThemeSwatches, button, label, compact_dialog)
-from clock_appearance import STYLES, FONTS, PRESETS, theme_family, normalize as normalize_appearance
+from clock_appearance import STYLES, FONTS, PRESETS, effective_appearance, theme_family, normalize as normalize_appearance
 from appearance_presets import LIGHT_GLASS_INK, MATERIALS, COLOR_MODES, THEME_ACCENTS, material_design
 from screen_layout import capture, project, screen_records, valid_record
 from liquid_glass import paint_liquid_glass, tint_palette, material_palette, material_blur
@@ -148,11 +148,12 @@ class DesktopClock(QWidget):
 
     def capture_backdrop(self):
         if self.parentWidget() is not None:return
-        cfg=self.option('appearance')
+        cfg=effective_appearance(self.option('appearance'), self.dock.cfg)
+        blur_surface=cfg.get('blur_enabled', True) and cfg['material'] not in ('clear', 'solid')
         from glass_capture import backdrop_key
         key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect'],cfg['auto_contrast']) if not self.dock.preview else None
         if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
-        if self.isVisible() and not self.dock.preview and (cfg['material'] not in ('clear','solid') or cfg['text_effect']=='glass' or (cfg['material']=='clear' and cfg['auto_contrast'])):
+        if self.isVisible() and not self.dock.preview and (blur_surface or cfg['text_effect']=='glass' or (cfg['material']=='clear' and cfg['auto_contrast'])):
             from glass_capture import capture_behind, surface_windows
             image=capture_behind(self,surface_windows(self.dock))
             if image is not None:
@@ -162,7 +163,7 @@ class DesktopClock(QWidget):
                     self.backdrop=image if cfg['text_effect']=='glass' else image.scaled(96,64,Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
                 else:self.backdrop=smooth_backdrop(image,material_blur(cfg['blur'],cfg['material']))
                 self._backdrop_key=key
-        elif cfg['material'] in ('clear','solid') and cfg['text_effect']!='glass':self.backdrop=None
+        elif not blur_surface and cfg['text_effect']!='glass':self.backdrop=None
         self.update()
 
     def layer(self):
@@ -296,8 +297,9 @@ class DesktopClock(QWidget):
             if host is not None and self.window() is host:
                 options.update(host.background,_host_palette=host.colors)
                 options['design']=self.dock.cfg['card_design']
-                if self.dock.cfg['resource_background']=='custom':
-                    options['design']=material_design(options['material'],options['design'])
+                source=self.dock.cfg['resource_background']
+                if source in ('app','custom'):
+                    options['design']=material_design(options['material'],'aurora' if source=='app' else options['design'])
         return options
 
     def paint_face(self,painter,style,**values):
@@ -367,6 +369,8 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     import math
     from PyQt5.QtGui import QFontMetricsF
     options=dict(options,**normalize_appearance(options))
+    if not options.get('_host_palette'):
+        options=effective_appearance(options,dock.cfg)
     painter.save();painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.TextAntialiasing)
     w,h=rect.width(),rect.height();painter.translate(rect.left(),rect.top());rect=QRectF(0,0,w,h)
     material=options['material'];host=options.get('_host_palette')
@@ -386,7 +390,8 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         strength=options['highlight']/45
         colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)))
         stops=[(position,min(255,round(alpha*strength))) for position,alpha in dock.merged_grad_stops(colors)]
-        surface=SimpleNamespace(cfg={'glass':material!='solid','dock_material':material},backdrop=backdrop,spec_x=0,spec_alpha=0)
+        surface=SimpleNamespace(cfg={'glass':options.get('blur_enabled',True) and material!='solid',
+                                     'dock_material':material},backdrop=backdrop,spec_x=0,spec_alpha=0)
 
         def paint_surface(target):
             paint_liquid_glass(surface,target,shape,rect,rect,colors,int(options['opacity']*2.55),stops)

@@ -16,7 +16,7 @@ KINDS = {
     'download':'下载速率', 'upload':'上传速率',
     'data':'本地 JSON 字段', 'remote':'在线 JSON 字段',
 }
-STYLES = {'follow':'跟随全局', 'solid':'纯色', 'clear':'全透明'}
+STYLES = {'follow':'玻璃卡片', 'solid':'纯色', 'clear':'全透明'}
 ARRANGEMENTS={'list':'纵向列表','grid':'双列网格','image_left':'左图右文','image_right':'左文右图'}
 TOOLS={'':'无','search':'浏览器搜索','pomodoro':'番茄钟','history':'历史上的今天','rates':'汇率与换算',
        'feed':'自定义在线数据','convert':'自定义单位换算'}
@@ -40,7 +40,8 @@ PATH_TOKENS = re.compile(
 def developer_prompt():
     return (
         '为大肥鱼 Dock 原生卡片编辑器生成配置。请只输出一个 JSON 对象，直接粘贴到编辑器的「导入 JSON」。\n'
-        'title 是卡片名称，最多 28 字。style 取 follow（跟随全局）、solid（纯色）或 clear（透明）。'
+        'title 是卡片名称，最多 28 字。appearance_source 取 app（跟随本应用）或 custom（自定义）。'
+        '自定义外观的 style 取 follow（玻璃卡片）、solid（纯色）或 clear（透明）。'
         'width 是 190 到 640 的整数。rows 最多 6 行，每行使用 kind、label 和 value，label 可留空。\n'
         'kind 可选 '+ '、'.join(KINDS) +'。text 的 value 最多 260 字，可用 JSON 的 \\n 分行。'
         'countdown 的 value 是 YYYY-MM-DD。data 的 value 是 data_file 中的字段名；data_file 是本地 JSON 对象文件。\n'
@@ -163,6 +164,8 @@ def validate_card(raw):
     colors={key:colors[key] for key in ('surface','text','accent') if key in colors and colors[key]!=''}
     if any(not isinstance(color,str) or not re.fullmatch(r'#[a-fA-F0-9]{6}',color) for color in colors.values()):
         raise ValueError('配色需为 #RRGGBB。')
+    source=raw.get('appearance_source','app' if style=='follow' and not colors else 'custom')
+    if source not in ('app','custom'):raise ValueError('卡片外观来源无效。')
     tool=validate_tool(raw.get('tool',{}))
     if not isinstance(rows,list) or len(rows)>MAX_ROWS or not (rows or image or tool):
         raise ValueError('每张卡片最多 6 行，需要至少一行、配图或工具。')
@@ -185,7 +188,7 @@ def validate_card(raw):
         if kind=='remote' and (tool.get('kind')!='feed' or not re.fullmatch(r'[\w-]{1,40}(\.[\w-]{1,40}){0,6}',value)):
             raise ValueError('在线数据行需要 feed 工具与有效字段路径。')
         cleaned.append(dict(kind=kind,label=label.strip(),value=value))
-    return dict(title=title.strip(),style=style,width=width,rows=cleaned,arrangement=arrangement,image=image,
+    return dict(title=title.strip(),style=style,appearance_source=source,width=width,rows=cleaned,arrangement=arrangement,image=image,
                 fonts=fonts,colors={k:v.lower() for k,v in colors.items()},data_file=data_file,
                 header_date=raw.get('header_date') is True,tool=tool)
 

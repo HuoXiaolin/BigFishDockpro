@@ -1,8 +1,5 @@
 // Adapted from BrimDeck (Apache-2.0), pinned 5cbf5596.
 // BigFishDockpro changes: bounded metadata projection replaces whole-line DOM parsing.
-using System.Buffers;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace BrimDeck.Core;
@@ -21,7 +18,7 @@ public sealed class LogReader
         public JsonElement Quota;
         public DateTimeOffset? QuotaTime;
         public int Errors;
-        public string Model = "unknown", LastTotal = "";
+        public CodexAccounting? Codex;
     }
     // Claude and Codex read different folders; each keeps only the files its latest read visited.
     private readonly Dictionary<ProviderId, Dictionary<string, CacheItem>> _caches = [];
@@ -45,6 +42,13 @@ public sealed class LogReader
         if (!_caches.TryGetValue(id, out var cache)) _caches[id] = cache = new(StringComparer.OrdinalIgnoreCase);
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool changed = !_merged.TryGetValue(id, out var merged) || merged.Cutoff != cutoff;
+        if (changed)
+        {
+            // A wider date range reparses each file. Do not pin the superseded
+            // entries until the complete replacement history has been built.
+            _merged.Remove(id);
+            merged = default;
+        }
         int count = 0, errors = 0;
         JsonElement latestQuota = default;
         var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
@@ -63,7 +67,11 @@ public sealed class LogReader
                     if (!cache.TryGetValue(file, out var cached) || cutoff < cached.Cutoff || info.Length < cached.Length ||
                         info.Length == cached.Length && info.LastWriteTimeUtc != cached.Modified)
                         cache[file] = cached = new CacheItem(cutoff);
-                    else if (cached.Cutoff < cutoff) { cached.Entries.RemoveAll(entry => entry.Time < cutoff); cached.Cutoff = cutoff; }
+                    else if (cached.Cutoff < cutoff)
+                    {
+                        cached.Entries.RemoveAll(entry => entry.Time < cutoff); cached.Codex?.Reindex();
+                        cached.Cutoff = cutoff;
+                    }
                     if (info.Length != cached.Length || info.LastWriteTimeUtc != cached.Modified) { Parse(file, id, cached, info); changed = true; }
                     count++; errors += cached.Errors;
                     if (cached.QuotaTime is { } time && (result.QuotaTime is null || time > result.QuotaTime))
@@ -75,7 +83,9 @@ public sealed class LogReader
         foreach (var gone in cache.Keys.Where(file => !visited.Contains(file)).ToList()) { cache.Remove(gone); changed = true; }
         if (changed)
         {
-            var entries = new Dictionary<string, TokenEntry>();
+            // Pre-size once: repeated dictionary growth temporarily keeps both
+            // bucket arrays, which can exhaust the helper's fixed heap budget.
+            var entries = new Dictionary<string, TokenEntry>(cache.Values.Sum(file => file.Entries.Count));
             foreach (var cached in cache.Values)
                 foreach (var entry in cached.Entries)
                 {
@@ -83,7 +93,9 @@ public sealed class LogReader
                     // Streaming Claude records can repeat an id across files; keep its most complete usage.
                     if (!entries.TryGetValue(entry.Key, out var old) || entry.Total >= old.Total) entries[entry.Key] = entry;
                 }
-            _merged[id] = merged = (cutoff, entries.Values.OrderBy(x => x.Time).ToList());
+            var ordered = entries.Values.ToList();
+            ordered.Sort((a, b) => a.Time.CompareTo(b.Time));
+            _merged[id] = merged = (cutoff, ordered);
         }
         result.Entries = merged.Entries;
         var where = place ?? Loc.T("本机", "This PC");
@@ -118,7 +130,8 @@ public sealed class LogReader
     }
 
     // ParseLine reads only lines with one of these keys.
-    private static readonly byte[][] UsageKeys = ["\"token_count\""u8.ToArray(), "\"turn_context\""u8.ToArray(), "\"usage\""u8.ToArray()];
+    private static readonly byte[][] UsageKeys = ["\"token_count\""u8.ToArray(), "\"turn_context\""u8.ToArray(), "\"usage\""u8.ToArray(),
+        "\"thread_settings_applied\""u8.ToArray(), "\"session_meta\""u8.ToArray(), "\"task_started\""u8.ToArray()];
     private static readonly int KeyTail = UsageKeys.Max(key => key.Length) - 1;
     private static bool HasUsageKey(ReadOnlySpan<byte> span)
     {
@@ -182,35 +195,11 @@ public sealed class LogReader
             else if (id == ProviderId.Codex)
             {
                 var payload = obj.Get("payload");
-                if (type == "turn_context") { item.Model = string.Intern(payload.Get("model").Text()); return; }
-                if (type != "event_msg" || payload.Get("type").Text() != "token_count" || time is null) return;
                 var limits = payload.Get("rate_limits");
-                if (limits.ValueKind == JsonValueKind.Object && (limits.Get("limit_id").Text() is "" or "codex") && (item.QuotaTime is null || time >= item.QuotaTime))
+                if (time is not null && limits.ValueKind == JsonValueKind.Object && (limits.Get("limit_id").Text() is "" or "codex") && (item.QuotaTime is null || time >= item.QuotaTime))
                 { item.Quota = limits.Clone(); item.QuotaTime = time; }
-                var usageInfo = payload.Get("info");
-                var cumulative = usageInfo.Get("total_token_usage");
-                var identity = cumulative.ValueKind == JsonValueKind.Object ? cumulative.GetRawText() : "";
-                if (identity.Length > 0)
-                {
-                    if (identity == item.LastTotal) return;
-                    item.LastTotal = identity;
-                }
-                var usage = usageInfo.Get("last_token_usage");
-                if (usage.ValueKind != JsonValueKind.Object || time < item.Cutoff) return;
-                long input = usage.Get("input_tokens").Count(), cached = Math.Min(input, usage.Get("cached_input_tokens").Count());
-                var write = usage.Get("cache_write_input_tokens").Count();
-                var output = usage.Get("output_tokens").Count();
-                // Timestamp + cumulative counters deduplicate history copied into a fork. The counters are kept as a digest of their
-                // text: the same text gives the same key in every copy, at a tenth of the size.
-                Span<byte> digest = stackalloc byte[32];
-                using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
-                {
-                    if (identity.Length > 0) hash.AppendData(JsonMarshal.GetRawUtf8Value(cumulative));
-                    hash.AppendData(":"u8);
-                    hash.AppendData(JsonMarshal.GetRawUtf8Value(usage));
-                    hash.GetHashAndReset(digest);
-                }
-                Add(item, new($"codex:{time:O}:{Convert.ToHexString(digest[..16])}", time.Value, item.Model, input - cached, cached, write, 0, output));
+                item.Codex ??= new CodexAccounting(item.Entries);
+                if (!item.Codex.Read(obj, time, item.Cutoff)) item.Errors++;
             }
             else
             {

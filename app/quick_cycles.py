@@ -1,9 +1,22 @@
 """Persistent custom slots for settings that cycle between presets."""
 import copy,re
-from appearance_presets import DOCK_PRESETS,MATERIALS
+from appearance_presets import APPEARANCE_SOURCES, DOCK_PRESETS, MATERIALS
+from shell_appearance_model import SOURCES
 
 SIZES=(32,42,54,64)
 APPEARANCE_FIELDS=tuple(DOCK_PRESETS[0][1])
+SHELL_CYCLES = {
+    'shell_start': (
+        ('系统默认', {'shell_start_enabled': False}),
+        *((label, {'shell_start_enabled': True, 'shell_start_source': source})
+          for label, source in APPEARANCE_SOURCES),
+    ),
+    'shell_notifications': (
+        ('系统默认', {'shell_notifications_enabled': False}),
+        *((label, {'shell_notifications_enabled': True, 'shell_notifications_source': source})
+          for label, source in SOURCES),
+    ),
+}
 
 
 def normalize_custom(value):
@@ -26,7 +39,16 @@ def normalize_custom(value):
 def matches(cfg,values):return all(cfg.get(key)==value for key,value in values.items())
 
 
+def shell_cycle_index(cfg, key):
+    return next((index for index, (_, values) in enumerate(SHELL_CYCLES[key]) if matches(cfg, values)), None)
+
+
 def next_cycle(cfg,key):
+    if key in SHELL_CYCLES:
+        choices = SHELL_CYCLES[key]
+        index = shell_cycle_index(cfg, key)
+        return dict(choices[(1 if index is None else index + 1) % len(choices)][1])
+
     if key == 'appearance':
         from appearance_profiles import selected_mode, switch_profile
         from appearance_presets import PRESET_IDS, DEFAULT_PRESET_ID

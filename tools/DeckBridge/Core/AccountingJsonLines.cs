@@ -11,10 +11,11 @@ internal sealed class AccountingJsonLines(Stream stream, int limit)
     int cursor, count;
     public long Position { get; private set; } = stream.Position;
     static readonly HashSet<string> Containers = new(StringComparer.Ordinal)
-    { "payload", "message", "usage", "info", "rate_limits", "primary", "secondary", "total_token_usage", "last_token_usage", "cache_creation", "cost" };
+    { "payload", "message", "usage", "info", "rate_limits", "primary", "secondary", "total_token_usage", "last_token_usage", "cache_creation", "cost", "thread_settings", "thread_token_usage" };
     static readonly HashSet<string> Scalars = new(StringComparer.Ordinal)
     {
         "timestamp", "type", "id", "uuid", "role", "stopReason", "model", "provider", "limit_id", "plan_type",
+        "session_id", "thread_id", "turn_id", "response_id",
         "used_percent", "window_minutes", "resets_at", "reset_after_seconds",
         "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens",
         "cache_read_input_tokens", "cache_creation_input_tokens", "cache_write_input_tokens", "ephemeral_1h_input_tokens",
@@ -23,7 +24,8 @@ internal sealed class AccountingJsonLines(Stream stream, int limit)
     static bool Keep(string parent, string name) => parent switch
     {
         "" => name is "timestamp" or "type" or "id" or "uuid" or "message" or "payload" or "model" or "provider" or "usage",
-        "payload" => name is "type" or "model" or "info" or "rate_limits",
+        "payload" => name is "type" or "model" or "info" or "rate_limits" or "id" or "session_id" or "thread_id" or "turn_id" or "response_id" or "usage" or "thread_token_usage" or "thread_settings",
+        "thread_settings" => name == "model",
         "message" => name is "role" or "stopReason" or "timestamp" or "usage" or "model" or "provider" or "id",
         "info" => name is "total_token_usage" or "last_token_usage",
         "rate_limits" => name is "limit_id" or "plan_type" or "primary" or "secondary",

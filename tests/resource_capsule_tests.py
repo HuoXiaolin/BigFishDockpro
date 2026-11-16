@@ -17,6 +17,113 @@ def drag(window,delta):
         QApplication.sendEvent(window,QMouseEvent(kind,QPointF(local),QPointF(global_point),button,held,Qt.NoModifier))
 
 
+def pawnio_export_checks(options, app, output, checks):
+    from hashlib import sha256
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from PyQt5.QtWidgets import QFileDialog, QLabel, QPushButton, QScrollArea
+    from resource_capsule import ResourceCapsule
+    import pawnio_setup
+
+    # Exercise the non-preview dependency decision with CPU readings selected.
+    service = SimpleNamespace(
+        runtime=SimpleNamespace(dock=SimpleNamespace(preview=False)),
+        cfg=dict(resource_taskbar=True, resource_task_music=False,
+                 resource_task_metrics=['cpu_temp', 'cpu_power'],
+                 resource_cpu_temp=True, resource_cpu_power=True),
+        strip_allowed=lambda: True, feature_visible=lambda _: True, dependency_prompts=None,
+    )
+    with patch('dependency_prompts.DependencyPrompts') as prompt:
+        ResourceCapsule.check_dependencies(service, False)
+        prompt.assert_not_called()
+
+    page = options.tabs.currentWidget()
+    assert any(label.text() == 'PawnIO 未安装（可选）' for label in page.findChildren(QLabel))
+    export = next(button for button in page.findChildren(QPushButton) if button.text() == '保存离线安装包…')
+    with TemporaryDirectory(prefix='bfp-pawnio-export-') as folder:
+        target = Path(folder) / pawnio_setup.INSTALLER_NAME
+        with patch.object(QFileDialog, 'getSaveFileName', return_value=('', '')) as picker, \
+                patch.object(pawnio_setup, 'installer_bytes', wraps=pawnio_setup.installer_bytes) as read, \
+                patch('os.startfile') as launch:
+            export.click()
+            read.assert_not_called()
+            assert not target.exists()
+            picker.return_value = (str(target), '安装程序 (*.exe)')
+            export.click()
+            read.assert_called_once_with()
+            assert sha256(target.read_bytes()).hexdigest() == pawnio_setup.DIGEST
+            assert options.status.text() == 'PawnIO 离线安装包已保存。'
+            launch.assert_not_called()
+        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(target), '')), \
+                patch.object(pawnio_setup, 'installer_bytes', return_value=b'corrupt'):
+            export.click()
+            assert '校验失败' in options.status.text()
+            assert sha256(target.read_bytes()).hexdigest() == pawnio_setup.DIGEST
+    page.findChild(QScrollArea).ensureWidgetVisible(export, 10, 50)
+    app.processEvents()
+    assert options.grab().save(str(output / 'pawnio-offline-settings.png'))
+    checks.append('PawnIO: CPU sensor toggles do not spawn a dependency prompt; settings cancel without reading the payload and save the verified original when requested. Corruption preserves the previous file.')
+
+
+def pawnio_autoinstall_checks(parent, app, output, checks):
+    import ctypes
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from PyQt5.QtCore import QRect
+    from PyQt5.QtWidgets import QLabel, QPushButton
+    from pawnio_auto import AutoInstall, SOURCE_PAGE
+
+    with TemporaryDirectory(prefix='bfp-pawnio-first-start-') as folder, patch('pawnio_auto.allowed', return_value=True):
+        runtime = SimpleNamespace(dock=parent, closed=False, api=SimpleNamespace(CONFIG_DIR=folder, log=Mock()))
+        ready = AutoInstall(runtime)
+        with patch('pawnio_auto.installed', return_value='2.2.0.0'), patch('pawnio_auto.subprocess.Popen') as spawn:
+            ready.run()
+            spawn.assert_not_called()
+            assert not ready.marker.exists()
+
+        success = AutoInstall(runtime)
+        with patch('pawnio_auto.installed', side_effect=['', '2.2.0.0']), patch('pawnio_auto.subprocess.Popen') as spawn:
+            spawn.return_value.wait.return_value = 0
+            success.run()
+            spawn.assert_called_once()
+            command = spawn.call_args.args[0]
+            assert command[1:] == ['-install', '-silent']
+            spawn.return_value.wait.assert_called_once_with(timeout=120)
+        success.complete()
+        assert not success.error and success.dialog is None
+
+        runtime.api.CONFIG_DIR = str(Path(folder) / 'permission-denied')
+        denied = AutoInstall(runtime)
+        with patch('pawnio_auto.installed', return_value=''), patch('pawnio_auto.subprocess.Popen',
+                                                                  side_effect=ctypes.WinError(740)) as spawn:
+            denied.run()
+            spawn.assert_called_once()
+            restarted = AutoInstall(runtime)
+            restarted.run()
+            assert spawn.call_count == 1 and not restarted.error
+        denied.complete()
+        app.processEvents()
+        box = denied.dialog
+        assert box and '权限' in box.findChild(QLabel, 'PawnIOInstallStatus').text()
+        details = box.findChild(QLabel, 'PawnIOInstallerDetails')
+        assert SOURCE_PAGE in details.text() and '封装温度和功耗' in details.text()
+        save = box.findChild(QPushButton, 'ExportPawnIOInstaller')
+        close = next(button for button in box.findChildren(QPushButton) if button.text() == '关闭')
+        assert close.isDefault()
+        assert all(box.rect().contains(QRect(button.mapTo(box, QPoint()), button.size())) for button in (save, close))
+        assert box.grab().save(str(output / 'pawnio-autoinstall-failure.png'))
+        with patch('pawnio_auto.export_installer', return_value=False) as export:
+            save.click()
+            export.assert_called_once_with(box)
+            assert denied.dialog is box
+            export.return_value = True
+            save.click()
+        assert denied.dialog is None
+        denied.close()
+    checks.append('PawnIO first launch: existing service skips setup; silent child uses the verified package and checks installed state; Windows elevation failure shows source and CPU purpose with export; later starts do not repeat the attempt. No real driver installation.')
+
+
 def auto_fold_checks(service, window, app, checks):
     from PyQt5.QtWidgets import QMenu
     from ui_test_events import Events
@@ -280,9 +387,12 @@ def run(api,runtime,root,app,output,checks):
         scroll.setValue(0)
         window.setGeometry(narrow);app.processEvents()
         options=ResourceOptions(service);options.show();app.processEvents()
-        for page,fields in ((1,options.task_fields),(2,options.compact_fields),(5,options.limit_fields)):
-            options.tabs.setCurrentIndex(page)
-            assert all(key in fields for key in FAN_METRICS)
+        with patch('pawnio_setup.installed', return_value=''):
+            for page,fields in ((1,options.task_fields),(2,options.compact_fields),(5,options.limit_fields)):
+                options.tabs.setCurrentIndex(page)
+                assert all(key in fields for key in FAN_METRICS)
+            pawnio_export_checks(options, app, output, checks)
+            pawnio_autoinstall_checks(options, app, output, checks)
         options.tabs.setCurrentIndex(0)
         options.fields['resource_layer'].setCurrentIndex(options.fields['resource_layer'].findData('top'))
         assert options.commit() and cfg['resource_layer']=='top'

@@ -115,6 +115,17 @@ def sync_card_controls(widget,colors):
     ''')
 
 
+def sync_note_controls(button, note, colors):
+    if not colors:
+        return
+    ink = colors['ink']
+    if button.property('noteInk') == ink:
+        return
+    button.setProperty('noteInk', ink)
+    button.setStyleSheet(f'QToolButton, QToolButton:checked, QToolButton:hover {{color:{ink};}}')
+    note.setStyleSheet(f'color:{ink};')
+
+
 class DashboardCard(QWidget):
     def __init__(self,window,tone,parent=None):
         super().__init__(parent)

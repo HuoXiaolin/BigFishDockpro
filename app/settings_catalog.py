@@ -1,30 +1,34 @@
 """Settings navigation and searchable field definitions without Qt widgets."""
 
 APPEARANCE, COLLECTION, APPS, RUNNING, UPDATES, USAGE, ABOUT, TASKBAR, WIDGETS, CAPSULES, DATA = range(11)
+START_MENU, NOTIFICATIONS = 11, 12
 PAGES = ('Dock 外观', '桌面收纳', '应用管理', '启动与运行', '更新设置', '使用统计',
-         '关于', '任务栏', '桌面组件', '胶囊与监控', '数据与备份')
+         '关于', '任务栏', '桌面组件', '胶囊与监控', '数据与备份', '开始菜单', '通知面板')
 PAGE_SYMBOLS = ('palette', 'panels', 'apps', 'startup', 'update', 'size', 'info',
-                'position', 'calendar', 'wave', 'notes')
+                'position', 'calendar', 'wave', 'notes', 'apps', 'calendar')
 PAGE_GROUPS = (
-    ('外观与系统', (APPEARANCE, TASKBAR)),
+    ('外观与系统', (APPEARANCE, TASKBAR, START_MENU, NOTIFICATIONS)),
     ('收纳与组件', (COLLECTION, APPS, WIDGETS, CAPSULES)),
     ('运行与数据', (RUNNING, UPDATES, USAGE, DATA, ABOUT)),
 )
-PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@capsules': CAPSULES, '@data': DATA}
+PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@capsules': CAPSULES, '@data': DATA,
+                '@start': START_MENU, '@notifications': NOTIFICATIONS}
 
 
 def field_catalog(api, cfg):
-    from appearance_presets import COLOR_MODES, MATERIALS, material_choices
+    from appearance_presets import APPEARANCE_SOURCES, COLOR_MODES, MATERIALS, material_choices
     from card_design import DESIGNS
     from flash_data import COLORS, PALETTES
     from settings_layout import MODES as SIZE_MODES
     from sticky_notes_store import STYLES
     from taskbar_appearance import MODES
     from taskbar_text import MODES as TEXT_MODES
-    from feature_config import SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
+    from feature_config import DOCK_ICON_SHAPES, SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
     from resource_options import FACE_SWITCH_RANGE
+    from shell_appearance_model import catalog as shell_catalog
 
     return {
+        **shell_catalog(START_MENU, NOTIFICATIONS),
         'dock_material': (0, '材质', 'combo', material_choices(cfg['dock_material'])),
         'theme': (0, '明暗模式', 'combo', COLOR_MODES),
         'theme_color': (0, '主题色', 'color', None),
@@ -32,6 +36,7 @@ def field_catalog(api, cfg):
         'transparency': (0, '不透明度（%）', 'number', (0, 100)),
         'blur_px': (0, '模糊强度', 'number', (3, 30)),
         'icon_size': (0, '图标大小（像素）', 'number', (20, 256)),
+        'dock_icon_shape': (0, '图标形状', 'combo', DOCK_ICON_SHAPES),
         'glass': (0, '背景模糊', 'check', None),
         'clear_background': (0, '背景全透明', 'check', None),
         'blur_mode': (0, '壁纸取样刷新', 'combo', api.BLUR_MODES),
@@ -49,12 +54,14 @@ def field_catalog(api, cfg):
         'corner_radius': (0, '屏幕圆角半径（像素）', 'number', (0, 120)),
         'taskbar_mode': (TASKBAR, '任务栏效果', 'combo', MODES),
         'taskbar_text_mode': (TASKBAR, '任务栏文字与系统图标', 'combo', TEXT_MODES),
+        'taskbar_text_auto': (TASKBAR, '文字随背景自动切换黑白色', 'check', None),
         'taskbar_color': (TASKBAR, '任务栏颜色', 'color', None),
         'taskbar_opacity': (TASKBAR, '任务栏不透明度（%）', 'number', (0, 100)),
         'taskbar_blur': (TASKBAR, '任务栏模糊强度', 'number', (0, 50)),
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
         'card_design': (1, '装饰样式', 'combo', DESIGNS),
+        'panel_appearance_source': (1, '外观来源', 'combo', APPEARANCE_SOURCES),
         'panel_material': (1, '材质', 'combo', material_choices(cfg['panel_material'])),
         'panel_theme': (1, '明暗模式', 'combo', COLOR_MODES),
         'panel_color': (1, '主题色', 'color', None),
@@ -81,16 +88,20 @@ def field_catalog(api, cfg):
         'calendar_enabled': (WIDGETS, '桌面日历', 'check', None),
         'spectrum_enabled': (WIDGETS, '桌面音乐频谱', 'check', None),
         'spectrum_style': (WIDGETS, '频谱样式', 'combo', SPECTRUM_STYLES),
+        'spectrum_appearance_source': (WIDGETS, '频谱外观来源', 'combo', APPEARANCE_SOURCES),
         'spectrum_color_mode': (WIDGETS, '频谱配色', 'combo', [('炫彩','colorful'),('单色','mono')]),
         'spectrum_mono_color': (WIDGETS, '频谱单色', 'color', None),
         'daily_picture_enabled': (WIDGETS, '桌面每日图片', 'check', None),
-        'daily_picture_material': (WIDGETS, '每日图片外框材质', 'combo', [('跟随应用','follow'), *MATERIALS]),
+        'daily_picture_appearance_source': (WIDGETS, '每日图片外观来源', 'combo', APPEARANCE_SOURCES),
+        'daily_picture_material': (WIDGETS, '每日图片外框材质', 'combo', [('沿用桌面收纳材质','follow'), *MATERIALS]),
         'daily_picture_color': (WIDGETS, '每日图片外框颜色', 'color', None),
         'daily_picture_source': (WIDGETS, '每日图片来源', 'combo', [('必应每日图片','bing'),('本地图片轮播','local')]),
         'daily_picture_interval': (WIDGETS, '本地轮播间隔（秒）', 'number', (5,3600)),
         'notes_enabled': (WIDGETS, '便签卡片', 'check', None),
+        'note_appearance_source': (WIDGETS, '新便签外观来源', 'combo', APPEARANCE_SOURCES),
         'note_style': (WIDGETS, '新便签装饰样式', 'combo', STYLES),
         'flash_enabled': (CAPSULES, '显示贴边胶囊', 'check', None),
+        'flash_appearance_source': (CAPSULES, '闪念外观来源', 'combo', APPEARANCE_SOURCES),
         'flash_palette': (CAPSULES, '胶囊配色', 'combo', PALETTES),
         'flash_color': (CAPSULES, '新闪念颜色', 'combo', [(name, key) for key, (name, _) in COLORS.items()]),
         'flash_side': (CAPSULES, '停靠边缘', 'combo', [('右侧', 'right'), ('左侧', 'left')]),

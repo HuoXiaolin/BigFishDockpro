@@ -19,16 +19,23 @@ def text_ink(color):
     return '#101418' if luminance>.20 else '#ffffff'
 
 
+def flash_appearance(cfg):
+    from appearance_presets import dock_appearance, panel_appearance
+    return dock_appearance(cfg) if cfg.get('flash_appearance_source')=='app' else panel_appearance(cfg)
+
+
 def palette_for(service,background=None):
     cfg=service.cfg
-    theme=background['theme'] if background is not None else cfg['panel_theme']
+    style=flash_appearance(cfg) if background is None else background
+    theme=style['theme']
     light=theme=='light' or (theme=='auto' and service.runtime.dock._sys_light)
     surface='#f7f9fb' if light else '#26292d'
-    accent=(background['color'] if background is not None else cfg['panel_color']) or '#9ac6e0'
+    accent=style['color'] or '#9ac6e0'
+    vivid=cfg['flash_palette']=='vivid' and (background is not None or cfg.get('flash_appearance_source')!='app')
     return dict(light=light,surface=surface, field='#ffffff' if light else '#303439',
                 ink='#18232d' if light else '#ffffff', muted='#526373' if light else '#bdc9d2',
                 line='#cfdae3' if light else '#4b5259', hover='#e4ebf0' if light else '#39414a',
-                fills={key:(rgb if cfg['flash_palette']=='vivid' else
+                fills={key:(rgb if vivid else
                        blend(blend(rgb,accent,.15),surface,.73 if light else .76).name())
                        for key,(_,rgb) in COLORS.items()})
 
@@ -269,12 +276,13 @@ class ToolGlass(QFrame):
         painter=QPainter(self)
         radius=max(0,self.height()/2-.8)
         if self.corner is not None:radius=min(radius,self.corner)
-        self.material.paint(painter,self,self.panel,radius)
+        style=flash_appearance(self.panel.service.cfg)
+        self.material.paint(painter,self,self.panel,radius,appearance=style)
         if self.corner is not None:
             # A light edit surface preserves contrast on patterned wallpaper. Even clear
             # material needs a nonzero alpha for clicks in a Windows layered text field.
             ink=QColor(self.panel.colors['surface'])
-            ink.setAlpha(1 if self.panel.service.cfg['panel_material']=='clear' else 132)
+            ink.setAlpha(1 if style['material']=='clear' else 132)
             painter.setRenderHint(QPainter.Antialiasing)
             painter.setPen(Qt.NoPen);painter.setBrush(ink)
             painter.drawRoundedRect(QRectF(self.rect()).adjusted(1,1,-1,-1),radius,radius)

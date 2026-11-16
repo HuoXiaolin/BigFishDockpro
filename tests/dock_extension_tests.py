@@ -55,6 +55,24 @@ def run(api,runtime,root,output,checks):
             dock.grab().save(str(output/'dock-hover-normal.png'))
         dock.mouse_x=-99999;dock.stretch=0;dock.stretch_target=0;dock.hover_index=-1;dock._recalc(uniform=True)
         dock.grab().save(str(output/'dock-reflections-clock.png'))
+        from settings_effects import apply_changes
+        cfg['dock_icon_shape']='circle'
+        with patch.object(dock,'reload') as reload_icons:
+            apply_changes(tray,api,dict(cfg,dock_icon_shape='default'))
+            reload_icons.assert_not_called()
+        images=[it['_circle_icon'].toImage() for it in dock.items]
+        assert all(image.pixelColor(0,0).alpha()==0 and image.pixelColor(image.width()//2,4).alpha()==255 for image in images)
+        assert len({image.pixelColor(image.width()//2,4).name() for image in images})==len(images)
+        assert dock.items[0]['pixmap'].toImage()==baseline_icon
+        circular=dock.items[0]['_circle_icon'].cacheKey()
+        dock.extras.prepare(dock.items)
+        assert dock.items[0]['_circle_icon'].cacheKey()==circular
+        with patch('dock_extras.circular_icon',side_effect=AssertionError('Circle composed during drawing')):
+            assert dock.grab().save(str(output/'dock-icons-circular.png'))
+        cfg['dock_icon_shape']='default'
+        apply_changes(tray,api,dict(cfg,dock_icon_shape='circle'))
+        assert all('_circle_icon' not in it for it in dock.items)
+        assert dock.items[0]['_reflected'].toImage()==combined
         assert dock.extras.clock.isActive() and 0<dock.extras.clock.remainingTime()<=60000
         rectangles=dock.extras.rects();assert {'clock','quick','add'}==set(rectangles)
         for i,first in enumerate(rectangles.values()):
@@ -81,7 +99,7 @@ def run(api,runtime,root,output,checks):
         popup.tiles['undo'].click();assert productivity.undo.call_count==1 and popup.status.text()==productivity.message
         productivity.message='保存失败，未撤销。';productivity.undo.return_value=False
         popup.tiles['undo'].click();assert '失败' in popup.status.text()
-        popup.set_page(popup.pages.count()-1);popup.grab().save(str(output/'dock-quick-productivity.png'));popup.set_page(0)
+        popup.set_page(popup.order().index('search')//9);popup.grab().save(str(output/'dock-quick-productivity.png'));popup.set_page(0)
         callbacks = []
         component = SimpleNamespace(backend=None, payload=True, install_process=None)
         def install_offline(callback):
@@ -92,21 +110,26 @@ def run(api,runtime,root,output,checks):
         fake_runtime.taskbar = component
         # Text color works without the optional background component, shares the
         # main setting, persists immediately, and preserves unrelated pending edits.
-        from PyQt5.QtWidgets import QComboBox,QLineEdit
+        from PyQt5.QtWidgets import QCheckBox,QComboBox,QLineEdit
         from taskbar_text import MODES as TEXT_MODES
-        text_field=QComboBox();pending=QLineEdit('尚未保存的主题色')
+        auto=QCheckBox();text_field=QComboBox();pending=QLineEdit('尚未保存的主题色')
         for title,value in TEXT_MODES:text_field.addItem(title,value)
         from settings_dialog import SettingsDialog
-        settings=SimpleNamespace(isVisible=lambda:True,fields={'taskbar_text_mode':text_field,'theme_color':pending},
-            catalog={'taskbar_text_mode':None,'theme_color':None},_draft={},_runtime_switch_baseline={},findChildren=lambda *args:[])
+        settings=SimpleNamespace(isVisible=lambda:True,fields={'taskbar_text_mode':text_field,'taskbar_text_auto':auto,'theme_color':pending},
+            catalog={'taskbar_text_mode':None,'taskbar_text_auto':None,'theme_color':None},_draft={},_runtime_switch_baseline={},findChildren=lambda *args:[])
         settings.set_draft_values=lambda changes:SettingsDialog.set_draft_values(settings,changes)
         tray.settings_dialog=settings
-        for mode,label in [('light','浅色文字 · 白字'),('dark','深色文字 · 黑字'),('system','跟随系统')]:
+        for mode,auto_enabled,label in [('light',False,'浅色文字 · 白字'),('dark',False,'深色文字 · 黑字'),
+                                        ('dark',True,'随背景自动配色'),('system',False,'跟随系统')]:
+            before={key:cfg[key] for key in ('taskbar_text_mode','taskbar_text_auto')}
             popup.tiles['taskbar_text'].click()
-            assert cfg['taskbar_text_mode']==api.load_config()['taskbar_text_mode']==text_field.currentData()==mode
+            saved=api.load_config()
+            assert cfg['taskbar_text_mode']==saved['taskbar_text_mode']==text_field.currentData()==mode
+            assert cfg['taskbar_text_auto']==saved['taskbar_text_auto']==auto.isChecked()==auto_enabled
+            assert text_field.isEnabled() is not auto_enabled
             assert settings._draft['taskbar_text_mode']==mode
             assert popup.tiles['taskbar_text'].value==label
-            assert fake_runtime.apply_settings.call_args.args==({'taskbar_text_mode'},)
+            assert fake_runtime.apply_settings.call_args.args==({key for key in before if cfg[key]!=before[key]},)
             assert not callbacks and pending.text()=='尚未保存的主题色'
         with patch.object(api,'save_config',return_value=False):popup.tiles['taskbar_text'].click()
         assert cfg['taskbar_text_mode']==text_field.currentData()=='system' and '失败' in popup.status.text()
@@ -114,10 +137,10 @@ def run(api,runtime,root,output,checks):
         popup.tiles['taskbar_text'].click()
         assert '失败' in popup.status.text() and popup.status.toolTip()==component.text.error
         component.text.error=''
-        popup.tiles['taskbar_text'].click();popup.tiles['taskbar_text'].click()
+        for _ in range(3):popup.tiles['taskbar_text'].click()
         assert cfg['taskbar_text_mode']=='system' and not popup.status.toolTip()
         del tray.settings_dialog
-        text_field.deleteLater();pending.deleteLater()
+        auto.deleteLater();text_field.deleteLater();pending.deleteLater()
         popup.tiles['taskbar'].click()
         popup.tiles['taskbar'].click()
         assert len(callbacks) == 1 and popup.tiles['taskbar'].value == '正在安装…'
@@ -155,24 +178,30 @@ def run(api,runtime,root,output,checks):
             with patch.object(dock,'start_backdrop'):popup.tiles[key].click()
             assert cfg[field]==original_value
         wheel_on(popup.tiles['settings'],120);assert popup.pages.currentIndex()==0
-        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_ORDER,PRIORITY_ORDER,MIME
+        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_ORDER,PRIORITY_ORDER,MIME,SHELL_ACTIONS
+        def without_shell(order):
+            return [key for key in order if key not in SHELL_ACTIONS]
         assert DEFAULT_ORDER[:len(PRIORITY_ORDER)] == PRIORITY_ORDER and normalize_order(PREVIOUS_ORDER) == DEFAULT_ORDER
-        assert normalize_order(['clock','clock','not-an-action'])==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
+        assert without_shell(normalize_order(['clock','clock','not-an-action']))==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
         assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
+        assert normalize_order(without_shell(DEFAULT_ORDER))==DEFAULT_ORDER
         previous=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
         assert normalize_order(previous+['lite'])==DEFAULT_ORDER
         custom_order=list(reversed(previous))
-        assert normalize_order(['lite']+custom_order)==custom_order+list(PRODUCTIVITY_ACTIONS)
+        migrated_order=normalize_order(['lite']+custom_order)
+        assert without_shell(migrated_order)==custom_order+list(PRODUCTIVITY_ACTIONS)
+        index=migrated_order.index('taskbar_text')+1
+        assert tuple(migrated_order[index:index+2])==SHELL_ACTIONS
         legacy=[key for key in previous if key!='taskbar_text']
         assert normalize_order(legacy)==DEFAULT_ORDER
         legacy[1],legacy[-1]=legacy[-1],legacy[1]
         assert normalize_order(legacy)==normalize_order(legacy[:-1])==DEFAULT_ORDER
         custom=list(reversed(legacy));upgraded=normalize_order(custom)
         assert upgraded[upgraded.index('taskbar')+1]=='taskbar_text'
-        assert [key for key in upgraded if key!='taskbar_text' and key not in PRODUCTIVITY_ACTIONS]==custom
+        assert [key for key in without_shell(upgraded) if key!='taskbar_text' and key not in PRODUCTIVITY_ACTIONS]==custom
         rearranged=['taskbar_text']+custom
-        assert normalize_order(rearranged)==rearranged+list(PRODUCTIVITY_ACTIONS)
-        arranged_new=['references']+[key for key in DEFAULT_ORDER if key!='references']
+        assert without_shell(normalize_order(rearranged))==rearranged+list(PRODUCTIVITY_ACTIONS)
+        arranged_new=['shell_notifications','references']+[key for key in DEFAULT_ORDER if key not in ('shell_notifications','references')]
         assert normalize_order(arranged_new)==arranged_new
         popup.toggle_edit();assert popup.editing
         popup.grab().save(str(output/'dock-quick-sort.png'))
@@ -235,7 +264,6 @@ def run(api,runtime,root,output,checks):
         popup.close()
         cfg['magnify']=False;dock.stretch=1;dock.mouse_x=dock.rects[0][0];dock._recalc()
         assert max(dock.tgt)<=dock.icon_size+.5
-        from settings_effects import apply_changes
         # An unrelated update preference must not reload native icons or panels.
         previous=dict(cfg);cfg['update_use_proxy']=not cfg['update_use_proxy']
         with patch.object(dock,'reload') as reload_icons,patch.object(dock,'start_backdrop') as backdrop:
@@ -254,6 +282,15 @@ def run(api,runtime,root,output,checks):
                 started=time.perf_counter();dialog.commit();elapsed=time.perf_counter()-started
                 assert not reload_icons.called and not panels.called and dialog.isVisible()
                 dialog.commit();assert not reload_icons.called and not panels.called
+            shape=dialog.fields['dock_icon_shape']
+            assert shape.findText('默认')==shape.findData('default') and shape.findText('圆形')==shape.findData('circle')
+            shape.setCurrentIndex(shape.findData('circle'))
+            dialog.commit()
+            assert api.load_config()['dock_icon_shape']=='circle'
+            shape.setCurrentIndex(shape.findData('default'))
+            dialog.commit()
+            assert api.load_config()['dock_icon_shape']=='default'
+            assert api.normalize_features(dict(cfg,dock_icon_shape='unknown'))['dock_icon_shape']=='default'
             dialog.tabs.setCurrentIndex(0)
             from PyQt5.QtWidgets import QScrollArea
             page=dialog.tabs.pages.widget(0)
@@ -262,6 +299,7 @@ def run(api,runtime,root,output,checks):
         finally:dialog.reject();dialog.deleteLater()
         (output/'dock-extension-metrics.json').write_text(json.dumps({'reflections':{'icons':len(dock.items),'bytes':memory,'budget_bytes':REFLECTION_BUDGET,'paint_draws_per_icon':1,'paint_generation':False},'unrelated_save_seconds':elapsed,'limits':'isolated UI fixture timing, not a system-wide latency measurement'},indent=2),encoding='utf-8')
         checks.append('Dock extensions: current-page bounded precomposed reflections replace original draw (one call/icon, no paint-time generation/scale cache); time timer minute-aligned/stops disabled; dynamic supported quick actions; local search/undo/layout/reference routes and unavailable/save-failure states, retired tile removed from legacy custom order; taskbar text adjacent migration, three-mode cycle, persistence, main-setting sync without losing edits, backend-independent text control and failure reporting, child-tile wheel paging, component toggles, order sanitation/cross-page swap/save-failure/reopen/reset, exact half bottom reserve and 36-highlight/zero-opacity preset, actual add/grid press-release, setting persistence/failure, all additions disable; hover works before Save; unrelated and unchanged saves skip icon/panel/global-style refresh; rendered snapshots and memory/timing recorded')
+        checks.append('Dock icon shape restores the default and persists round mode through the main settings. Rounded icons preserve their source, choose individual backdrop colors and cache the result with reflections outside paint.')
     finally:
         if dock:dock.extras.close();dock.close();dock.deleteLater()
         runtime.dock.cfg.clear();runtime.dock.cfg.update(original);api.save_config(original);runtime.apply_settings()

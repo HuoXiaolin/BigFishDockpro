@@ -16,6 +16,7 @@ def run(api,runtime,root,output,checks):
     from settings_dialog import SettingsDialog
     from ui_style import apply_theme
     from ui_test_events import Events
+    from desktop_panel_tests import wait_for
     app = QApplication.instance()
     previous = runtime.usage
     folder = Path(root)/'usage-fixture'
@@ -98,7 +99,17 @@ def run(api,runtime,root,output,checks):
             dialog.size_mode.setCurrentIndex(dialog.size_mode.findData('medium'))
             app.processEvents()
             scroll=dialog.tabs.pages.currentWidget()
-            assert scroll.horizontalScrollBar().maximum()==0 and scroll.widget().width()<=scroll.viewport().width()+2
+            # Theme changes queue style/layout events. Observe the settled
+            # geometry instead of checking halfway through one event pass.
+            def fits():
+                return scroll.horizontalScrollBar().maximum()==0 and scroll.widget().width()<=scroll.viewport().width()+2
+            if not fits():
+                stage(f'theme layout pending: light={light}, range={scroll.horizontalScrollBar().maximum()}, content={scroll.widget().width()}, viewport={scroll.viewport().width()}')
+                try:wait_for(app, fits, seconds=2)
+                except AssertionError:
+                    dialog.grab().save(str(Path(output)/'usage-layout-failure.png'))
+                    raise AssertionError((light, scroll.horizontalScrollBar().maximum(), scroll.widget().size(), scroll.viewport().size()))
+                stage('theme layout settled')
             assert page.overview.height() <= page.overview.minimumSizeHint().height()+4 < 108
             assert page.management.parentWidget() is page and page.management.width()==page.overview.width()
             assert page.management.y() > page.analysis_layout.parentWidget().geometry().bottom()

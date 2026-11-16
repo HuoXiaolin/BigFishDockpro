@@ -5,6 +5,7 @@ from PyQt5.QtCore import Qt, QPoint, QRect, QRectF
 from PyQt5.QtGui import QPainter, QPainterPath, QPixmap
 from PyQt5.QtWidgets import QApplication
 
+from appearance_presets import panel_appearance
 from glass_capture import smooth_backdrop
 from liquid_glass import material_blur, material_palette, paint_liquid_glass, tint_palette
 from wallpaper_source import capture
@@ -23,9 +24,9 @@ class CapsuleGlass:
     def paint(self, painter, widget, owner, radius, moving=False, appearance=None, inset=0, shape=None):
         service = owner.service
         cfg = service.cfg
-        style=appearance if appearance is not None else {k:cfg['panel_'+k] for k in ('material','theme','color','opacity','blur','highlight')}
+        style=appearance if appearance is not None else panel_appearance(cfg)
         material=style['material']
-        self.uses_wallpaper = material not in ('clear', 'solid')
+        self.uses_wallpaper = style.get('blur_enabled', True) and material not in ('clear', 'solid')
         if material == 'clear':
             self.clear()
             return
@@ -37,17 +38,17 @@ class CapsuleGlass:
         mode = style['theme']
         light = dock._sys_light if mode == 'auto' else mode == 'light'
         key = (rect.getRect(), dpr, radius, inset, tuple(shape) if shape else None, moving, light, material, style['blur'],
-               style['opacity'], style['highlight'], style['color'])
+               style['opacity'], style['highlight'], style['color'], self.uses_wallpaper)
         if self.key != key and (not moving or self.image is None or shape):
             texture_dpr = dpr * .5 if rect.width()*rect.height()*dpr*dpr > 128*1024 else dpr
             buffer = QPixmap(max(1,round(rect.width()*texture_dpr)),max(1,round(rect.height()*texture_dpr)))
             buffer.fill(Qt.transparent)
             screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()
             backdrop = None
-            if moving and shape and self.tiny is not None and material!='solid':
+            if moving and shape and self.tiny is not None and self.uses_wallpaper:
                 backdrop=QPixmap.fromImage(self.tiny).scaled(buffer.size(),Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
                 backdrop.setDevicePixelRatio(texture_dpr)
-            elif material != 'solid' and not dock.preview and screen and not moving:
+            elif self.uses_wallpaper and not dock.preview and screen and not moving:
                 source = SimpleNamespace(frameGeometry=lambda:rect, devicePixelRatioF=lambda:dpr, winId=owner.winId)
                 try:
                     backdrop = smooth_backdrop(capture(source,screen),material_blur(style['blur'],material))
@@ -58,7 +59,7 @@ class CapsuleGlass:
             strength = style['highlight']/45
             colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)))
             stops = [(pos,min(255,round(alpha*strength))) for pos,alpha in dock.merged_grad_stops(colors)]
-            surface = SimpleNamespace(cfg={'glass':True,'dock_material':material},backdrop=backdrop,spec_x=0,spec_alpha=0)
+            surface = SimpleNamespace(cfg={'glass':self.uses_wallpaper,'dock_material':material},backdrop=backdrop,spec_x=0,spec_alpha=0)
             area = QRectF(widget.rect()).adjusted(.8+inset,.8+inset,-.8-inset,-.8-inset)
             if shape:
                 from resource_liquid_shape import body_path

@@ -35,7 +35,8 @@ $taskTestSeconds = 0.0
 $taskBuildTimer = [Diagnostics.Stopwatch]::StartNew()
 function Invoke-TaskCheck([string]$Target,[string]$Output,[string]$Kind,[string[]]$Options) {
     $taskTimer = [Diagnostics.Stopwatch]::StartNew()
-    & $taskPython tools/run_isolated_test.py --target $Target --timeout 160 --output $Output @Options
+    $taskDeadline = if ($Kind -eq 'singlefile-runtime') {240} else {160}
+    & $taskPython tools/run_isolated_test.py --target $Target --timeout $taskDeadline --output $Output @Options
     $taskExit = $LASTEXITCODE
     $taskTimer.Stop()
     $script:taskTestSeconds += $taskTimer.Elapsed.TotalSeconds
@@ -60,6 +61,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Bluetooth probe preparation failed' }
     & $taskPython tools/prepare_deck.py --dotnet $taskDotnet --shared-packages $taskSharedPackages
     if ($LASTEXITCODE -ne 0) { throw 'AI and media bridge preparation failed' }
+    & $taskPython tools/prepare_shell_appearance.py --toolchain $Toolchain
+    if ($LASTEXITCODE -ne 0) { throw 'Native shell appearance preparation failed' }
+    if (-not $taskSkip) { Invoke-TaskCheck 'tools/shell_native_test.py' 'artifacts/shell-native-test' 'native-shell-xaml' @() }
     $taskVersion = & $taskPython tools/release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
     if ($taskExtended) { Invoke-TaskCheck 'dock.py' 'artifacts/source-test' 'source-runtime' $taskScopeArgs }

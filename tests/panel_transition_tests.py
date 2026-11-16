@@ -11,6 +11,7 @@ def run(api,runtime,root,output,checks):
     from desktop_panels import DesktopPanels
     from desktop_catalog import CATEGORIES
     from desktop_panel_tests import wait_for
+    from ui_test_events import Events
     app=QApplication.instance();cfg=runtime.dock.cfg;original=copy.deepcopy(cfg)
     previous=runtime.panels;roots=list(previous.roots);previous.close();manager=None
     try:
@@ -42,6 +43,30 @@ def run(api,runtime,root,output,checks):
             assert before==[panel.tabs.tabRect(i) for i in range(panel.tabs.count())],(width,before,[panel.tabs.tabRect(i) for i in range(panel.tabs.count())])
             wait_for(app,lambda:panel.page_transition.frame is None)
             panel.grab().save(str(Path(output)/('other-tab-stable-%d.png'%width)))
+            pager = panel.page_pager
+            assert (pager.width(), pager.height()) == (110, 20)
+            assert pager.previous.text() == pager.next.text() == '' and not pager.previous.icon().isNull()
+            assert pager.isVisible() and pager.name.text() == panel.model['name']
+            assert abs(pager.geometry().center().x() - panel.content.rect().center().x()) <= 1
+            assert not pager.geometry().intersects(panel.notice.geometry())
+            assert panel.content.layout().indexOf(pager) == panel.content.layout().indexOf(panel.notice) == -1
+            assert panel.list.geometry().bottom() == pager.geometry().bottom()
+            app.sendEvent(pager, QEvent(QEvent.Leave))
+            assert pager.visibility_effect.opacity() == 0 and panel.notice.isVisible()
+            app.sendEvent(pager, QEvent(QEvent.Enter))
+            assert pager.visibility_effect.opacity() == 1
+            pager.next.click()
+            assert panel.identity == 'apps' and pager.name.text() == panel.model['name']
+            assert Events.wheel(pager.name, 120) and panel.identity == 'other'
+            pager.previous.click()
+            assert panel.identity == 'archives'
+            assert Events.wheel(pager.next, -120) and manager.windows['other'] is panel
+            assert panel.geometry()==geometry and int(panel.winId())==handle
+            wait_for(app,lambda:panel.page_transition.frame is None)
+            assert panel.grab().save(str(Path(output)/('collection-footer-pager-%d.png'%width)))
+            app.sendEvent(pager, QEvent(QEvent.Leave))
+            assert pager.visibility_effect.opacity() == 0 and panel.notice.isVisible()
+        checks.append('Collection floating page navigation: transparent, shown on pointer entry and hidden on exit; no layout row; drop hint remains; click and wheel wrap through pages.')
         transition=panel.page_transition;size=panel.list.viewport().size();ratio=panel.list.viewport().devicePixelRatioF()
         front=QPixmap(round(size.width()*ratio),round(size.height()*ratio));front.setDevicePixelRatio(ratio);front.fill(QColor('#d53d4b'))
         back=QPixmap(front.size());back.setDevicePixelRatio(ratio);back.fill(QColor('#36aa79'))

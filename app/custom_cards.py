@@ -7,6 +7,8 @@ from PyQt5.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QImage, QImageReader, QPainter, QPainterPath
 from PyQt5.QtWidgets import QApplication, QWidget
 
+from appearance_presets import dock_appearance, panel_appearance
+from capsule_glass import CapsuleGlass
 from custom_card_data import SAMPLERS
 from card_design import paint_capsule_card,paint_design
 from resource_compact import text
@@ -100,6 +102,7 @@ class CustomCard(QWidget):
         super().__init__(parent,Qt.Widget if parent else Qt.Tool|Qt.FramelessWindowHint)
         self.embedded=parent is not None
         self.manager=manager;self.runtime=manager.runtime;self.card=card;self.index=index
+        self.service=self.runtime.resources;self.glass=CapsuleGlass()
         self.drag=None;self.placement=None
         self.image=QImage();self.image_path='';self.data={};self.data_key=None
         self.remote=None
@@ -109,6 +112,8 @@ class CustomCard(QWidget):
 
     def sync(self,card):
         self.card=card
+        if card.get('appearance_source')!='app':
+            self.glass.clear();self.glass.uses_wallpaper=False
         self.setProperty('clickThroughKey','custom:'+card['id'])
         self.setWindowTitle(card['title']+' · 大肥鱼Dock')
         self.sync_tool()
@@ -298,23 +303,27 @@ class CustomCard(QWidget):
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         dock=self.runtime.dock;cfg=dock.cfg;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
-        card=self.card;style=card['style'];colors=dock.base_theme_colors(cfg['panel_theme'])
-        custom=card['colors'];factor=cfg['card_scale']/70
+        card=self.card;style=card['style'];following=card.get('appearance_source')=='app'
+        background=dock_appearance(cfg) if following else panel_appearance(cfg)
+        colors=dock.base_theme_colors(background['theme'])
+        custom={} if following else card['colors'];factor=cfg['card_scale']/70
         host=self.window() if self.embedded else None
         ink=QColor(custom.get('text') or (host.colors['ink'] if host else colors['fg']))
         if 'text' not in custom and 'surface' in custom:
             ink=QColor('#f2f7fa' if QColor(custom['surface']).lightness()<128 else '#172b36')
-        clear=style=='clear' or style=='follow' and cfg['panel_material']=='clear'
+        clear=background['material']=='clear' if following else style=='clear' or style=='follow' and background['material']=='clear'
         if host:
             paint_capsule_card(p,QRectF(self.rect()),dict(host.colors,ink=ink),'lavender',host.background,
                                radius=12,base=custom.get('surface'))
+        elif following:
+            self.glass.paint(p,self,self,12,moving=self.drag is not None,appearance=background)
         elif not clear:
             path=QPainterPath();path.addRoundedRect(rect,12,12)
             surface=QColor(custom.get('surface') or ('#f5fafc' if colors['light'] else '#1e2b34'))
-            if style=='follow':surface.setAlpha(min(250,155+cfg['panel_opacity']))
+            if style=='follow':surface.setAlpha(min(250,155+background['opacity']))
             p.fillPath(path,surface)
             if style=='follow':
-                design=dict(theme_color=custom.get('accent') or cfg['theme_color'],panel_color=cfg['panel_color'],card_design=cfg['card_design'])
+                design=dict(theme_color=custom.get('accent') or cfg['theme_color'],panel_color=background['color'],card_design=cfg['card_design'])
                 paint_design(p,rect,design,corner_radius=12,header_separator=False)
         muted=QColor(ink);muted.setAlpha(180)
         fonts={key:max(1,round(size*factor)) for key,size in card['fonts'].items()}

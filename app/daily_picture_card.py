@@ -9,7 +9,7 @@ from screen_layout import capture, project, screen_records
 
 
 def add_menu_actions(menu,runtime):
-    from appearance_presets import MATERIALS
+    from appearance_presets import APPEARANCE_SOURCES, MATERIALS
     cfg=runtime.dock.cfg
     show=menu.addAction('显示桌面每日图片')
     show.setCheckable(True);show.setChecked(cfg['daily_picture_enabled'])
@@ -17,13 +17,18 @@ def add_menu_actions(menu,runtime):
     lock=menu.addAction('锁定位置')
     lock.setCheckable(True);lock.setChecked(cfg['daily_picture_locked'])
     lock.triggered.connect(lambda on:runtime.set_daily_picture_options(daily_picture_locked=on))
-    materials=menu.addMenu('外框材质')
-    for name,value in [('跟随应用','follow'),*MATERIALS]:
+    appearance=menu.addMenu('外观来源')
+    for name,value in APPEARANCE_SOURCES:
+        action=appearance.addAction(name);action.setCheckable(True)
+        action.setChecked(cfg['daily_picture_appearance_source']==value)
+        action.triggered.connect(lambda _,source=value:runtime.set_daily_picture_options(daily_picture_appearance_source=source))
+    materials=menu.addMenu('自定义外框材质')
+    for name,value in [('沿用桌面收纳材质','follow'),*MATERIALS]:
         action=materials.addAction(name);action.setCheckable(True)
         action.setChecked(cfg['daily_picture_material']==value)
         action.triggered.connect(lambda _,style=value:runtime.set_daily_picture_options(daily_picture_material=style))
     menu.addAction('选择外框颜色…',lambda:choose_color(runtime))
-    menu.addAction('外框跟随应用色',lambda:runtime.set_daily_picture_options(daily_picture_color=''))
+    menu.addAction('恢复外框默认色',lambda:runtime.set_daily_picture_options(daily_picture_color=''))
     source=menu.addMenu('图片来源与轮播')
     for label,value in (('必应每日图片','bing'),('本地图片轮播','local')):
         action=source.addAction(label);action.setCheckable(True);action.setChecked(cfg['daily_picture_source']==value)
@@ -83,16 +88,22 @@ class DailyPictureCard(QWidget):
             self.placement=placement;self.reposition()
         if self.cfg['daily_picture_locked']:self.drag=None
         from flash_view import palette_for
-        from appearance_presets import material_design
+        from appearance_presets import dock_appearance, material_design, panel_appearance
+        following = self.cfg['daily_picture_appearance_source'] == 'app'
         if self.embedded:
             style=dict(self.window().background)
+        elif following:
+            style=dock_appearance(self.cfg)
         else:
-            style={key:self.cfg['panel_'+key] for key in ('material','theme','color','opacity','blur','highlight')}
+            style=panel_appearance(self.cfg)
             if self.cfg['daily_picture_material']!='follow':style['material']=self.cfg['daily_picture_material']
-        if self.cfg['daily_picture_color']:style['color']=self.cfg['daily_picture_color']
+        custom_color = '' if following else self.cfg['daily_picture_color']
+        if custom_color:style['color']=custom_color
         self.appearance=style
-        design=self.cfg['card_design'] if self.cfg['daily_picture_material']=='follow' else material_design(style['material'],self.cfg['card_design'])
-        self.border=dict(theme_color=self.cfg['daily_picture_color'] or self.cfg['theme_color'],panel_color=style['color'],card_design=design)
+        design=self.cfg['card_design']
+        if following or self.cfg['daily_picture_material']!='follow':
+            design=material_design(style['material'],'aurora' if following else design)
+        self.border=dict(theme_color=custom_color or self.cfg['theme_color'],panel_color=style['color'],card_design=design)
         colors=palette_for(self.service,style)
         if self.embedded:colors['card_alpha']=self.window().colors['card_alpha']
         if self.colors!=colors:

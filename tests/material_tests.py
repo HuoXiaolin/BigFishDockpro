@@ -47,6 +47,99 @@ def run(api,runtime,output,checks):
     checks.append('materials: distinct rendered outputs with the same tint/wallpaper, acrylic grain/blur and opaque simulated mica; clear-to-other selection restores visible defaults without changing saved config')
 
     check_clock_materials(api,runtime,output,checks)
+    check_appearance_sources(api,runtime,output,checks)
+
+
+def check_appearance_sources(api,runtime,output,checks):
+    import copy
+    from PyQt5 import sip
+    from PyQt5.QtWidgets import QApplication
+    from appearance_presets import APPEARANCE_SOURCES, dock_appearance, panel_appearance
+    from clock_appearance import effective_appearance
+    from clock_options import ClockOptions
+    from custom_card_data import TEMPLATE, validate_card
+    from custom_card_editor import CardEditor
+    from flash_view import flash_appearance
+    from glass_panel import PanelOptions
+    from resource_options import background
+    from resource_settings import ResourceOptions
+    from settings_catalog import WIDGETS
+    from settings_dialog import SettingsDialog
+    from sticky_notes import NoteOptions
+
+    cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);dialogs=[]
+    def select(field,key):field.setCurrentIndex(field.findData(key))
+    def options(field):return [(field.itemText(i),field.itemData(i)) for i in range(field.count())]
+
+    try:
+        cfg.update(dock_material='flowing',theme_color='#9151d1',theme='dark',transparency=43,glass=False,clear_background=False)
+        expected=dock_appearance(cfg)
+        for component in (runtime.clock,runtime.calendar):
+            saved=copy.deepcopy(component.option('appearance'))
+            dialog=ClockOptions(component);dialogs.append(dialog);dialog.tabs.setCurrentIndex(2)
+            source=dialog.fields['source'];assert options(source)==APPEARANCE_SOURCES
+            select(source,'app')
+            assert not dialog.fields['material'].isEnabled() and dialog.commit()
+            assert api.load_config()[component.kind+'_appearance']['source']=='app'
+            active=effective_appearance(component.option('appearance'),cfg)
+            assert all(active[key]==value for key,value in expected.items())
+            assert component.option('appearance')['material']==saved['material']
+            dialog.show();QApplication.processEvents()
+            dialog.grab().save(str(Path(output)/(component.kind+'-follow-dock.png')))
+            select(source,'custom');assert dialog.fields['material'].isEnabled() and dialog.commit()
+            assert component.option('appearance')['color']==saved['color']
+            dialog.close()
+
+        panel=next(iter(runtime.panels.windows.values()))
+        dialog=PanelOptions(panel);dialogs.append(dialog)
+        source=dialog.fields['appearance_source'];assert options(source)==APPEARANCE_SOURCES
+        select(source,'app');assert dialog.commit()
+        assert panel_appearance(cfg)==expected and panel.colors()['material']=='flowing'
+        select(source,'custom');assert dialog.commit() and cfg['panel_color']==before['panel_color']
+        dialog.close()
+
+        assert background(dict(cfg,resource_background='app'))==expected
+        saved_background={key:value for key,value in expected.items() if key!='blur_enabled'}
+        saved_background.update(material='solid',color='#123456')
+        assert background(dict(cfg,resource_background='custom',resource_appearance=saved_background))==saved_background
+        assert flash_appearance(dict(cfg,flash_appearance_source='app'))==expected
+        dialog=ResourceOptions(runtime.resources);dialogs.append(dialog);dialog.tabs.setCurrentIndex(4)
+        source=dialog.fields['resource_background'];assert options(source)[:2]==APPEARANCE_SOURCES
+        select(source,'custom');dialog.color.setText('#123456')
+        dialog.tabs.setCurrentIndex(0);dialog.tabs.setCurrentIndex(4)
+        assert not dialog.custom_box.isHidden() and dialog.color.text()=='#123456'
+        select(dialog.fields['resource_background'],'app');assert dialog.custom_box.isHidden() and dialog.commit()
+        assert background(cfg)==expected and cfg['resource_appearance']['color']=='#123456'
+        dialog.close()
+
+        identity=runtime.notes.new();note=runtime.notes.windows[identity]
+        dialog=NoteOptions(note);dialogs.append(dialog);saved_color=note.row()['color']
+        assert options(dialog.source)==APPEARANCE_SOURCES
+        select(dialog.source,'app');assert not dialog.color.isEnabled() and dialog.commit()
+        assert note.effective_appearance()['color']==expected['color'] and note.row()['color']==saved_color
+        select(dialog.source,'custom');assert dialog.commit() and note.effective_appearance()['color']==saved_color
+        dialog.close()
+
+        dialog=CardEditor(runtime.custom_card_manager(),None);dialogs.append(dialog)
+        legacy=validate_card(dict(TEMPLATE,colors={'surface':'#123456'}))
+        assert legacy['appearance_source']=='custom'
+        dialog.fill(legacy);assert options(dialog.source)==APPEARANCE_SOURCES
+        select(dialog.source,'app');assert not dialog.style.isEnabled()
+        assert dialog.values()['colors']==legacy['colors']
+        select(dialog.source,'custom');assert dialog.style.isEnabled() and dialog.values()==legacy
+
+        dialog=SettingsDialog(runtime.tray,api);dialogs.append(dialog);dialog.tabs.setCurrentIndex(WIDGETS)
+        for component,setting in (('daily_picture','material'),('spectrum','mono_color'),('note','style')):
+            source=dialog.fields[component+'_appearance_source'];assert options(source)==APPEARANCE_SOURCES
+            dialog.set_draft_values({component+'_appearance_source':'app'})
+            assert not dialog.fields[component+'_'+setting].isEnabled()
+            dialog.set_draft_values({component+'_appearance_source':'custom'})
+            assert dialog.fields[component+'_'+setting].isEnabled()
+        checks.append('Component appearance sources save independently, follow Dock at render time and retain the custom draft when switching back')
+    finally:
+        for dialog in reversed(dialogs):
+            if not sip.isdeleted(dialog):dialog.reject();dialog.deleteLater()
+        cfg.clear();cfg.update(before);api.save_config(cfg);runtime.apply_settings();QApplication.processEvents()
 
 
 def check_clock_materials(api,runtime,output,checks):

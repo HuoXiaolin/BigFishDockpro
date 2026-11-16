@@ -4,10 +4,12 @@ import re
 from appearance_presets import DOCK_PRESETS, PANEL_PRESETS, PRESET_IDS, preset_design, DEFAULT_PRESET_ID, DEFAULT_DOCK_STYLE, normalize_note_appearance
 from clock_appearance import DEFAULTS as CLOCK_DEFAULTS, normalize as normalize_clock
 
-TOP_DEFAULTS = dict(DEFAULT_DOCK_STYLE, card_design=DEFAULT_PRESET_ID, note_style='glass', clock_style='digital', clock_flipped=False, flash_palette='theme',resource_palette='theme',resource_tints={})
+TOP_DEFAULTS = dict(DEFAULT_DOCK_STYLE, card_design=DEFAULT_PRESET_ID, panel_appearance_source='custom',
+                    note_style='glass', note_appearance_source='custom', clock_style='digital', clock_flipped=False,
+                    flash_palette='theme', resource_palette='theme',resource_tints={})
 TOP_KEYS = tuple(TOP_DEFAULTS) + tuple('panel_'+key for key in PANEL_PRESETS[0][1])
 CLOCK_KEYS = tuple(key for key in CLOCK_DEFAULTS if key != 'work')
-NOTE_KEYS = ('style','color','font_size','font_scale','body_font_size','body_font_scale','appearance')
+NOTE_KEYS = ('style','color','font_size','font_scale','body_font_size','body_font_scale','appearance','appearance_source')
 MODES = [('自定义','custom'),('默认样式','default')] + [(name,key) for key,(name,_) in zip(PRESET_IDS,PANEL_PRESETS)]
 
 def snapshot(cfg):
@@ -35,6 +37,8 @@ def clean_snapshot(value):
         if not isinstance(raw.get(key),str) or raw[key] not in options:return {}
         values[key]=raw[key]
     values['clock_flipped']=raw.get('clock_flipped') is True
+    for key in ('panel_appearance_source', 'note_appearance_source'):
+        values[key] = 'app' if raw.get(key) == 'app' else 'custom'
     values['flash_palette']='vivid' if raw.get('flash_palette')=='vivid' else 'theme'
     values['resource_palette']=raw.get('resource_palette') if raw.get('resource_palette') in ('vivid','custom') else 'theme'
     from resource_options import TINTS
@@ -112,7 +116,7 @@ def apply_profile(cfg, mode, defaults):
         from appearance_presets import DEFAULT_NOTE_APPEARANCE
         result['note_appearance']=dict(DEFAULT_NOTE_APPEARANCE)
         for row in result.get('sticky_notes',[]):
-            row.update(style='glass',color=defaults['panel_color'],font_size=12,font_scale=1.0)
+            row.update(style='glass',color=defaults['panel_color'],font_size=12,font_scale=1.0,appearance_source='custom')
             for key in ('body_font_size','body_font_scale','appearance'):row.pop(key,None)
         return result
     if mode not in PRESET_IDS:return result

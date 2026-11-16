@@ -77,19 +77,20 @@ def run(api,runtime,root,output,checks):
                 dense.size_mode.setCurrentIndex(dense.size_mode.findData(mode));app.processEvents();sizes.append(dense.size());fonts.append(dense.fields['icon_size'].font().pixelSize())
                 assert dense.size_mode.currentData()==mode
                 dense.grab().save(str(Path(output)/('settings-preset-'+mode+'.png')))
-            assert sizes==[QSize(448,350),QSize(640,500)],sizes
+            assert sizes==[QSize(538,420),QSize(768,600)],sizes
             assert fonts==[10,11],fonts
             dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==.78
             for _ in range(2):
-                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(640,500) and dense.size_mode.currentData()=='auto'
+                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(768,600) and dense.size_mode.currentData()=='auto'
             dense.reject();assert cfg==saved_cfg,{key:(saved_cfg.get(key),cfg.get(key)) for key in set(saved_cfg)|set(cfg) if saved_cfg.get(key)!=cfg.get(key)}
             dense.reveal();dense.size_mode.setCurrentIndex(dense.size_mode.findData('medium'));dense.resize(910,710);app.processEvents()
             assert dense.size_mode.currentData()=='custom'
             dense.commit();assert cfg['settings_size']=='custom' and cfg['settings_manual_size']==[910,710]
         dense.reject();dense.reveal();area=dense.available_interface_area()
-        assert dense.size()==QSize(min(910,area.width()-24),min(710,area.height()-24)),dense.size()
+        assert dense.size()==QSize(min(768,area.width()-24),min(600,area.height()-24)),dense.size()
+        assert dense.size_mode.currentData()=='medium'
         assert cfg['settings_manual_size']==[910,710]
-        checks.append('card sizing and adaptive settings: 70 percent card/frame/text density without anchor drift, per-card exact width/height/text including notes, rich content retained, eleven large-font list rows, atomic save failure, global density reversible, resize-transition timer guard; small/medium scale controls/fonts, legacy large migrates to medium including imports, high-resolution auto uses 800x640, theme idempotence, cancel and manual 910x710 save/reopen')
+        checks.append('adaptive settings: small/medium frames enlarged 20 percent to 538x420/768x600; fonts remain 10/11 px; medium on reopen, custom dimensions retained, theme idempotence and cancel preserved')
     finally:
         if dialog:dialog.reject();dialog.deleteLater()
         if dense:

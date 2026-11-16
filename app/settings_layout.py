@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import QApplication,QWidget
 from ui_style import UI_DENSITY,ModernComboBox,label,density_stylesheet
 
 MODES=[('自动适配','auto'),('小','small'),('中','medium'),('手动调整','custom')]
-SETTINGS_SIZE = (640, 500)
+SETTINGS_SIZE = (768, 600)
 SETTINGS_MINIMUM = (575, 360)
 
 
@@ -72,7 +72,9 @@ class SettingsSizingMixin:
     def initialize_size_behavior(self):
         self._density_reference=capture_density(self)
         self._interface_ready=True;self._custom_density=self.tray.cfg.get('settings_custom_density',100);self._manual_dimensions=list(self.tray.cfg.get('settings_manual_size',[]))
-        self.size_mode.setCurrentIndex(max(0,self.size_mode.findData(self.tray.cfg.get('settings_size','medium'))))
+        # Open at the agreed medium size; small/custom remain available for the
+        # current window. Do not increase text or control density with the frame.
+        self.size_mode.setCurrentIndex(self.size_mode.findData('medium'))
         self.size_mode.currentIndexChanged.connect(self.adapt_interface);self.adapt_interface()
     def available_interface_area(self):
         screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()

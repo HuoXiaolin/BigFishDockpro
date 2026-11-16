@@ -7,6 +7,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication,QColorDialog,QDialog,QFileDialog,QFormLayout,QHBoxLayout,QHeaderView,QInputDialog,
                              QLineEdit,QPlainTextEdit,QScrollArea,QTableWidget,QTabWidget,QVBoxLayout,QWidget)
 
+from appearance_presets import APPEARANCE_SOURCES
 from custom_card_data import ARRANGEMENTS,KINDS,MAX_CARDS,MAX_ROWS,STYLES,TEMPLATE,TOOLS,developer_prompt,parse_card_json,validate_card
 from ui_style import ModernCheckBox,ModernComboBox,ModernSpinBox,SettingsHeader,button,compact_dialog,label
 
@@ -27,6 +28,7 @@ class CardEditor(QDialog):
         basic=QWidget();base=QVBoxLayout(basic);self.tabs.addTab(basic,'内容')
         form=QFormLayout();self.title=QLineEdit();self.title.setMaxLength(28)
         self.title.setAccessibleName('卡片名称');form.addRow('名称',self.title)
+        self.source=self.combo({key:title for title,key in APPEARANCE_SOURCES});form.addRow('外观来源',self.source)
         self.style=ModernComboBox()
         for value,name in STYLES.items():self.style.addItem(name,value)
         form.addRow('背景',self.style)
@@ -50,6 +52,7 @@ class CardEditor(QDialog):
         self.status=label('每张卡片最多 6 行，可组合文字、倒计时与系统读数。','muted')
         body.addWidget(self.status)
         self.cards.currentIndexChanged.connect(self.load)
+        self.source.currentIndexChanged.connect(self.sync_source)
         self.fill_cards(identity)
         compact_dialog(self)
 
@@ -83,17 +86,22 @@ class CardEditor(QDialog):
         self.fonts={}
         for key,title in (('title','标题字号'),('label','标签字号'),('body','正文字号')):
             self.fonts[key]=self.spin(9,32);form.addRow(title,self.fonts[key])
-        self.colors={}
+        self.colors={};self.color_controls=[]
         for key,title in (('surface','背景色'),('text','文字色'),('accent','强调色')):
             field=QLineEdit();field.setPlaceholderText('跟随应用 / #RRGGBB');field.setMaxLength(7)
             row=QHBoxLayout();row.addWidget(field,1)
-            row.addWidget(button('选色',lambda _,field=field:self.choose_color(field)))
+            pick=button('选色',lambda _,field=field:self.choose_color(field));row.addWidget(pick)
+            self.color_controls.extend((field,pick))
             self.colors[key]=field;form.addRow(title,row)
         self.data_file=self.file_input(form,'本地数据文件','JSON 文件 (*.json)')
 
     def choose_color(self,field):
         color=QColorDialog.getColor(QColor(field.text() or '#87bcd6'),self,'卡片配色')
         if color.isValid():field.setText(color.name())
+
+    def sync_source(self):
+        custom=self.source.currentData()=='custom'
+        for field in (self.style,*self.color_controls):field.setEnabled(custom)
 
     def build_tools(self):
         page=QWidget();lay=QVBoxLayout(page);self.tabs.addTab(page,'工具与接口')
@@ -127,6 +135,7 @@ class CardEditor(QDialog):
         visible=row.get('visible',True)
         row=validate_card(row)
         self.title.setText(row['title']);self.style.setCurrentIndex(self.style.findData(row['style']))
+        self.source.setCurrentIndex(self.source.findData(row['appearance_source']));self.sync_source()
         self.width_field.setValue(row['width']);self.visible.setChecked(visible)
         self.arrangement.setCurrentIndex(self.arrangement.findData(row['arrangement']));self.header_date.setChecked(row['header_date'])
         image=row['image'];self.image.setText(image.get('path',''));self.fit.setCurrentIndex(self.fit.findData(image.get('fit','contain')))
@@ -172,7 +181,7 @@ class CardEditor(QDialog):
         if len(tool_text)>4096:raise ValueError('工具 JSON 过长。')
         try:tool=json.loads(tool_text or '{}')
         except (ValueError,RecursionError):raise ValueError('工具 JSON 格式无效。') from None
-        return validate_card(dict(title=self.title.text(),style=self.style.currentData(),width=self.width_field.value(),rows=rows,
+        return validate_card(dict(title=self.title.text(),style=self.style.currentData(),appearance_source=self.source.currentData(),width=self.width_field.value(),rows=rows,
             arrangement=self.arrangement.currentData(),header_date=self.header_date.isChecked(),data_file=self.data_file.text(),tool=tool,
             image=dict(path=self.image.text(),fit=self.fit.currentData(),height=self.image_height.value()),
             fonts={key:field.value() for key,field in self.fonts.items()},colors={key:field.text().strip() for key,field in self.colors.items()}))

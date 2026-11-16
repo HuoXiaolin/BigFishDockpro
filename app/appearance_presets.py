@@ -1,6 +1,7 @@
 """One theme vocabulary; rendering adapters retain each component's units."""
 MATERIALS = [('液态玻璃','liquid'), ('高光玻璃','gloss'), ('亚克力','acrylic'), ('云母','mica'), ('全透明','clear'), ('纯色','solid'), ('清透水晶','crystal'), ('柔光流彩','flowing'), ('浅色纸玻璃','paper_glass')]
 COLOR_MODES = [('跟随系统','auto'), ('浅色','light'), ('深色','dark')]
+APPEARANCE_SOURCES = [('跟随本应用', 'app'), ('自定义', 'custom')]
 VIVID_BLUE, VIVID_GREEN, VIVID_RED = '#5b8def', '#5fd97b', '#ff5d5d'
 LIQUID_TINT = '#d3e4f8'
 FLOWING_TINT = '#d3b6ee'
@@ -56,6 +57,26 @@ DOCK_PRESETS = [(name, dict(theme=v['theme'], transparency=100-v['opacity'],
 DEFAULT_PANEL_STYLE = dict(PANEL_PRESETS[PRESET_IDS.index(DEFAULT_PRESET_ID)][1])
 DEFAULT_DOCK_STYLE = dict(DOCK_PRESETS[PRESET_IDS.index(DEFAULT_PRESET_ID)][1])
 DEFAULT_NOTE_APPEARANCE = {key:DEFAULT_PANEL_STYLE[key] for key in ('material','theme','opacity','blur','highlight')}
+
+
+def dock_appearance(cfg):
+    """Resolve the shared Dock appearance without altering component settings."""
+    defaults = DEFAULT_DOCK_STYLE
+    material = cfg.get('dock_material', defaults['dock_material'])
+    clear = cfg.get('clear_background') or material == 'clear'
+    return dict(material='clear' if clear else material,
+                theme=cfg.get('theme', defaults['theme']),
+                color=cfg.get('theme_color', defaults['theme_color']),
+                opacity=0 if clear else 100 - cfg.get('transparency', defaults['transparency']),
+                blur=cfg.get('blur_px', defaults['blur_px']),
+                highlight=0 if clear else cfg.get('dock_highlight', defaults['dock_highlight']),
+                blur_enabled=not clear and cfg.get('glass', defaults['glass']))
+
+
+def panel_appearance(cfg):
+    if cfg.get('panel_appearance_source') == 'app':
+        return dock_appearance(cfg)
+    return {key: cfg.get('panel_' + key, value) for key, value in DEFAULT_PANEL_STYLE.items()}
 
 NOTE_DEFAULTS = dict(material='liquid',theme='light',opacity=41,blur=8,highlight=45)
 

@@ -4,6 +4,7 @@
   "taskbar_opacity": 32,
   "taskbar_blur": 12,
   "icon_size": 42,
+  "dock_icon_shape": "default",
   "magnify": true,
   "glass": true,
   "running_dots": true,

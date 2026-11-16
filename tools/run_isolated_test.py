@@ -131,7 +131,7 @@ def main():
             process = subprocess.Popen(command, cwd=target.parent, env=env, startupinfo=startup,
                 creationflags=subprocess.CREATE_NO_WINDOW, stdout=log, stderr=subprocess.STDOUT)
             try:
-                code = process.wait(timeout=max(5,min(180,args.timeout)))
+                code = process.wait(timeout=max(5,min(300,args.timeout)))
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)

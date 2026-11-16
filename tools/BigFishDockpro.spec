@@ -4,6 +4,12 @@ import os
 import ssl
 root = Path(SPECPATH).parent
 single_file = os.environ.get('FISHDOCK_ONEFILE') == '1'
+# Store the optional installer in the Python archive. Both builds can export
+# the original bytes without unpacking a runnable setup file at startup.
+pawnio_dir = root / 'artifacts/pawnio'
+pawnio_setup = pawnio_dir / 'PawnIO_setup.exe'
+(pawnio_dir / '_pawnio_payload.py').write_text(
+    f'INSTALLER = {pawnio_setup.read_bytes()!r}\n', encoding='ascii')
 # Some Python distributions load additional trust restrictions from ssl.py's
 # directory. Keep that file beside the frozen module as well.
 tls_policy = Path(ssl.__file__).with_name('codex-rejected-cas.pem')
@@ -14,10 +20,12 @@ if single_file:
     taskbar_data = [(str(payload / name), 'taskbar-payload') for name in ('VCLibs-x64.appx', 'WinUI-x64.appx')]
     taskbar_data += [(str(payload / 'backend'), 'taskbar-payload/backend'),
                      (str(root / 'tools/install_taskbar_frameworks.ps1'), 'taskbar-payload')]
-a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('app','tests','tools')],
-    binaries=[], datas=[(str(root / 'artifacts/pawnio/PawnIO_setup.exe'),'resource-probe'), (str(root / 'artifacts/generated/DesktopResourceProbe.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/PresentMon.exe'), 'resource-probe'), (str(root / 'licenses/PresentMon-LICENSE.txt'),'licenses'), (str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
+a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('app','tests','tools')] + [str(pawnio_dir)],
+    binaries=[], datas=[(str(root / 'artifacts/generated/DesktopResourceProbe.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/PresentMon.exe'), 'resource-probe'), (str(root / 'licenses/PresentMon-LICENSE.txt'),'licenses'), (str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
                         (str(root / 'licenses'), 'licenses'),
+                        (str(root / 'artifacts/shell-appearance'), 'shell-appearance'),
                         (str(root / 'docs/2.4G外设适配.md'), 'docs'),
+                        (str(root / 'docs/系统面板外观.md'), 'docs'),
                         (str(root / 'assets/ai-providers'), 'assets/ai-providers'),
                         (str(root / 'assets/reminder-sounds'), 'assets/reminder-sounds'),
                         (str(root / 'artifacts/deck-bridge/BigFishDeckBridge.exe'), 'deck-bridge'),

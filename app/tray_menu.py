@@ -141,6 +141,9 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         bt.triggered.connect(lambda on:runtime.resources.set_options(resource_bt_tray=on))
         from taskbar_menu import add_menu as taskbar_actions
         taskbar_actions(menu.addMenu('任务栏'),runtime)
+        from shell_menu import add_menu as shell_actions
+        shell_actions(menu.addMenu('开始菜单'),runtime,'start')
+        shell_actions(menu.addMenu('通知与快捷面板'),runtime,'notifications')
         from component_passthrough import add_menu as passthrough_actions
         passthrough_actions(menu.addMenu('鼠标穿透'),runtime)
     clock_menu=menu.addMenu('桌面时钟');clock_menu.menuAction().setEnabled(runtime is not None)

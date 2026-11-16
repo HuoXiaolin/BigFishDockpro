@@ -32,8 +32,12 @@ def add_menu(menu,runtime):
     for title,key,values in (('任务栏效果','taskbar_mode',EFFECTS),('任务栏文字','taskbar_text_mode',TEXT)):
         submenu=menu.addMenu(title);group=QActionGroup(submenu);group.setExclusive(True)
         for label,value in values:
-            action=submenu.addAction(label);action.setCheckable(True);action.setChecked(cfg[key]==value);group.addAction(action)
-            action.triggered.connect(lambda _,key=key,value=value:save_changes(runtime.tray,runtime.api,{key:value}))
+            action=submenu.addAction(label);action.setCheckable(True)
+            action.setChecked(cfg[key]==value and (key!='taskbar_text_mode' or not cfg.get('taskbar_text_auto', False)));group.addAction(action)
+            action.triggered.connect(lambda _,key=key,value=value:save_changes(runtime.tray,runtime.api,
+                {key:value, **({'taskbar_text_auto': False} if key=='taskbar_text_mode' else {})}))
+    automatic=menu.addAction('文字随背景自动切换黑白色');automatic.setCheckable(True);automatic.setChecked(cfg.get('taskbar_text_auto', False))
+    automatic.triggered.connect(lambda enabled:save_changes(runtime.tray,runtime.api,{'taskbar_text_auto':enabled}))
     state=auto_hide()
     action=menu.addAction('自动隐藏 Windows 任务栏');action.setCheckable(True);action.setChecked(bool(state));action.setEnabled(state is not None)
 
@@ -47,3 +51,6 @@ def add_menu(menu,runtime):
     monitor=menu.addAction('显示任务栏监控');monitor.setCheckable(True);monitor.setChecked(cfg['resource_taskbar'])
     monitor.triggered.connect(lambda on:runtime.resources.set_options(resource_taskbar=on))
     menu.addAction('任务栏监控设置…',lambda:runtime.resources.settings(page=1))
+    from shell_menu import open_settings
+    from settings_catalog import TASKBAR
+    menu.addAction('任务栏外观设置…',lambda:open_settings(runtime,TASKBAR))

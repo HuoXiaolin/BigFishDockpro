@@ -436,6 +436,8 @@ def run(api,runtime,app,output,checks):
             window.resize(before_width,190);app.processEvents()
             assert window.grab().save(str(output/'readme-pomodoro.png'))
             window.resize(290,before_height);app.processEvents()
+            # The width change reflows the cards before the scroll area's queued layout update.
+            app.sendPostedEvents(None,QEvent.LayoutRequest)
             assert page.cards.direction()==QBoxLayout.TopToBottom
             assert window.view('pomodoro').verticalScrollBar().maximum()<=2
             for summary,action in ((page.focus_summary,page.toggle),(page.water_summary,page.drink)):

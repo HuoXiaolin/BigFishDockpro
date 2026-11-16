@@ -10,6 +10,37 @@ def run(output,checks):
     from feature_config import normalize
     assert normalize({})['taskbar_text_mode']=='system'
     assert normalize({'taskbar_text_mode':'red'})['taskbar_text_mode']=='system'
+    assert normalize({})['taskbar_text_auto'] is False
+    assert normalize({'taskbar_text_auto':'false'})['taskbar_text_auto'] is False
+    from taskbar_text import background_mode
+    from background_contrast import foreground
+    assert foreground('#ffffff') == '#000000' and foreground('#000000') == '#ffffff'
+    auto = {'taskbar_text_auto':True, 'taskbar_text_mode':'dark', 'taskbar_mode':'clear'}
+    assert background_mode(auto, (240,240,240)) == 'dark'
+    assert background_mode(auto, (12,18,24)) == 'light'
+    assert background_mode(auto, (12,18,24), surface=(250,250,250), previous='light') == 'dark'
+    assert background_mode(auto, (240,240,240), surface=(22,22,22), previous='dark') == 'light'
+    auto.update(taskbar_mode='color', taskbar_color='#ffffff', taskbar_opacity=100)
+    assert background_mode(auto, (0,0,0)) == 'dark'
+    auto['taskbar_mode']='system'
+    assert background_mode(auto, (0,0,0)) == 'system'
+    auto['taskbar_text_auto']=False
+    assert background_mode(auto, (0,0,0), surface=(0,0,0)) == 'dark'
+    # Exercise color sampling on a negative-origin monitor at 150% scale.
+    from PyQt5.QtCore import QRect
+    from taskbar_surface import taskbar_color
+    screen=SimpleNamespace(name=lambda:'Test display')
+    window=SimpleNamespace(screen=lambda:screen)
+    bar={'screen':screen.name(),'rect':QRect(-1280,680,1280,40),
+         'map':(-1920,0,-1280,0,2/3,2/3)}
+    get_dc,release=Mock(return_value=123),Mock()
+    get_pixel=Mock(side_effect=[0xffffff]*7+[0,0xffffffff])
+    with patch('resource_taskbar.taskbars',return_value=[bar]),patch('taskbar_surface._bindings',return_value=(get_dc,release,get_pixel)):
+        assert taskbar_color(window)==(255,255,255)
+        assert all(-1920<x<0 and 1020<y<1080 for _,x,y in (c.args for c in get_pixel.call_args_list))
+        release.assert_called_once_with(None,123)
+        get_pixel.side_effect=None;get_pixel.return_value=0xffffffff
+        assert taskbar_color(window) is None
     for original in (None,0,1):
         with tempfile.TemporaryDirectory(prefix='bfp-taskbar-theme-') as folder:
             path=Path(folder)/'restore.json';state={'system':original,'apps':1};events=[]
@@ -45,4 +76,13 @@ def run(output,checks):
     component.text=Mock();component.xaml=Mock();component.backend=component.xaml
     component.sync();cfg['taskbar_text_mode']='light';component.sync()
     assert component.xaml.sync.call_count==1 and component.text.sync.call_count==2
+    cfg['taskbar_text_auto']=True
+    with patch('taskbar_surface.taskbar_color',return_value=(255,255,255)), \
+         patch('background_contrast.wallpaper_color',side_effect=AssertionError('composed color is available')):
+        component.sync()
+    assert component.text.sync.call_args.args==('dark',) and component.xaml.sync.call_count==1
+    with patch('taskbar_surface.taskbar_color',return_value=None),patch('background_contrast.wallpaper_color',return_value=(8,8,8)):
+        component.sync()
+    assert component.text.sync.call_args.args==('light',) and component.xaml.sync.call_count==1
+    checks.append('Taskbar automatic text: composed white/dark windows override wallpaper when the color is available; sampled DPI coordinates, missing-pixel fallback, manual/system modes and no backend restart.')
     checks.append('taskbar text: follow/white/black normalization; fake registry preserves application theme; original/missing value restore, newer user override wins, crash recovery, disk/registry failure rollback, isolated no-op; text-only change does not restart background backend (no real Windows theme changed)')

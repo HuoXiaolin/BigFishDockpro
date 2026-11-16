@@ -137,10 +137,12 @@ def migrate_docked(data):
 
 
 def background(cfg):
-    style={key:cfg['panel_'+key] for key in ('material','theme','color','opacity','blur','highlight')}
+    from appearance_presets import dock_appearance, panel_appearance
+    if cfg.get('resource_background') == 'app':
+        return dock_appearance(cfg)
     if cfg.get('resource_background')=='custom' and cfg.get('resource_appearance'):
-        style.update(cfg['resource_appearance'])
-    return style
+        return dict(cfg['resource_appearance'])
+    return panel_appearance(cfg)
 
 
 def clean_background(raw,strict=False):
@@ -213,7 +215,7 @@ def normalize(cfg,strict=False):
             value = ''
         cfg[key] = value
     cfg.setdefault('resource_ai_tray_mode', 'auto')
-    options={'resource_background':('global','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
+    options={'resource_background':('global','app','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
              'resource_ai_tray_mode':('auto','fixed'),

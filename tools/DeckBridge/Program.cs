@@ -278,6 +278,7 @@ internal static class Program
     static void SelfTest()
     {
         CodexResetCredits.SelfTest();
+        CodexAccountingTests.Run();
         var live = new MediaTrack { Id = "system:fixture", State = MediaState.Playing, PositionKnown = false };
         var owner = new MediaAppOwner(null, "chrome", "Chrome");
         if (!LiveAudio.CanPause(live, owner) || LiveAudio.CanPause(live, null) ||
@@ -309,6 +310,6 @@ internal static class Program
         GC.KeepAlive(buffers);
         Emit(new { passed = true, workingSetLimit = MemoryBudget.InstalledLimit(), managedHeapLimit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, processErrorMode = GetErrorMode(),
             gcRegionSize = GC.GetConfigurationVariables().GetValueOrDefault("GCRegionSize"),
-            checks = new[] { "quota", "read-only reset credits: quantity, sorted expiries, embedded fallback, zero versus unavailable", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB", "bridge fault reporting runs without UI", "repeated large-object allocation under the managed heap limit" } });
+            checks = new[] { "quota", "read-only reset credits: quantity, sorted expiries, embedded fallback, zero versus unavailable", "Codex response ledger, model switches, cache writes, compaction, append and cross-file deduplication", "synchronized lyrics", "usage projection without auth or conversation content", "OS working set limit 47 MiB", "bridge fault reporting runs without UI", "repeated large-object allocation under the managed heap limit" } });
     }
 }

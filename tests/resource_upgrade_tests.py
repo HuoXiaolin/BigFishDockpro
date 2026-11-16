@@ -63,7 +63,7 @@ def content_column_checks(window,app,output,checks):
                     weather=scroll.content
                     assert weather.cards.columns==columns
                     assert weather.weather_head.y()==0 and weather.cards.y()==weather.weather_head.height()+4
-                    assert weather.remarks_button.y()>=weather.cards.geometry().bottom()+1
+                    assert weather.remarks_button.isVisible() and weather.remarks_button.parent() is weather
                     assert weather.cards.geometry().bottom()<weather.height()
                 if key in ('pomodoro','agenda'):
                     layout=scroll.content.cards if key=='pomodoro' else scroll.content.layout_
@@ -73,8 +73,56 @@ def content_column_checks(window,app,output,checks):
                     assert (first.top()==second.top())==(columns==2),(key,width,first,second)
                     assert second.right()<scroll.content.width(),(key,width,second,scroll.content.width())
             assert scroll.widget().width()==scroll.viewport().width(),(key,width,scroll.widget().width(),scroll.viewport().width())
+            assert abs(window.page_pager.geometry().center().x() - window.detail.rect().center().x()) <= 1, (
+                key, width, window.page_pager.geometry(), window.detail.rect())
+            assert window.detail.layout().indexOf(window.page_pager) == -1
             assert window.grab().save(str(output/f'capsule-columns-{key}-{width}.png'))
     checks.append('Expanded capsule: live 360 → 361 → 360 logical px resize across resource, AI, traffic, weather, focus, agenda, music and news pages. Cards and quota metrics switch at 361; each scroll viewport retains its full width.')
+
+
+def footer_page_checks(window, app, output, checks):
+    from PyQt5.QtCore import QEvent
+    from resource_options import OPEN_PAGES
+    from ui_test_events import Events
+
+    window.select_page('weather')
+    app.processEvents()
+    pager = window.page_pager
+    assert (pager.width(), pager.height()) == (110, 20)
+    assert pager.isVisible() and pager.name.text() == '天气'
+    weather_page = window.view('weather')
+    assert weather_page.geometry().bottom() > pager.geometry().top()
+    app.sendEvent(pager, QEvent(QEvent.Leave))
+    assert pager.visibility_effect.opacity() == 0
+    window.weather_view.remarks_button.click()
+    assert window.weather_view.remarks_button.isChecked() and window.weather_view.notes.isVisible()
+    app.processEvents()
+    weather_page.verticalScrollBar().setValue(weather_page.verticalScrollBar().maximum())
+    app.processEvents()
+    order = window.enabled_pages()
+    successor = order[(order.index('weather') + 1) % len(order)]
+    assert window.grab().save(str(output / 'capsule-pager-idle.png'))
+    app.sendEvent(pager, QEvent(QEvent.Enter))
+    assert pager.visibility_effect.opacity() == 1
+    assert window.grab().save(str(output / 'capsule-footer-pager.png'))
+    pager.next.click()
+    assert window.page_key == successor and pager.name.text() == OPEN_PAGES[successor]
+    assert Events.wheel(pager.name, 60) and window.page_key == successor
+    assert Events.wheel(pager.name, 60) and window.page_key == 'weather'
+    assert window.weather_view.remarks_button.isChecked() and pager.name.text() == '天气'
+    app.sendEvent(pager, QEvent(QEvent.Leave))
+    assert pager.visibility_effect.opacity() == 0 and window.weather_view.notes.isVisible()
+    window.weather_view.remarks_button.click()
+    assert window.weather_view.notes.isHidden()
+    first, last = order[0], order[-1]
+    window.select_page(first)
+    pager.previous.click()
+    assert window.page_key == last
+    assert Events.wheel(pager.next, -120) and window.page_key == first
+    window.select_page('ai')
+    stats = window.stats_view
+    assert stats.notes_button.parent() is stats.scroll.widget()
+    checks.append('Capsule floating page navigation: transparent and shown only on hover or keyboard focus, overlays the lower content without a layout row, remarks remain visible independently, and click/wheel follow the page order.')
 
 
 def run(api,runtime,root,app,output,checks):
@@ -135,6 +183,7 @@ def run(api,runtime,root,app,output,checks):
         w.sync_window();app.processEvents();w.scroll.verticalScrollBar().setValue(0)
         checks.append('Sensor layout: all values and units stay visible at 260, 360, 361, 500 and 720 logical px. Readings share rows above 360 px.')
         content_column_checks(w,app,output,checks)
+        footer_page_checks(w,app,output,checks)
         w.select_page('resources');w.sync_window();app.processEvents()
         geometry=w.geometry();w.select_page('traffic');app.processEvents()
         assert w.traffic.isVisible() and w.geometry()==geometry
