@@ -102,7 +102,7 @@ def normalize(cfg):
     # Retired selective hiding is migrated to the safe co-display mode.
     if result.get('desktop_icon_mode')=='collected':result['desktop_icon_mode']='both'
     for key, lower, upper in [('corner_radius', 0, 120), ('card_snap_distance', 2, 64), ('panel_opacity', 0, 100),
-                              ('panel_blur', 2, 30), ('panel_highlight', 0, 100), ('dock_highlight', 0, 100),
+                              ('panel_blur', 0, 30), ('panel_highlight', 0, 100), ('dock_highlight', 0, 100),
                               ('panel_face_scale',60,130), ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100), ('startup_delay', 0, 300)]:
         try:
             result[key] = max(lower, min(upper, int(result[key])))

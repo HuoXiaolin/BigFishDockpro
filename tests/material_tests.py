@@ -48,6 +48,78 @@ def run(api,runtime,output,checks):
 
     check_clock_materials(api,runtime,output,checks)
     check_appearance_sources(api,runtime,output,checks)
+    check_zero_crystal(api,runtime,output,checks)
+
+
+def check_zero_crystal(api,runtime,output,checks):
+    import copy,json
+    from appearance_presets import DEFAULT_PANEL_STYLE,DOCK_PRESETS,PRESET_IDS,normalize_note_appearance
+    from appearance_profiles import apply_profile,clean_snapshot,snapshot
+    from clock_appearance import normalize as normalize_clock
+    from desktop_catalog import normalize_desktop
+    from glass_capture import smooth_backdrop
+    from glass_panel import PanelOptions
+    from resource_options import clean_background
+    from settings_dialog import SettingsDialog
+    from shell_appearance_model import appearance,background
+    style=DEFAULT_PANEL_STYLE
+    assert style['opacity']==style['highlight']==style['blur']==0
+    cfg=api.normalize_features(copy.deepcopy(runtime.dock.cfg))
+    styled=apply_profile(cfg,'crystal',cfg)
+    assert clean_snapshot(json.loads(json.dumps(snapshot(styled))))==snapshot(styled)
+    assert styled['transparency']==100 and styled['blur_px']==styled['dock_highlight']==0
+    assert clean_background(style,strict=True)==style
+    assert normalize_note_appearance(style)['blur']==normalize_clock(style)['blur']==0
+    single=normalize_desktop(dict(cfg,desktop_panels=[dict(id='zero-blur',name='Test',category='apps',material='crystal',blur=0)]))
+    assert single['desktop_panels'][0]['blur']==0 and single['desktop_panels'][0]['material']=='crystal'
+    for kind in ('start','notifications'):
+        native=appearance(styled,kind)
+        assert native['blur']==native['highlight']==native['opacity']==0 and 'SolidColorBrush' in background(native)
+    assert all(material_blur(0,material)==0 for _,material in MATERIALS)
+    pixmap=QPixmap(40,40);pixmap.fill(QColor('#8bc4ee'));pixmap.setDevicePixelRatio(1.25)
+    assert smooth_backdrop(pixmap,material_blur(0,'crystal')) is pixmap
+    old=copy.deepcopy(runtime.dock.cfg)
+    try:
+        runtime.dock.cfg.update(DOCK_PRESETS[PRESET_IDS.index('crystal')][1])
+        palette=runtime.dock.theme_colors()
+        assert palette['tint_floor']==runtime.dock.base_theme_colors()['tint_floor']*.5
+        assert palette['spec']==palette['border'].alpha()==0
+        canvas=QImage(40,40,QImage.Format_ARGB32_Premultiplied);canvas.fill(Qt.transparent)
+        painter=QPainter(canvas);rect=QRectF(0,0,40,40);path=QPainterPath();path.addRect(rect)
+        surface=SimpleNamespace(cfg={'glass':False,'dock_material':'crystal'},backdrop=None,spec_x=20,spec_alpha=1)
+        paint_liquid_glass(surface,painter,path,rect,rect,palette,0,runtime.dock.merged_grad_stops(palette));painter.end()
+        assert all(canvas.pixelColor(x,y).alpha()==30 for x in range(40) for y in range(40))
+    finally:runtime.dock.cfg.clear();runtime.dock.cfg.update(old)
+    dialog=SettingsDialog(runtime.tray,api)
+    try:
+        dialog.reveal()
+        dialog.dock_preset.setCurrentIndex(PRESET_IDS.index('crystal')+1)
+        assert all(dialog.fields[key].value()==0 for key in ('transparency','dock_highlight','blur_px'))
+        assert dialog.fields['blur_px'].minimum()==dialog.fields['panel_blur'].minimum()==0
+        dialog.grab().save(str(Path(output)/'settings-crystal-zero.png'))
+    finally:dialog.reject();dialog.deleteLater()
+    panel=PanelOptions(next(iter(runtime.panels.windows.values())))
+    try:
+        panel.preset.setCurrentIndex(PRESET_IDS.index('crystal')+1)
+        assert all(panel.fields[key].value()==0 for key in ('opacity','highlight','blur'))
+        assert panel.fields['blur'].minimum()==0
+    finally:panel.reject();panel.deleteLater()
+    from clock_options import ClockOptions
+    for component in (runtime.clock,runtime.calendar):
+        dialog=ClockOptions(component)
+        try:
+            dialog.preset.setCurrentIndex(PRESET_IDS.index('crystal')+1)
+            assert dialog.fields['blur'].minimum()==0 and dialog.values()['blur']==0
+        finally:dialog.reject();dialog.deleteLater()
+    from resource_settings import ResourceOptions
+    dialog=ResourceOptions(runtime.resources)
+    try:
+        dialog.tabs.setCurrentIndex(4)
+        assert dialog.custom_fields['blur'].minimum()==0
+        dialog.custom_fields['blur'].setValue(0)
+        assert dialog.custom_fields['blur'].value()==0
+    finally:dialog.reject();dialog.deleteLater()
+    checks.append('crystal zero opacity/highlight/blur: controls, JSON roundtrip, component/native inheritance, zero-radius pixels, half material tint floor and no sheen')
 
 
 def check_appearance_sources(api,runtime,output,checks):

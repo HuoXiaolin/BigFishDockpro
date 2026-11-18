@@ -200,8 +200,8 @@ EN = {
     "程序与快捷方式 (*.exe *.lnk *.bat *.cmd *.url *.msc *.ps1);;所有文件 (*.*)":
         "Programs & shortcuts (*.exe *.lnk *.bat *.cmd *.url *.msc *.ps1);;All files (*.*)",
     "已添加 %d 个图标到 Dock": "Added %d icon(s) to the dock",
-    "毛玻璃模糊强度：\n（3 ~ 30，数字越大越模糊、越朦胧）":
-        "Blur strength:\n(3 ~ 30, bigger = hazier)",
+    "毛玻璃模糊强度：\n（0 ~ 30，0 为不模糊）":
+        "Blur strength:\n(0 ~ 30, 0 = no blur)",
     "玻璃条距离屏幕底部多少像素？\n（Dock 始终水平居中，数字越大越往上）":
         "How many pixels from the bottom of the screen?\n(the dock stays horizontally centered)",
     "请输入图标像素大小：\n（建议 32 ~ 160，数字越大图标越大）":
@@ -906,87 +906,12 @@ class Dock(QWidget):
         return bool(self._sys_light)
 
     def theme_colors(self):
-        from liquid_glass import tint_palette, material_palette
-        colors = material_palette(tint_palette(self.base_theme_colors(), self.cfg.get('theme_color', '')), self.cfg.get('dock_material','liquid'))
-        strength = self.cfg.get('dock_highlight', 45)/45
-        for key in ('grad', 'hl'):
-            colors[key] = [(position, min(255, round(alpha*strength))) for position, alpha in colors[key]]
-        colors['border'].setAlpha(min(255, round(colors['border'].alpha()*strength)))
-        colors['spec'] = min(255, round(colors['spec']*strength))
-        return colors
+        from liquid_glass import dock_theme_colors
+        return dock_theme_colors(self.cfg, self._sys_light)
 
     def base_theme_colors(self, theme=None):
-        """按当前模式返回整套配色与外观参数。
-
-        公共字段：
-          tint / tint_scale / tint_floor  玻璃底色和它的浓度曲线
-          grad / hl                       竖向渐变与顶部高光（会被合成为一条）
-          border / border_w               描边颜色与粗细
-          corner                          圆角半径占条高的比例
-          tile / tile_*                   图标是否带圆角底板（iOS 那种）
-        """
-        t = str(self.cfg.get("theme", "auto") if theme is None else theme)
-        if t in ("gloss", "fog"):
-            # ── 光感模式：玻璃上有一道明显的光照（上方光源 + 顶边亮线 + 斜向光斑） ──
-            #     不做白色图标底板，图标保持原样，整体是"湿润的玻璃"质感
-            return dict(
-                light=True,
-                gloss=True,
-                tint=QColor(238, 243, 252),
-                tint_scale=0.62,          # 比浅色模式透一点，光才透得出来
-                tint_floor=36,
-                fg=QColor(40, 46, 62),
-                # 上亮 → 中暗 → 下亮的经典光泽曲线
-                grad=[(0.00, 150), (0.18, 96), (0.52, 40), (0.80, 30), (1.00, 74)],
-                hl=[(0.00, 118), (0.42, 34), (1.00, 0)],
-                border=QColor(255, 255, 255, 178),
-                border_w=1.2,
-                corner=0.44,
-                spec=150,                          # 跟随鼠标的高光更强（就是"光照"）
-                spec_wide=1.9,                     # 光斑更宽更柔
-                shadow=QColor(255, 255, 255, 190),
-                label_bg=QColor(250, 251, 255, 234),
-                label_border=QColor(255, 255, 255, 176),
-                label_fg=QColor(34, 40, 56, 246),
-                tile=False,
-            )
-        if t == 'light' or (t == 'auto' and self._sys_light):
-            return dict(
-                light=True,
-                tint=QColor(247, 247, 251),        # 玻璃底色（偏白）
-                tint_scale=0.70,
-                tint_floor=45,
-                fg=QColor(34, 34, 44),             # 小圆点/提示文字
-                grad=[(0.00, 88), (0.30, 48), (0.72, 26), (1.00, 60)],
-                hl=[(0.00, 150), (0.55, 48), (1.00, 0)],
-                border=QColor(88, 88, 104, 46),
-                border_w=1.0,
-                corner=0.40,
-                spec=86,
-                shadow=QColor(255, 255, 255, 150),
-                label_bg=QColor(250, 250, 253, 238),
-                label_border=QColor(80, 80, 96, 42),
-                label_fg=QColor(28, 28, 38, 244),
-                tile=False,
-            )
-        return dict(
-            light=False,
-            tint=QColor(16, 16, 20),
-            tint_scale=1.0,
-            tint_floor=0,
-            fg=QColor(255, 255, 255),
-            grad=[(0.00, 30), (0.28, 12), (0.70, 6), (1.00, 18)],
-            hl=[(0.00, 76), (0.55, 20), (1.00, 0)],
-            border=QColor(255, 255, 255, 78),
-            border_w=1.0,
-            corner=0.40,
-            spec=70,
-            shadow=QColor(0, 0, 0, 130),
-            label_bg=QColor(16, 16, 20, 228),
-            label_border=QColor(255, 255, 255, 62),
-            label_fg=QColor(255, 255, 255, 242),
-            tile=False,
-        )
+        from liquid_glass import base_theme_colors
+        return base_theme_colors(self.cfg.get('theme', 'auto') if theme is None else theme, self._sys_light)
 
     def apply_theme_follow(self):
         """跟随系统模式下，定期检查系统有没有切换深浅色。"""
@@ -2062,12 +1987,9 @@ class Dock(QWidget):
         paint_liquid_glass(self, p, path, path_rect, bar, c, tint_a, stops)
 
     def paint_dock_surface(self, surface, painter, paths, bar, colors):
-        from liquid_glass import paint_liquid_glass
+        from liquid_glass import dock_tint_layers, paint_liquid_glass
 
-        transparency = max(0, min(100, int(self.cfg.get('transparency', 40))))
-        base_alpha = 235.0 * (100 - transparency) / 100.0
-        tint = round(min(255.0, base_alpha * colors['tint_scale'] + colors['tint_floor']))
-        opacity = 1.0 - max(0.0, transparency - 40.0) / 60.0 * 0.58
+        tint, opacity = dock_tint_layers(colors, self.cfg.get('transparency', 40))
         stops = self.merged_grad_stops(colors)
         painter.save()
         painter.setOpacity(opacity)
@@ -2570,8 +2492,8 @@ class DockTray(QSystemTrayIcon):
         cur = int(self.cfg.get("blur_px", 6))
         val, ok = QInputDialog.getInt(
             None, APP_TITLE,
-            T("毛玻璃模糊强度：\n（3 ~ 30，数字越大越模糊、越朦胧）"),
-            cur, 3, 30, 1)
+            T("毛玻璃模糊强度：\n（0 ~ 30，0 为不模糊）"),
+            cur, 0, 30, 1)
         if ok:
             self.set_blur(val)
 

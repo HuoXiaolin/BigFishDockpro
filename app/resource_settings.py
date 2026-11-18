@@ -393,7 +393,7 @@ class ResourceOptions(QDialog):
             chips=QHBoxLayout()
             for title,rgb in THEME_COLORS:chips.addWidget(ColorSwatch(self.color,title,rgb,self.custom_box))
             chips.addStretch();custom.addRow('',chips)
-            for key,title,low,high in [('opacity','不透明度（%）',0,100),('blur','模糊强度',2,30),('highlight','高光（%）',0,100)]:
+            for key,title,low,high in [('opacity','不透明度（%）',0,100),('blur','模糊强度',0,30),('highlight','高光（%）',0,100)]:
                 spin(custom,key,title,low,high,saved[key],self.custom_fields)
             self.custom_box.setVisible(source.currentData()=='custom')
             source.currentIndexChanged.connect(lambda:self.custom_box.setVisible(source.currentData()=='custom'))

@@ -2,7 +2,7 @@ param(
     [string]$Toolchain = 'D:\Agant\toolchain',
     [string]$Iscc = '',
     [switch]$Deliver,
-    [ValidateSet('Quick','Runtime','Full','None')][string]$TestMode = 'Quick',
+    [ValidateSet('Auto','Quick','Runtime','Full','None')][string]$TestMode = 'Auto',
     [switch]$SkipTests,
     [switch]$RuntimeChecks,
     [switch]$Clean,
@@ -30,6 +30,9 @@ if ($Clean) { $taskCompilerArgs += '--clean' }
 New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 $taskLock = [IO.File]::Open((Join-Path $taskRoot 'artifacts\release.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
 $taskPriorFixture = $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE
+$taskPriorShellProfile = $env:FISHDOCK_SHELL_TEST_PROFILE
+$taskPlan = $null
+$taskFocused = $false
 $taskValidations = [Collections.Generic.List[object]]::new()
 $taskTestSeconds = 0.0
 $taskBuildTimer = [Diagnostics.Stopwatch]::StartNew()
@@ -45,6 +48,14 @@ function Invoke-TaskCheck([string]$Target,[string]$Output,[string]$Kind,[string[
     $taskValidations.Add([ordered]@{kind=$Kind;path=$taskResult.Replace('\','/');sha256=(Get-FileHash -LiteralPath $taskResult -Algorithm SHA256).Hash.ToLowerInvariant();seconds=[math]::Round($taskTimer.Elapsed.TotalSeconds,2)})
 }
 try {
+    if ($taskMode -eq 'Auto') {
+        $taskProfile = & $taskPython tools/build_plan.py --source $SourceDirectory --output artifacts/build-plan.json
+        if ($LASTEXITCODE -ne 0) { throw 'Build check selection failed' }
+        $taskPlan = Get-Content -LiteralPath artifacts/build-plan.json -Raw | ConvertFrom-Json
+        $taskFocused = $taskProfile -eq 'shell'
+        Write-Host ('Automatic checks: ' + $taskProfile + ' (' + $taskPlan.changed_files.Count + ' changed files)')
+    }
+    $env:FISHDOCK_SHELL_TEST_PROFILE = if ($taskFocused) {'layout'} else {'full'}
     if ($taskMode -eq 'Full') {
         $taskGcc = Join-Path $Toolchain 'mingw\mingw64\bin\gcc.exe'
         if (Test-Path -LiteralPath $taskGcc) {
@@ -64,10 +75,12 @@ try {
     & $taskPython tools/prepare_shell_appearance.py --toolchain $Toolchain
     if ($LASTEXITCODE -ne 0) { throw 'Native shell appearance preparation failed' }
     if (-not $taskSkip) { Invoke-TaskCheck 'tools/shell_native_test.py' 'artifacts/shell-native-test' 'native-shell-xaml' @() }
+    if (-not $taskSkip) { Invoke-TaskCheck 'tools/shell_lifecycle_test.py' 'artifacts/shell-lifecycle-test' 'native-shell-lifecycle' @() }
+    if (-not $taskSkip) { Invoke-TaskCheck 'tools/shell_controller_test.py' 'artifacts/shell-controller-test' 'shell-controller' @() }
     $taskVersion = & $taskPython tools/release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
     if ($taskExtended) { Invoke-TaskCheck 'dock.py' 'artifacts/source-test' 'source-runtime' $taskScopeArgs }
-    & $taskPython -m PyInstaller @taskCompilerArgs tools/BigFishDockpro.spec
+    & $taskPython -m PyInstaller @taskCompilerArgs --workpath artifacts/pyinstaller-directory tools/BigFishDockpro.spec
     if ($LASTEXITCODE -ne 0) { throw 'Directory build failed' }
     if ($taskExtended) {
         Invoke-TaskCheck 'dist/BigFishDockpro/BigFishDockpro.exe' 'artifacts/bundle-test' 'directory-runtime' $taskScopeArgs
@@ -85,14 +98,18 @@ try {
         $taskOldBundleMode = $env:FISHDOCK_ONEFILE
         try {
             $env:FISHDOCK_ONEFILE = '1'
-            & $taskPython -m PyInstaller @taskCompilerArgs --distpath release tools/BigFishDockpro.spec
+            & $taskPython -m PyInstaller @taskCompilerArgs --workpath artifacts/pyinstaller-singlefile --distpath release tools/BigFishDockpro.spec
             if ($LASTEXITCODE -ne 0) { throw 'Single-file build failed' }
         } finally { $env:FISHDOCK_ONEFILE = $taskOldBundleMode }
         if (-not $taskSkip) {
-            $taskOutput = if ($taskExtended) {'artifacts/singlefile-test'} else {'artifacts/quick-runtime-test'}
-            Invoke-TaskCheck 'release/BigFishDockpro.exe' $taskOutput 'singlefile-runtime' $taskScopeArgs
+            if ($taskFocused) {
+                Invoke-TaskCheck 'release/BigFishDockpro.exe' 'artifacts/auto-singlefile-startup' 'singlefile-fresh-startup' @('--startup','--fresh-profile')
+            } else {
+                $taskOutput = if ($taskExtended) {'artifacts/singlefile-test'} else {'artifacts/quick-runtime-test'}
+                Invoke-TaskCheck 'release/BigFishDockpro.exe' $taskOutput 'singlefile-runtime' $taskScopeArgs
+            }
         }
-    } elseif ($taskMode -eq 'Quick') {
+    } elseif ($taskMode -in @('Quick','Auto') -and -not $taskFocused) {
         Invoke-TaskCheck 'dist/BigFishDockpro/BigFishDockpro.exe' 'artifacts/quick-runtime-test' 'directory-runtime' @('--runtime-check')
     }
     $taskHash = Get-FileHash -LiteralPath release/BigFishDockpro-Setup-x64.exe -Algorithm SHA256
@@ -103,8 +120,8 @@ try {
         ('{0}  BigFishDockpro.exe' -f $taskSingleHash.Hash.ToLowerInvariant()) | Add-Content release/SHA256SUMS.txt -Encoding utf8
     }
     $taskBuildTimer.Stop()
-    $taskScope = switch ($taskMode) {'Quick' {'quick-runtime'} 'Runtime' {'current-ui-runtime'} 'Full' {'full'} default {'none'}}
-    $taskReceipt=[ordered]@{tests_skipped=$taskSkip;test_scope=$taskScope;validation_results=@($taskValidations.ToArray());test_seconds=[math]::Round($taskTestSeconds,2);build_seconds=[math]::Round($taskBuildTimer.Elapsed.TotalSeconds,2);installer_sha256=$taskHash.Hash.ToLowerInvariant();singlefile_sha256=$(if($taskSingleHash){$taskSingleHash.Hash.ToLowerInvariant()}else{''});version=$taskVersion}
+    $taskScope = switch ($taskMode) {'Auto' {if($taskFocused){'auto-shell'}else{'auto-runtime'}} 'Quick' {'quick-runtime'} 'Runtime' {'current-ui-runtime'} 'Full' {'full'} default {'none'}}
+    $taskReceipt=[ordered]@{tests_skipped=$taskSkip;test_scope=$taskScope;change_plan=$taskPlan;validation_results=@($taskValidations.ToArray());test_seconds=[math]::Round($taskTestSeconds,2);build_seconds=[math]::Round($taskBuildTimer.Elapsed.TotalSeconds,2);installer_sha256=$taskHash.Hash.ToLowerInvariant();singlefile_sha256=$(if($taskSingleHash){$taskSingleHash.Hash.ToLowerInvariant()}else{''});version=$taskVersion}
     $taskReceipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath artifacts/build-validation.json -Encoding utf8
     if ($Deliver) {
         $taskDeliveryArgs=@('tools/release_tools.py','deliver','--source',$SourceDirectory,'--release',$ReleaseDirectory)
@@ -112,4 +129,4 @@ try {
         & $taskPython @taskDeliveryArgs
         if ($LASTEXITCODE -ne 0) { throw 'Delivery failed' }
     }
-} finally { $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = $taskPriorFixture; $taskLock.Dispose() }
+} finally { $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = $taskPriorFixture; $env:FISHDOCK_SHELL_TEST_PROFILE = $taskPriorShellProfile; $taskLock.Dispose() }

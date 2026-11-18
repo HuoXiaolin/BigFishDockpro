@@ -1,5 +1,10 @@
 // Isolated native regression. This never attaches to another process.
 #include <windows.ui.xaml.hosting.desktopwindowxamlsource.h>
+#include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
+#ifdef BIGFISH_START_ENGINE
+#include "start_layout_probe.h"
+#endif
+#include "lifecycle_probe.h"
 
 static bool BF_ProbeTint(const Media::Brush& brush, unsigned percent, unsigned alpha) {
     if (auto solid = brush.try_as<Media::SolidColorBrush>()) return solid.Color().A == alpha;
@@ -40,24 +45,38 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
        !GetUserObjectInformationW(desktop,6,&receiving,sizeof(receiving),&needed) || receiving)return 90;
     bf_root=directory;bf_matches=0;bf_errors=0;
     if(!BF_LoadSettings())return 91;
+    if (!BF_Setting(L"probe_lifecycle").empty()) return BF_ProbeLifecycle(directory);
     HWND window=nullptr;
     try {
         winrt::init_apartment(winrt::apartment_type::single_threaded);
         auto manager=Hosting::WindowsXamlManager::InitializeForCurrentThread();
-        window=CreateWindowExW(0,L"STATIC",L"BigFish native shell fixture",WS_OVERLAPPEDWINDOW,0,0,680,760,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+#ifdef BIGFISH_START_ENGINE
+        if (BF_Setting(L"probe_observer_layout")==L"1") return BF_ProbeStartLayout(directory)?0:95;
+#endif
+        window=CreateWindowExW(0,L"STATIC",L"BigFish native shell fixture",WS_OVERLAPPEDWINDOW,0,0,870,900,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
         Hosting::DesktopWindowXamlSource source;
         auto native=source.as<IDesktopWindowXamlSourceNative>();winrt::check_hresult(native->AttachToWindow(window));
-        HWND child=nullptr;native->get_WindowHandle(&child);SetWindowPos(child,nullptr,0,0,640,710,SWP_NOZORDER|SWP_SHOWWINDOW);
+        HWND child=nullptr;native->get_WindowHandle(&child);SetWindowPos(child,nullptr,24,16,795,840,SWP_NOZORDER|SWP_SHOWWINDOW);
         Controls::Grid root;root.Name(L"FrameRoot");
         Controls::Border border;
 #ifdef BIGFISH_START_ENGINE
+        root.Margin({14,8,0,0});
         border.Name(L"AcrylicBorder");
 #else
         border.Name(L"ToastBackgroundBorder");
 #endif
         auto original=Media::SolidColorBrush(winrt::Windows::UI::Colors::Orange());
-        border.Background(original);border.CornerRadius({3,3,3,3});root.Children().Append(border);
+        border.Background(original);border.CornerRadius({3,3,3,3});
 #ifdef BIGFISH_START_ENGINE
+        Controls::Grid mainMenu, classicRoot;
+        mainMenu.Name(L"MainMenu");classicRoot.Name(L"RootContent");
+        mainMenu.Children().Append(border);
+        root.Children().Append(mainMenu);
+        Controls::Border classicBorder;
+        classicBorder.Name(L"AcrylicBorder");classicRoot.Children().Append(classicBorder);
+        Controls::Grid classicSizingFrame;
+        classicSizingFrame.Name(L"StartSizingFrame");classicSizingFrame.Children().Append(classicRoot);
+        root.Children().Append(classicSizingFrame);
         Controls::Border overlay;overlay.Name(L"AcrylicOverlay");overlay.Background(original);overlay.BorderThickness({2,2,2,2});root.Children().Append(overlay);
         std::vector<Controls::Border> shadows;
         for (auto name : {L"DropShadow", L"StartDropShadow", L"RootGridDropShadow", L"RightCompanionDropShadow"}) {
@@ -92,15 +111,85 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         appsRoot.Children().Append(wrapper);
         undocked.Children().Append(appsRoot);
         root.Children().Append(undocked);
+        Controls::MenuFlyoutPresenter menu;
+        Controls::MenuFlyoutItem menuItem;
+        menuItem.Text(L"睡眠");menuItem.Foreground(white);
+        menu.Items().Append(menuItem);
+        menu.Height(100);menu.Width(160);menu.HorizontalAlignment(HorizontalAlignment::Left);
+        menu.Template(Markup::XamlReader::Load(LR"(<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            TargetType="MenuFlyoutPresenter"><Border><ItemsPresenter/></Border></ControlTemplate>)").as<Controls::ControlTemplate>());
+        root.Children().Append(menu);
+        Controls::Grid searchPage, searchRoot, searchOuter, searchFrame;
+        Controls::Border searchBorder, searchInput;
+        searchPage.Name(L"TaskbarSearchPage");searchPage.Children().Append(searchRoot);
+        searchRoot.Name(L"RootGrid");searchOuter.Name(L"OuterBorderGrid");searchFrame.Name(L"BorderGrid");
+        searchBorder.Name(L"AppBorder");searchInput.Name(L"TaskbarSearchBackground");
+        searchBorder.Background(original);searchInput.Background(original);
+        searchInput.Height(36);searchInput.VerticalAlignment(VerticalAlignment::Top);searchInput.Margin({16,16,16,0});
+        searchFrame.Children().Append(searchBorder);searchOuter.Children().Append(searchFrame);
+        searchRoot.Children().Append(searchOuter);searchRoot.Children().Append(searchInput);
+        HWND searchWindow = CreateWindowExW(0,L"STATIC",L"BigFish search panel fixture",WS_POPUP,264,184,875,710,
+                                           nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+        Hosting::DesktopWindowXamlSource searchSource;
+        auto nativeSearch = searchSource.as<IDesktopWindowXamlSourceNative>();
+        winrt::check_hresult(nativeSearch->AttachToWindow(searchWindow));
+        HWND searchChild = nullptr;nativeSearch->get_WindowHandle(&searchChild);
+        auto viewportSubclass=[](HWND parent,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data)->LRESULT {
+            if (msg==WM_SIZE) {
+                RECT clip{};
+                GetClientRect(parent,&clip);
+                SetWindowPos(reinterpret_cast<HWND>(data),nullptr,36,21,std::max(1L,clip.right-36),
+                             std::max(1L,clip.bottom-21),SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW);
+            }
+            return DefSubclassProc(parent,msg,wp,lp);
+        };
+        SetWindowSubclass(searchWindow,viewportSubclass,1,reinterpret_cast<DWORD_PTR>(searchChild));
+        SendMessageW(searchWindow,WM_SIZE,SIZE_RESTORED,MAKELPARAM(875,710));
+        Controls::Grid searchShell;
+        searchShell.Margin({45,24,0,0});
+        Media::TranslateTransform searchOpening;searchShell.RenderTransform(searchOpening);
+        Controls::Border searchInset;searchInset.Padding({12,12,12,12});searchInset.Child(searchPage);
+        Media::RectangleGeometry searchClip;searchClip.Rect({0,0,536,600});searchInset.Clip(searchClip);
+        searchShell.Children().Append(searchInset);
+        searchSource.Content(searchShell);ShowWindow(searchWindow, SW_SHOW);
+        Controls::Grid navigation,userView,powerView;
+        navigation.Height(56);navigation.VerticalAlignment(VerticalAlignment::Bottom);
+        Controls::ListView places;
+        places.Name(L"NavigationPanePlacesListView");places.Width(50);places.HorizontalAlignment(HorizontalAlignment::Right);
+        Controls::ListViewItem gear;
+        gear.Content(winrt::box_value(L"设置"));gear.Width(50);
+        places.Items().Append(gear);navigation.Children().Append(places);
+        Controls::Button user,power;
+        user.Name(L"UserTileButton");user.Content(winrt::box_value(L"示例用户"));
+        user.Width(125);user.Height(36);user.HorizontalAlignment(HorizontalAlignment::Right);
+        power.Name(L"PowerButton");power.Content(winrt::box_value(L"电源"));
+        power.Width(36);power.Height(36);power.HorizontalAlignment(HorizontalAlignment::Center);
+        // Real Shell uses a same-named PowerOptionsView around PowerButton.
+        // The old lookup measured this 506px wrapper as if it were the button.
+        userView.Children().Append(user);userView.Width(190);
+        powerView.Name(L"PowerButton");powerView.Width(506);powerView.Margin({-506,0,0,0});
+        powerView.Children().Append(power);
+        navigation.Children().Append(userView);navigation.Children().Append(powerView);
+        root.Children().Append(navigation);
 #endif
         std::vector<Controls::Grid> regions;
 #ifndef BIGFISH_START_ENGINE
+        root.Children().Append(border);
         Controls::Grid quickInner;
         Controls::TextBlock quickLabel;
         quickInner.Name(L"L1Grid");
         quickInner.RequestedTheme(ElementTheme::Dark);
         quickLabel.Text(L"亮度与音量");
         quickInner.Children().Append(quickLabel);
+        Controls::Primitives::ToggleButton quickSwitch;quickSwitch.Name(L"ToggleButton");
+        quickSwitch.Template(Markup::XamlReader::Load(LR"(<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ToggleButton">
+          <ContentPresenter x:Name="ContentPresenter" Background="{TemplateBinding Background}">
+            <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+              <VisualState x:Name="Normal"/><VisualState x:Name="PointerOver"/><VisualState x:Name="Pressed"/>
+            </VisualStateGroup></VisualStateManager.VisualStateGroups>
+          </ContentPresenter></ControlTemplate>)").as<Controls::ControlTemplate>());
+        const auto accentState=Media::SolidColorBrush(winrt::Windows::UI::Color{255,0,103,192});
+        quickSwitch.IsChecked(true);quickSwitch.Background(accentState);quickInner.Children().Append(quickSwitch);
         for(auto name:{L"NotificationCenterGrid",L"CalendarCenterGrid",L"ControlCenterRegion",L"MediaTransportControlsRegion"}) {
             Controls::Grid grid;grid.Name(name);grid.Background(original);grid.CornerRadius({3,3,3,3});
             if (std::wstring_view(name) == L"ControlCenterRegion") grid.Children().Append(quickInner);
@@ -111,9 +200,19 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         auto pump=[] {MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}};
         pump();root.UpdateLayout();
         ProcessAllStylesFromSettings();
+#ifdef BIGFISH_START_ENGINE
+        root.Opacity(0.75);
+        bf_is_start_menu = true;
+        auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), nullptr);
+        BF_BindPanelGeometry(mapping, true);
+        BF_PrepareStartFrame(root, border, child);
+        const bool heldBeforeLayout = root.Opacity()==0.0;
+#endif
         ApplyCustomizations(static_cast<ElementId>(1),root,L"Windows.UI.Xaml.Controls.Grid");
         ApplyCustomizations(static_cast<ElementId>(2),border,L"Windows.UI.Xaml.Controls.Border");
 #ifdef BIGFISH_START_ENGINE
+        // This fixture covers both hosts; production loads these rules only in SearchHost.
+        ProcessWebStylesFromSettings({}, {});
         ApplyCustomizations(static_cast<ElementId>(100),overlay,L"Windows.UI.Xaml.Controls.Border");
         ApplyCustomizations(static_cast<ElementId>(101),allApps,L"Windows.UI.Xaml.Controls.TextBlock");
         ApplyCustomizations(static_cast<ElementId>(102),pinned,L"Windows.UI.Xaml.Controls.TextBlock");
@@ -124,11 +223,38 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         ApplyCustomizations(static_cast<ElementId>(122),wrapper,L"Windows.UI.Xaml.Controls.Grid");
         ApplyCustomizations(static_cast<ElementId>(123),appsScroll,L"Windows.UI.Xaml.Controls.ScrollViewer");
         ApplyCustomizations(static_cast<ElementId>(124),pinnedScroll,L"Windows.UI.Xaml.Controls.ScrollViewer");
+        menu.ApplyTemplate();root.UpdateLayout();
+        auto menuBorder=Media::VisualTreeHelper::GetChild(menu,0).as<Controls::Border>();
+        menuBorder.Background(original);
+        ApplyCustomizations(static_cast<ElementId>(130),menu,L"Windows.UI.Xaml.Controls.MenuFlyoutPresenter");
+        ApplyCustomizations(static_cast<ElementId>(131),menuBorder,L"Windows.UI.Xaml.Controls.Border");
+        ApplyCustomizations(static_cast<ElementId>(132),menuItem,L"Windows.UI.Xaml.Controls.MenuFlyoutItem");
+        ApplyCustomizations(static_cast<ElementId>(133),searchBorder,L"Windows.UI.Xaml.Controls.Border");
+        ApplyCustomizations(static_cast<ElementId>(134),searchInput,L"Windows.UI.Xaml.Controls.Border");
+        ApplyCustomizations(static_cast<ElementId>(135),searchFrame,L"Windows.UI.Xaml.Controls.Grid");
+        ApplyCustomizations(static_cast<ElementId>(136),mainMenu,L"Windows.UI.Xaml.Controls.Grid");
+        ApplyCustomizations(static_cast<ElementId>(137),classicSizingFrame,L"Windows.UI.Xaml.Controls.Grid");
+        bf_is_start_menu = false;
+        ApplyCustomizations(static_cast<ElementId>(138),classicBorder,L"Windows.UI.Xaml.Controls.Border");
+        ApplyCustomizations(static_cast<ElementId>(139),searchPage,L"Windows.UI.Xaml.Controls.Grid");
+        ApplyCustomizations(static_cast<ElementId>(140),searchRoot,L"Windows.UI.Xaml.Controls.Grid");
+        ApplyCustomizations(static_cast<ElementId>(141),searchOuter,L"Windows.UI.Xaml.Controls.Grid");
+        bf_is_start_menu = true;
+        BF_AddStartSearchButton(navigation);
+        BF_AddStartSearchButton(navigation);
 #else
         ApplyCustomizations(static_cast<ElementId>(100),quickInner,L"Windows.UI.Xaml.Controls.Grid");
+        auto quickFace=Media::VisualTreeHelper::GetChild(quickSwitch,0).as<Controls::ContentPresenter>();
+        VisualStateManager::GoToState(quickSwitch,L"Normal",false);
+        ApplyCustomizations(static_cast<ElementId>(101),quickFace,L"Windows.UI.Xaml.Controls.ContentPresenter");
 #endif
         for(size_t i=0;i<regions.size();++i)ApplyCustomizations(static_cast<ElementId>(3+i),regions[i],L"Windows.UI.Xaml.Controls.Grid");
         pump();root.UpdateLayout();
+#ifdef BIGFISH_START_ENGINE
+        for (int i=0; i<32 && root.Opacity()==0; ++i) { Sleep(2); pump(); }
+        const auto frameOpacity = root.Opacity();
+        const bool revealed = frameOpacity==0.75;
+#endif
         bool applied=border.Background()!=original && border.CornerRadius().TopLeft==18;
         for(auto grid:regions)applied=applied && grid.Background()!=original && grid.CornerRadius().TopLeft==18;
         auto probePercent = BF_Setting(L"probe_tint_percent");
@@ -144,7 +270,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         applied=applied&&undocked.Visibility()==Visibility::Visible&&appsRoot.Visibility()==Visibility::Visible&&
             appsScroll.Visibility()==Visibility::Visible&&pinnedScroll.Visibility()==Visibility::Visible&&
             appsScroll.ActualWidth()>0&&pinnedScroll.ActualWidth()>0&&appsList.Items().Size()==1&&
-            columns.Size()==2&&columns.GetAt(0).Width().Value==270&&columns.GetAt(1).Width().Value==368;
+            columns.Size()==2&&columns.GetAt(0).Width().Value==2&&columns.GetAt(1).Width().Value==3;
         auto foreground=allApps.Foreground().try_as<Media::SolidColorBrush>();
         auto pinnedForeground=pinned.Foreground().try_as<Media::SolidColorBrush>();
         auto clear=overlay.Background().try_as<Media::SolidColorBrush>();
@@ -153,9 +279,121 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         applied=applied&&clear&&clear.Color().A==0&&overlay.BorderThickness().Left==0&&overlay.Margin().Top==0;
         applied=applied&&overlay.Visibility()==Visibility::Collapsed;
         for (auto shadow : shadows) applied=applied&&shadow.Visibility()==Visibility::Collapsed;
+        auto menuInk=menuItem.Foreground().try_as<Media::SolidColorBrush>();
+        auto menuSurface=menuBorder.Background();
+        applied=applied&&menuInk&&menuInk.Color().R==expectedInk&&menuSurface!=original&&menuBorder.CornerRadius().TopLeft==12;
+        applied=applied&&searchBorder.Background()!=original&&searchBorder.CornerRadius().TopLeft==18&&
+            searchInput.Background()!=original&&searchInput.CornerRadius().TopLeft==12;
+        if (!probePercent.empty()) {
+            auto percent = wcstoul(probePercent.c_str(), nullptr, 10);
+            auto alpha = wcstoul(BF_Setting(L"probe_tint_alpha").c_str(), nullptr, 10);
+            tint = tint && BF_ProbeTint(searchBorder.Background(),percent,alpha)&&BF_ProbeTint(menuSurface,percent,alpha);
+        }
+        const auto searchCss = CreateWebViewJsCodeForApply();
+        auto searchWidth=wcstoul(BF_Setting(L"probe_start_width").c_str(),nullptr,10);
+        auto searchHeight=wcstoul(BF_Setting(L"probe_start_height").c_str(),nullptr,10);
+        auto measuredWidth=searchFrame.MaxWidth(), measuredHeight=searchFrame.MaxHeight();
+        const auto startWidth = bf_start_width.load(), startHeight = bf_start_height.load();
+        const bool classicSized = classicSizingFrame.Width()==searchWidth && classicSizingFrame.Height()==searchHeight &&
+            std::abs(classicBorder.ActualWidth()-searchWidth)<=.5 && std::abs(classicBorder.ActualHeight()-searchHeight)<=.5 &&
+            BF_StartPanelParent(classicBorder)==classicRoot;
+        const auto startRect = BF_PanelScreenRect(border, child);
+        pump();searchShell.UpdateLayout();
+        const auto searchRect = BF_PanelScreenRect(searchBorder,searchChild);
+        RECT originalSearchWindow{};
+        GetWindowRect(searchWindow,&originalSearchWindow);
+        const bool reproducedClip=searchRect && !BF_FullPanel(*searchRect,searchChild,BF_PanelPeer(searchBorder));
+        const auto publishedStart=BF_ReadPanelGeometry();
+        if (bf_startFrame) bf_startFrame->layout.revoke();
+        BF_WritePanelGeometry(0);
+        BF_TrackSearchFrame(searchBorder,searchChild);
+        BF_UpdateSearchPanel();
+        pump();searchShell.UpdateLayout();pump();
+        MONITORINFO monitor{sizeof(monitor)};
+        GetMonitorInfoW(MonitorFromWindow(searchWindow,MONITOR_DEFAULTTONEAREST),&monitor);
+        const auto fallbackRect=BF_PanelScreenRect(searchBorder,searchChild);
+        const auto expectedAnchor=searchRect ? BF_SearchAnchor(originalSearchWindow,*searchRect,monitor,
+            std::lround(12*searchShell.XamlRoot().RasterizationScale())) : std::nullopt;
+        const bool directSearchAnchored=fallbackRect && expectedAnchor && EqualRect(&*fallbackRect,&*expectedAnchor) &&
+            BF_FullPanel(*fallbackRect,searchChild,BF_PanelPeer(searchBorder)) && !bf_search_position_ready;
+        BF_WritePanelGeometry(publishedStart);
+        // Keep the Shell's opening transform alive while only the bottom of
+        // the page is visible, then finish the animation without any input.
+        searchOpening.Y(-440);
+        BF_UpdateSearchPanel(true);
+        pump();searchShell.UpdateLayout();pump();
+        const bool shellOwnsAnimation=searchShell.RenderTransform()==searchOpening && !bf_search_position_ready;
+        searchOpening.Y(0);
+        const auto settleDeadline=GetTickCount64()+750;
+        while (!bf_search_position_ready && GetTickCount64()<settleDeadline) {pump();Sleep(4);}
+        const auto alignedRect = BF_PanelScreenRect(searchBorder,searchChild);
+        const auto inputRect=BF_PanelScreenRect(searchInput,searchChild);
+        const bool searchAligned = shellOwnsAnimation && bf_search_position_ready && startRect && searchRect && alignedRect &&
+            inputRect && BF_ContainsPanel(*alignedRect,*inputRect) && bf_searchInputBounds==BF_EncodePanelRect(*inputRect) &&
+            !BF_CoincidentPanels(*searchRect,*startRect) && EqualRect(&*alignedRect,&*startRect) &&
+            BF_FullPanel(*alignedRect,searchChild,BF_PanelPeer(searchBorder));
+        Media::RectangleGeometry hiddenInput;hiddenInput.Rect({0,0,64,1});searchInput.Clip(hiddenInput);
+        BF_UpdateSearchPanel();const bool rejectsHiddenInput=!bf_search_position_ready;
+        searchInput.Clip(nullptr);
+        bool searchStable=true;
+        for (int retry=0;retry<8;++retry) {
+            if (retry==4) SetWindowPos(searchWindow,nullptr,180,20,900,1000,BF_SearchMoveFlags);
+            BF_UpdateSearchPanel();pump();searchShell.UpdateLayout();pump();
+            auto face=BF_PanelScreenRect(searchBorder,searchChild);
+            searchStable=searchStable&&face&&startRect&&BF_CoincidentPanels(*face,*startRect)&&
+                BF_CoincidentPanels(BF_ClientScreenRect(searchChild),*startRect);
+        }
+        if (bf_searchFrame) bf_searchFrame->originalWindow=originalSearchWindow;
+        BF_ClearSearchFrames();
+        const bool innerClipRestored=searchInset.Padding().Right==12 && searchInset.Clip()==searchClip;
+        RECT restoredWindow{};
+        GetWindowRect(searchWindow,&restoredWindow);
+        const bool positionRestored=EqualRect(&restoredWindow,&originalSearchWindow);
+        applied=applied&&measuredWidth==searchWidth&&measuredHeight==searchHeight&&
+            mainMenu.Width()==searchWidth&&mainMenu.Height()==searchHeight&&
+            heldBeforeLayout&&revealed&&startWidth==searchWidth&&startHeight==searchHeight&&
+            classicSized&&reproducedClip&&directSearchAnchored&&searchAligned&&rejectsHiddenInput&&positionRestored&&searchStable&&innerClipRestored;
+        applied=applied&&g_webContentJs.empty()&&g_webContentCss.contains(L".previewContainer")&&
+            g_webContentCss.contains(L"[data-region=\"TopApps\"]")&&g_webContentCss.contains(L"QuickSearch")&&
+            g_webContentCss.contains(L".curatedSettingsGroup")&&g_webContentCss.contains(L".topItemsGroup")&&
+            g_webContentCss.contains(expectedInk==255 ? L"color: #ffffff !important" : L"color: #000000 !important")&&
+            g_webContentCss.contains(L"outline: 1px solid")&&
+            BF_IsSearchDocument(wf::Uri(L"https://www.bing.com/WS/Init?locale=zh-CN"))&&
+            BF_IsSearchDocument(wf::Uri(L"https://cn.bing.com/WS/Init?cc=CN#root"))&&
+            BF_IsSearchDocument(wf::Uri(L"https://searchapp.bundleassets.example/desktop/2.html?offline=1"))&&
+            !BF_IsSearchDocument(wf::Uri(L"https://www.bing.com/search?q=test"))&&
+            searchCss.contains(L"bigfish-windows-search-style")&&
+            searchCss.contains(L"bigfish-search-styled")&&
+            std::wstring_view(CreateWebViewJsCodeForClear()).contains(L"bigfish-windows-search-style");
+        auto shortcut=navigation.Children().GetAt(navigation.Children().Size()-1).as<Controls::Button>();
+        auto userBounds=BF_FooterBounds(user,navigation),powerBounds=BF_FooterBounds(power,navigation),gearBounds=BF_FooterBounds(gear,navigation);
+        auto shortcutBounds=BF_FooterBounds(shortcut,navigation);
+        const bool footerAligned=userBounds.X>=0 && powerBounds.X>=userBounds.X+userBounds.Width &&
+            std::abs(navigation.ActualWidth()-gearBounds.X-gearBounds.Width)<=1 &&
+            shortcutBounds.X>=powerBounds.X+powerBounds.Width && bf_search_button_ready;
+        bf_popup::Popup accountPopup;
+        Controls::Border secondary;secondary.Width(150);secondary.Height(90);
+        accountPopup.XamlRoot(root.XamlRoot());accountPopup.Child(secondary);
+        accountPopup.PlacementTarget(user);accountPopup.DesiredPlacement(bf_popup::PopupPlacementMode::Top);
+        accountPopup.IsOpen(true);pump();
+        BF_AlignStartPopup(secondary);secondary.UpdateLayout();pump();
+        const auto popupPlacement=accountPopup.ActualPlacement();
+        const auto anchorPoint=user.TransformToVisual(nullptr).TransformPoint({0,0});
+        const auto popupPoint=secondary.TransformToVisual(nullptr).TransformPoint({0,0});
+        const bool popupAligned=popupPlacement==bf_popup::PopupPlacementMode::TopEdgeAlignedLeft &&
+            std::abs(anchorPoint.X-popupPoint.X)<=1 && popupPoint.Y+secondary.ActualHeight()<=anchorPoint.Y+1;
+        applied=applied&&footerAligned&&popupAligned&&navigation.Children().Size()==4&&shortcut.Visibility()==Visibility::Visible&&
+            shortcutBounds.X+shortcutBounds.Width<=gearBounds.X&&
+            shortcut.Content().as<Controls::FontIcon>().Foreground().as<Media::SolidColorBrush>().Color().R==expectedInk&&
+            winrt::Windows::UI::Xaml::Automation::AutomationProperties::GetName(shortcut)==L"搜索";
 #else
         auto expectedTheme = BF_Setting(L"bigfish_theme")==L"Dark" ? ElementTheme::Dark : ElementTheme::Light;
-        applied=applied&&quickInner.RequestedTheme()==expectedTheme&&quickLabel.ActualTheme()==expectedTheme;
+        const bool firstChecked=quickFace.CornerRadius().TopLeft==30 && quickFace.Background()==accentState;
+        quickSwitch.IsChecked(false);quickSwitch.Background(original);pump();
+        const bool unchecked=quickFace.Background()==original;
+        quickSwitch.IsChecked(true);quickSwitch.Background(accentState);pump();
+        const bool switchColors=firstChecked&&unchecked&&quickFace.Background()==accentState;
+        applied=applied&&quickInner.RequestedTheme()==expectedTheme&&quickLabel.ActualTheme()==expectedTheme&&switchColors;
 #endif
         auto errors=bf_errors.load();auto matches=bf_matches.load();
         CleanupCustomizations(static_cast<ElementId>(2));
@@ -168,6 +406,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         for (size_t i=0; i<shadows.size(); ++i) CleanupCustomizations(static_cast<ElementId>(103+i));
         for (int id=124; id>=120; --id) CleanupCustomizations(static_cast<ElementId>(id));
 #else
+        CleanupCustomizations(static_cast<ElementId>(101));
         CleanupCustomizations(static_cast<ElementId>(100));
 #endif
         bool restored=border.Background()==original && border.CornerRadius().TopLeft==3;
@@ -175,6 +414,13 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         restored=restored&&overlay.Background()==original&&overlay.BorderThickness().Left==2&&allApps.Foreground()==white&&pinned.Foreground()==black;
         restored=restored&&overlay.Visibility()==Visibility::Visible;
         for (auto shadow : shadows) restored=restored&&shadow.Visibility()==Visibility::Visible;
+        for (int id=141; id>=130; --id) CleanupCustomizations(static_cast<ElementId>(id));
+        BF_ClearStartSearchButtons();
+        restored=restored&&accountPopup.DesiredPlacement()==bf_popup::PopupPlacementMode::Top&&
+            navigation.Children().Size()==3&&menuBorder.Background()==original&&
+            menuItem.Foreground()==white&&searchBorder.Background()==original&&searchInput.Background()==original&&
+            std::isinf(searchFrame.MaxWidth())&&std::isinf(searchFrame.MaxHeight());
+        accountPopup.IsOpen(false);
         auto originalColumns=wrapper.ColumnDefinitions();
         restored=restored&&pinnedScroll.Visibility()==Visibility::Visible&&wrapper.Children().Size()==2&&
             originalColumns.Size()==2&&originalColumns.GetAt(0).Width().Value==1&&originalColumns.GetAt(1).Width().Value==1;
@@ -184,12 +430,33 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         for(auto grid:regions)restored=restored && grid.Background()==original && grid.CornerRadius().TopLeft==3;
         int result=applied&&tint&&restored&&errors==0?0:92;
 #ifdef BIGFISH_START_ENGINE
+        const bool fullLayout=BF_ProbeStartLayout(bf_root);
+        if (!fullLayout) result=92;
         UninitializeSettingsAndTap();
+        BF_UnbindPanelGeometry();
+        RemoveWindowSubclass(searchWindow,viewportSubclass,1);
+        searchSource.Content(nullptr);searchSource.Close();DestroyWindow(searchWindow);
 #else
         UninitializeForCurrentThread();
 #endif
         std::ofstream report(bf_root/(std::wstring(BF_KIND)+L"-probe.json"));
-        report<<"{\"passed\":"<<(result==0?"true":"false")<<",\"applied\":"<<applied<<",\"tint\":"<<tint<<",\"restored\":"<<restored<<",\"errors\":"<<errors<<",\"matches\":"<<matches<<"}";
+        report<<"{\"passed\":"<<(result==0?"true":"false")<<",\"applied\":"<<applied<<",\"tint\":"<<tint<<",\"restored\":"<<restored<<",\"errors\":"<<errors<<",\"matches\":"<<matches;
+#ifdef BIGFISH_START_ENGINE
+        report<<",\"held\":"<<heldBeforeLayout<<",\"revealed\":"<<revealed<<",\"frame_opacity\":"<<frameOpacity
+              <<",\"start_box\":["<<startWidth<<","<<startHeight<<"]"
+              <<",\"classic_sized\":"<<classicSized<<",\"search_aligned\":"<<searchAligned
+              <<",\"clipped_before\":"<<reproducedClip<<",\"direct_search_anchored\":"<<directSearchAnchored
+              <<",\"footer_aligned\":"<<footerAligned<<",\"popup_aligned\":"<<popupAligned
+              <<",\"popup_mode\":"<<static_cast<int>(popupPlacement)
+              <<",\"popup_x\":"<<popupPoint.X<<",\"account_x\":"<<anchorPoint.X
+              <<",\"search_position_restored\":"<<positionRestored;
+        report<<",\"search_stable\":"<<searchStable<<",\"complete_layout\":"<<fullLayout;
+        if (startRect && alignedRect) {
+            report<<",\"start_edges\":["<<startRect->left<<","<<startRect->top<<","<<startRect->right<<","<<startRect->bottom<<"]"
+                  <<",\"search_edges\":["<<alignedRect->left<<","<<alignedRect->top<<","<<alignedRect->right<<","<<alignedRect->bottom<<"]";
+        }
+#endif
+        report<<"}";
         report.close();
         source.Content(nullptr);source.Close();source=nullptr;native=nullptr;
         regions.clear();root=nullptr;border=nullptr;original=nullptr;pump();

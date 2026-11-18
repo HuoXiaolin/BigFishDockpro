@@ -49,7 +49,7 @@ def normalize(value, cfg=None):
     from card_design import DESIGNS
     for key,allowed in [('design',{'follow'}|{value for _,value in DESIGNS}),('material',{v for _,v in MATERIALS}),('theme',{'auto','light','dark'}),('hour_format',{'12','24'}),('text_effect',{'glass','clear'}),('layout',{'auto','wide','portrait'}),('align',{'left','center'}),('shadow',{'none','soft'}),('ring_mode',{'day','work'})]:
         if not isinstance(result[key],str) or result[key] not in allowed:result[key]=DEFAULTS[key]
-    for key,low,high in [('opacity',0,100),('blur',2,30),('highlight',0,100),('font_scale',60,180),('date_scale',70,150),('font_weight',50,87),('letter_spacing',90,115),('padding',4,14),('text_opacity',50,100),('bar_width',4,18),('ring_width',4,18),('corner_radius',8,36)]:
+    for key,low,high in [('opacity',0,100),('blur',0,30),('highlight',0,100),('font_scale',60,180),('date_scale',70,150),('font_weight',50,87),('letter_spacing',90,115),('padding',4,14),('text_opacity',50,100),('bar_width',4,18),('ring_width',4,18),('corner_radius',8,36)]:
         value=result[key];result[key]=max(low,min(high,value)) if type(value) is int else DEFAULTS[key]
     for key in ('color','text_color','accent_color'):
         value=result[key];result[key]=value.lower() if isinstance(value,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',value) else ''

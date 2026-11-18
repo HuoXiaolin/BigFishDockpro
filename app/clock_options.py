@@ -99,7 +99,7 @@ class ClockOptions(QDialog):
         choice(material,'source','外观来源',APPEARANCE_SOURCES)
         choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS,False)
         choice(material,'material','材质',material_choices(clock.option('appearance')['material']));choice(material,'theme','明暗模式',COLOR_MODES)
-        self.material_color=color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',2,30);number(material,'highlight','高光（%）',0,100)
+        self.material_color=color(material,'color','主题色');number(material,'opacity','不透明度（%）',0,100);number(material,'blur','模糊强度',0,30);number(material,'highlight','高光（%）',0,100)
         if not self.calendar:
             number(layout,'bar_width','进度条厚度',4,18);number(layout,'ring_width','圆环厚度',4,18)
             choice(layout,'ring_mode','进度圆环',[('今日进度','day'),('下班进度','work')])

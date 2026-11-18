@@ -26,7 +26,7 @@ def normalize_custom(value):
         candidate={key:appearance[key] for key in APPEARANCE_FIELDS}
         valid=(candidate['theme'] in ('auto','light','dark') and isinstance(candidate['dock_material'],str) and candidate['dock_material'] in {key for _,key in MATERIALS}
                and all(type(candidate[key]) is bool for key in ('glass','clear_background'))
-               and all(type(candidate[key]) is int and low<=candidate[key]<=high for key,low,high in [('transparency',0,100),('blur_px',3,30),('dock_highlight',0,100)])
+               and all(type(candidate[key]) is int and low<=candidate[key]<=high for key,low,high in [('transparency',0,100),('blur_px',0,30),('dock_highlight',0,100)])
                and isinstance(candidate['theme_color'],str) and (not candidate['theme_color'] or bool(re.fullmatch(r'#[0-9a-fA-F]{6}',candidate['theme_color']))))
         if valid:result['appearance']=candidate
     size=value.get('size')

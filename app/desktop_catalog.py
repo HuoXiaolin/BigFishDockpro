@@ -146,7 +146,7 @@ def normalize_desktop(cfg):
         geo = raw.get('geometry')
         if isinstance(geo, list) and len(geo) == 4 and all(type(n) is int for n in geo):
             panel['geometry'] = [geo[0], geo[1], max(260, min(2400, geo[2])), max(156, min(1800, geo[3]))]
-        for key, low, high in [('opacity', 0, 100), ('blur', 2, 30), ('highlight', 0, 100), ('capsule_ratio', 30, 100)]:
+        for key, low, high in [('opacity', 0, 100), ('blur', 0, 30), ('highlight', 0, 100), ('capsule_ratio', 30, 100)]:
             if type(raw.get(key)) is int: panel[key] = max(low, min(high, raw[key]))
         if isinstance(raw.get('fold'),dict):
             from fold_options import normalize as normalize_fold
@@ -156,7 +156,8 @@ def normalize_desktop(cfg):
         if raw.get('collapse_style') in ('bar', 'capsule'): panel['collapse_style'] = raw['collapse_style']
         if raw.get('view') in ('small','large','list'): panel['view'] = raw['view']
         if raw.get('sort') in ('name_asc', 'name_desc', 'modified_desc', 'modified_asc'): panel['sort'] = raw['sort']
-        if raw.get('material') in ('liquid', 'gloss', 'acrylic', 'mica', 'clear', 'solid'): panel['material'] = raw['material']
+        from appearance_presets import MATERIALS
+        if raw.get('material') in {key for _,key in MATERIALS}: panel['material'] = raw['material']
         if raw.get('theme') in ('auto', 'light', 'dark'): panel['theme'] = raw['theme']
         if raw.get('theme') == 'follow': panel['theme'] = 'auto'
         if raw.get('theme') == 'gloss': panel.update(theme='light', material='gloss')

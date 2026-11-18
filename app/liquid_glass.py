@@ -4,6 +4,99 @@ from PyQt5.QtGui import QColor, QLinearGradient, QRadialGradient, QBrush, QPen, 
 from appearance_presets import FLOWING_TINT, LIQUID_TINT, THEME_GRADIENTS, THEME_INKS, VIVID_BLUE
 
 
+def base_theme_colors(theme, system_light):
+    """按当前模式返回整套配色与外观参数。
+
+    公共字段：
+      tint / tint_scale / tint_floor  玻璃底色和它的浓度曲线
+      grad / hl                       竖向渐变与顶部高光（会被合成为一条）
+      border / border_w               描边颜色与粗细
+      corner                          圆角半径占条高的比例
+      tile / tile_*                   图标是否带圆角底板（iOS 那种）
+    """
+    t = str(theme)
+    if t in ("gloss", "fog"):
+        # ── 光感模式：玻璃上有一道明显的光照（上方光源 + 顶边亮线 + 斜向光斑） ──
+        #     不做白色图标底板，图标保持原样，整体是"湿润的玻璃"质感
+        return dict(
+            light=True,
+            gloss=True,
+            tint=QColor(238, 243, 252),
+            tint_scale=0.62,          # 比浅色模式透一点，光才透得出来
+            tint_floor=36,
+            fg=QColor(40, 46, 62),
+            # 上亮 → 中暗 → 下亮的经典光泽曲线
+            grad=[(0.00, 150), (0.18, 96), (0.52, 40), (0.80, 30), (1.00, 74)],
+            hl=[(0.00, 118), (0.42, 34), (1.00, 0)],
+            border=QColor(255, 255, 255, 178),
+            border_w=1.2,
+            corner=0.44,
+            spec=150,                          # 跟随鼠标的高光更强（就是"光照"）
+            spec_wide=1.9,                     # 光斑更宽更柔
+            shadow=QColor(255, 255, 255, 190),
+            label_bg=QColor(250, 251, 255, 234),
+            label_border=QColor(255, 255, 255, 176),
+            label_fg=QColor(34, 40, 56, 246),
+            tile=False,
+        )
+    if t == 'light' or (t == 'auto' and system_light):
+        return dict(
+            light=True,
+            tint=QColor(247, 247, 251),        # 玻璃底色（偏白）
+            tint_scale=0.70,
+            tint_floor=45,
+            fg=QColor(34, 34, 44),             # 小圆点/提示文字
+            grad=[(0.00, 88), (0.30, 48), (0.72, 26), (1.00, 60)],
+            hl=[(0.00, 150), (0.55, 48), (1.00, 0)],
+            border=QColor(88, 88, 104, 46),
+            border_w=1.0,
+            corner=0.40,
+            spec=86,
+            shadow=QColor(255, 255, 255, 150),
+            label_bg=QColor(250, 250, 253, 238),
+            label_border=QColor(80, 80, 96, 42),
+            label_fg=QColor(28, 28, 38, 244),
+            tile=False,
+        )
+    return dict(
+        light=False,
+        tint=QColor(16, 16, 20),
+        tint_scale=1.0,
+        tint_floor=0,
+        fg=QColor(255, 255, 255),
+        grad=[(0.00, 30), (0.28, 12), (0.70, 6), (1.00, 18)],
+        hl=[(0.00, 76), (0.55, 20), (1.00, 0)],
+        border=QColor(255, 255, 255, 78),
+        border_w=1.0,
+        corner=0.40,
+        spec=70,
+        shadow=QColor(0, 0, 0, 130),
+        label_bg=QColor(16, 16, 20, 228),
+        label_border=QColor(255, 255, 255, 62),
+        label_fg=QColor(255, 255, 255, 242),
+        tile=False,
+    )
+
+
+def dock_theme_colors(cfg, system_light):
+    base = base_theme_colors(cfg.get('theme', 'auto'), system_light)
+    colors = material_palette(tint_palette(base, cfg.get('theme_color', '')), cfg.get('dock_material', 'liquid'))
+    strength = cfg.get('dock_highlight', 45) / 45
+    for key in ('grad', 'hl'):
+        colors[key] = [(position, min(255, round(alpha * strength))) for position, alpha in colors[key]]
+    colors['border'].setAlpha(min(255, round(colors['border'].alpha() * strength)))
+    colors['spec'] = min(255, round(colors['spec'] * strength))
+    return colors
+
+
+def dock_tint_layers(colors, transparency):
+    transparency = max(0, min(100, int(transparency)))
+    base_alpha = 235 * (100 - transparency) / 100
+    tint = round(min(255, base_alpha * colors['tint_scale'] + colors['tint_floor']))
+    layer_opacity = 1 - max(0, transparency - 40) / 60 * .58
+    return tint, layer_opacity
+
+
 def material_palette(colors, material):
     colors = dict(colors)
     strength = {'gloss':1.55, 'acrylic':.22, 'mica':.08, 'clear':.12, 'solid':0}.get(material, 1)
@@ -20,6 +113,7 @@ def material_palette(colors, material):
     if material in ('crystal','flowing','paper_glass'):
         light=colors.get('light',True)
         if material=='crystal':
+            colors['tint_floor']*=.5
             colors['border']=QColor(238,253,255,163) if light else QColor(220,243,255,105)
         elif material=='flowing':
             colors['border']=QColor(232,213,250,96) if light else QColor(221,201,245,67)
@@ -51,18 +145,19 @@ def material_alpha(alpha, material):
     if material == 'acrylic': return max(alpha, 130)
     if material == 'mica': return max(alpha, 232)
     if material == 'solid': return 255
-    if material == 'crystal': return max(alpha,40)
+    if material == 'crystal': return max(alpha,20)
     if material == 'flowing': return max(alpha,76)
     if material == 'paper_glass': return max(alpha,205)
     return alpha
 
 
 def material_blur(value, material):
-    value = max(2,min(40,int(value)))
+    value = max(0,min(40,int(value)))
+    if value == 0: return 0
     if material=='acrylic': return max(16,min(40,value*2))
     if material=='mica': return max(24,min(40,value*3))
     if material=='gloss': return max(2,value//2)
-    if material=='crystal': return max(2,min(18,value))
+    if material=='crystal': return min(18,value)
     if material=='flowing': return max(6,min(24,value))
     if material=='paper_glass': return max(12,min(30,value))
     return value
@@ -109,6 +204,7 @@ def _material_wash(painter, rect, material, colors):
         stops=((0,wash[0],first),(.56,'#ffffff',4),(1,wash[1],last))
         dark_strength=.38
     for position,value,alpha in stops:
+        if material=='crystal':alpha=round(alpha*min(1,max(0,colors.get('spec',58)/58)))
         color=QColor(value);color.setAlpha(alpha if colors.get('light',True) else round(alpha*dark_strength));gradient.setColorAt(position,color)
     painter.fillRect(rect,gradient)
 
@@ -156,7 +252,7 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
             p.fillRect(path_rect, col)
     else:
         col = QColor(c["tint"])
-        col.setAlpha(min(255, tint_a + 20))
+        col.setAlpha(min(255, tint_a + (10 if surface.cfg.get('dock_material')=='crystal' else 20)))
         p.fillRect(path_rect, col)
 
     material = surface.cfg.get('dock_material',c.get('material','liquid'))
@@ -170,7 +266,8 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
         g.setColorAt(pos, QColor(255, 255, 255, a))
     p.fillRect(path_rect, QBrush(g))
     _material_wash(p,path_rect,material,c)
-    _interaction_light(p,path_rect,material)
+    if material!='crystal' or c.get('spec',0)>0:
+        _interaction_light(p,path_rect,material)
 
     # 跟着鼠标走的柔光（液态感的关键）
     # 只填"柔光实际照到的那一块"：半径外的颜色本来就是全透明，

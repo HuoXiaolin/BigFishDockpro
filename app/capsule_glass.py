@@ -40,7 +40,7 @@ class CapsuleGlass:
         key = (rect.getRect(), dpr, radius, inset, tuple(shape) if shape else None, moving, light, material, style['blur'],
                style['opacity'], style['highlight'], style['color'], self.uses_wallpaper)
         if self.key != key and (not moving or self.image is None or shape):
-            texture_dpr = dpr * .5 if rect.width()*rect.height()*dpr*dpr > 128*1024 else dpr
+            texture_dpr = dpr * .5 if style['blur']>0 and rect.width()*rect.height()*dpr*dpr > 128*1024 else dpr
             buffer = QPixmap(max(1,round(rect.width()*texture_dpr)),max(1,round(rect.height()*texture_dpr)))
             buffer.fill(Qt.transparent)
             screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()

@@ -18,13 +18,13 @@ static int attach(DWORD pid,const std::wstring& kind) {
     auto systemHost=std::wstring(system)+L"\\System32\\ShellHost.exe";
     valid=valid && (_wcsnicmp(target,expected.c_str(),expected.size())==0 ||
         (kind==L"notifications"&&_wcsicmp(target,systemHost.c_str())==0));
-    valid=valid && ((kind==L"start"&&_wcsicmp(name.c_str(),L"StartMenuExperienceHost.exe")==0) ||
+    valid=valid && ((kind==L"start"&&(_wcsicmp(name.c_str(),L"StartMenuExperienceHost.exe")==0||_wcsicmp(name.c_str(),L"SearchHost.exe")==0)) ||
         (kind==L"notifications"&&(_wcsicmp(name.c_str(),L"ShellExperienceHost.exe")==0||_wcsicmp(name.c_str(),L"ShellHost.exe")==0)));
     if(!valid){CloseHandle(process);return 22;}
     wchar_t executable[32768];GetModuleFileNameW(nullptr,executable,32768);
     auto library=std::filesystem::path(executable).parent_path()/(kind==L"start"?L"BigFishStartStyle.dll":L"BigFishNotificationStyle.dll");
     if(!std::filesystem::is_regular_file(library)){CloseHandle(process);return 23;}
-    auto eventName=BF_EventName(process,pid);
+    auto eventName=BF_EventName(process,pid,BIGFISH_BUILD_ID);
     if(eventName.empty()){CloseHandle(process);return 28;}
     HANDLE signal=OpenEventW(EVENT_MODIFY_STATE,FALSE,eventName.c_str());
     if(signal){SetEvent(signal);CloseHandle(signal);CloseHandle(process);return 0;}

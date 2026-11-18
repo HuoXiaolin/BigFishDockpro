@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 from unittest.mock import patch
 
 
@@ -73,18 +74,27 @@ def run(api, runtime, root, app, output, checks):
             for kind in KINDS:
                 assert settings(cfg, kind, 1)['bigfish_theme'] == scheme.title()
             buttons = [props for target, props in notified.items() if 'PaginatedToggleButton' in target]
-            assert len(buttons) == 2 and all(f'Background@Normal:=<SolidColorBrush Color="#18{ink[1:]}"/>' in props for props in buttons)
-            assert all(not any(prop.startswith('Background@Checked') for prop in props) for props in buttons)
+            assert len(buttons) == 2 and all('CornerRadius=30' in props for props in buttons)
+            assert all(not any(prop.startswith(('Background', 'Foreground')) for prop in props) for props in buttons)
             cfg['glass'] = False
             for kind, target in (('start', 'Border#AcrylicBorder'), ('notifications', 'Grid#ControlCenterRegion')):
                 surface = dict(rules(cfg, kind))[target]
                 assert surface[0].startswith('Background:=<SolidColorBrush ')
     checks.append('Start and notification panels share Dock materials, foreground, corner and border settings; sampled contrast leaves tint alpha untouched')
 
+    from appearance_presets import DOCK_PRESETS
+    paper = next(preset for _, preset in DOCK_PRESETS if preset['dock_material'] == 'paper_glass')
+    for kind in KINDS:
+        brush = settings(paper, kind, 1)['controlStyles[0].styles[0]']
+        assert brush == 'Background:=<WindhawkBlur BlurAmount="14" TintColor="#cdf6f1eb" FallbackColor="#cdf6f1eb"/>'
+        for sample in ((12, 78, 225), (14, 14, 18), (255, 255, 255)):
+            assert settings(paper, kind, 1, surface_color=sample)['controlStyles[0].styles[0]'] == brush
+    checks.append('Paper glass uses the same Dock tint #f6f1eb and alpha 205 over blue, dark and white backgrounds in both Shell panels.')
+
     for kind in KINDS:
         prefix = f'shell_{kind}_'
         for material in ('liquid', 'acrylic', 'paper_glass', 'solid', 'mica'):
-            cfg = {prefix + 'source': 'custom', prefix + 'material': material}
+            cfg = {prefix + 'source': 'custom', prefix + 'material': material, prefix + 'blur': 24}
             for opacity in (0, 10, 25, 50, 75, 100):
                 cfg[prefix + 'opacity'] = opacity
                 style = appearance(cfg, kind)
@@ -145,22 +155,30 @@ def run(api, runtime, root, app, output, checks):
     controller.attach = attached
     with patch('shell_appearance.stage_payload', return_value=payload), patch('shell_appearance.shell_hosts', return_value={1234: 'start'}), \
          patch('shell_appearance.system_appearance', return_value=(True, True)), patch('shell_container.context', return_value=None), \
-         patch('shell_appearance.signal_host', return_value=True) as signal:
+         patch('shell_container.panel_geometry_mapping', return_value=200), patch('shell_container.share_panel_geometry', return_value=201), \
+         patch('shell_container.close_panel_geometry'), \
+         patch('shell_appearance.signal_host', side_effect=lambda *args, notify=True: notify) as signal:
         controller.sync()
-        file = folder / 'shell-appearance/start.ini'
+        file = folder / 'shell-appearance' / f'start.{manifest["build"]}.ini'
         assert file.exists() and 'enabled=1' in file.read_text(encoding='utf-16')
         timestamp = file.stat().st_mtime_ns
         signal.reset_mock();controller.sync()
         assert file.stat().st_mtime_ns == timestamp and not signal.called and attach == [(1234, 'start')]
         dock.cfg.update(theme='dark');controller.sync()
-        notification = file.with_name('notifications.ini')
+        notification = file.with_name(f'notifications.{manifest["build"]}.ini')
         assert all('bigfish_theme=Dark' in path.read_text(encoding='utf-16') for path in (file, notification))
         for kind in KINDS:
             dock.cfg.update({f'shell_{kind}_source': 'custom', f'shell_{kind}_material': 'liquid',
-                             f'shell_{kind}_theme': 'dark', f'shell_{kind}_opacity': 0})
-        with patch('shell_appearance.foreground_surface', return_value=('start', (250, 250, 250))) as surface:
+                             f'shell_{kind}_theme': 'dark', f'shell_{kind}_opacity': 0, f'shell_{kind}_blur': 24})
+        with patch('shell_appearance.foreground_surface', return_value=('start', (250, 250, 250))) as surface, \
+             patch('shell_appearance.foreground_target', return_value=(None, 1, 'start')) as open_panel:
+            signal.reset_mock()
             controller.refresh_foreground()
             surface.assert_called_with({1234: 'start'})
+            assert 'bigfish_theme=Dark' in file.read_text(encoding='utf-16') and not signal.called
+            open_panel.return_value = None
+            surface.return_value = None
+            controller.refresh_foreground()
             rendered = file.read_text(encoding='utf-16')
             assert 'bigfish_theme=Light' in rendered and 'TintColor="#00313437"' in rendered
             assert 'bigfish_theme=Dark' in notification.read_text(encoding='utf-16')
@@ -178,7 +196,7 @@ def run(api, runtime, root, app, output, checks):
         # A working quick-settings host must not hide a failed notification host.
         controller.hosts={1234:'notifications',5678:'notifications'}
         controller.errors[5678]='组件连接失败'
-        (controller.root/'1234.json').write_text(json.dumps(dict(protocol=1,pid=1234,owner_pid=os.getpid(),state='applied',matches=9,errors=0)))
+        controller.status_path(1234, manifest['build']).write_text(json.dumps(dict(protocol=1,pid=1234,owner_pid=os.getpid(),state='applied',matches=9,errors=0)))
         controller.update_status({'notifications'})
         assert '部分已应用' in controller.status and '组件连接失败' in controller.status
         controller.errors.clear()
@@ -187,9 +205,162 @@ def run(api, runtime, root, app, output, checks):
         controller.hosts={1234:'start'}
         controller.close()
         assert not controller.timer.isActive() and 'enabled=0' in file.read_text(encoding='utf-16')
+
+    upgraded = ShellAppearance(dock, Api)
+    upgraded.root = folder / 'upgrade'
+    upgraded.disabled = False
+    upgraded.supported = True
+    cache = folder / 'builds'
+    stage = cache / manifest['build']
+    stage.mkdir(parents=True)
+    (stage / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+    old_build = '1111111111111111'
+    (cache / old_build).mkdir()
+    legacy = upgraded.event_name(1234, '')
+    previous = upgraded.event_name(1234, old_build)
+    upgraded.root.mkdir(parents=True)
+
+    def status(build, state, **extra):
+        path = upgraded.status_path(1234, build)
+        path.write_text(json.dumps(dict(protocol=1, pid=1234, owner_pid=os.getpid(), state=state,
+                                        matches=2, errors=0, **extra)), encoding='utf-8')
+
+    status('', 'applied')
+    with patch('shell_appearance.stage_payload', return_value=stage), \
+         patch('shell_appearance.shell_hosts', return_value={1234: 'start'}), \
+         patch('shell_appearance.system_appearance', return_value=(True, True)), \
+         patch('shell_container.context', return_value=None), \
+         patch('shell_container.panel_geometry_mapping', return_value=200), patch('shell_container.share_panel_geometry', return_value=201), \
+         patch('shell_container.close_panel_geometry'), \
+         patch('shell_appearance.signal_host', side_effect=lambda pid, name, notify=True: notify or name in (legacy, previous)), \
+         patch.object(upgraded, 'attach') as attach_new:
+        upgraded.sync()
+        for name in ('start.ini', f'start.{old_build}.ini'):
+            assert 'enabled=0' in (upgraded.root / name).read_text(encoding='utf-16')
+        assert upgraded.next_attach.isActive() and upgraded.next_attach.interval() <= 100
+        assert '正在切换' in upgraded.status
+        attach_new.assert_not_called()
+        legacy_file = upgraded.status_path(1234, '')
+        prior_time = legacy_file.stat().st_mtime_ns
+        status('', 'restored')
+        os.utime(legacy_file, ns=(prior_time, prior_time))
+        upgraded.sync()
+        attach_new.assert_not_called()
+        status(old_build, 'restored')
+        upgraded.sync()
+        attach_new.assert_called_once_with(1234, 'start')
+        status(manifest['build'], 'applied', search_button=False)
+        upgraded.update_status({'start'})
+        assert '等待搜索入口' in upgraded.status
+        status(manifest['build'], 'applied', search_button=True, start_width=382, start_height=302)
+        upgraded.update_status({'start'})
+        assert upgraded.status == '开始菜单：已应用'
+        upgraded.attached.add(1234)
+        upgraded.sync()
+        limits = (upgraded.root / f'start.{manifest["build"]}.ini').read_text(encoding='utf-16')
+        assert 'Width=563' in limits and 'Height=625' in limits
+        assert 'BigFishSearchWidth=382' not in limits and 'panel_geometry_1234=201' in limits
+        upgraded.close()
+    notice = ShellAppearance(dock, Api)
+    notice.root = folder / 'notification-upgrade'
+    notice.disabled = False;notice.supported = True
+    notice.root.mkdir(parents=True)
+    notice_legacy = notice.event_name(4321, '')
+    old_status = notice.root / '4321.json'
+    old_status.write_text(json.dumps(dict(protocol=1, pid=4321, owner_pid=os.getpid(),
+                                           state='applied', matches=2, errors=0)))
+    staged_status = old_status.with_name(old_status.name + '.tmp')
+    restored_receipt = dict(protocol=1, pid=4321, owner_pid=os.getpid(), state='restored', matches=0, errors=0)
+    staged_status.write_text(json.dumps(restored_receipt))
+    with patch('shell_appearance.stage_payload', return_value=stage), \
+         patch('shell_appearance.shell_hosts', return_value={4321: 'notifications'}), \
+         patch('shell_appearance.system_appearance', return_value=(True, True)), \
+         patch('shell_container.context', return_value=None), \
+         patch('shell_container.panel_geometry_mapping', return_value=200), \
+         patch('shell_container.close_panel_geometry'), \
+         patch('shell_appearance.signal_host', side_effect=lambda pid, name, notify=True: notify or name==notice_legacy), \
+         patch.object(notice, 'attach') as connect_notice:
+        notice.sync()
+        assert 'enabled=0' in (notice.root/'notifications.ini').read_text(encoding='utf-16')
+        assert 'enabled=1' in (notice.root/f'notifications.{manifest["build"]}.ini').read_text(encoding='utf-16')
+        connect_notice.assert_not_called()
+        pending, _ = notice.start_handoffs[4321]
+        notice.start_handoffs[4321] = (pending, time.monotonic() - 1)
+        notice.window_created(4321)
+        assert notice.start_handoffs[4321][1] > time.monotonic() and notice.next_attach.interval() == 0
+        notice.sync()
+        connect_notice.assert_not_called()  # Old staged receipt predates this handoff.
+        staged_status.write_text(json.dumps(dict(restored_receipt, owner_pid=os.getpid() + 1)))
+        notice.sync()
+        connect_notice.assert_not_called()
+        staged_status.write_text(json.dumps(restored_receipt))
+        fresh_stamp = time.time_ns() + 1_000_000_000
+        os.utime(staged_status, ns=(fresh_stamp, fresh_stamp))
+        notice.sync()
+        connect_notice.assert_called_once_with(4321, 'notifications')
+        assert notice.status_path(4321, notice.build).name == f'4321.{manifest["build"]}.json'
+        notice.close()
+    notice.deleteLater()
+    recovering = ShellAppearance(dock, Api)
+    recovering.root = folder / 'cold-start'
+    recovering.disabled = False
+    recovering.supported = True
+    with patch('shell_appearance.stage_payload', side_effect=[PermissionError('logon directory busy'), payload]), \
+         patch('shell_appearance.shell_hosts', return_value={}) as hosts, \
+         patch('shell_appearance.system_appearance', return_value=(True, True)), \
+         patch('shell_container.context', return_value=None), \
+         patch('shell_container.panel_geometry_mapping', return_value=200), \
+         patch('shell_container.share_panel_geometry', return_value=201), \
+         patch('shell_container.close_panel_geometry'), \
+         patch('shell_appearance.signal_host', side_effect=lambda *args, notify=True: notify), \
+         patch.object(recovering, 'attach') as attach_recovered:
+        recovering.sync()
+        assert recovering.timer.isActive() and recovering.sync_failures == 1
+        assert dock.cfg['shell_start_enabled']
+        recovering.sync()
+        assert recovering.sync_failures == 0 and recovering.timer.interval() == 5000
+        # The Shell starts later than Dock, then restarts with a different PID.
+        hosts.return_value = {1201: 'start'}
+        recovering.sync();attach_recovered.assert_called_with(1201, 'start')
+        recovering.attached.add(1201)
+        hosts.return_value = {1202: 'start'}
+        recovering.sync();attach_recovered.assert_called_with(1202, 'start')
+        assert 1201 not in recovering.attached and 1201 not in recovering.panel_handles
+        # Three temporary failures must not disable this host for the session.
+        recovering.attempts[1202] = (3, 200)
+        attach_recovered.reset_mock()
+        with patch('shell_appearance.time.monotonic', return_value=199):recovering.sync()
+        attach_recovered.assert_not_called()
+        with patch('shell_appearance.time.monotonic', return_value=201):recovering.sync()
+        attach_recovered.assert_called_once_with(1202, 'start')
+        # A ready notification host goes before a Start retry, and a finished
+        # launcher drains the next host without a five-second discovery delay.
+        hosts.return_value = {1202: 'start', 1203: 'notifications', 1204: 'notifications'}
+        recovering.attempts[1199] = (1, 100)
+        with patch('shell_appearance.time.monotonic', return_value=201):recovering.sync()
+        attach_recovered.assert_called_with(1203, 'notifications')
+        assert 1199 not in recovering.attempts
+        from unittest.mock import Mock
+        from PyQt5.QtCore import QProcess
+        recovering.active_pid = 1203
+        recovering.process = Mock()
+        recovering.finished(0, QProcess.NormalExit)
+        assert recovering.next_attach.isActive() and recovering.next_attach.interval() == 0
+        attach_recovered.reset_mock()
+        app.processEvents()
+        attach_recovered.assert_called_once_with(1204, 'notifications')
+        recovering.next_attach.start(0)
+        recovering.close()
+        assert not recovering.timer.isActive() and not recovering.next_attach.isActive()
+    recovering.deleteLater()
     dock.deleteLater()
     assert runtime.shell_appearance.disabled and not runtime.shell_appearance.timer.isActive()
     checks.append('shell lifecycle: no duplicate style writes/attach, theme refresh, shutdown cancellation and restore on close; OS calls mocked')
+    checks.append('Start upgrade waits for legacy and previous-version restore acknowledgements, then attaches once and reports the search button state')
+    checks.append('Notification upgrades accept a fresh restore receipt despite an unchanged file time or a delayed rename, reject stale and foreign receipts, and resume the handoff when the date window opens.')
+    checks.append('Start keeps its layout during automatic color sampling. Its inner widths cannot override the shared panel dimensions.')
+    checks.append('Shell cold start recovers from staging failure, absent/late/restarted hosts and an expired three-attempt backoff; saved choices remain enabled. OS calls mocked.')
+    checks.append('Shell attachment drains ready hosts without discovery-delay gaps, prioritizes new hosts over retries and cancels pending work on close; OS calls mocked.')
 
     dialog = SettingsDialog(runtime.tray, api)
     try:

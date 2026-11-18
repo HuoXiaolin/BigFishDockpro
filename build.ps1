@@ -2,7 +2,7 @@ param(
     [string]$Toolchain = 'D:\Agant\toolchain',
     [string]$Iscc = '',
     [switch]$Deliver,
-    [ValidateSet('Quick','Runtime','Full','None')][string]$TestMode = 'Quick',
+    [ValidateSet('Auto','Quick','Runtime','Full','None')][string]$TestMode = 'Auto',
     [switch]$SkipTests,
     [switch]$RuntimeChecks,
     [switch]$Clean,

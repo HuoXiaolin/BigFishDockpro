@@ -148,7 +148,7 @@ def background(cfg):
 def clean_background(raw,strict=False):
     from appearance_presets import MATERIALS,COLOR_MODES
     if raw=={}:return {}
-    ranges={'opacity':(0,100),'blur':(2,30),'highlight':(0,100)}
+    ranges={'opacity':(0,100),'blur':(0,30),'highlight':(0,100)}
     valid=(isinstance(raw,dict) and isinstance(raw.get('material'),str) and isinstance(raw.get('theme'),str) and raw.get('material') in {v for _,v in MATERIALS}
            and raw.get('theme') in {v for _,v in COLOR_MODES}
            and isinstance(raw.get('color'),str) and (not raw['color'] or re.fullmatch(r'#[0-9a-fA-F]{6}',raw['color']))

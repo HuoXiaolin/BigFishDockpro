@@ -57,6 +57,8 @@ def run(output):
         run_usage_stats(api,runtime,root.name,output,checks)
         from shell_appearance_tests import run as run_shell_appearance
         run_shell_appearance(api,runtime,root.name,app,output,checks)
+        from material_tests import check_zero_crystal
+        check_zero_crystal(api,runtime,output,checks)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
         checks.append('private Windows desktop: '+desktop+'; temporary configuration and synthetic entries only')
         # Sample this test process before/after enabling one clock; this is not a power measurement.

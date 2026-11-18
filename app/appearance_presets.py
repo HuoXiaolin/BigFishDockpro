@@ -22,7 +22,7 @@ THEME_GRADIENTS = {
 }
 PROGRESS_COLORS = (THEME_GRADIENTS['liquid'],('#f3cf80','#dc9c44'),('#72d5b5','#37a98c'))
 PANEL_PRESETS = [
-    ('清透水晶', dict(opacity=22, blur=6, highlight=38, material='crystal', theme='light', color='#deedf9')),
+    ('清透水晶', dict(opacity=0, blur=0, highlight=0, material='crystal', theme='light', color='#deedf9')),
     ('液态玻璃', dict(opacity=0, blur=6, highlight=36, material='liquid', theme='light', color=LIQUID_TINT)),
     ('柔光流彩', dict(opacity=36, blur=10, highlight=30, material='flowing', theme='light', color=FLOWING_TINT)),
     ('活力原色', dict(opacity=30, blur=7, highlight=34, material='liquid', theme='light', color=VIVID_BLUE)),
@@ -50,7 +50,7 @@ def select_material(field,value):
     field.setCurrentIndex(max(0,field.findData(value)))
 
 DOCK_PRESETS = [(name, dict(theme=v['theme'], transparency=100-v['opacity'],
-    blur_px=max(3,v['blur']), dock_highlight=v['highlight'], theme_color=v['color'],
+    blur_px=max(0,v['blur']), dock_highlight=v['highlight'], theme_color=v['color'],
     glass=v['material']!='clear', clear_background=v['material']=='clear', dock_material=v['material']))
     for name,v in PANEL_PRESETS]
 
@@ -85,6 +85,6 @@ def normalize_note_appearance(value):
     if not isinstance(value,dict):return result
     for key,allowed in [('material',{v for _,v in MATERIALS}),('theme',{'auto','light','dark'})]:
         if isinstance(value.get(key),str) and value[key] in allowed:result[key]=value[key]
-    for key,low,high in [('opacity',0,100),('blur',2,30),('highlight',0,100)]:
+    for key,low,high in [('opacity',0,100),('blur',0,30),('highlight',0,100)]:
         if type(value.get(key)) is int:result[key]=max(low,min(high,value[key]))
     return result

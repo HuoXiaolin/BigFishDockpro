@@ -1,9 +1,14 @@
-"""Narrow IPC with the built-in notification AppContainer, without ACL changes."""
+"""Narrow IPC with the built-in Windows shell AppContainers."""
 import ctypes
 from ctypes import wintypes as W
 import os
 from pathlib import Path
 import re
+
+SHELL_PACKAGES = {
+    'shellexperiencehost.exe': r'Microsoft\.Windows\.ShellExperienceHost_[a-z0-9]+',
+    'searchhost.exe': r'MicrosoftWindows\.Client\.CBS_[a-z0-9]+',
+}
 
 
 def _api():
@@ -13,6 +18,7 @@ def _api():
     kernel.OpenProcess.restype = W.HANDLE
     kernel.CloseHandle.argtypes = [W.HANDLE]
     kernel.GetPackageFamilyName.argtypes = [W.HANDLE, ctypes.POINTER(W.UINT), W.LPWSTR]
+    kernel.QueryFullProcessImageNameW.argtypes = [W.HANDLE, W.DWORD, W.LPWSTR, ctypes.POINTER(W.DWORD)]
     kernel.GetAppContainerNamedObjectPath.argtypes = [W.HANDLE, ctypes.c_void_p, W.ULONG, W.LPWSTR, ctypes.POINTER(W.ULONG)]
     security.OpenProcessToken.argtypes = [W.HANDLE, W.DWORD, ctypes.POINTER(W.HANDLE)]
     security.GetTokenInformation.argtypes = [W.HANDLE, ctypes.c_int, ctypes.c_void_p, W.DWORD, ctypes.POINTER(W.DWORD)]
@@ -34,7 +40,11 @@ def context(pid):
         family = ctypes.create_unicode_buffer(256);length = W.UINT(len(family))
         error = kernel.GetPackageFamilyName(process, ctypes.byref(length), family)
         if error:raise ctypes.WinError(error)
-        if not re.fullmatch(r'Microsoft\.Windows\.ShellExperienceHost_[a-z0-9]+', family.value):
+        image = ctypes.create_unicode_buffer(32768);length = W.DWORD(len(image))
+        if not kernel.QueryFullProcessImageNameW(process, 0, image, ctypes.byref(length)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        pattern = SHELL_PACKAGES.get(Path(image.value).name.lower())
+        if not pattern or not re.fullmatch(pattern, family.value):
             raise OSError('不支持的系统面板沙箱')
         namespace = ctypes.create_unicode_buffer(1024);length = W.ULONG()
         if not kernel.GetAppContainerNamedObjectPath(token, None, len(namespace), namespace, ctypes.byref(length)):
@@ -64,6 +74,39 @@ def _duplicate(pid, source, access):
 def owner_handle(pid):
     """Only a wait/query handle to this Dock, never read/write process access."""
     return _duplicate(pid, None, 0x100000 | 0x1000)
+
+
+def panel_geometry_mapping():
+    kernel, _ = _api()
+    kernel.CreateFileMappingW.argtypes = [W.HANDLE, ctypes.c_void_p, W.DWORD, W.DWORD, W.DWORD, W.LPCWSTR]
+    kernel.CreateFileMappingW.restype = W.HANDLE
+    handle = kernel.CreateFileMappingW(ctypes.c_void_p(-1), None, 4, 0, 8, None)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return handle
+
+
+def share_panel_geometry(pid, mapping):
+    kernel, _ = _api()
+    host = kernel.OpenProcess(0x1000, False, pid)
+    if not host:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        image = ctypes.create_unicode_buffer(32768)
+        length = W.DWORD(len(image))
+        if not kernel.QueryFullProcessImageNameW(host, 0, image, ctypes.byref(length)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        name = Path(image.value).name.lower()
+        if name not in ('startmenuexperiencehost.exe', 'searchhost.exe'):
+            raise OSError('系统搜索宿主已更换')
+        return _duplicate(pid, mapping, 2 if name == 'startmenuexperiencehost.exe' else 4)
+    finally:
+        kernel.CloseHandle(host)
+
+
+def close_panel_geometry(handle):
+    kernel, _ = _api()
+    kernel.CloseHandle(handle)
 
 
 def status_handle(pid, path):

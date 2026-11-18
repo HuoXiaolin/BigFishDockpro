@@ -1142,7 +1142,7 @@ class PanelOptions(QDialog):
         self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');self.color_box=QWidget();colors=QVBoxLayout(self.color_box);colors.setContentsMargins(0,0,0,0);row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
         from ui_style import ThemeSwatches
         colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',self.color_box)
-        number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',2,30)
+        number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',0,30)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
         choice('expand_mode','展开方式',[('鼠标移入','hover'),('点击展开','click')])
@@ -1201,7 +1201,9 @@ class PanelOptions(QDialog):
         if not self.applying_preset and self.fields['material'].currentData()=='clear':
             self.fields['opacity'].setValue(0);self.fields['highlight'].setValue(0)
         if not self.applying_preset and self.fields['material'].currentData()!='clear' and self.fields['opacity'].value()==0 and self.fields['highlight'].value()==0:
-            self.fields['opacity'].setValue(38);self.fields['highlight'].setValue(45)
+            values=next(v for _,v in PANEL_PRESETS if v['material']=='crystal') if self.fields['material'].currentData()=='crystal' else dict(opacity=38,highlight=45,blur=6)
+            self.fields['opacity'].setValue(values['opacity']);self.fields['highlight'].setValue(values['highlight'])
+            if self.fields['material'].currentData()=='crystal':self.fields['blur'].setValue(values['blur'])
     def customized(self,*args):
         if not self.applying_preset:self.preset.setCurrentIndex(0)
     def apply_preset(self,index):

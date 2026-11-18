@@ -38,30 +38,114 @@ only while enabled; unchanged settings do not cause style reapplication. A
 small dormant DLL remains loaded after restore so pending COM callbacks cannot
 call unloaded code. It is released by the system host's normal exit.
 
-`ShellExperienceHost` is an AppContainer on current Windows builds. Its DLL and
-generated settings are staged inside its own package LocalState, using the
+Start, Search and notification hosts use configuration, status files and refresh events scoped to
+the staged native build. On upgrade the controller asks resident builds to
+restore their properties, waits for their acknowledgement, then activates the
+new build. Start reports whether the footer search button has been laid out.
+Ready hosts connect consecutively; a failed Start attachment does not hold up
+the notification queue. Restore acknowledgements are checked every 100 ms
+during the bounded handoff instead of waiting for another discovery interval.
+
+An out-of-context WinEvent hook wakes discovery on native Shell window creation
+and display; the five-second timer remains a fallback. An attached notification
+observer prepares an uninitialized UI thread on its first visual-tree callback,
+so the first elements are not skipped until a settings refresh.
+
+Window-dispatch messages include the build ID. Callback exceptions are contained
+on the target UI thread. Teardown revokes column layout handlers, removes the
+style watchers, then restores column values. A rejected property is recorded and
+the remaining properties are still restored. This addresses the local crash dump
+with `BF_LocalLayout::restore -> BF_ClearStartColumns -> UninitializeSettingsAndTap`
+unwinding through the user32 callback. Regression coverage includes the complete
+layout under the real TAP observer, settings refresh and production teardown.
+
+CoreWindow creation can occur before XAML diagnostics are ready. Initialization
+is deferred to the UI message loop and retries readiness failures at bounded
+intervals. A failed attempt clears its initialized flag and partial state, so
+it cannot permanently latch the component into an unstyled state. Disabling
+the component cancels pending initialization. Native status includes the
+initialization phase, attempt count and last HRESULT.
+
+`ShellExperienceHost` and `SearchHost` can run in AppContainers. Their DLLs and
+generated settings are staged inside their respective package LocalState, using the
 existing inherited package permissions. The controller qualifies the refresh
 event with `GetAppContainerNamedObjectPath` and duplicates only a synchronize /
 limited-query handle to itself and a write handle to one host status file.
-No application-directory ACLs are broadened. See Microsoft's
+An anonymous eight-byte section carries the Start surface rectangle in physical
+pixels. Start publishes its background bounds, and Search receives read-only
+access. No application-directory ACLs are broadened. See Microsoft's
 [named object sharing documentation](https://learn.microsoft.com/en-us/windows/apps/develop/communication/sharing-named-objects).
 Status aggregation retains per-host failures, including when ShellHost already
 styled quick settings successfully.
 
-The app offers only generated bounded settings, not arbitrary XAML/JavaScript
-imports. Layout adaptations never set a native window's screen position. The
-adapter disables upstream process restarts, feature-layout forcing and network
-telemetry. Windows updates can still change undocumented visual-tree names.
+The app offers generated bounded settings. The Start layout keeps its system
+anchor. Search measures from its XAML layout window, checks the face against
+the visible viewport, and adjusts the host position and size to fit. Before
+Start publishes visible bounds on that monitor, Search uses the taskbar work
+area. Disabling the style restores the native host bounds.
+Search sizes its viewport independently of the page offset, then aligns the
+content root. Deriving host height from a centered page offset caused repeated
+layouts to grow the window above the monitor. Hidden/offscreen Start rectangles
+do not replace the last visible anchor.
+
+The classic tree positions its two content roots inside their original layout
+slots. It never reparents them or assigns DataContext: native template ownership,
+routed commands and subsequent view-model changes remain intact. Layout starts
+after Loaded and restores local properties on teardown. Upstream rules for the
+same root Margin/Width/RenderTransform are removed rather than competing with
+the layout adapter and causing a XAML layout loop. The native footer gets
+dedicated grid slots for its existing controls and Search; a PowerOptionsView
+wrapper is not mistaken for the nested PowerButton. Pinned item containers and
+wrap cells use matching 76 × 84 DIP slots in four columns, while native icon
+sizes stay unchanged. The app-list inset is 18 DIPs; the right inset and column
+gap are 10 DIPs, keeping the 563 × 625
+DIP panel size unchanged. Expanded folders align to the pinned column, reuse
+the material/text colors and four-column cell sizing, and restore native values
+when disabled. Positive offsets have compensating trailing margins so the
+original parent's available size does not implicitly clip their right edge.
+Column alignment also includes the native template's inner containers, not just
+the two outer roots. The loaded Windows resources contain a 63-DIP pinned-header
+margin, 32-DIP pinned-root padding and 52-DIP app-list panel margin. The adapter
+normalizes the paths to the named headers/lists while preserving item templates,
+and leaves a 10-DIP paging column beside the four pinned cells. A nested FrameRoot
+no longer receives the whole menu's width. The grouped GridView app-list variant
+gets one column sized to the available app-list width. All original inner values
+are restored when disabled.
+The adapter disables upstream process restarts, feature-layout forcing and
+network telemetry. Windows updates can still change undocumented visual-tree names.
 
 ## Verification
 
+`tools/shell_lifecycle_test.py` is part of the standard build. It runs the real
+MinHook and XAML diagnostics/TAP path in owned, isolated XAML hosts. Both engines
+are checked with an existing window, before XAML construction, and after a
+deliberate early-readiness failure, followed by refresh and restore. This covers
+the connection sequence that direct style/geometry fixtures do not exercise.
+
 `tools/shell_native_test.py`, via `tools/run_isolated_test.py`, creates synthetic
 native XAML controls on a verified non-input desktop and tests actual material
-application, two-column Start layout and original-property restoration. The
+application, both Start sizing frames, Search alignment with offsets and
+clipping in separate XAML hosts, the direct Search entry, footer actions and
+their popups, and original-property restoration. The
 standalone probe refuses the input desktop and never injects another process.
+The complete layout fixture additionally reproduces column overflow and 96-DIP
+containers in 76-DIP cells, checks all 15 tile rectangles and the nested footer,
+and saves native rendered bitmaps for the base and expanded-folder views. It
+includes the inner margins/padding and paging column from local Windows templates:
+the pre-fix engine fails these checks. Both ListView and grouped GridView app-list
+structures are covered, including restoration of the inner template values. It
+also hit-tests the rightmost tiles and folder surface, since measured element
+bounds alone do not reveal ancestor layout clipping. Search is repositioned eight times including
+a simulated OS host resize; both its viewport and face must remain coincident.
+Cold-tree registration, unchanged parents/Loaded lifecycle, inherited view-model
+updates and dummy native power/flyout Click handlers are also checked. These
+dummy actions never call shutdown, restart or logoff.
 `tests/shell_appearance_tests.py` checks configuration/lifecycle and the Qt pages;
 OS operations in lifecycle scenarios are mocked. These checks run before the
 standard Quick delivery and in the final single-file UI suite respectively.
+The controller retries temporary staging/connection failures with a bounded
+delay, including after three failed attempts; a delayed or restarted Shell host
+does not require toggling the saved appearance preference off and on.
 
 `tools/shell_container_test.py` runs an owned, windowless AppContainer child on
 the isolated desktop. It validates package-local DLL loading/config reads,

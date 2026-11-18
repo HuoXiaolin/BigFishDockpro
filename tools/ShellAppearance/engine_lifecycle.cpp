@@ -14,7 +14,7 @@ static DWORD BF_WorkerCore() {
         bf_root=std::filesystem::path(roaming)/L"BigFishDock"/L"shell-appearance";
         CoTaskMemFree(roaming);
     }
-    auto eventName=L"Local\\BigFishDock.ShellAppearance."+std::to_wstring(GetCurrentProcessId());
+    auto eventName=L"Local\\"+BF_EventSuffix(GetCurrentProcessId(),BF_BUILD);
     bf_config_event=CreateEventW(nullptr,FALSE,FALSE,eventName.c_str());
     bf_status_event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
     if(!bf_config_event||!bf_status_event)return 0;
@@ -23,9 +23,13 @@ static DWORD BF_WorkerCore() {
     bool active=false;HANDLE owner=nullptr;
     std::wstring ownerKey;
     for(;;) {
-        bool loaded=BF_LoadSettings();
+        bool changed=false;
+        bool loaded=BF_LoadSettings(&changed);
         DWORD ownerId=loaded?wcstoul(BF_Setting(L"owner_pid").c_str(),nullptr,10):0;
         auto nextKey=BF_Setting(L"owner_pid")+L":"+BF_Setting(L"owner_start");
+#ifdef BIGFISH_START_ENGINE
+        if (nextKey != ownerKey) BF_UnbindPanelGeometry();
+#endif
         if(!container || nextKey!=ownerKey) {
             if(owner)CloseHandle(owner);
             owner=nullptr;ownerKey=nextKey;
@@ -42,13 +46,24 @@ static DWORD BF_WorkerCore() {
         bool sameOwner=owner && GetProcessTimes(owner,&created,&exited,&kernel,&user) &&
             stamp==((static_cast<unsigned long long>(created.dwHighDateTime)<<32)|created.dwLowDateTime);
         bool enabled=loaded && BF_Setting(L"enabled")==L"1" && sameOwner && WaitForSingleObject(owner,0)==WAIT_TIMEOUT;
+#ifdef BIGFISH_START_ENGINE
+        if (enabled) {
+            const auto key = L"panel_geometry_" + std::to_wstring(GetCurrentProcessId());
+            BF_BindPanelGeometry(reinterpret_cast<HANDLE>(_wcstoui64(BF_Setting(key.c_str()).c_str(), nullptr, 10)),
+                                 bf_is_start_menu);
+        }
+#endif
         try {
             if(active&&!enabled) {
                 Wh_ModUninit();MH_DisableHook(MH_ALL_HOOKS);MH_RemoveHook(MH_ALL_HOOKS);active=false;
-            } else if(enabled) {
+            } else if(enabled&&(!active||changed)) {
                 bf_matches=0;bf_errors=0;bf_layout_pending=false;
-                if(active)Wh_ModSettingsChanged();
+                if(active){Wh_ModSettingsChanged();Wh_ModAfterInit();}
                 else if(Wh_ModInit()) {MH_EnableHook(MH_ALL_HOOKS);active=true;Wh_ModAfterInit();}
+            } else if(enabled) {
+                // A newly shown window can belong to an existing process whose
+                // XAML thread was not ready on the first attachment.
+                Wh_ModAfterInit();
             }
             BF_Status(active?(bf_matches.load()?"applied":"waiting"):"restored");
         }catch(...) {++bf_errors;BF_Status("failed");}
@@ -67,6 +82,9 @@ static DWORD BF_WorkerCore() {
                 try {if(active){Wh_ModUninit();MH_DisableHook(MH_ALL_HOOKS);MH_RemoveHook(MH_ALL_HOOKS);active=false;}}catch(...){}
                 CloseHandle(owner);owner=nullptr;BF_Status("restored");
                 if(bf_status_file){CloseHandle(bf_status_file);bf_status_file=nullptr;}
+#ifdef BIGFISH_START_ENGINE
+                BF_UnbindPanelGeometry();
+#endif
                 continue;
             }
             return 0;

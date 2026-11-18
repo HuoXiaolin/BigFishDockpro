@@ -809,8 +809,12 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.fields['transparency'].setValue(0);self.fields['dock_highlight'].setValue(0)
         if not self.applying_dock_preset and self.fields['dock_material'].currentData()!='clear' and self.fields['clear_background'].isChecked():
             self.fields['clear_background'].setChecked(False)
-            if self.fields['transparency'].value()==0: self.fields['transparency'].setValue(38)
-            if self.fields['dock_highlight'].value()==0: self.fields['dock_highlight'].setValue(45)
+            from appearance_presets import PANEL_PRESETS
+            material=self.fields['dock_material'].currentData()
+            values=next((v for _,v in PANEL_PRESETS if v['material']==material),dict(opacity=38,highlight=45,blur=6))
+            if self.fields['transparency'].value()==0: self.fields['transparency'].setValue(values['opacity'])
+            if self.fields['dock_highlight'].value()==0: self.fields['dock_highlight'].setValue(values['highlight'])
+            if material=='crystal':self.fields['blur_px'].setValue(values['blur'])
 
     def apply_dock_preset(self, index):
         if index <= 0: return

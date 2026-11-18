@@ -114,7 +114,7 @@ def run(api, runtime, main, app, output, checks):
     for theme in ('light','dark'):
         crystal,flowing=(surface(make_dock(dict(cfg,panel_theme=theme)),340,158,'panel').pixelColor(170,140)
                          for cfg in configs[:2])
-        assert flowing.red()-crystal.red()>=18 and flowing.green()<crystal.green(),(theme,crystal.name(),flowing.name())
+        assert flowing.red()-crystal.red()>=18 and crystal.blue()-crystal.red()>=18,(theme,crystal.name(),flowing.name())
     assert sheet.save(str(output/'visual-themes.png'))
 
     # Small progress cards keep each period label separate from its percentage.
