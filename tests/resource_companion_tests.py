@@ -135,7 +135,7 @@ def run(api,runtime,app,output,checks):
     from resource_weather_style import weather_kind,compact_temperature_ink,air_quality_style
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources
     try:
-        cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,
+        cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,resource_alert_almanac=False,
             resource_ai=True,resource_music=True,resource_weather=True,resource_face=True,
             resource_expand_mode='click',resource_compact_width=292,resource_compact_height=50,resource_compact_auto_width=False,
             resource_background='custom',resource_appearance=dict(material='solid',theme='light',color='',opacity=98,blur=8,highlight=40))

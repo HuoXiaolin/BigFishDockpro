@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLay
 from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,normalize_order
 from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
 from dock_icon_shape import circular_icon
+from background_contrast import foreground
+from taskbar_surface import clock_surface_color
 
 REFLECTION_BUDGET=2*1024*1024
 
@@ -74,6 +76,9 @@ def symbol(p,rect,kind,color):
     elif kind=='notes':
         p.drawRoundedRect(QRectF(4,3,16,18),2,2);p.drawLine(8,8,16,8);p.drawLine(8,12,16,12);p.drawLine(8,16,13,16)
     elif kind=='clock':p.drawEllipse(QRectF(3,3,18,18));p.drawLine(12,6,12,12);p.drawLine(12,12,17,14)
+    elif kind=='watermark':
+        p.drawRoundedRect(QRectF(2,4,20,16),2,2)
+        p.translate(12,12);p.rotate(-18);p.drawLine(-4,-4,4,-4);p.drawLine(0,-4,0,5)
     elif kind=='calendar':
         p.drawRoundedRect(QRectF(3,5,18,16),2,2);p.drawLine(3,10,21,10);p.drawLine(8,3,8,7);p.drawLine(16,3,16,7)
         for x in (8,13,18):p.drawPoint(x,14);p.drawPoint(x,18)
@@ -276,6 +281,7 @@ class DockQuickSettings(QDialog):
                 'panels':'已开启' if cfg['panel_enabled'] else '已关闭','magnify':'已开启' if cfg['magnify'] else '已关闭',
                 'notes':'已开启' if cfg['notes_enabled'] and cfg['notes_visible'] else '已关闭',
                 'clock':'已开启' if cfg['clock_enabled'] else '已关闭','calendar':'已开启' if cfg['calendar_enabled'] else '已关闭',
+                'watermark':'已开启' if cfg['watermark_enabled'] else '已关闭',
                 'reflections':'已开启' if cfg['dock_reflections'] else '已关闭','dock_time':'已开启' if cfg['dock_clock'] else '已关闭',
                 'color_mode':{'auto':'跟随系统','light':'浅色','dark':'深色'}.get(cfg['theme'],'跟随系统'),
                 'blur':'已开启' if cfg['glass'] else '已关闭','panel_auto_hide':'已开启' if cfg['panel_auto_hide'] else '已关闭',
@@ -413,6 +419,7 @@ class DockQuickSettings(QDialog):
         elif key=='magnify':changes={'magnify':not cfg['magnify']}
         elif key=='notes':changes={'notes_enabled':not (cfg['notes_enabled'] and cfg['notes_visible']),'notes_visible':True}
         elif key=='clock':changes={'clock_enabled':not cfg['clock_enabled']}
+        elif key=='watermark':changes={'watermark_enabled':not cfg['watermark_enabled']}
         elif key=='calendar':changes={'calendar_enabled':not cfg['calendar_enabled']}
         elif key=='reflections':changes={'dock_reflections':not cfg['dock_reflections']}
         elif key=='dock_time':changes={'dock_clock':not cfg['dock_clock']}
@@ -494,6 +501,11 @@ class DockExtras(QObject):
     def __init__(self,dock):
         super().__init__(dock);self.dock=dock;self.popup=None;self.pressed=None;self.hover=None
         self.clock=QTimer(self);self.clock.setSingleShot(True);self.clock.timeout.connect(self.minute)
+        self.clock_ink = None
+        self.clock_sample = QTimer(self)
+        self.clock_sample.setSingleShot(True)
+        self.clock_sample.timeout.connect(self.refresh_clock_ink)
+        dock.geo_timer.timeout.connect(self.refresh_clock_ink)
     def reflection_room(self):return max(2,round(self.dock.icon_size*.32)) if self.dock.cfg.get('dock_reflections',True) and self.dock.items else 0
     def bottom_space(self):
         return max(1,round((self.dock.pad_y+self.reflection_room())/2)) if self.reflection_room() else self.dock.pad_y
@@ -539,10 +551,13 @@ class DockExtras(QObject):
         d=self.dock;now=datetime.datetime.now();ink=colors['fg'];rects=self.rects()
         for key,rect in rects.items():
             if key=='clock':
-                font=QFont('Segoe UI');font.setPixelSize(max(12,min(21,round(d.icon_size*.39))));font.setWeight(QFont.DemiBold);p.setFont(font);p.setPen(ink)
+                p.save()
+                p.setPen(self.clock_ink or QColor(foreground(colors['tint'].getRgb()[:3])))
+                font=QFont('Segoe UI');font.setPixelSize(max(12,min(21,round(d.icon_size*.39))));font.setWeight(QFont.DemiBold);p.setFont(font)
                 p.drawText(rect.adjusted(0,-2,0,-rect.height()*.38),Qt.AlignCenter,now.strftime('%H:%M'))
                 font.setPixelSize(max(9,min(12,round(d.icon_size*.23))));font.setWeight(QFont.Normal);p.setFont(font)
                 label=now.strftime('%m月%d日')+' '+('周'+'一二三四五六日'[now.weekday()]);p.drawText(rect.adjusted(0,rect.height()*.51,0,3),Qt.AlignCenter,label)
+                p.restore()
             else:
                 p.save();tint=QColor(255,255,255,85 if colors['light'] else 28);p.setPen(QPen(QColor(128,150,175,25),1));p.setBrush(tint)
                 if self.hover==key:p.setBrush(QColor(255,255,255,145 if colors['light'] else 55))
@@ -555,14 +570,29 @@ class DockExtras(QObject):
             if self.popup is None:self.popup=DockQuickSettings(self)
             if self.popup.isVisible():self.popup.close();return
             self.popup.refresh();self.popup.reanchor();self.popup.show()
+    def refresh_clock_ink(self):
+        if self.dock.preview or not self.dock.isVisible() or not self.dock.cfg.get('dock_clock', True):
+            return
+        rect = self.rects()['clock']
+        surface = clock_surface_color(self.dock, rect)
+        if surface is not None:
+            ink = QColor(foreground(surface))
+            if ink != self.clock_ink:
+                self.clock_ink = ink
+                self.dock.update(rect.adjusted(0,-2,0,3).toAlignedRect())
+
     def sync_clock(self):
         self.clock.stop()
+        self.clock_sample.stop()
         if self.dock.cfg.get('dock_clock',True) and self.dock.isVisible():
             now=datetime.datetime.now();self.clock.start(max(100,60000-now.second*1000-now.microsecond//1000))
+            if not self.dock.preview:
+                self.clock_sample.start(80)
     def minute(self):
         rect=self.rects().get('clock')
         if rect:self.dock.update(rect.toAlignedRect())
         self.sync_clock()
     def close(self):
         self.clock.stop()
+        self.clock_sample.stop()
         if self.popup:self.popup.close();self.popup.deleteLater();self.popup=None

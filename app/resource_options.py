@@ -3,6 +3,10 @@ import re
 from content_sources import NEWS_FEED_PRESETS, clean_feeds
 from screen_layout import valid_record
 
+RUNNER_ANIMALS = {'cat': '小猫', 'dog': '小狗', 'rabbit': '小兔'}
+RUNNER_SPEEDS = {'cpu': '跟随 CPU 占用', 'fixed_140ms': '匀速 · 低', 'fixed_80ms': '匀速 · 中', 'fixed_50ms': '匀速 · 高'}
+RUNNER_SLOT = 26
+
 METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'外设电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
          'gpu_temp':'GPU 温度','cpu_power':'CPU 功率','gpu_power':'GPU 功率','traffic':'流量统计'}
 METRICS.update(cpu_frequency='CPU 频率',cpu_voltage='CPU 电压',cpu_fan='CPU 风扇',cpu_pump='CPU 水泵',
@@ -57,6 +61,7 @@ TIMER_RANGES={
 REMINDER_OPTIONS={
     'resource_alert_agenda':'日程到提醒时间', 'resource_alert_focus':'番茄钟倒计时与完成',
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
+    'resource_alert_almanac':'农历节气与节日',
 }
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
 FACE_SWITCH_RANGE = (1, 1440)
@@ -76,7 +81,9 @@ DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank',*
 DEFAULTS.update(resource_system_status=True,resource_peripheral_profiles=[],resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
                 resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
 DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_agenda=True,resource_alert_focus=True,
-                resource_alert_water=True,resource_alert_battery=False,resource_reminder_sound=True)
+                resource_alert_water=True,resource_alert_battery=False,resource_alert_almanac=True,resource_reminder_sound=True)
+DEFAULTS.update(resource_runner_enabled=False, resource_runner_animal='cat', resource_runner_speed='cpu',
+                resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='cpu')
 DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
@@ -124,7 +131,20 @@ def calendar_data_active(cfg):
     return resource_page_active(cfg,'agenda') or bool(cfg.get('calendar_enabled') and cfg['resource_agenda'])
 
 
+def migrate_runner_placement(cfg):
+    placement = cfg.pop('resource_runner_placement')
+    cfg['resource_runner_enabled'] = placement == 'capsule'
+    cfg['resource_tray_runner_enabled'] = placement == 'tray'
+    if placement == 'tray':
+        for field in ('animal', 'speed'):
+            key = 'resource_runner_' + field
+            cfg['resource_tray_runner_' + field] = cfg.get(key, DEFAULTS[key])
+
+
 def migrate_docked(data):
+    if 'resource_runner_placement' in data:
+        data = dict(data)
+        migrate_runner_placement(data)
     # The previous capsule switch applied to both screen edges and peer cards.
     if 'resource_peer_snap' not in data and data.get('resource_edge_snap') is False:
         data = dict(data, resource_peer_snap=False)
@@ -215,10 +235,20 @@ def normalize(cfg,strict=False):
             value = ''
         cfg[key] = value
     cfg.setdefault('resource_ai_tray_mode', 'auto')
+    if 'resource_runner_placement' in cfg:
+        migrate_runner_placement(cfg)
+    cfg.pop('resource_runner_color', None)
+    for prefix in ('resource_runner_', 'resource_tray_runner_'):
+        cfg.setdefault(prefix + 'animal', 'cat')
+        speed = cfg.setdefault(prefix + 'speed', 'cpu')
+        if isinstance(speed, str):
+            cfg[prefix + 'speed'] = {'low': 'fixed_140ms', 'medium': 'fixed_140ms', 'high': 'fixed_80ms'}.get(speed, speed)
     options={'resource_background':('global','app','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
              'resource_ai_tray_mode':('auto','fixed'),
+             'resource_runner_animal':tuple(RUNNER_ANIMALS),'resource_tray_runner_animal':tuple(RUNNER_ANIMALS),
+             'resource_runner_speed':tuple(RUNNER_SPEEDS),'resource_tray_runner_speed':tuple(RUNNER_SPEEDS),
              'resource_expand_mode':('hover','click'),'resource_open_page':tuple(OPEN_PAGES),
              'resource_face_mood':('random','default','happy','wink','love','star','shy','pout','squint'),
              'resource_compact_density':('auto','dense'),
@@ -233,7 +263,7 @@ def normalize(cfg,strict=False):
             cfg[key]=DEFAULTS[key]
     for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
-                'resource_face_auto_switch',*REMINDER_OPTIONS):
+                'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]

@@ -268,6 +268,8 @@ def run(api,runtime,root,app,output,checks):
         liquid_ui(api,runtime,app,output,checks)
         from resource_companion_tests import run as companion_ui
         companion_ui(api,runtime,app,output,checks)
+        from resource_runner_tests import run as runner_ui
+        runner_ui(api,runtime,app,output,checks)
         from resource_performance_tests import run as performance_ui
         performance_ui(api,runtime,app,output,checks)
         from resource_render_cache_tests import run as rendering_ui

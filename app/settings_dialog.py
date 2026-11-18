@@ -111,7 +111,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
-        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection')
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','watermark_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection')
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = SettingsFields(self)
         self.import_candidate=None;self.import_path=None
@@ -306,6 +306,10 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.fields['panel_face_switch_minutes'].setEnabled(self.fields['panel_face_auto_switch'].isChecked())
         if 'taskbar_text_auto' in changes and 'taskbar_text_mode' in self.fields:
             self.fields['taskbar_text_mode'].setEnabled(not changes['taskbar_text_auto'])
+        if 'resource_tray_runner_enabled' in changes and 'resource_tray_runner_animal' in self.fields:
+            self.sync_tray_runner_fields()
+        if 'watermark_mode' in changes and 'watermark_mode' in self.fields:
+            self.sync_watermark_fields()
         if any(key.endswith('_appearance_source') for key in changes):
             self.sync_appearance_sources()
         from settings_design import NumericControl
@@ -418,6 +422,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                                button('监控设置…', lambda: runtime.resources.settings(page=1)))
         else:
             self.add_field(form, 'resource_taskbar')
+        section_marker(form, '托盘小动物')
+        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_speed'):
+            self.add_field(form, key)
+        self.fields['resource_tray_runner_enabled'].toggled.connect(self.sync_tray_runner_fields)
+        self.sync_tray_runner_fields()
         section_marker(form, '效果与文字')
         self.add_field(form, 'taskbar_mode')
         self.add_field(form, 'taskbar_text_auto')
@@ -463,6 +472,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                     form.addRow(download)
                 for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
                     self.fields[key].setEnabled(False)
+
+    def sync_tray_runner_fields(self):
+        enabled = self.fields['resource_tray_runner_enabled'].isChecked()
+        for key in ('resource_tray_runner_animal', 'resource_tray_runner_speed'):
+            self.fields[key].setEnabled(enabled)
 
     def build_panel(self, panel):
         from settings_design import section_marker
@@ -522,6 +536,13 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(panel,'时钟与日历')
         self.component_row(panel, 'clock_enabled', '桌面时钟', button('时钟设置', lambda:self.tray.runtime.clock.open_settings()))
         self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
+        section_marker(panel,'桌面文字水印')
+        from feature_config import WATERMARK_TEXT_LIMIT
+        for key in ('enabled','text','color','size','angle','opacity','layer','mode','position','density'):
+            self.add_field(panel, 'watermark_'+key)
+        self.fields['watermark_text'].setMaxLength(WATERMARK_TEXT_LIMIT)
+        self.fields['watermark_mode'].currentIndexChanged.connect(self.sync_watermark_fields)
+        panel.addRow(label('单一水印显示在主屏幕，平铺覆盖每个屏幕。鼠标和键盘输入穿透水印。','muted'))
         section_marker(panel,'音乐频谱')
         self.add_field(panel, 'spectrum_enabled')
         self.add_field(panel, 'spectrum_style')
@@ -737,6 +758,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         form.addRow(label(PAGES[index], 'page-title'))
         scroll.setWidget(page)
         return form
+
+    def sync_watermark_fields(self):
+        tiled = self.fields['watermark_mode'].currentData() == 'tile'
+        self.fields['watermark_position'].setEnabled(not tiled)
+        self.fields['watermark_density'].setEnabled(tiled)
 
     def field_label(self, title):
         widget = label(title)
@@ -983,11 +1009,12 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         cfg = self.stage_profile(cfg)
         cfg['settings_manual_size']=list(self._manual_dimensions)
         cfg['settings_custom_density']=self._custom_density
-        for key in ('theme_color', 'panel_color', 'spectrum_mono_color', 'daily_picture_color'):
+        for key in ('theme_color', 'panel_color', 'spectrum_mono_color', 'daily_picture_color', 'watermark_color'):
             if cfg[key] and not re.fullmatch(r'#[0-9a-fA-F]{6}', cfg[key]):
                 self.status.setText('主题色请使用 #RRGGBB，或留空使用默认色。')
                 return
             cfg[key] = cfg[key].lower()
+        cfg['watermark_color'] = cfg['watermark_color'] or '#ffffff'
         if cfg['update_source'] and not cfg['update_source'].startswith('https://'):
             self.status.setText('更新源必须是 HTTPS 发布地址或版本清单地址。')
             return

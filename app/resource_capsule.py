@@ -93,6 +93,7 @@ class ResourceCapsule(QObject):
         self.traffic_reset_error=''
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
         self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
+        self.runners = {}
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
         self.reminder_audio=None
         self.calendar_sync=None;self.calendar_checked=False
@@ -341,6 +342,11 @@ class ResourceCapsule(QObject):
         level=self.low_battery()
         if level is not None:badges.append(('battery',f'{level}%'))
         if self.pomodoro:badges.extend(self.pomodoro.badges())
+        if self.cfg['resource_alert_almanac']:
+            from datetime import date
+            from calendar_almanac import almanac
+            day=almanac(date.today())
+            if day and (day.term_today or day.festival):badges.append(('almanac',day.badge()))
         return tuple(badges)
 
     def low_battery(self):
@@ -359,6 +365,30 @@ class ResourceCapsule(QObject):
             if not (self.runtime.dock.preview or self.runtime.game_active):
                 tray=self.runtime.tray;tray.showMessage('电脑电量低',f'剩余 {low}%，请接上电源。',tray.icon(),5000)
                 self.play_reminder_sound('battery')
+
+    def sync_runners(self):
+        available = not (self.closed or self.runtime.session_ending or self.runtime.game_active)
+        folded = self.compact and self.window and self.window.isVisible()
+        for target, prefix, visible in (('capsule', 'resource_runner_', folded), ('tray', 'resource_tray_runner_', True)):
+            runner = self.runners.get(target)
+            if available and visible and self.cfg[prefix + 'enabled']:
+                if runner is None:
+                    from resource_runner import RunningAnimal
+                    runner = self.runners[target] = RunningAnimal(self, target)
+                runner.configure(self.cfg[prefix + 'animal'], self.cfg[prefix + 'speed'])
+            elif runner is not None:
+                self.runners.pop(target).close()
+
+    def stop_runners(self):
+        for runner in self.runners.values():
+            runner.close()
+        self.runners.clear()
+
+    def runner_visibility_changed(self, window):
+        if (self.window is window and self.cfg['resource_runner_enabled']
+                and not self.closed and not self.runtime.session_ending):
+            self.sync_runners()
+            self.sync_monitor()
 
     def needs(self):
         if self.closed:return set()
@@ -382,6 +412,8 @@ class ResourceCapsule(QObject):
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
         custom=getattr(self.runtime,'custom_cards',None)
         if custom:desktop.update(custom.needs())
+        if any(runner.speed == 'cpu' for runner in self.runners.values()):
+            desktop.add('cpu')
         return desktop
 
     def active_keys(self):
@@ -440,6 +472,7 @@ class ResourceCapsule(QObject):
             strip.reposition();strip.sync_style()
         elif self.strip:
             strip,self.strip=self.strip,None;strip.dispose()
+        self.sync_runners()
         demand=self.needs()
         want_tray=self.cfg['resource_ai_tray'] and not self.runtime.game_active
         want_music=bool(self.strip and self.strip.music_requested())
@@ -489,28 +522,7 @@ class ResourceCapsule(QObject):
             self.fps=FrameMonitor(self)
         elif not want_fps and self.fps:
             self.fps.close();self.fps=None
-        keys=self.active_keys()
-        interval=max(self.cfg['resource_interval'],2 if self.compact and not self.detached('resources') else 1)
-        signature=(frozenset(keys),interval) if keys else None
-        if signature!=self.signature:
-            self.signature=signature
-            now=time.monotonic()
-            # A quick fold may suspend detailed counters. Keep their last small snapshot
-            # only while this visible desktop component still has the metric enabled.
-            keep=set(keys)
-            if self.window and self.window.isVisible():
-                keep.update(k for k in self.latest if self.cfg.get('resource_'+('cpu' if k=='cpu_cores' else k)) and
-                            now-self.observed.get(k,float('-inf'))<=max(4,2*interval+1))
-            self.latest={k:v for k,v in self.latest.items() if k in keep and
-                         now-self.observed.get(k,float('-inf'))<=max(4,2*interval+1)}
-            if signature is None:self.history=None
-            elif self.history is None:self.history=deque(maxlen=65)
-            else:
-                self.history=deque(({k:v for k,v in row.items() if k=='time' or k in keys} for row in self.history),maxlen=65)
-            self.observed={k:v for k,v in self.observed.items() if k in self.latest}
-            if self.job and signature and not self.job.cancelled.is_set():self.job.reconfigure(signature)
-            elif self.job:self.job.requestInterruption()
-            else:self.start_job()
+        self.sync_monitor()
         if self.pomodoro:
             self.pomodoro.sync()
         elif resource_page_active(self.cfg,'pomodoro'):
@@ -544,6 +556,28 @@ class ResourceCapsule(QObject):
             from dependency_prompts import DependencyPrompts
             self.dependency_prompts=DependencyPrompts(self.runtime)
         if self.dependency_prompts:self.dependency_prompts.request(dotnet)
+
+    def sync_monitor(self):
+        keys=self.active_keys()
+        interval=max(self.cfg['resource_interval'],2 if self.compact and not self.detached('resources') else 1)
+        signature=(frozenset(keys),interval) if keys else None
+        if signature==self.signature:return
+        self.signature=signature
+        now=time.monotonic()
+        # A quick fold can retain the last recent value for an enabled desktop metric.
+        keep=set(keys)
+        if self.window and self.window.isVisible():
+            keep.update(k for k in self.latest if self.cfg.get('resource_'+('cpu' if k=='cpu_cores' else k)) and
+                        now-self.observed.get(k,float('-inf'))<=max(4,2*interval+1))
+        self.latest={k:v for k,v in self.latest.items() if k in keep and
+                     now-self.observed.get(k,float('-inf'))<=max(4,2*interval+1)}
+        if signature is None:self.history=None
+        elif self.history is None:self.history=deque(maxlen=65)
+        else:self.history=deque(({k:v for k,v in row.items() if k=='time' or k in keys} for row in self.history),maxlen=65)
+        self.observed={k:v for k,v in self.observed.items() if k in self.latest}
+        if self.job and signature and not self.job.cancelled.is_set():self.job.reconfigure(signature)
+        elif self.job:self.job.requestInterruption()
+        else:self.start_job()
 
     def start_job(self):
         if self.closed or self.runtime.session_ending or not self.signature or self.runtime.dock.preview:return
@@ -587,6 +621,10 @@ class ResourceCapsule(QObject):
             elif now-self.observed.get(key,float('-inf'))>max(4,2*interval+1):
                 self.latest.pop(key,None)
         if 'battery' in keys:self.check_battery_alert()
+        if 'cpu' in keys:
+            for runner in self.runners.values():
+                if runner.speed == 'cpu':
+                    runner.update_speed()
 
         while self.history and now-self.history[0]['time']>60:self.history.popleft()
         record={k:data[k] for k in ('cpu','memory','network','gpu') if k in keys and data.get(k) is not None}
@@ -722,6 +760,7 @@ class ResourceCapsule(QObject):
         if self.job:
             job,self.job=self.job,None
             job.requestInterruption();job.deleteLater()
+        self.stop_runners()
         for key in ('sensors','bluetooth','peripherals','app_traffic','fps','deck'):
             reader=getattr(self,key)
             setattr(self,key,None)
@@ -730,6 +769,7 @@ class ResourceCapsule(QObject):
 
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
+        self.stop_runners()
         if self.reminder_audio:self.reminder_audio.stop()
         if self.pomodoro:self.pomodoro.timer.stop()
         if self.agenda:self.agenda.timer.stop()

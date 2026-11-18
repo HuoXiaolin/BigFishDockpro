@@ -198,7 +198,7 @@ def draw(style,p,w,h,now,o,ink,muted,accent,text,time_text,period):
             if not same:color.setAlpha(100)
             details=calendar_info(day,o['work']);marked=same and o['show_holidays'] and details['marker']
             subtitle=(details['name'] if o['show_holidays'] else '') or (details['lunar'] if o['show_lunar'] else '')
-            if len(subtitle)>3:subtitle=subtitle[:2]+'…'
+            if len(subtitle)>4:subtitle=subtitle[:3]+'…'
             p.save();p.setClipRect(box)
             sources=markers.get(day,())
             day_height = ch-detail_height-(max(5,marker_space) if sources else marker_space) if detail_row else max(1, ch - (6 if marked or sources else 1))

@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import ssl
+import sys
 root = Path(SPECPATH).parent
 single_file = os.environ.get('FISHDOCK_ONEFILE') == '1'
 # Store the optional installer in the Python archive. Both builds can export
@@ -27,6 +28,8 @@ a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('a
                         (str(root / 'docs/2.4G外设适配.md'), 'docs'),
                         (str(root / 'docs/系统面板外观.md'), 'docs'),
                         (str(root / 'assets/ai-providers'), 'assets/ai-providers'),
+                        (str(root / 'assets/almanac'), 'assets/almanac'),
+                        (str(root / 'assets/runner/*.png'), 'assets/runner'),
                         (str(root / 'assets/reminder-sounds'), 'assets/reminder-sounds'),
                         (str(root / 'artifacts/deck-bridge/BigFishDeckBridge.exe'), 'deck-bridge'),
                         (str(root / 'artifacts/generated/version.json'), '.'),
@@ -57,10 +60,15 @@ def retain(entry):
 a.binaries = [e for e in a.binaries if retain(e)]
 a.datas = [e for e in a.datas if retain(e)]
 pyz = PYZ(a.pure)
+windows_options = dict(debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=False,
+                       manifest=str(root/'assets/BigFishDockpro.manifest'), icon=str(root/'assets/dock.ico'),
+                       version=str(root/'artifacts/generated/version_info.txt'))
 exe = EXE(pyz, a.scripts, *( [a.binaries, a.datas] if single_file else [[]] ),
-          exclude_binaries=not single_file,
-          name='BigFishDockpro',
-          debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
-          console=False, manifest=str(root/'assets/BigFishDockpro.manifest'), icon=str(root / 'assets/dock.ico'), version=str(root / 'artifacts/generated/version_info.txt'))
-if not single_file:
+          exclude_binaries=not single_file, name='BigFishDockpro', **windows_options)
+if single_file:
+    sys.path.insert(0, str(root/'tools'))
+    from portable_dotnet import BASENAME, runtime_entries
+    bundled = EXE(pyz, a.scripts, a.binaries, a.datas, runtime_entries(),
+                  name=Path(BASENAME).stem, **windows_options)
+else:
     coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='BigFishDockpro')

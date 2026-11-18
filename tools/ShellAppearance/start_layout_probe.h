@@ -86,10 +86,11 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
       </Grid>
       <Grid Name="NavigationPane" Width="543" Height="56" VerticalAlignment="Bottom">
         <Grid Name="RootPanel" FlowDirection="RightToLeft">
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <Grid Name="UserTileView" Width="190"><Button Name="UserTileButton" Content="示例账户" Width="125" Height="36"/></Grid>
-          <Grid Name="PowerButton" Grid.Column="2" Width="506" Margin="-506,0,0,0"><Button Name="PowerCommand" Width="36" Height="36" Padding="0" Background="Transparent"><FontIcon Glyph="&#xE7E8;" FontSize="18"/></Button></Grid>
-          <ListView Name="NavigationPanePlacesListView" Grid.Column="1" Width="40" Padding="0" VerticalContentAlignment="Center"><ListViewItem Width="40" Height="40" Padding="0" VerticalContentAlignment="Center"><FontIcon Glyph="&#xE713;" FontSize="18"/></ListViewItem></ListView>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition/><ColumnDefinition Width="40"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition/></Grid.RowDefinitions>
+          <Grid Name="UserTileView" Grid.Column="3" Width="140"><Button Name="UserTileButton" Content="示例账户" Width="125" Height="36"/></Grid>
+          <Grid Name="PowerButton" Grid.Column="2"><Button Name="PowerCommand" Width="36" Height="36" Padding="0" Background="Transparent"><FontIcon Glyph="&#xE7E8;" FontSize="18"/></Button></Grid>
+          <ListView Name="NavigationPanePlacesListView" Width="40" Height="40" Padding="0" BorderThickness="0" VerticalContentAlignment="Center"><ListViewItem Width="40" Height="40" MinWidth="0" MinHeight="0" Margin="0" Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"><FontIcon Glyph="&#xE713;" FontSize="18"/></ListViewItem></ListView>
         </Grid>
       </Grid>
     </Grid>)").as<Controls::Grid>();
@@ -178,6 +179,14 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     auto before=BF_FooterBounds(appsRoot,root);
     const bool oldOverflow=before.X<16;
     const bool oldTileOverflow=tiles[0].ActualWidth()>76;
+    auto user=BF_FindLayoutElement(footer,L"UserTileButton");
+    auto power=BF_FindLayoutElement(footer,L"PowerCommand");
+    auto settingsList=BF_FindLayoutElement(footer,L"NavigationPanePlacesListView").as<Controls::ListView>();
+    auto settingsItem=settingsList.ContainerFromIndex(0).as<Controls::ListViewItem>();
+    const auto originalUser=BF_FooterBounds(user,footer),originalPower=BF_FooterBounds(power,footer),
+               originalPlaces=BF_FooterBounds(settingsItem,footer);
+    const auto nativeColumn=footer.ColumnDefinitions().GetAt(2);
+    const auto nativeRow=footer.RowDefinitions().GetAt(0);
     if (!observed) BF_ArrangeStartColumns(root);
     BF_AddStartSearchButton(footer);
     trace("arranged");
@@ -302,13 +311,15 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     const bool pinnedEdgeHit=hitAt(tiles[3],{bounds[3].X+bounds[3].Width-2,bounds[3].Y+bounds[3].Height/2});
     hitboxes=hitboxes&&pinnedEdgeHit;
     auto search=BF_FindLayoutElement(footer,L"BigFishNativeSearchButton");
-    auto user=BF_FindLayoutElement(footer,L"UserTileButton");auto power=BF_FindLayoutElement(footer,L"PowerCommand");
     auto searchBox=BF_FooterBounds(search,root),userBox=BF_FooterBounds(user,root),powerBox=BF_FooterBounds(power,root);
-    auto settingsList=BF_FindLayoutElement(footer,L"NavigationPanePlacesListView").as<Controls::ListView>();
-    auto settingsItem=settingsList.ContainerFromIndex(0).as<Controls::ListViewItem>();
     auto settingsBox=BF_FooterBounds(settingsItem,root);
     auto settingsIcon=BF_FooterBounds(settingsItem.Content().as<FrameworkElement>(),root);
-    const bool footerFits=search.Visibility()==Visibility::Visible&&searchBox.X>powerBox.X+powerBox.Width&&
+    const bool nativeCommandsIntact=footer.ColumnDefinitions().Size()==4 && footer.ColumnDefinitions().GetAt(2)==nativeColumn &&
+        footer.RowDefinitions().Size()==1 && footer.RowDefinitions().GetAt(0)==nativeRow &&
+        BF_FooterBounds(user,footer)==originalUser && BF_FooterBounds(power,footer)==originalPower &&
+        BF_FooterBounds(settingsItem,footer)==originalPlaces;
+    const bool footerFits=nativeCommandsIntact&&search.IsHitTestVisible()&&searchBox.X>powerBox.X+powerBox.Width&&
+        searchBox.X+searchBox.Width<=settingsBox.X&&
         powerBox.X>=userBox.X+userBox.Width&&std::abs(searchBox.Y+searchBox.Height/2-userBox.Y-userBox.Height/2)<1&&bf_search_button_ready;
     const bool settingsCentered=std::abs(settingsIcon.X+settingsIcon.Width/2-settingsBox.X-settingsBox.Width/2)<1&&
         std::abs(settingsIcon.Y+settingsIcon.Height/2-searchBox.Y-searchBox.Height/2)<1&&settingsBox.X+settingsBox.Width<=root.ActualWidth()-9;
@@ -434,7 +445,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
         Media::VisualTreeHelper::GetParent(BF_FindLayoutElement(root,L"PinnedListHeaderText")).as<FrameworkElement>().Margin().Left==63;
     const bool slotRestored=!outerInset || (Controls::Grid::GetColumn(apps)==1 && Controls::Grid::GetColumnSpan(apps)==1);
     const bool restored=innerRestored&&slotRestored&&Media::VisualTreeHelper::GetParent(appsRoot)==originalParent&&Media::VisualTreeHelper::GetParent(pinnedRoot)==originalParent&&
-        appsRoot.ReadLocalValue(FrameworkElement::DataContextProperty())==DependencyProperty::UnsetValue()&&footer.ColumnDefinitions().Size()==3&&
+        appsRoot.ReadLocalValue(FrameworkElement::DataContextProperty())==DependencyProperty::UnsetValue()&&footer.ColumnDefinitions().GetAt(2)==nativeColumn&&
         footer.Children().Size()==3&&tiles[0].MinWidth()==96&&power.Visibility()==Visibility::Visible;
     BF_LocalLayout rejected;
     Controls::Border target;target.Margin({0,0,0,0});rejected.element=winrt::make_weak(target.as<FrameworkElement>());
@@ -451,7 +462,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
           <<",\"pinned_center_error_dip\":["<<iconError<<","<<labelError<<"]"
           <<",\"apps_ink_edges\":["<<headingInk<<","<<letter.X<<","<<appLogo.X<<"],\"apps_edge_hit\":"<<rowEdgesHit
           <<",\"stable_during_motion\":"<<stableDuringMotion<<",\"old_column_overflow\":"<<oldOverflow<<",\"old_hover_overflow\":"<<oldTileOverflow
-          <<",\"columns\":"<<columns<<",\"hitboxes\":"<<hitboxes<<",\"footer\":"<<footerFits<<",\"settings_centered\":"<<settingsCentered<<",\"restored\":"<<restored
+          <<",\"columns\":"<<columns<<",\"hitboxes\":"<<hitboxes<<",\"footer\":"<<footerFits<<",\"native_commands_intact\":"<<nativeCommandsIntact<<",\"settings_centered\":"<<settingsCentered<<",\"restored\":"<<restored
           <<",\"construction_deferred\":"<<deferred<<",\"native_hierarchy\":"<<hierarchy
           <<",\"real_observer\":"<<observed<<",\"rejected_restore_continued\":"<<restoreContinued<<",\"native_animation\":"<<nativeAnimation
            <<",\"inner_templates_restored\":"<<innerRestored<<",\"core_apps_grid\":"<<coreApps<<",\"late_insets_corrected\":"<<lateInsets

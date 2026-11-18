@@ -3,6 +3,7 @@
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 #ifdef BIGFISH_START_ENGINE
 #include "start_layout_probe.h"
+#include "start_flyout_probe.h"
 #endif
 #include "lifecycle_probe.h"
 
@@ -53,7 +54,12 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
 #ifdef BIGFISH_START_ENGINE
         if (BF_Setting(L"probe_observer_layout")==L"1") return BF_ProbeStartLayout(directory)?0:95;
 #endif
-        window=CreateWindowExW(0,L"STATIC",L"BigFish native shell fixture",WS_OVERLAPPEDWINDOW,0,0,870,900,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+        WNDCLASSW fixtureClass{};
+        fixtureClass.hInstance=GetModuleHandleW(nullptr);
+        fixtureClass.lpfnWndProc=DefWindowProcW;
+        fixtureClass.lpszClassName=L"BigFishXamlInputFixture";
+        RegisterClassW(&fixtureClass);
+        window=CreateWindowExW(0,fixtureClass.lpszClassName,L"BigFish native shell fixture",WS_OVERLAPPEDWINDOW,0,0,870,900,nullptr,nullptr,fixtureClass.hInstance,nullptr);
         Hosting::DesktopWindowXamlSource source;
         auto native=source.as<IDesktopWindowXamlSourceNative>();winrt::check_hresult(native->AttachToWindow(window));
         HWND child=nullptr;native->get_WindowHandle(&child);SetWindowPos(child,nullptr,24,16,795,840,SWP_NOZORDER|SWP_SHOWWINDOW);
@@ -116,8 +122,9 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         menuItem.Text(L"睡眠");menuItem.Foreground(white);
         menu.Items().Append(menuItem);
         menu.Height(100);menu.Width(160);menu.HorizontalAlignment(HorizontalAlignment::Left);
+        menu.Background(original);
         menu.Template(Markup::XamlReader::Load(LR"(<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-            TargetType="MenuFlyoutPresenter"><Border><ItemsPresenter/></Border></ControlTemplate>)").as<Controls::ControlTemplate>());
+            TargetType="MenuFlyoutPresenter"><Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}"><ItemsPresenter/></Border></ControlTemplate>)").as<Controls::ControlTemplate>());
         root.Children().Append(menu);
         Controls::Grid searchPage, searchRoot, searchOuter, searchFrame;
         Controls::Border searchBorder, searchInput;
@@ -154,20 +161,23 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         searchSource.Content(searchShell);ShowWindow(searchWindow, SW_SHOW);
         Controls::Grid navigation,userView,powerView;
         navigation.Height(56);navigation.VerticalAlignment(VerticalAlignment::Bottom);
+        for (auto length:{GridLength{1,GridUnitType::Auto},GridLength{1,GridUnitType::Auto},
+                          GridLength{1,GridUnitType::Star},GridLength{1,GridUnitType::Auto}}) {
+            Controls::ColumnDefinition column;column.Width(length);navigation.ColumnDefinitions().Append(column);
+        }
         Controls::ListView places;
-        places.Name(L"NavigationPanePlacesListView");places.Width(50);places.HorizontalAlignment(HorizontalAlignment::Right);
+        places.Name(L"NavigationPanePlacesListView");places.Width(50);places.MinWidth(0);places.Padding({});
+        places.HorizontalAlignment(HorizontalAlignment::Right);
         Controls::ListViewItem gear;
-        gear.Content(winrt::box_value(L"设置"));gear.Width(50);
-        places.Items().Append(gear);navigation.Children().Append(places);
+        gear.Content(winrt::box_value(L"设置"));gear.Width(50);gear.MinWidth(0);gear.Margin({});
+        places.Items().Append(gear);Controls::Grid::SetColumn(places,3);navigation.Children().Append(places);
         Controls::Button user,power;
         user.Name(L"UserTileButton");user.Content(winrt::box_value(L"示例用户"));
         user.Width(125);user.Height(36);user.HorizontalAlignment(HorizontalAlignment::Right);
         power.Name(L"PowerButton");power.Content(winrt::box_value(L"电源"));
         power.Width(36);power.Height(36);power.HorizontalAlignment(HorizontalAlignment::Center);
-        // Real Shell uses a same-named PowerOptionsView around PowerButton.
-        // The old lookup measured this 506px wrapper as if it were the button.
-        userView.Children().Append(user);userView.Width(190);
-        powerView.Name(L"PowerButton");powerView.Width(506);powerView.Margin({-506,0,0,0});
+        userView.Children().Append(user);userView.Width(145);
+        powerView.Name(L"PowerButton");powerView.Width(40);Controls::Grid::SetColumn(powerView,1);
         powerView.Children().Append(power);
         navigation.Children().Append(userView);navigation.Children().Append(powerView);
         root.Children().Append(navigation);
@@ -225,7 +235,6 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         ApplyCustomizations(static_cast<ElementId>(124),pinnedScroll,L"Windows.UI.Xaml.Controls.ScrollViewer");
         menu.ApplyTemplate();root.UpdateLayout();
         auto menuBorder=Media::VisualTreeHelper::GetChild(menu,0).as<Controls::Border>();
-        menuBorder.Background(original);
         ApplyCustomizations(static_cast<ElementId>(130),menu,L"Windows.UI.Xaml.Controls.MenuFlyoutPresenter");
         ApplyCustomizations(static_cast<ElementId>(131),menuBorder,L"Windows.UI.Xaml.Controls.Border");
         ApplyCustomizations(static_cast<ElementId>(132),menuItem,L"Windows.UI.Xaml.Controls.MenuFlyoutItem");
@@ -240,6 +249,9 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         ApplyCustomizations(static_cast<ElementId>(140),searchRoot,L"Windows.UI.Xaml.Controls.Grid");
         ApplyCustomizations(static_cast<ElementId>(141),searchOuter,L"Windows.UI.Xaml.Controls.Grid");
         bf_is_start_menu = true;
+        root.UpdateLayout();
+        const auto nativeUser=BF_FooterBounds(user,navigation),nativePower=BF_FooterBounds(power,navigation),
+                   nativeGear=BF_FooterBounds(gear,navigation);
         BF_AddStartSearchButton(navigation);
         BF_AddStartSearchButton(navigation);
 #else
@@ -279,9 +291,10 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         applied=applied&&clear&&clear.Color().A==0&&overlay.BorderThickness().Left==0&&overlay.Margin().Top==0;
         applied=applied&&overlay.Visibility()==Visibility::Collapsed;
         for (auto shadow : shadows) applied=applied&&shadow.Visibility()==Visibility::Collapsed;
-        auto menuInk=menuItem.Foreground().try_as<Media::SolidColorBrush>();
+        auto menuInk=menu.Foreground().try_as<Media::SolidColorBrush>();
         auto menuSurface=menuBorder.Background();
-        applied=applied&&menuInk&&menuInk.Color().R==expectedInk&&menuSurface!=original&&menuBorder.CornerRadius().TopLeft==12;
+        applied=applied&&menuInk&&menuInk.Color().R==expectedInk&&menuSurface!=original&&menuSurface==menu.Background()&&
+            menuItem.Foreground()==white&&menuBorder.IsHitTestVisible()&&menuItem.IsHitTestVisible()&&menuBorder.CornerRadius().TopLeft==12;
         applied=applied&&searchBorder.Background()!=original&&searchBorder.CornerRadius().TopLeft==18&&
             searchInput.Background()!=original&&searchInput.CornerRadius().TopLeft==12;
         if (!probePercent.empty()) {
@@ -368,21 +381,43 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         auto shortcut=navigation.Children().GetAt(navigation.Children().Size()-1).as<Controls::Button>();
         auto userBounds=BF_FooterBounds(user,navigation),powerBounds=BF_FooterBounds(power,navigation),gearBounds=BF_FooterBounds(gear,navigation);
         auto shortcutBounds=BF_FooterBounds(shortcut,navigation);
-        const bool footerAligned=userBounds.X>=0 && powerBounds.X>=userBounds.X+userBounds.Width &&
-            std::abs(navigation.ActualWidth()-gearBounds.X-gearBounds.Width)<=1 &&
-            shortcutBounds.X>=powerBounds.X+powerBounds.Width && bf_search_button_ready;
-        bf_popup::Popup accountPopup;
-        Controls::Border secondary;secondary.Width(150);secondary.Height(90);
-        accountPopup.XamlRoot(root.XamlRoot());accountPopup.Child(secondary);
-        accountPopup.PlacementTarget(user);accountPopup.DesiredPlacement(bf_popup::PopupPlacementMode::Top);
-        accountPopup.IsOpen(true);pump();
-        BF_AlignStartPopup(secondary);secondary.UpdateLayout();pump();
-        const auto popupPlacement=accountPopup.ActualPlacement();
-        const auto anchorPoint=user.TransformToVisual(nullptr).TransformPoint({0,0});
-        const auto popupPoint=secondary.TransformToVisual(nullptr).TransformPoint({0,0});
-        const bool popupAligned=popupPlacement==bf_popup::PopupPlacementMode::TopEdgeAlignedLeft &&
-            std::abs(anchorPoint.X-popupPoint.X)<=1 && popupPoint.Y+secondary.ActualHeight()<=anchorPoint.Y+1;
-        applied=applied&&footerAligned&&popupAligned&&navigation.Children().Size()==4&&shortcut.Visibility()==Visibility::Visible&&
+        const bool footerAligned=userBounds==nativeUser && powerBounds==nativePower && gearBounds==nativeGear &&
+            userBounds.X>=0 && powerBounds.X>=userBounds.X+userBounds.Width &&
+            gearBounds.Width>0 && gearBounds.X+gearBounds.Width<=navigation.ActualWidth()+1 &&
+            shortcutBounds.X>=powerBounds.X+powerBounds.Width && shortcutBounds.X+shortcutBounds.Width<=gearBounds.X &&
+            shortcut.IsHitTestVisible() && shortcut.IsTabStop() && bf_search_button_ready;
+        Controls::MenuFlyout accountMenu,powerMenu;
+        using Placement=Controls::Primitives::FlyoutPlacementMode;
+        powerMenu.Placement(Placement::Top);
+        const auto accountPlacement=accountMenu.Placement();
+        user.Flyout(accountMenu);Controls::Primitives::FlyoutBase::SetAttachedFlyout(power,powerMenu);
+        const bool nativePolicy=!accountMenu.ShouldConstrainToRootBounds() && !powerMenu.ShouldConstrainToRootBounds();
+        const bool nativePlacement=accountMenu.Placement()==accountPlacement && powerMenu.Placement()==Placement::Top;
+        const bool testRows=BF_Setting(L"probe_footer_hit_test")==L"1";
+        unsigned popupHitRows=0;
+        unsigned privateHitRows=0;
+        if (testRows) {
+            // The search positioning checks used a second owned window.
+            ShowWindow(searchWindow,SW_HIDE);
+            SetWindowPos(window,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);
+            SetActiveWindow(window);SetFocus(child);pump();
+            popupHitRows=BF_ProbeFlyoutRows(accountMenu,user,child,{L"更改帐户设置",L"锁定",L"注销"},pump);
+            popupHitRows+=BF_ProbeFlyoutRows(powerMenu,power,child,{L"登录选项",L"睡眠",L"关机",L"重启"},pump);
+            Controls::MenuFlyout privateMenu;
+            privateHitRows=BF_ProbeFlyoutRows(privateMenu,power,child,{L"示例设置"},pump,true);
+        }
+        const auto searchGlyph=shortcut.Content().as<Controls::FontIcon>();
+        bool liveInk=true;
+        if (bf_startInkTone.load()>=0) {
+            const int originalTone=bf_startInkTone.load();
+            for (int tone:{255-originalTone,originalTone}) {
+                bf_startInkTone=tone;BF_RefreshStartInk();
+                for (auto brush:{allApps.Foreground(),pinned.Foreground(),menu.Foreground(),searchGlyph.Foreground()})
+                    liveInk=liveInk && brush==bf_startTextBrush && brush.as<Media::SolidColorBrush>().Color().R==tone;
+            }
+        }
+        applied=applied&&liveInk&&nativePolicy&&(!testRows || (popupHitRows==7 && privateHitRows==1));
+        applied=applied&&footerAligned&&nativePlacement&&navigation.Children().Size()==4&&shortcut.Visibility()==Visibility::Visible&&
             shortcutBounds.X+shortcutBounds.Width<=gearBounds.X&&
             shortcut.Content().as<Controls::FontIcon>().Foreground().as<Media::SolidColorBrush>().Color().R==expectedInk&&
             winrt::Windows::UI::Xaml::Automation::AutomationProperties::GetName(shortcut)==L"搜索";
@@ -416,11 +451,11 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         for (auto shadow : shadows) restored=restored&&shadow.Visibility()==Visibility::Visible;
         for (int id=141; id>=130; --id) CleanupCustomizations(static_cast<ElementId>(id));
         BF_ClearStartSearchButtons();
-        restored=restored&&accountPopup.DesiredPlacement()==bf_popup::PopupPlacementMode::Top&&
+        restored=restored&&!accountMenu.ShouldConstrainToRootBounds()&&!powerMenu.ShouldConstrainToRootBounds()&&
+            accountMenu.Placement()==accountPlacement&&powerMenu.Placement()==Placement::Top&&
             navigation.Children().Size()==3&&menuBorder.Background()==original&&
             menuItem.Foreground()==white&&searchBorder.Background()==original&&searchInput.Background()==original&&
             std::isinf(searchFrame.MaxWidth())&&std::isinf(searchFrame.MaxHeight());
-        accountPopup.IsOpen(false);
         auto originalColumns=wrapper.ColumnDefinitions();
         restored=restored&&pinnedScroll.Visibility()==Visibility::Visible&&wrapper.Children().Size()==2&&
             originalColumns.Size()==2&&originalColumns.GetAt(0).Width().Value==1&&originalColumns.GetAt(1).Width().Value==1;
@@ -446,9 +481,10 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
               <<",\"start_box\":["<<startWidth<<","<<startHeight<<"]"
               <<",\"classic_sized\":"<<classicSized<<",\"search_aligned\":"<<searchAligned
               <<",\"clipped_before\":"<<reproducedClip<<",\"direct_search_anchored\":"<<directSearchAnchored
-              <<",\"footer_aligned\":"<<footerAligned<<",\"popup_aligned\":"<<popupAligned
-              <<",\"popup_mode\":"<<static_cast<int>(popupPlacement)
-              <<",\"popup_x\":"<<popupPoint.X<<",\"account_x\":"<<anchorPoint.X
+              <<",\"footer_aligned\":"<<footerAligned<<",\"popup_native_placement\":"<<nativePlacement
+              <<",\"footer_xw\":["<<navigation.ActualWidth()<<","<<userBounds.X<<","<<userBounds.Width<<","<<powerBounds.X<<","<<powerBounds.Width
+              <<","<<shortcutBounds.X<<","<<shortcutBounds.Width<<","<<gearBounds.X<<","<<gearBounds.Width<<"]"
+              <<",\"popup_screen_hit_rows\":"<<popupHitRows<<",\"private_menu_hit_rows\":"<<privateHitRows<<",\"live_start_ink\":"<<liveInk
               <<",\"search_position_restored\":"<<positionRestored;
         report<<",\"search_stable\":"<<searchStable<<",\"complete_layout\":"<<fullLayout;
         if (startRect && alignedRect) {

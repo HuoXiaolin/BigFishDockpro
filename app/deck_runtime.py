@@ -1,11 +1,32 @@
-"""Find the registered x64 .NET 10 desktop runtime without launching a process."""
+"""Locate the packaged or installed x64 .NET 10 Desktop Runtime."""
 import os
+import sys
 from pathlib import Path
 
 RUNTIME_URL='https://dotnet.microsoft.com/en-us/download/dotnet/10.0'
 
 
+def private_runtime():
+    bundle = getattr(sys, '_MEIPASS', None)
+    if not bundle:
+        return None
+    root = Path(bundle) / 'dotnet'
+    if not (root / 'dotnet.exe').is_file():
+        return None
+    for desktop in (root / 'shared/Microsoft.WindowsDesktop.App').glob('10.0.*'):
+        version = desktop.name
+        if version[5:].isdigit() and all(path.is_file() for path in (
+            desktop / 'PresentationFramework.dll', root / 'shared/Microsoft.NETCore.App' / version / 'coreclr.dll',
+            root / 'host/fxr' / version / 'hostfxr.dll',
+        )):
+            return root
+    return None
+
+
 def installed_runtime():
+    private = private_runtime()
+    if private is not None:
+        return private
     paths=[]
     try:
         import winreg

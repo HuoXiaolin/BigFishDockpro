@@ -156,6 +156,14 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     calendar.triggered.connect(lambda checked:runtime.calendar.set_enabled(checked) if runtime else None)
     calendar_menu.addAction('日历设置…').triggered.connect(lambda:runtime.calendar.open_settings() if runtime else None)
     if runtime:
+        from settings_effects import save_changes
+        watermark = menu.addAction('桌面文字水印')
+        watermark.setCheckable(True)
+        watermark.setChecked(tray.cfg['watermark_enabled'])
+        def toggle_watermark(checked):
+            if not save_changes(tray, runtime.api, {'watermark_enabled':checked}):
+                watermark.setChecked(tray.cfg['watermark_enabled'])
+        watermark.triggered.connect(toggle_watermark)
         from desktop_spectrum import add_menu_actions
         add_menu_actions(menu.addMenu('桌面音乐频谱'), runtime)
         from daily_picture_card import add_menu_actions as picture_actions

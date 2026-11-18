@@ -174,10 +174,25 @@ def run(api, runtime, root, app, output, checks):
              patch('shell_appearance.foreground_target', return_value=(None, 1, 'start')) as open_panel:
             signal.reset_mock()
             controller.refresh_foreground()
-            surface.assert_called_with({1234: 'start'})
-            assert 'bigfish_theme=Dark' in file.read_text(encoding='utf-16') and not signal.called
+            surface.assert_called_with({1234: 'start'}, controller.start_panel_bounds)
+            rendered = file.read_text(encoding='utf-16')
+            assert 'bigfish_theme=Dark' in rendered and 'bigfish_live_ink=#000000' in rendered and signal.called
+            timestamp = file.stat().st_mtime_ns
+            signal.reset_mock();controller.refresh_foreground()
+            assert file.stat().st_mtime_ns == timestamp and not signal.called
+            surface.return_value = ('start', (40, 16, 65))
+            controller.refresh_foreground()
+            assert 'bigfish_live_ink=#ffffff' in file.read_text(encoding='utf-16') and signal.called
+            surface.return_value = ('start', (250, 250, 250))
+            controller.refresh_foreground()
             open_panel.return_value = None
             surface.return_value = None
+            with patch.object(controller, 'start_window_visible', return_value=True):
+                timestamp = file.stat().st_mtime_ns
+                signal.reset_mock()
+                controller.refresh_foreground()
+                assert file.stat().st_mtime_ns == timestamp and not signal.called
+                assert 'bigfish_theme=Dark' in file.read_text(encoding='utf-16')
             controller.refresh_foreground()
             rendered = file.read_text(encoding='utf-16')
             assert 'bigfish_theme=Light' in rendered and 'TintColor="#00313437"' in rendered
@@ -187,8 +202,9 @@ def run(api, runtime, root, app, output, checks):
             assert file.stat().st_mtime_ns == timestamp and not signal.called
             dock.cfg['shell_start_text_mode']='system'
             with patch('taskbar_text.system_mode', return_value=0):controller.sync()
-            surface.assert_called_with({})
-            assert 'bigfish_theme=Dark' in file.read_text(encoding='utf-16')
+            surface.assert_called_with({}, controller.start_panel_bounds)
+            rendered = file.read_text(encoding='utf-16')
+            assert 'bigfish_theme=Dark' in rendered and 'bigfish_live_ink=' not in rendered
         controller.suspend()
         assert not controller.timer.isActive() and 'enabled=0' in file.read_text(encoding='utf-16')
         controller.resume()

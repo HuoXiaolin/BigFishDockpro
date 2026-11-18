@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+from tempfile import NamedTemporaryFile
+from portable_dotnet import BASENAME as DOTNET_PORTABLE, digest as file_digest
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOT_FILES=['dock.py','build.ps1','bootstrap.ps1','version.json','LICENSE','README.md','使用说明.md','CHANGELOG.md','CHANGELOG_HISTORY.md','.gitignore','1-启动.bat','2-关闭.bat','3-修复依赖.bat','4-调试启动.bat','references/BrimDeck-PIN.json','references/OpenQuota-PIN.json','references/Wisland-PIN.json']
@@ -80,27 +82,44 @@ def deliver(source_dir, release_dir, skip_tests=False):
         raise RuntimeError('A verified installer is required before delivery.')
     if not skip_tests and current_results is None and not json.loads((ROOT/'artifacts/bundle-test/result.json').read_text(encoding='utf-8'))['passed']:
         raise RuntimeError('Bundle test did not pass.')
-    # Verify the delivered installer before committing the successful release date.
-    release.mkdir(parents=True, exist_ok=True)
-    target = release/installer.name
-    shutil.copy2(installer, target)
-    digest = hashlib.sha256(installer.read_bytes()).hexdigest()
-    if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
-        raise RuntimeError('Delivered installer hash differs.')
-    manifest = [digest+'  '+installer.name]
+    digest = file_digest(installer)
+    packages = [(installer, digest)]
     single = ROOT/'release/BigFishDockpro.exe'
-    if single.exists():
+    if receipt.get('singlefile_sha256') or (not receipt and single.is_file()):
         if single.stat().st_mtime < installer.stat().st_mtime:
             raise RuntimeError('Rebuild the single-file artifact alongside the current installer before delivery.')
         result = ROOT/'artifacts/singlefile-test/result.json'
         if not skip_tests and current_results is None and (not result.exists() or not json.loads(result.read_text(encoding='utf-8')).get('passed')):
             raise RuntimeError('Single-file verification is required before delivery.')
-        single_digest = hashlib.sha256(single.read_bytes()).hexdigest()
+        single_digest = file_digest(single)
         if receipt and single_digest!=receipt.get('singlefile_sha256'):raise RuntimeError('Single file does not match the current build receipt.')
-        shutil.copy2(single, release/single.name)
-        if hashlib.sha256((release/single.name).read_bytes()).hexdigest() != single_digest:
-            raise RuntimeError('Delivered single-file hash differs.')
-        manifest.append(single_digest+'  '+single.name)
+        packages.append((single, single_digest))
+    offline = ROOT/'release'/DOTNET_PORTABLE
+    offline_hash = None
+    if receipt.get('singlefile_sha256'):
+        offline_hash = file_digest(offline)
+        if offline_hash != receipt.get('dotnet_portable_sha256'):
+            raise RuntimeError('Self-contained .NET executable does not match the current build.')
+        if not skip_tests:
+            verified = next((item for item in (current_results or []) if item['kind']=='offline-dotnet-portable'), None)
+            if not verified or json.loads((ROOT/verified['path']).read_text(encoding='utf-8')).get('executable_sha256') != offline_hash:
+                raise RuntimeError('Standalone .NET executable and embedded bridge verification is required.')
+        packages.append((offline, offline_hash))
+    release.mkdir(parents=True, exist_ok=True)
+    staged = []
+    try:
+        for package, expected in packages:
+            with NamedTemporaryFile(dir=release, suffix='.pending', delete=False) as temporary:
+                item = Path(temporary.name)
+            staged.append((item, release/package.name))
+            shutil.copy2(package, item)
+            if file_digest(item) != expected:
+                raise RuntimeError('Delivered package hash differs: '+package.name)
+        for item, destination in staged:
+            item.replace(destination)
+    finally:
+        for item, _ in staged:item.unlink(missing_ok=True)
+    manifest = [expected+'  '+package.name for package, expected in packages]
     shutil.copy2(ROOT/'artifacts/generated/version.json', ROOT/'version.json')
     source.mkdir(parents=True, exist_ok=True)
     for name in SOURCE_FILES:
@@ -123,7 +142,8 @@ def deliver(source_dir, release_dir, skip_tests=False):
     for directory in [ROOT/'release', release]:
         (directory/'SHA256SUMS.txt').write_text('\n'.join(manifest)+'\n', encoding='utf-8')
     report = {'development': str(ROOT), 'source': str(source), 'release': str(release),
-              'installer': installer.name, 'sha256': digest, 'source_files': len(source_hashes),
+              'installer': installer.name, 'sha256': digest, 'dotnet_portable': offline.name if offline_hash else None,
+              'dotnet_portable_sha256': offline_hash, 'source_files': len(source_hashes),
               'version': json.loads((ROOT/'version.json').read_text(encoding='utf-8'))['version'], 'tests_skipped':bool(skip_tests), 'test_scope':receipt.get('test_scope','full' if not skip_tests else 'none')}
     (ROOT/'artifacts/delivery.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False, indent=2))

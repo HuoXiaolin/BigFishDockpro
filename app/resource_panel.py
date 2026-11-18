@@ -10,7 +10,7 @@ from ui_style import AlignedMenu
 from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,SENSOR_UNITS,
+from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,RUNNER_SLOT,SENSOR_UNITS,
                               background,component_available,component_location,content_columns)
 from flash_view import palette_for,icon
 
@@ -682,7 +682,7 @@ class ResourceWindow(ResourceContentHost):
         if self.service.compact:
             from resource_compact import compact_badges
             badges,_=compact_badges(self.service)
-            key=tuple((kind,value if kind in ('agenda','water') else '') for kind,value in badges)
+            key=tuple((kind,value if kind in ('agenda','water','almanac') else '') for kind,value in badges)
             self._compact_cache=None
             if key!=self._reminder_key:
                 self._reminder_key=key;self.reposition()
@@ -917,7 +917,9 @@ class ResourceWindow(ResourceContentHost):
         rect = QRect(*projected) if compact and projected else self.desktop_rect(screens, projected)
         if compact:
             kind=cfg['resource_fold']
-            if kind=='ball':rect=QRect(*fold_geometry(list(rect.getRect()),{'style':'ball','ratio':80},38))
+            if kind=='ball':
+                rect=QRect(*fold_geometry(list(rect.getRect()),{'style':'ball','ratio':80},38))
+                if cfg['resource_runner_enabled']:rect.setWidth(rect.width()+RUNNER_SLOT)
             else:
                 center=rect.x()+rect.width()/2;screen=QApplication.screenAt(rect.center()) or QApplication.primaryScreen();area=screen.availableGeometry()
                 from resource_compact import natural_width
@@ -937,7 +939,7 @@ class ResourceWindow(ResourceContentHost):
             return
         placement=self.ensure_taskbar_placement()
         placement.restore()
-        size=(cfg['resource_fold'],cfg['resource_compact_width'],cfg['resource_compact_height'])
+        size=(cfg['resource_fold'],cfg['resource_compact_width'],cfg['resource_compact_height'],cfg['resource_runner_enabled'])
         if self.taskbar_size is not None and self.taskbar_size!=size:placement.schedule_check()
         self.taskbar_size=size
 
@@ -957,7 +959,8 @@ class ResourceWindow(ResourceContentHost):
         vertical=rect.height()>rect.width()
         if cfg['resource_fold']=='ball' or vertical:
             thickness=rect.width() if vertical else rect.height()
-            return min(thickness-4,38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
+            diameter=min(thickness-4,38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
+            return diameter + (RUNNER_SLOT if not vertical and cfg['resource_runner_enabled'] else 0)
         return cfg['resource_compact_width']
 
     def taskbar_rect(self,slot):
@@ -965,7 +968,9 @@ class ResourceWindow(ResourceContentHost):
         vertical=bar.height()>bar.width()
         if self.service.compact:
             if vertical or cfg['resource_fold']=='ball':
-                width=height=min(slot.width(),slot.height(),self.taskbar_width(self.taskbar_placement.slot_bar))
+                width=min(slot.width(),self.taskbar_width(self.taskbar_placement.slot_bar))
+                height=min(width,slot.height(),38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
+                if vertical:width=height
             else:
                 from resource_compact import natural_width
                 width=natural_width(self,min(slot.width(),cfg['resource_compact_width']))
@@ -1041,7 +1046,7 @@ class ResourceWindow(ResourceContentHost):
             data=self.service.latest.get('traffic') or {}
             for key,name in [('day','今日'),('month','本月'),('year','本年')]:
                 if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
-        reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注',
+        reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注','almanac':'农历',
                          'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停'}
         tips.extend(reminder_labels[kind]+' '+value for kind,value in self.service.reminders())
         if self.service.compact:
@@ -1104,12 +1109,17 @@ class ResourceWindow(ResourceContentHost):
         paint_halo(self,p)
         ink=QColor(c['ink']);accent=QColor(metric_colors(self.service)['cpu']);font=QFont(self.font());font.setPixelSize(13)
         if compact and (self.width()<70 or (cfg['resource_fold']=='ball')):
+            runner=self.service.runners.get('capsule')
+            if runner:
+                from resource_runner import capsule_rect
+                rect.setRight(capsule_rect(self).left()-1)
             if cfg['resource_face']:
-                self.liquid.paint_face(p,rect.center(),max(20,self.width()-12))
+                self.liquid.paint_face(p,rect.center(),min(rect.width(),max(12,rect.width()-10)))
             else:
                 q=rect.center();p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
                 for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
             paint_ball_reminder(self,p,rect)
+            if runner:runner.paint(p,self)
             return
         if not compact:
             if self.nav.isVisible():
@@ -1140,6 +1150,8 @@ class ResourceWindow(ResourceContentHost):
             if progress < 1:
                 scroll = previous, max(0., progress), direction
         paint_compact(self,p,scroll)
+        runner = self.service.runners.get('capsule')
+        if runner:runner.paint(p,self)
         return
 
     def wheelEvent(self,event):
@@ -1164,6 +1176,11 @@ class ResourceWindow(ResourceContentHost):
         elif not icon_only:
             kind=next((kind for kind,rect in zip(self.reminder_kinds,self.reminder_bounds) if rect.contains(QPointF(point))),None)
         else:kind=None
+        if kind=='almanac':
+            if not automatic:
+                from calendar_almanac_face import open_capsule_card
+                open_capsule_card(self, self.mapToGlobal(point))
+            return
         if kind:
             target={'agenda':'agenda','battery':'resources'}.get(kind,'pomodoro')
         else:
@@ -1275,12 +1292,14 @@ class ResourceWindow(ResourceContentHost):
         self.settle_compact_scroll()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
         self.wallpaper_timer.stop()
+        self.service.runner_visibility_changed(self)
         self.enter_timer.stop();self.auto_fold_timer.stop();self.outside_since=None
         if hasattr(self,'liquid'):self.liquid.hide()
         if self.service.extras and not self.service.detached('weather'):self.service.extras.pause()
         super().hideEvent(event)
     def showEvent(self,event):
         super().showEvent(event)
+        self.service.runner_visibility_changed(self)
         self.last_layer=None
         self.sync_auto_fold()
         if self.colors:

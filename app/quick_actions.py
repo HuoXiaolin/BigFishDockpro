@@ -5,6 +5,7 @@ ACTIONS=[('settings','全部设置','grid'),('taskbar','任务栏效果','positi
          ('appearance','切换外观','palette'),('size','图标大小','size'),('position','停靠位置','position'),
          ('panels','桌面卡片','panels'),('magnify','图标放大','magnify'),
          ('notes','便签组件','notes'),('clock','时钟组件','clock'),('calendar','日历组件','calendar'),
+         ('watermark','桌面水印','watermark'),
          ('reflections','图标倒影','reflection'),('dock_time','Dock 时间','clock'),('color_mode','明暗模式','palette'),
          ('blur','背景模糊','blur'),('panel_auto_hide','卡片收起','panels'),('corners','屏幕圆角','corner'),('add','添加应用','plus'),
          ('search','统一搜索','search'),('undo','撤销整理','undo'),
@@ -16,6 +17,7 @@ OLD_PRIORITY_ORDER = [
 ]
 FIRST_PAGE_SETTINGS = ['settings', 'taskbar', 'taskbar_text', *SHELL_ACTIONS, 'manage', 'appearance', 'panels']
 PRIORITY_ORDER = FIRST_PAGE_SETTINGS + [key for key in OLD_PRIORITY_ORDER if key not in FIRST_PAGE_SETTINGS]
+PRIORITY_ORDER.insert(PRIORITY_ORDER.index('calendar')+1, 'watermark')
 DEFAULT_ORDER = PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in PRIORITY_ORDER]
 PRODUCTIVITY_ACTIONS=('search','undo','layouts','references','flash','resources','taskbar_monitor')
 MIME='application/x-bigfishdock-quick-action'
@@ -31,10 +33,13 @@ def normalize_order(value):
     previous_default = list(old_default)
     previous_default[1], previous_default[-1] = previous_default[-1], previous_default[1]
     old_priority = OLD_PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in OLD_PRIORITY_ORDER]
-    if not order or order in (PREVIOUS_ORDER, previous_twenty, old_default, previous_default, previous_default[:-1], old_priority):
+    old_orders = (PREVIOUS_ORDER, previous_twenty, old_default, previous_default, previous_default[:-1], old_priority)
+    if not order or order in old_orders or any(order == [key for key in layout if key != 'watermark'] for layout in old_orders):
         return list(DEFAULT_ORDER)
     # Add missing system controls in functional order, leaving saved positions intact.
-    order += [key for key in PREVIOUS_ORDER if key not in order and key != 'taskbar_text']
+    order += [key for key in PREVIOUS_ORDER if key not in order and key not in ('taskbar_text','watermark')]
+    if 'watermark' not in order:
+        order.insert(order.index('calendar')+1, 'watermark')
     anchor = 'taskbar'
     for key in ('taskbar_text', *SHELL_ACTIONS):
         if key not in order:

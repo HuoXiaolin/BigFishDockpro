@@ -40,7 +40,14 @@ static void BF_CancelThreadInitialization() {
 }
 #ifdef BIGFISH_START_ENGINE
 static bool bf_is_start_menu = false;
+static std::atomic<int> bf_startInkTone{-1}, bf_appliedStartInk{-1};
 static std::atomic<bool> bf_search_button_ready{false};
+static std::atomic<bool> bf_traceMenuInput{false};
+static std::atomic<unsigned> bf_menuPresenters{0},bf_menuPresses{0},bf_menuReleases{0},bf_menuClicks{0};
+static std::atomic<unsigned> bf_footerAttached{0},bf_footerTracked{0},bf_footerSelected{0},bf_footerWindowed{0},bf_footerSettings{0};
+static std::atomic<unsigned> bf_footerError{0};
+static std::atomic<unsigned> bf_footerRows{0},bf_footerHits{0};
+static std::atomic<uintptr_t> bf_footerFirstBounds{0},bf_footerLastBounds{0};
 static std::atomic<unsigned> bf_start_width{0}, bf_start_height{0};
 static std::atomic<int> bf_start_apps_inset{-1},bf_start_pinned_inset{-1};
 static std::atomic<int> bf_start_apps_item_x{-1},bf_start_pinned_item_x{-1};
@@ -110,8 +117,9 @@ static std::wstring BF_Setting(const wchar_t* key) {
 }
 static bool BF_StyleSettingsEqual(const std::map<std::wstring,std::wstring>& previous,
                                   const std::map<std::wstring,std::wstring>& next) {
+    if (previous.contains(L"bigfish_live_ink") != next.contains(L"bigfish_live_ink")) return false;
     const auto transport=[](const std::wstring& key) {
-        return key.starts_with(L"owner_") || key.starts_with(L"status_handle_") || key.starts_with(L"panel_geometry_");
+        return key==L"bigfish_live_ink" || key==L"bigfish_footer_surface" || key.starts_with(L"owner_") || key.starts_with(L"status_handle_") || key.starts_with(L"panel_geometry_");
     };
     for (const auto& [key,value]:previous) if (!transport(key)) {
         const auto found=next.find(key);
@@ -136,6 +144,11 @@ static bool BF_LoadSettings(bool* changed=nullptr) {
     // A new Search process only changes duplicated handles. Rebuilding all
     // Start styles for that bookkeeping briefly exposes the default menu.
     if (changed) *changed = !BF_StyleSettingsEqual(bf_settings,next);
+#ifdef BIGFISH_START_ENGINE
+    const auto ink=next.find(L"bigfish_live_ink");
+    bf_startInkTone=ink==next.end() ? -1 : ink->second==L"#ffffff" ? 255 : 0;
+    bf_traceMenuInput=next.contains(L"trace_menu_input") && next.at(L"trace_menu_input")==L"1";
+#endif
     bf_settings.swap(next);
     return true;
 }
@@ -193,6 +206,15 @@ static void BF_Status(const char* state) noexcept {
                << ",\"initialization_attempts\":" << bf_init_attempts.load()
                << ",\"layout_pending\":" << (bf_layout_pending?"true":"false");
 #ifdef BIGFISH_START_ENGINE
+        if (bf_is_start_menu && bf_appliedStartInk.load()>=0)
+            output<<",\"start_text_color\":\""<<(bf_appliedStartInk.load()==255?"#ffffff":"#000000")<<"\"";
+        if (bf_is_start_menu && bf_traceMenuInput)
+            output<<",\"menu_input\":{\"presenters\":"<<bf_menuPresenters<<",\"pressed\":"<<bf_menuPresses
+                  <<",\"released\":"<<bf_menuReleases<<",\"clicked\":"<<bf_menuClicks
+                  <<",\"attached\":"<<bf_footerAttached<<",\"native_menus\":"<<bf_footerTracked<<",\"selections\":"<<bf_footerSelected
+                  <<",\"settings_accepted\":"<<bf_footerSettings
+                  <<",\"windowed_seen\":"<<bf_footerWindowed<<",\"layout_error\":"<<bf_footerError
+                  <<",\"rows\":"<<bf_footerRows<<",\"top_hits\":"<<bf_footerHits<<"}";
         if(bf_is_start_menu)output<<",\"search_button\":"<<(bf_search_button_ready.load()?"true":"false")
             <<",\"start_width\":"<<bf_start_width.load()<<",\"start_height\":"<<bf_start_height.load()
             <<",\"apps_inset_dip\":"<<bf_start_apps_inset.load()/100.0
@@ -218,6 +240,8 @@ static void BF_Status(const char* state) noexcept {
         if(!bf_is_start_menu && bf_search_view_seen.load())
             output<<",\"search_position\":"<<(bf_search_position_ready.load()?"true":"false");
         BF_AppendPanelBounds(output,"start_bounds_px",bf_startScreenBounds.load());
+        if (bf_traceMenuInput) BF_AppendPanelBounds(output,"footer_first_row_px",bf_footerFirstBounds.load());
+        if (bf_traceMenuInput) BF_AppendPanelBounds(output,"footer_last_row_px",bf_footerLastBounds.load());
         BF_AppendPanelBounds(output,"search_bounds_px",bf_searchScreenBounds.load());
         BF_AppendPanelBounds(output,"search_viewport_px",bf_searchViewportBounds.load());
         BF_AppendPanelBounds(output,"search_input_px",bf_searchInputBounds.load());

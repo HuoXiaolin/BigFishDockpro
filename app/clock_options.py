@@ -22,7 +22,8 @@ class ClockPreview(QWidget):
         ratio=self.dialog.fields['width'].value()/max(1,self.dialog.fields['height'].value())
         h=min(self.height()-18,(self.width()-24)/ratio);w=h*ratio
         clock=self.dialog.clock;o=self.dialog.values()
-        if clock.kind=='calendar':o=dict(o,_calendar_year=clock.view_year,_calendar_month=clock.view_month)
+        if clock.kind=='calendar':o=dict(o,_calendar_year=clock.view_year,_calendar_month=clock.view_month,
+                                         _almanac_date=clock.view_day,_almanac_prefer_term=clock.prefer_term,_almanac_controls='calendar')
         logical_width=self.dialog.fields['width'].value();logical_height=self.dialog.fields['height'].value()
         key=(round(w*self.devicePixelRatioF()),round(h*self.devicePixelRatioF()),logical_width,logical_height)
         if key!=getattr(self,'_sample_key',None):
@@ -31,7 +32,8 @@ class ClockPreview(QWidget):
             gradient.setColorAt(0,QColor('#87b6d3'));gradient.setColorAt(1,QColor('#99a9cc'))
             sample.fillRect(QRectF(0,0,logical_width,logical_height),gradient);sample.end();self._sample_key=key
         painter.save();painter.translate((self.width()-w)/2,(self.height()-h)/2);painter.scale(w/logical_width,h/logical_height)
-        draw_clock(painter,QRectF(0,0,logical_width,logical_height),clock.dock,dict(o,_header_controls=clock.kind=='clock'),'calendar_card' if clock.kind=='calendar' else self.dialog.fields['style'].currentData(),self._sample);painter.restore()
+        style=self.dialog.fields['calendar_style' if self.dialog.calendar else 'style'].currentData()
+        draw_clock(painter,QRectF(0,0,logical_width,logical_height),clock.dock,dict(o,_header_controls=clock.kind=='clock'),style,self._sample);painter.restore()
 
 
 class ClockOptions(QDialog):
@@ -64,7 +66,10 @@ class ClockOptions(QDialog):
         for name,_ in PRESETS:self.preset.addItem(name)
         layout.addRow('主题预设',self.preset)
         self.style_buttons=[]
-        if not self.calendar:
+        if self.calendar:
+            from clock_appearance import CALENDAR_STYLES
+            choice(layout,'calendar_style','日历样式',CALENDAR_STYLES)
+        else:
             style=choice(layout,'style','样式',STYLES,False);grid=QGridLayout()
             for i,(name,value) in enumerate(STYLES):
                 item=button(name,lambda checked=False,v=value:style.setCurrentIndex(style.findData(v)));item.setCheckable(True);item.setObjectName('ClockStyle');item.setStyleSheet('QPushButton#ClockStyle {font-weight:600;} QPushButton#ClockStyle:checked {background:rgba(95,164,204,45);border:1px solid rgba(95,164,204,110);color:palette(text);}')
@@ -130,7 +135,7 @@ class ClockOptions(QDialog):
         row=QHBoxLayout();row.addStretch();row.addWidget(button('关闭',self.reject));row.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(row)
         saved=clock.option('appearance');work=saved['work']
         for key,field in self.fields.items():
-            if key=='style':value=clock.option('style')
+            if key in ('style','calendar_style'):value=clock.option('style')
             elif key=='width':value=clock.width()
             elif key=='height':value=clock.height()
             elif key in work:value=work[key]
@@ -264,6 +269,7 @@ class ClockOptions(QDialog):
         options=self.values();options['work']=work
         changes=dict(clock_appearance=options,clock_layout=layout)
         if not self.calendar:changes['clock_style']=self.fields['style'].currentData()
+        else:changes['calendar_style']=self.fields['calendar_style'].currentData()
         if self.clock.save(**changes):
             self.clock.reposition();self.clock.sync();self.status.setText('已保存并应用'+self.clock.component_name+'设置。');return True
         self.status.setText('保存失败，原设置保持不变。');return False

@@ -304,7 +304,7 @@ def run(api,runtime,app,output,checks):
         cfg['resource_enabled']=False;service.sync()
         with tempfile.TemporaryDirectory(prefix='fishdock-pomodoro-') as folder:
             cfg.update(copy.deepcopy(DEFAULTS))
-            cfg.update(resource_enabled=True,resource_collapsed=False,resource_auto_hide=False,
+            cfg.update(resource_enabled=True,resource_collapsed=False,resource_auto_hide=False,resource_alert_almanac=False,
                        resource_open_page='resources',resource_bluetooth=True,resource_face=True,resource_cpu_power=True,
                        resource_expanded_width=620,resource_expanded_height=340,
                        resource_focus_minutes=25,resource_water_interval=45,
@@ -369,6 +369,23 @@ def run(api,runtime,app,output,checks):
             from resource_settings import ResourceOptions
             previous_metrics=list(cfg['resource_compact_metrics'])
             previous_pins=list(cfg['resource_compact_pinned'])
+            from calendar_almanac import almanac
+            from datetime import date
+            with patch('calendar_almanac.almanac',return_value=almanac(date(2026,11,22))):
+                settings=ResourceOptions(service);settings.tabs.setCurrentIndex(9)
+                toggle=settings.fields['resource_alert_almanac'];toggle.setChecked(True)
+                assert settings.commit() and api.load_config()['resource_alert_almanac']
+                assert service.fold(True);app.processEvents();window.grab()
+                index=window.reminder_kinds.index('almanac')
+                window.expand_from(window.reminder_bounds[index].center().toPoint())
+                app.processEvents()
+                menu=window._almanac_menu;assert menu and menu.isVisible()
+                assert '小雪' in menu.actions()[0].defaultWidget().accessibleName()
+                menu.hide();app.processEvents()
+                toggle.setChecked(False);assert settings.commit() and not api.load_config()['resource_alert_almanac']
+                window.grab();assert 'almanac' not in window.reminder_kinds
+                settings.close();settings.deleteLater();service.fold(False);app.processEvents()
+            checks.append('Seasonal capsule badge opens the illustrated day, and its saved switch removes the badge.')
             options=ResourceOptions(service);options.tabs.setCurrentIndex(2)
             for key in COMPACT_DEVICE:options.compact_fields[key].setChecked(True)
             fmt=options.fields['resource_clock_format'];fmt.setCurrentIndex(fmt.findData('date_seconds'))

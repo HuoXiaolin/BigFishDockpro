@@ -27,6 +27,7 @@ def run(api,runtime,app,output,checks):
     bar_rect=QRect(geo.left(),geo.bottom()-45,geo.width(),46)
     slot=QRect(bar_rect.left()+85,bar_rect.top()+4,238,38)
     old_auto,old_game,old_manual=runtime.auto_game,runtime.game_active,runtime.manual_game
+    original_job=service.job
     dock_visible=dock.isVisible()
     try:
         show(cover,geo);show(shell,bar_rect);app.processEvents()
@@ -35,6 +36,8 @@ def run(api,runtime,app,output,checks):
         bar=dict(hwnd=shell_id,screen=screen.name(),rect=bar_rect,map=(0,0,0,0,1,1))
         cfg.update(resource_enabled=True,resource_collapsed=True,resource_auto_hide=False,resource_layer='top',
                    resource_taskbar=True,resource_taskbar_layer='top',resource_task_metrics=['cpu'],resource_task_music=False,
+                   resource_cpu=True,resource_memory=True,resource_compact_metrics=['cpu','memory'],
+                   resource_network=False,resource_traffic=False,resource_system_status=False,resource_alert_battery=False,
                    resource_click_through=False,resource_taskbar_click_through=False,resource_taskbar_anchor={'screen':screen.name()})
         service.sync()
         w,strip=service.window,service.strip
@@ -59,7 +62,8 @@ def run(api,runtime,app,output,checks):
             bars.return_value=[];shell.hide();placement.shell_changed()
             assert strip.isVisible() and strip.geometry()==slot and hit(strip_id)==strip_id
             runtime.auto_game=runtime.game_active=True
-            service.sync();assert service.strip is strip and 'cpu' in service.active_keys()
+            service.sync();assert service.strip is strip and service.active_keys()=={'cpu'}
+            assert service.job is not None and service.job.isRunning()
             runtime.auto_game=runtime.game_active=False
             service.sync();app.processEvents();w=service.window;capsule_id=int(w.winId())
             assert hit(capsule_id)==capsule_id
@@ -117,6 +121,12 @@ def run(api,runtime,app,output,checks):
     finally:
         runtime.auto_game,runtime.game_active,runtime.manual_game=old_auto,old_game,old_manual
         cover.close();shell.close();cover.deleteLater();shell.deleteLater()
+        # Release the real CPU sampler before restoring the other fixtures' metrics.
+        job=service.job
+        if job is not None and job is not original_job:
+            job.requestInterruption()
+            assert job.wait(4000), 'The layer fixture left its sampler running'
+            app.processEvents()
         cfg.clear();cfg.update(before);service.sync();runtime.notes.sync();runtime.flash.sync()
         dock.setVisible(dock_visible);api.save_config(cfg)
 

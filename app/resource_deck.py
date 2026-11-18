@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import QApplication
 def start_headless(process, executable, data_dir, runtime):
     env = QProcessEnvironment.systemEnvironment()
     env.insert('DOTNET_ROOT_X64', str(runtime))
+    env.insert('DOTNET_ROOT', str(runtime))
     env.insert('DOTNET_DISABLE_GUI_ERRORS', '1')
     process.setProcessEnvironment(env)
     # The Windows error mode is inherited at CreateProcess, including failures

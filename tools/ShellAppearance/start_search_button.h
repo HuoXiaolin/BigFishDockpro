@@ -4,85 +4,21 @@
 #include <winrt/Windows.UI.Xaml.Automation.Peers.h>
 #include <winrt/Windows.UI.Xaml.Automation.Provider.h>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
+#include "start_footer_flyouts.h"
 
 struct BF_StartSearchButton {
     winrt::weak_ref<Controls::Grid> pane;
     Controls::Button button{nullptr};
     FrameworkElement::LayoutUpdated_revoker layout;
-    std::vector<Controls::ColumnDefinition> columns;
-    std::vector<Controls::RowDefinition> rows;
-    BF_LocalLayout root,account,power,places;
-    std::vector<BF_LocalLayout> placeItems;
-    bool arranged=false;
+    Media::TranslateTransform offset{nullptr};
+    winrt::weak_ref<FrameworkElement> account, power;
+    winrt::weak_ref<Controls::ListViewBase> places;
     bool arranging=false;
+    std::shared_ptr<BF_FooterAnchor> accountMenu,powerMenu;
 };
 
 static thread_local std::vector<BF_StartSearchButton> bf_startSearchButtons;
 static thread_local unsigned bf_startSearchGeneration = 0;
-namespace bf_popup = winrt::Windows::UI::Xaml::Controls::Primitives;
-struct BF_StartPopup {
-    winrt::weak_ref<bf_popup::Popup> popup;
-    wf::IInspectable originalPlacement;
-};
-static thread_local std::vector<BF_StartPopup> bf_startPopups;
-
-static bool BF_IsStartFooterAnchor(const FrameworkElement& anchor) {
-    for (DependencyObject item=anchor;item;item=Media::VisualTreeHelper::GetParent(item)) {
-        auto element=item.try_as<FrameworkElement>();
-        if (!element) continue;
-        const auto name=element.Name();
-        if (name==L"UserTileButton" || name==L"PowerButton") return true;
-        const auto type=winrt::get_class_name(element);
-        if (type==L"StartDocked.UserTileView" || type==L"StartDocked.PowerOptionsView") return true;
-    }
-    return false;
-}
-
-static void BF_AlignStartPopup(const FrameworkElement& presenter) {
-    auto root=presenter.XamlRoot();
-    if (!root) return;
-    for (auto popup : Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(root)) {
-        auto anchor=popup.PlacementTarget();
-        if (!anchor || !BF_IsStartFooterAnchor(anchor)) continue;
-        auto child=popup.Child();
-        bool matches=false;
-        for (DependencyObject item=presenter;item;item=Media::VisualTreeHelper::GetParent(item)) {
-            if (item==child) {matches=true;break;}
-        }
-        if (!matches || popup.DesiredPlacement()==bf_popup::PopupPlacementMode::TopEdgeAlignedLeft) continue;
-        std::erase_if(bf_startPopups,[](const auto& item){return !item.popup.get();});
-        if (std::none_of(bf_startPopups.begin(),bf_startPopups.end(),
-                         [&](const auto& item){return item.popup.get()==popup;})) {
-            bf_startPopups.push_back({winrt::make_weak(popup),popup.ReadLocalValue(bf_popup::Popup::DesiredPlacementProperty())});
-        }
-        popup.DesiredPlacement(bf_popup::PopupPlacementMode::TopEdgeAlignedLeft);
-    }
-}
-
-static void BF_QueueStartPopup(const FrameworkElement& element) {
-    if (!bf_is_start_menu || (!element.try_as<Controls::MenuFlyoutPresenter>() && !element.try_as<Controls::FlyoutPresenter>())) return;
-    element.Dispatcher().RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,
-        [weak=winrt::make_weak(element),generation=bf_startSearchGeneration] {
-            if (generation!=bf_startSearchGeneration) return;
-            if (auto live=weak.get()) {
-                try { BF_AlignStartPopup(live); }
-                catch (const winrt::hresult_error& error) { Wh_Log(L"Error %08X: Start flyout position",error.code()); }
-            }
-        });
-}
-
-static FrameworkElement BF_FindNamedControl(const FrameworkElement& parent, std::wstring_view name, int depth) {
-    if (parent.Name() == name) return parent;
-    if (depth == 0) return nullptr;
-    const auto count = Media::VisualTreeHelper::GetChildrenCount(parent);
-    for (int index = 0; index < count; ++index) {
-        auto child = Media::VisualTreeHelper::GetChild(parent, index).try_as<FrameworkElement>();
-        if (child) {
-            if (auto found = BF_FindNamedControl(child, name, depth - 1)) return found;
-        }
-    }
-    return nullptr;
-}
 
 static void BF_InvokeWindowsSearch(const Controls::Grid& pane) {
     if (GetEnvironmentVariableW(L"FISHDOCK_TEST_DESKTOP", nullptr, 0)) return;
@@ -91,8 +27,8 @@ static void BF_InvokeWindowsSearch(const Controls::Grid& pane) {
     namespace provider = winrt::Windows::UI::Xaml::Automation::Provider;
     try {
         if (auto root = pane.XamlRoot().Content().try_as<FrameworkElement>()) {
-            auto toggle = BF_FindNamedControl(root, L"SearchBoxToggleButton", 14);
-            if (!toggle) toggle = BF_FindNamedControl(root, L"StartMenuSearchBox", 14);
+            auto toggle = BF_FindLayoutElement(root, L"SearchBoxToggleButton", 14);
+            if (!toggle) toggle = BF_FindLayoutElement(root, L"StartMenuSearchBox", 14);
             if (toggle) {
                 auto type = winrt::get_class_name(toggle);
                 if (type == L"StartMenu.SearchBoxToggleButton" || type == L"StartDocked.SearchBoxToggleButton") {
@@ -124,69 +60,93 @@ static wf::Rect BF_FooterBounds(const FrameworkElement& element,const FrameworkE
         {0,0,static_cast<float>(element.ActualWidth()),static_cast<float>(element.ActualHeight())});
 }
 
+// The named PowerButton can be a PowerOptionsView containing the actual button.
+// Measure the interactive part; the wrapper is sometimes the width of the pane.
+static FrameworkElement BF_FooterButton(const FrameworkElement& node) {
+    if (!node || node.try_as<Controls::Primitives::ButtonBase>()) return node;
+    const int count=Media::VisualTreeHelper::GetChildrenCount(node);
+    for (int i=0;i<count;++i) {
+        auto child=Media::VisualTreeHelper::GetChild(node,i).try_as<FrameworkElement>();
+        if (auto button=BF_FooterButton(child)) return button;
+    }
+    return nullptr;
+}
+
 static void BF_PositionStartFooter(BF_StartSearchButton& entry) {
     auto pane=entry.pane.get();
-    if (!pane || !pane.IsLoaded() || pane.ActualWidth()<250 || entry.arranging) return;
+    if (!pane || !pane.IsLoaded() || entry.arranging || BF_StartMenuFlyoutOpen(pane)) return;
     entry.arranging=true;
     struct Guard {bool& value;~Guard(){value=false;}} guard{entry.arranging};
-    auto user=BF_DirectLayoutChild(pane,BF_FindNamedControl(pane,L"UserTileButton",12));
-    auto power=BF_DirectLayoutChild(pane,BF_FindNamedControl(pane,L"PowerButton",12));
-    auto places=BF_DirectLayoutChild(pane,BF_FindNamedControl(pane,L"NavigationPanePlacesListView",12));
-    if (user && power && user!=power && !entry.arranged) {
-        entry.arranged=true;
-        for (auto item:pane.ColumnDefinitions()) entry.columns.push_back(item);
-        for (auto item:pane.RowDefinitions()) entry.rows.push_back(item);
-        pane.ColumnDefinitions().Clear();pane.RowDefinitions().Clear();
-        // Reserve Search before assigning the optional Windows places list.
-        for (auto length:{GridLength{156,GridUnitType::Pixel},GridLength{40,GridUnitType::Pixel},
-                          GridLength{1,GridUnitType::Star},GridLength{40,GridUnitType::Pixel},GridLength{1,GridUnitType::Auto}}) {
-            Controls::ColumnDefinition definition;definition.Width(length);pane.ColumnDefinitions().Append(definition);
+
+    auto resolve=[&](auto& reference,PCWSTR name) {
+        auto button=reference.get();
+        if (!button || !button.IsLoaded()) {
+            button=BF_FooterButton(BF_FindLayoutElement(pane,name));
+            reference=button ? winrt::make_weak(button) : winrt::weak_ref<FrameworkElement>{};
         }
-        entry.root.set(pane,FrameworkElement::FlowDirectionProperty(),winrt::box_value(FlowDirection::LeftToRight));
-        entry.root.set(pane,FrameworkElement::MarginProperty(),winrt::box_value(Thickness{}));
-        entry.root.set(pane,Controls::Grid::PaddingProperty(),winrt::box_value(Thickness{}));
-        BF_SetGridSlot(entry.account,user,0);BF_SetGridSlot(entry.power,power,1);
-        for (auto pair:{std::pair{user,&entry.account},std::pair{power,&entry.power}}) {
-            pair.second->set(pair.first,FrameworkElement::VerticalAlignmentProperty(),winrt::box_value(VerticalAlignment::Center));
-            pair.second->set(pair.first,FrameworkElement::MaxWidthProperty(),winrt::box_value(pair.first==user?156.0:40.0));
-            pair.second->set(pair.first,FrameworkElement::FlowDirectionProperty(),winrt::box_value(FlowDirection::LeftToRight));
-        }
-        if (places && places!=user && places!=power) {
-            BF_SetGridSlot(entry.places,places,4);
-            entry.places.set(places,FrameworkElement::MaxWidthProperty(),winrt::box_value(210.0));
-            entry.places.set(places,FrameworkElement::VerticalAlignmentProperty(),winrt::box_value(VerticalAlignment::Center));
-            if (auto control=places.try_as<Controls::Control>()) {
-                entry.places.set(places,Controls::Control::PaddingProperty(),winrt::box_value(Thickness{}));
-                entry.places.set(places,Controls::Control::VerticalContentAlignmentProperty(),winrt::box_value(VerticalAlignment::Center));
-            }
+        return button;
+    };
+    const auto account=resolve(entry.account,L"UserTileButton");
+    const auto power=resolve(entry.power,L"PowerButton");
+    auto watch=[](const FrameworkElement& node,std::shared_ptr<BF_FooterAnchor>& state) {
+        auto native=node.try_as<BF_FooterCommandButton>();
+        if (native && (!state || state->button.get()!=native)) state=BF_FooterAnchor::observe(native);
+    };
+    watch(account,entry.accountMenu);
+    watch(power,entry.powerMenu);
+    auto places=entry.places.get();
+    if (!places || !places.IsLoaded()) {
+        if (auto found=BF_FindLayoutElement(pane,L"NavigationPanePlacesListView")) {
+            places=found.try_as<Controls::ListViewBase>();
+            if (places) entry.places=winrt::make_weak(places);
         }
     }
-    if (auto list=places.try_as<Controls::ListViewBase>();entry.arranged && list) {
-        const double width=std::min(210.0,40.0*list.Items().Size());
-        if (std::isnan(places.Width()) || std::abs(places.Width()-width)>.5)
-            entry.places.set(places,FrameworkElement::WidthProperty(),winrt::box_value(width));
-        for (unsigned index=0;index<std::min(16u,list.Items().Size());++index) {
-            auto item=list.ContainerFromIndex(index).try_as<FrameworkElement>();
-            if (!item || std::any_of(entry.placeItems.begin(),entry.placeItems.end(),[&](const auto& state){return state.element.get()==item;})) continue;
-            BF_LocalLayout state;
-            state.set(item,FrameworkElement::MinWidthProperty(),winrt::box_value(0.0));
-            state.set(item,FrameworkElement::MinHeightProperty(),winrt::box_value(0.0));
-            state.set(item,FrameworkElement::WidthProperty(),winrt::box_value(40.0));
-            state.set(item,FrameworkElement::HeightProperty(),winrt::box_value(40.0));
-            state.set(item,FrameworkElement::MarginProperty(),winrt::box_value(Thickness{}));
-            if (item.try_as<Controls::Control>()) {
-                state.set(item,Controls::Control::PaddingProperty(),winrt::box_value(Thickness{}));
-                state.set(item,Controls::Control::HorizontalContentAlignmentProperty(),winrt::box_value(HorizontalAlignment::Center));
-                state.set(item,Controls::Control::VerticalContentAlignmentProperty(),winrt::box_value(VerticalAlignment::Center));
-            }
-            entry.placeItems.push_back(std::move(state));
+
+    // The only element whose geometry or input state Dock owns is Search.
+    // All rectangles are measured in pane coordinates, including RTL templates.
+    const double width=pane.ActualWidth(), buttonWidth=entry.button.Width();
+    std::vector<std::pair<double,double>> occupied;
+    const bool rtl=pane.FlowDirection()==FlowDirection::RightToLeft;
+    double placeEdge=rtl ? 0 : width;
+    auto reserve=[&](const FrameworkElement& element, bool place=false) {
+        auto rect=BF_FooterBounds(element,pane);
+        if (rect.Width>0 && rect.Height>0 && rect.X<width && rect.X+rect.Width>0) {
+            occupied.emplace_back(std::max(0.0,double(rect.X)),std::min(width,double(rect.X+rect.Width)));
+            if (place) placeEdge=rtl ? std::max(placeEdge,occupied.back().second) : std::min(placeEdge,occupied.back().first);
         }
+    };
+    reserve(account);reserve(power);
+    if (places) {
+        for (unsigned i=0;i<places.Items().Size();++i)
+            reserve(places.ContainerFromIndex(i).try_as<FrameworkElement>(),true);
     }
-    entry.button.Visibility(Visibility::Visible);
-    const auto rect=BF_FooterBounds(entry.button,pane);
-    const bool visible=entry.arranged && rect.Width>0 && rect.Height>0 && rect.X>=0 && rect.Y>=0 &&
-                       rect.X+rect.Width<=pane.ActualWidth()+1 && rect.Y+rect.Height<=pane.ActualHeight()+1;
-    if (bf_search_button_ready.exchange(visible)!=visible && bf_status_event) SetEvent(bf_status_event);
+    std::sort(occupied.begin(),occupied.end());
+    const double preferred=rtl ? placeEdge+3 : placeEdge-buttonWidth-3;
+    double start=0, target=-1;
+    auto consider=[&](double end) {
+        if (end-start<buttonWidth+6) return;
+        const double x=std::clamp(preferred,start+3,end-buttonWidth-3);
+        if (target<0 || std::abs(x-preferred)<std::abs(target-preferred)) target=x;
+    };
+    for (auto [left,right]:occupied) {
+        consider(left);
+        start=std::max(start,right);
+    }
+    consider(width);
+    auto rect=BF_FooterBounds(entry.button,pane);
+    bool fits=account && power && target>=0 && rect.Width>0 && pane.ActualHeight()>=entry.button.Height();
+    if (fits) {
+        // Moving just our button after arrange keeps it out of the native
+        // grid's size calculation, including auto-sized command columns.
+        const double delta=target-rect.X;
+        if (std::abs(delta)>.5) entry.offset.X(entry.offset.X()+delta);
+    }
+    if (entry.button.IsHitTestVisible()!=fits) {
+        entry.button.IsHitTestVisible(fits);
+        entry.button.IsTabStop(fits);
+        entry.button.Opacity(fits ? 1 : 0);
+    }
+    if (bf_search_button_ready.exchange(fits)!=fits && bf_status_event) SetEvent(bf_status_event);
 }
 
 static void BF_AddStartSearchButton(const Controls::Grid& pane) {
@@ -207,8 +167,8 @@ static void BF_AddStartSearchButton(const Controls::Grid& pane) {
     icon.Glyph(L"\uE721");
     icon.FontFamily(Media::FontFamily(L"Segoe MDL2 Assets"));
     icon.FontSize(17);
-    icon.Foreground(Media::SolidColorBrush(dark ? winrt::Windows::UI::Colors::White()
-                                                : winrt::Windows::UI::Colors::Black()));
+    icon.Foreground(BF_StartForeground(Media::SolidColorBrush(dark ? winrt::Windows::UI::Colors::White()
+                                                                 : winrt::Windows::UI::Colors::Black())));
     button.Content(icon);
     winrt::Windows::UI::Xaml::Automation::AutomationProperties::SetName(button, L"搜索");
     Controls::ToolTipService::SetToolTip(button, winrt::box_value(L"搜索 · Win+S"));
@@ -216,10 +176,15 @@ static void BF_AddStartSearchButton(const Controls::Grid& pane) {
         if (auto live = weakPane.get()) BF_InvokeWindowsSearch(live);
     });
 
-    Controls::Grid::SetColumn(button,3);
-    Controls::Canvas::SetZIndex(button,6);
-    button.HorizontalAlignment(HorizontalAlignment::Center);
+    Controls::Grid::SetColumnSpan(button,std::max(1u,pane.ColumnDefinitions().Size()));
+    Controls::Grid::SetRowSpan(button,std::max(1u,pane.RowDefinitions().Size()));
+    button.HorizontalAlignment(HorizontalAlignment::Left);
     button.VerticalAlignment(VerticalAlignment::Center);
+    button.Opacity(0);
+    button.IsHitTestVisible(false);
+    button.IsTabStop(false);
+    Media::TranslateTransform offset;
+    button.RenderTransform(offset);
     pane.Children().Append(button);
     auto weakPane=winrt::make_weak(pane);
     auto watch=pane.LayoutUpdated(winrt::auto_revoke,[weakPane](auto&&,auto&&) {
@@ -231,7 +196,7 @@ static void BF_AddStartSearchButton(const Controls::Grid& pane) {
         try { BF_PositionStartFooter(*entry); }
         catch (const winrt::hresult_error& error) { Wh_Log(L"Error %08X: Start footer",error.code()); }
     });
-    BF_StartSearchButton entry{weakPane,button,std::move(watch)};
+    BF_StartSearchButton entry{weakPane,button,std::move(watch),offset};
     bf_startSearchButtons.push_back(std::move(entry));
     BF_PositionStartFooter(bf_startSearchButtons.back());
 }
@@ -253,33 +218,16 @@ static void BF_QueueStartSearchButton(const FrameworkElement& element) {
 
 static void BF_ClearStartSearchButtons() {
     ++bf_startSearchGeneration;
+    BF_StopFooterRequest();
+    BF_CloseFooterMenu();
     bf_search_button_ready = false;
-    for (auto& item:bf_startPopups) {
-        if (auto popup=item.popup.get();
-            popup && popup.DesiredPlacement()==bf_popup::PopupPlacementMode::TopEdgeAlignedLeft) {
-            const auto property=bf_popup::Popup::DesiredPlacementProperty();
-            if (item.originalPlacement==DependencyProperty::UnsetValue()) popup.ClearValue(property);
-            else popup.SetValue(property,item.originalPlacement);
-        }
-    }
-    bf_startPopups.clear();
     auto entries=std::exchange(bf_startSearchButtons,{});
     for (auto& entry : entries) {
         entry.layout.revoke();
-        entry.root.restore();
-        entry.account.restore();
-        entry.power.restore();
-        entry.places.restore();
-        for(auto& item:entry.placeItems) item.restore();
         if (auto pane = entry.pane.get()) {
             auto children = pane.Children();
             unsigned index = 0;
             if (children.IndexOf(entry.button, index)) children.RemoveAt(index);
-            if (entry.arranged) {
-                pane.ColumnDefinitions().Clear();pane.RowDefinitions().Clear();
-                for (auto definition:entry.columns) pane.ColumnDefinitions().Append(definition);
-                for (auto definition:entry.rows) pane.RowDefinitions().Append(definition);
-            }
         }
     }
 }

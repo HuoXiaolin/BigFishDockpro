@@ -71,3 +71,36 @@ def run(app,output,checks):
         result['clean_exit']=True
         (output/'deck-qt-pipe.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
         checks.append('Real AI/media helper: Qt JSON pipe returned offline Pi fixture tokens and cost plus a Windows media snapshot, used no console host, and exited cleanly.')
+
+
+def verify_bundled_runtime(output):
+    """Check the shipping bridge launch path against the frameworks the host actually selected."""
+    import os
+    import sys
+    from PyQt5.QtWidgets import QApplication
+    from deck_runtime import installed_runtime
+    from resource_deck import start_headless
+
+    root = Path(sys._MEIPASS) / 'dotnet'
+    assert installed_runtime() == root
+    assert root.parent != Path(sys.executable).parent and not (Path(sys.executable).parent / '_internal').exists()
+    process = QProcess()
+    trace = output / 'private-dotnet-host.txt'
+    trace.unlink(missing_ok=True)
+    with patch.dict(os.environ, {'DOTNET_HOST_TRACE': '1', 'DOTNET_HOST_TRACEFILE': str(trace)}):
+        start_headless(process, root.parent / 'deck-bridge/BigFishDeckBridge.exe', '--self-test', root)
+    assert process.waitForFinished(30000), process.errorString()
+    rows = [json.loads(row) for row in bytes(process.readAllStandardOutput()).splitlines()]
+    assert process.exitCode() == 0 and any(row.get('passed') is True for row in rows), rows
+    host = trace.read_text(encoding='utf-8-sig', errors='replace').casefold()
+    versions = {p.name for p in (root / 'shared/Microsoft.WindowsDesktop.App').iterdir()}
+    version, = versions
+    for framework in ('Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App'):
+        location = str(root / 'shared' / framework / version)
+        assert location.casefold() in host, location
+    checks = []
+    run(QApplication.instance(), output, checks)
+    return {'version': version, 'bridge_self_test': True, 'frameworks': ['Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App'],
+            'checks': checks}
+
+

@@ -83,8 +83,8 @@ def check_idle_reclaim(runtime):
 
 def run(api,runtime,output,checks):
     from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPixmap,QColor
-    from PyQt5.QtCore import QCoreApplication,QEvent,QTimer
+    from PyQt5.QtGui import QPixmap,QColor,QImage
+    from PyQt5.QtCore import QCoreApplication,QEvent,QTimer,Qt
     from glass_capture import backdrop_key
     app=QApplication.instance();dock=runtime.dock;cfg=dock.cfg
     # Isolate reclamation from independent blinking and cursor animation in the pixel comparison.
@@ -108,12 +108,21 @@ def run(api,runtime,output,checks):
     for _ in range(4):app.processEvents()
     # Minute rollover or a running clock hand is independent of idle reclamation.
     clock_time = SimpleNamespace(datetime=SnapshotTime)
+    def snapshot(widget):
+        # Render the widget and its children directly into owned, device-resolution pixels.
+        ratio = widget.devicePixelRatioF()
+        image = QImage(widget.size() * ratio, QImage.Format_ARGB32_Premultiplied)
+        assert not image.isNull(), widget.__class__.__name__
+        image.setDevicePixelRatio(ratio)
+        image.fill(Qt.transparent)
+        widget.render(image)
+        return image.size(), image.devicePixelRatio(), image.constBits().asstring(image.byteCount())
     with patch('dock_extras.datetime', clock_time), patch('desktop_clock.datetime', clock_time):
-        before=[(w.geometry(),w.backdrop.cacheKey(),w.grab().toImage()) for w in surfaces]
+        before=[(w.geometry(),w.backdrop.cacheKey(),snapshot(w)) for w in surfaces]
         assert runtime.memory_budget.reclaim(trim_caches=False)
         for w,(geometry,key,image) in zip(surfaces,before):
             assert w.geometry()==geometry and w.backdrop.cacheKey()==key
-            assert w.grab().toImage()==image,w.__class__.__name__
+            assert snapshot(w)==image,w.__class__.__name__
     cfg['panel_face_interactive'] = face_interactive
     runtime.apply_settings({'panel_face_interactive'})
     checks.append('idle reclamation preserves exact rendered Dock/card/note/clock/calendar pixels, geometry and backdrop')

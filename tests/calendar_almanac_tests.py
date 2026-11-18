@@ -1,0 +1,71 @@
+"""Check the card's date boundaries, shipped artwork, and compact reminder."""
+from datetime import date, datetime, timedelta
+from hashlib import sha256
+from pathlib import Path
+from unittest.mock import patch
+
+
+def dates_and_assets():
+    from calendar_almanac import ART, ASSETS, FIRST_DAY, LAST_DAY, almanac, edition, next_festival, term_dates, until_rotation, verse_index
+    assert len(ART)==36 and all(len(set(art.verses))==4 for art in ART.values())
+    assert len({line for art in ART.values() for line in art.verses if line})==144
+    periods=[datetime(2026,11,19,8,m) for m in (0,10,20,30,40)]
+    assert [edition(t) for t in periods]==[0,1,0,1,0] and [verse_index(t) for t in periods]==[0,1,2,3,0]
+    files=[ASSETS/'pictures'/f'{art.key}{suffix}.jpg' for art in ART.values() for suffix in ('','-print')]
+    assert len({sha256(path.read_bytes()).digest() for path in files})==72
+    assert all(len(term_dates(y))==24 for y in range(1901,2101))
+    assert almanac(FIRST_DAY).term=='冬至' and almanac(LAST_DAY).next_term=='小寒'
+    assert almanac(FIRST_DAY-timedelta(days=1)) is None
+    winter=almanac(date(2026,11,7))
+    for i in range(15):
+        model=almanac(winter.day+timedelta(days=i))
+        assert (model.term,model.card().key,model.next_term,model.days_left)==('立冬',winter.card().key,'小雪',15-i)
+        assert model.term_today==(i==0)
+    assert almanac(date(2026,11,19)).lunar=='十月十一'
+    snow=almanac(date(2026,11,22))
+    assert snow.term_today and (snow.card().name,snow.next_term,snow.days_left)==('小雪','大雪',15)
+    assert almanac(date(2025,1,28)).festival=='除夕' and next_festival(date(2025,1,28))==('春节',1)
+    assert almanac(date(2025,7,27)).lunar=='闰六月初三' and not almanac(date(2025,7,27)).festival
+    mixed=almanac(date(2026,3,20))
+    assert (mixed.festival,mixed.card().name,mixed.card(True).name,mixed.badge())==('龙抬头','龙抬头','春分','龙抬头 · 春分')
+    mid=almanac(date(2026,9,25))
+    assert mid.card().name=='中秋节' and '婵娟' in mid.card().verses[0]
+    assert {almanac(date(2026,1,1)+timedelta(days=i)).festival for i in range(365)} >= {
+        '春节','元宵节','龙抬头','端午节','七夕','中元节','中秋节','重阳节','腊八节','北方小年','南方小年','除夕'}
+    boundary=datetime(2026,11,19,23,59,59,990000)
+    assert 10<=until_rotation(boundary)<=11 and edition(boundary)==1 and edition(boundary+timedelta(milliseconds=10))==0
+
+
+def render(dock, cfg, output):
+    from PyQt5.QtCore import Qt, QRectF
+    from PyQt5.QtGui import QImage, QPainter
+    from desktop_clock import draw_clock
+    folder=Path(output);folder.mkdir(parents=True,exist_ok=True)
+    for name, day, size, minute, term in [
+            ('normal',date(2026,11,19),(360,235),0,False),('snow',date(2026,11,22),(360,235),0,False),
+            ('moon',date(2026,9,25),(360,235),0,False),('moon-print',date(2026,9,25),(360,235),10,False),
+            ('overlap-festival',date(2026,3,20),(260,230),0,False),('overlap-term',date(2026,3,20),(260,230),0,True),
+            ('clock-min',date(2026,11,19),(160,100),10,False),('portrait',date(2026,6,19),(260,360),0,False)]:
+        image=QImage(*size,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+        painter=QPainter(image)
+        try:
+            draw_clock(painter,QRectF(0,0,*size),dock,dict(cfg, _now=datetime(2026,1,1,8,minute),
+                       _almanac_date=day,_almanac_prefer_term=term,_almanac_controls='clock' if name=='clock-min' else ''),'almanac')
+        finally:painter.end()
+        assert image.save(str(folder/f'almanac-{name}.png'))
+
+
+def compact_cases(service):
+    from calendar_almanac import almanac
+    from resource_compact import compact_badges
+    from resource_options import DEFAULTS
+    assert DEFAULTS['resource_alert_almanac'] is True
+    for when,label,special in [(date(2026,11,19),'小雪 3天',False),(date(2026,11,22),'小雪',True),
+                               (date(2026,9,25),'中秋节',True),(date(2026,3,20),'龙抬头 · 春分',True)]:
+        with patch('calendar_almanac.almanac',return_value=almanac(when)):
+            with patch.dict(service.cfg,resource_alert_almanac=True):
+                badges,count=compact_badges(service)
+                assert [v for k,v in badges if k=='almanac']==[label]
+                assert (('almanac',label) in badges[:count])==special
+            with patch.dict(service.cfg,resource_alert_almanac=False):
+                assert 'almanac' not in dict(compact_badges(service)[0])

@@ -9,11 +9,13 @@ from ui_style import button,AlignedMenu
 class DesktopCalendar(DesktopClock):
     def __init__(self,runtime):
         now=datetime.date.today();self.view_year=now.year;self.view_month=now.month;self.follow_today=True
+        self.view_day=now;self.prefer_term=False
         super().__init__(runtime,'calendar')
-        self.previous=button('‹',lambda:self.shift_month(-1));self.previous.setParent(self);self.previous.setToolTip('上个月')
+        self.previous=button('‹',lambda:self.navigate(-1));self.previous.setParent(self)
         self.today=button('今天',self.go_today);self.today.setParent(self)
-        self.next=button('›',lambda:self.shift_month(1));self.next.setParent(self);self.next.setToolTip('下个月')
+        self.next=button('›',lambda:self.navigate(1));self.next.setParent(self)
         self.settings=button('',self.open_settings);self.settings.setParent(self);self.settings.setToolTip('日历设置')
+        self.other_art=button('',self.switch_art);self.other_art.setParent(self)
         self.controls=(self.previous,self.today,self.next,self.settings);self.place_controls()
 
     def place_controls(self):
@@ -24,27 +26,62 @@ class DesktopCalendar(DesktopClock):
             from glass_panel import category_icon
             self.settings.setIcon(QIcon(category_icon('settings',ink,16,key[1])))
             style='QPushButton {background:transparent;border:0;border-radius:6px;padding:0;color:'+ink+';font-size:13px;font-weight:600;} QPushButton:hover {background:rgba(110,150,180,35);}'
-            for control in self.controls:control.setStyleSheet(style)
+            for control in (*self.controls,self.other_art):control.setStyleSheet(style)
             self._controls_key=key
         x=self.width()-119
         for control,width in zip(self.controls,(23,38,23,23)):
             control.show();control.setFixedSize(width,24);control.move(x,11);x+=width+2
+        seasonal=self.option('style')=='almanac'
+        self.previous.setToolTip('前一天' if seasonal else '上个月');self.next.setToolTip('后一天' if seasonal else '下个月')
+        if seasonal:
+            from calendar_almanac import almanac,FIRST_DAY,LAST_DAY
+            model=almanac(self.view_day)
+            self.previous.setEnabled(self.view_day>FIRST_DAY);self.next.setEnabled(self.view_day<LAST_DAY)
+            if model and model.festival and model.term_today:
+                self.other_art.setText('看'+(model.festival if self.prefer_term else model.term)+' ›')
+                self.other_art.adjustSize();self.other_art.move(self.width()-self.other_art.width()-12,self.height()-64)
+                self.other_art.show();return
+        else:
+            self.previous.setEnabled(True);self.next.setEnabled(True)
+        self.other_art.hide()
+
+    def switch_art(self):
+        self.prefer_term=not self.prefer_term
+        self.place_controls();self.update()
+
+    def navigate(self,direction):
+        if self.option('style')!='almanac':return self.shift_month(direction)
+        from calendar_almanac import FIRST_DAY,LAST_DAY
+        day=self.view_day+datetime.timedelta(days=direction)
+        if not FIRST_DAY<=day<=LAST_DAY:return False
+        self.view_day=day;self.view_year,self.view_month=day.year,day.month
+        self.follow_today=False;self.prefer_term=False;self.place_controls();self.update();return True
 
     def sync(self):
+        if self.option('style')=='almanac':
+            from calendar_almanac import FIRST_DAY,LAST_DAY
+            self.view_day=max(FIRST_DAY,min(LAST_DAY,self.view_day))
         super().sync();self.place_controls()
 
     def shift_month(self,direction):
         index=self.view_year*12+self.view_month-1+direction;year,month=divmod(index,12)
         if not 1<=year<=9999:return False
-        self.view_year,self.view_month=year,month+1;self.follow_today=False;self.update();return True
+        self.view_year,self.view_month=year,month+1;self.view_day=datetime.date(year,month+1,1)
+        self.follow_today=False;self.prefer_term=False;self.update();return True
 
     def go_today(self):
-        now=datetime.date.today();self.view_year,self.view_month=now.year,now.month;self.follow_today=True;self.update()
+        now=datetime.date.today();self.view_day=now;self.view_year,self.view_month=now.year,now.month
+        self.follow_today=True;self.prefer_term=False;self.place_controls();self.update()
 
     def update_time(self):
         if not self.isVisible() or self.closed:return
         now=datetime.datetime.now()
-        if self.follow_today:self.view_year,self.view_month=now.year,now.month
+        if self.follow_today and self.view_day!=now.date():
+            self.view_day=now.date();self.view_year,self.view_month=now.year,now.month
+            self.prefer_term=False;self.place_controls()
+        if self.option('style')=='almanac':
+            from calendar_almanac import until_rotation
+            self.update();self.tick.start(until_rotation(now));return
         self.update();tomorrow=datetime.datetime.combine(now.date()+datetime.timedelta(days=1),datetime.time())
         self.tick.start(max(1000,round((tomorrow-now).total_seconds()*1000)))
 
@@ -52,6 +89,9 @@ class DesktopCalendar(DesktopClock):
         from calendar_markers import countdowns
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         self.paint_resize_targets(painter)
+        if self.option('style')=='almanac':
+            self.paint_face(painter,'almanac',_almanac_date=self.view_day,_almanac_prefer_term=self.prefer_term,_almanac_controls='calendar')
+            return
         self.paint_face(painter,'calendar_card',_calendar_year=self.view_year,_calendar_month=self.view_month,
                         _calendar_events=self.runtime.resources.calendar_entries(),
                         _calendar_countdowns=countdowns(self.dock.cfg))

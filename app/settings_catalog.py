@@ -24,7 +24,8 @@ def field_catalog(api, cfg):
     from taskbar_appearance import MODES
     from taskbar_text import MODES as TEXT_MODES
     from feature_config import DOCK_ICON_SHAPES, SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
-    from resource_options import FACE_SWITCH_RANGE
+    from feature_config import WATERMARK_LAYERS, WATERMARK_MODES, WATERMARK_POSITIONS, WATERMARK_RANGES
+    from resource_options import FACE_SWITCH_RANGE, RUNNER_ANIMALS, RUNNER_SPEEDS
     from shell_appearance_model import catalog as shell_catalog
 
     return {
@@ -58,6 +59,9 @@ def field_catalog(api, cfg):
         'taskbar_color': (TASKBAR, '任务栏颜色', 'color', None),
         'taskbar_opacity': (TASKBAR, '任务栏不透明度（%）', 'number', (0, 100)),
         'taskbar_blur': (TASKBAR, '任务栏模糊强度', 'number', (0, 50)),
+        'resource_tray_runner_enabled': (TASKBAR, '显示托盘小动物', 'check', None),
+        'resource_tray_runner_animal': (TASKBAR, '动物形象', 'combo', [(label, value) for value, label in RUNNER_ANIMALS.items()]),
+        'resource_tray_runner_speed': (TASKBAR, '奔跑速度', 'combo', [(label, value) for value, label in RUNNER_SPEEDS.items()]),
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
         'card_design': (1, '装饰样式', 'combo', DESIGNS),
@@ -85,6 +89,16 @@ def field_catalog(api, cfg):
         'desktop_icon_mode': (1, '桌面图标显示', 'combo', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')]),
         'desktop_middle_toggle': (1, '鼠标中键切换桌面图标', 'check', None),
         'clock_enabled': (WIDGETS, '桌面时钟', 'check', None),
+        'watermark_enabled': (WIDGETS, '显示桌面文字水印', 'check', None),
+        'watermark_text': (WIDGETS, '水印文字', 'text', None),
+        'watermark_color': (WIDGETS, '水印颜色', 'color', None),
+        'watermark_size': (WIDGETS, '水印字号（像素）', 'number', WATERMARK_RANGES['watermark_size']),
+        'watermark_angle': (WIDGETS, '旋转角度（°）', 'number', WATERMARK_RANGES['watermark_angle']),
+        'watermark_opacity': (WIDGETS, '水印不透明度（%）', 'number', WATERMARK_RANGES['watermark_opacity']),
+        'watermark_layer': (WIDGETS, '水印层级', 'combo', WATERMARK_LAYERS),
+        'watermark_mode': (WIDGETS, '水印模式', 'combo', WATERMARK_MODES),
+        'watermark_position': (WIDGETS, '单一位置', 'combo', WATERMARK_POSITIONS),
+        'watermark_density': (WIDGETS, '平铺密度', 'number', WATERMARK_RANGES['watermark_density']),
         'calendar_enabled': (WIDGETS, '桌面日历', 'check', None),
         'spectrum_enabled': (WIDGETS, '桌面音乐频谱', 'check', None),
         'spectrum_style': (WIDGETS, '频谱样式', 'combo', SPECTRUM_STYLES),

@@ -128,6 +128,10 @@ def background(values):
     return f'<WindhawkBlur BlurAmount="{amount}" TintColor="{tint}" FallbackColor="{tint}"/>'
 
 
+def shows_backdrop(style):
+    return style.get('tint_alpha', round(style['opacity'] * 255 / 100)) < 255
+
+
 def panel_ink(style, surface=None, system_text_light=None):
     mode = style['text_mode']
     if mode == 'white':
@@ -138,7 +142,7 @@ def panel_ink(style, surface=None, system_text_light=None):
         light = style['system_light'] if system_text_light is None else system_text_light
         return '#000000' if light else '#ffffff'
     # A sampled surface already includes the brush and backdrop.
-    return foreground(surface if surface is not None and style['opacity'] < 100 else style['color'])
+    return foreground(surface if surface is not None and shows_backdrop(style) else style['color'])
 
 
 def menu_color(ink):
@@ -238,25 +242,18 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
         add('StartMenu.PinnedList > Grid#Root > Microsoft.UI.Xaml.Controls.PipsPager#PinnedListPipsPager',
             'MinWidth=0', 'Width=10', 'Padding=0', 'Margin=0')
         add('GridView#PinnedList', 'Padding=0', 'Margin=0', 'HorizontalAlignment=Stretch')
-        add('StartDocked.UserTileView', 'Visibility=Visible', 'FlowDirection=0',
-            'MinWidth=0', 'MaxWidth=156', 'Height=40', 'VerticalAlignment=Center', f'RequestedTheme={theme}')
+        add('StartDocked.UserTileView', 'Visibility=Visible', f'RequestedTheme={theme}')
         add('TextBlock#UserTileNameText', 'TextTrimming=CharacterEllipsis', 'MaxWidth=112')
-        add('StartDocked.NavigationPaneView', f'Width={width - 20}', 'MinWidth=0', 'Height=56',
-            'Margin=0', 'HorizontalAlignment=Center', 'VerticalAlignment=Bottom', 'FlowDirection=0')
-        add('StartDocked.NavigationPaneView > Grid#RootPanel', 'Padding=0', 'Margin=0',
-            'FlowDirection=0', 'HorizontalAlignment=Stretch')
+        add('StartDocked.NavigationPaneView', 'Margin=10,0,10,0')
         # Both native lists set local Foreground values; changing their parent
         # theme alone leaves all-apps white and pinned names black.
         for target in ('TextBlock', 'FontIcon', 'SymbolIcon'):
             add(target, f'Foreground={ink}')
         # Native popups own a second visual tree with a separate template brush.
         for presenter in ('MenuFlyoutPresenter', 'FlyoutPresenter'):
+            # Let the native template paint the brush and handle pointer input.
             add(presenter, f'Background:={brush}', 'CornerRadius=12', 'BorderThickness=1',
-                f'BorderBrush:={edge_brush}', f'RequestedTheme={theme}')
-            add(presenter + ' > Border', f'Background:={brush}', 'CornerRadius=12',
-                'BorderThickness=1', f'BorderBrush:={edge_brush}', f'RequestedTheme={theme}')
-        for target in ('MenuFlyoutItem', 'MenuFlyoutSubItem', 'ToggleMenuFlyoutItem', 'RadioMenuFlyoutItem'):
-            add(target, f'Foreground={ink}', f'RequestedTheme={theme}')
+                f'BorderBrush:={edge_brush}', f'Foreground={ink}')
         search = 'Cortana.UI.Views.TaskbarSearchPage'
         search_root = search + ' > Grid#RootGrid'
         search_frame = 'Grid#OuterBorderGrid > Grid#BorderGrid'
@@ -384,11 +381,15 @@ def settings(cfg, kind, owner_pid, system_light=True, transparent=True, surface_
             # Never force a legacy OS feature or restart the native shell host.
             'disableNewStartMenuLayout': 'default',
             'bigfish_theme': 'Light' if ink == '#000000' else 'Dark'}
+    if kind == 'start' and style['text_mode'] == 'auto' and shows_backdrop(style):
+        data['bigfish_live_ink'] = ink
     for index, (target, properties) in enumerate(rules(cfg, kind, system_light, transparent, surface_color, system_text_light)):
         data[f'controlStyles[{index}].target'] = target
         for part, value in enumerate(properties):
             data[f'controlStyles[{index}].styles[{part}]'] = value
     if kind == 'start':
+        surface = surface_color if surface_color is not None and shows_backdrop(style) else style['color']
+        data['bigfish_footer_surface'] = surface if isinstance(surface,str) else '#%02x%02x%02x'%tuple(round(v) for v in surface)
         for index, (target, properties) in enumerate(search_content_styles(ink, style)):
             data[f'webContentStyles[{index}].target'] = target
             for part, value in enumerate(properties):

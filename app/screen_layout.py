@@ -330,6 +330,8 @@ class DisplayLayout:
             if spectrum:spectrum.reposition()
             daily=getattr(self.runtime,'daily_picture',None)
             if daily:daily.reposition()
+            watermarks=getattr(self.runtime,'watermarks',None)
+            if watermarks:watermarks.sync()
             custom=getattr(self.runtime,'custom_cards',None)
             if custom:custom.reposition()
             dialog=getattr(self.runtime.tray,'settings_dialog',None)

@@ -17,7 +17,7 @@ from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
 def reminder_ink(kind,light,battery_level=None):
     if kind=='battery':
         return low_battery_ink(BATTERY_WARNING_LEVEL if battery_level is None else battery_level,light)
-    palette={'agenda':('#6246a2','#c8b6ff'),
+    palette={'agenda':('#6246a2','#c8b6ff'), 'almanac':('#356551','#a4dbb2'),
              'water':('#1268ab','#83c7ff'), 'rest':('#087959','#72dfb4'),
              'paused':('#59657b','#b9c5d8'), 'focus':('#ab412d','#ffa08a')}
     return palette[kind.removesuffix('_done')][0 if light else 1]
@@ -34,6 +34,10 @@ def reminder_icon(p,rect,kind,ink):
             p.drawRoundedRect(QRectF(2,3,12,11),2,2)
             p.drawLine(QPointF(2.5,7),QPointF(13.5,7))
             for x in (5.,11.):p.drawLine(QPointF(x,1.8),QPointF(x,4.6))
+        elif kind=='almanac':
+            p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(ink),1.45,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+            path.moveTo(2.5,12);path.cubicTo(2,5,7,2.7,14,2);path.cubicTo(14,10.5,10,14,4,12.5)
+            p.drawPath(path);p.drawLine(QPointF(2.5,14),QPointF(10.5,6))
         elif kind=='battery':
             p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(ink),1.4,Qt.SolidLine,Qt.RoundCap))
             p.drawRoundedRect(QRectF(1,4,12,8),1.5,1.5)

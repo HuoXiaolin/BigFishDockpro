@@ -10,7 +10,16 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
         auto transport=bf_settings;
         transport[L"owner_pid"]=L"2";transport[L"owner_start"]=L"3";
         transport[L"status_handle_400"]=L"12";transport[L"panel_geometry_400"]=L"16";
-        const bool transportStable=BF_StyleSettingsEqual(bf_settings,transport);
+        bool transportStable=BF_StyleSettingsEqual(bf_settings,transport);
+#ifdef BIGFISH_START_ENGINE
+        auto autoInk=transport;
+        autoInk[L"bigfish_live_ink"]=L"#ffffff";
+        auto darkerInk=autoInk;
+        darkerInk[L"bigfish_live_ink"]=L"#000000";
+        transportStable=transportStable && BF_StyleSettingsEqual(autoInk,darkerInk);
+        darkerInk.erase(L"bigfish_live_ink");
+        transportStable=transportStable && !BF_StyleSettingsEqual(autoInk,darkerInk);
+#endif
         transport[L"bigfish_theme"]=BF_Setting(L"bigfish_theme")==L"Dark"?L"Light":L"Dark";
         const bool styleChanges=!BF_StyleSettingsEqual(bf_settings,transport);
         const bool retry = BF_Setting(L"probe_lifecycle") == L"retry";
@@ -90,9 +99,19 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
         if (auto watcher=ExchangeVisualTreeWatcher(nullptr)) watcher->UnadviseVisualTreeChange();
         Controls::Border first;first.Background(original);
         ApplyCustomizations(static_cast<ElementId>(900000),first,L"Windows.UI.Xaml.Controls.Border");
+        bool firstLoaded=false,styledAtLoad=false;
+        auto firstLoad=first.Loaded(winrt::auto_revoke,[&](auto&&,auto&&) {
+            firstLoaded=true;
+            styledAtLoad=first.Background()!=original;
+        });
         first.Name(L"LifecycleSurface");root.Children().Append(first);
-        first.Background(original);root.UpdateLayout();pump(25);
-        firstPresentation=first.Background()!=original;
+        first.Background(original);root.UpdateLayout();
+        // Loaded is asynchronous on a non-input desktop. Check the first
+        // presentation itself, even if the compositor takes more than 25 ms.
+        const auto loadDeadline=GetTickCount64()+750;
+        while (!firstLoaded && GetTickCount64()<loadDeadline) pump(5);
+        firstPresentation=firstLoaded && styledAtLoad && first.Background()!=original;
+        if (!firstLoaded) trace("first_loaded_event_missing");
         trace(firstPresentation?"first_presentation_styled":"first_presentation_skipped");
         // The taskbar date panel can first open well after Dock startup. Exercise
         // the actual calendar selector, both naming before and after Loaded,

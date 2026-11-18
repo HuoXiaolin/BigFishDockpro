@@ -9,6 +9,12 @@ SPECTRUM_STYLES = (
 RING_HEIGHT_MAX = 140
 STARTUP_ANIMATION_STYLES = (('流动描边', 'outline'), ('滚动文字', 'rolling'))
 DOCK_ICON_SHAPES = (('默认', 'default'), ('圆形', 'circle'))
+WATERMARK_MODES = (('单一位置', 'single'), ('平铺', 'tile'))
+WATERMARK_POSITIONS = (('上方', 'top'), ('下方', 'bottom'), ('左侧', 'left'), ('右侧', 'right'), ('居中', 'center'))
+WATERMARK_LAYERS = (('桌面置底', 'bottom'), ('窗口置顶', 'top'))
+WATERMARK_RANGES = {'watermark_size': (8, 160), 'watermark_angle': (-180, 180),
+                    'watermark_density': (1, 10), 'watermark_opacity': (0, 100)}
+WATERMARK_TEXT_LIMIT = 256
 
 DEFAULTS = {
     'flash_enabled':False, 'flash_appearance_source':'custom', 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
@@ -21,7 +27,10 @@ DEFAULTS = {
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_icon_shape':'default','dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'medium', 'settings_manual_size':[], 'settings_custom_density':100,
-    'calendar_enabled':False,'calendar_locked':False,'calendar_layout':{},'calendar_appearance':{},
+    'calendar_enabled':False,'calendar_locked':False,'calendar_style':'calendar_card','calendar_layout':{},'calendar_appearance':{},
+    'watermark_enabled':False, 'watermark_text':'桌面水印', 'watermark_color':'#ffffff',
+    'watermark_size':32, 'watermark_angle':-25, 'watermark_density':5, 'watermark_opacity':24,
+    'watermark_mode':'single', 'watermark_position':'center', 'watermark_layer':'bottom',
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
     'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_appearance_source': 'custom', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
     'spectrum_locked': False, 'spectrum_layout': {}, 'spectrum_manual_size': False,
@@ -89,6 +98,13 @@ def normalize(cfg):
     for key, value in DEFAULTS.items():
         result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
     if type(result['taskbar_text_auto']) is not bool:result['taskbar_text_auto'] = False
+    text = result['watermark_text']
+    result['watermark_text'] = ' '.join(text.splitlines()).strip()[:WATERMARK_TEXT_LIMIT] if isinstance(text,str) else DEFAULTS['watermark_text']
+    color = result['watermark_color']
+    result['watermark_color'] = color.lower() if isinstance(color,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',color) else DEFAULTS['watermark_color']
+    for key, (lower, upper) in WATERMARK_RANGES.items():
+        value = result[key]
+        result[key] = max(lower, min(upper,value)) if type(value) is int else DEFAULTS[key]
     if result['dock_icon_shape'] not in tuple(value for _, value in DOCK_ICON_SHAPES):
         result['dock_icon_shape'] = DEFAULTS['dock_icon_shape']
     from layout_profiles import normalize_profiles
@@ -117,6 +133,9 @@ def normalize(cfg):
         if result[key] not in ('app', 'custom'):
             result[key] = DEFAULTS[key]
     for key, allowed in [('panel_material', tuple(value for _,value in MATERIALS)),
+                         ('watermark_mode',tuple(value for _,value in WATERMARK_MODES)),
+                         ('watermark_position',tuple(value for _,value in WATERMARK_POSITIONS)),
+                         ('watermark_layer',tuple(value for _,value in WATERMARK_LAYERS)),
                          ('taskbar_text_mode', ('system','light','dark')),
                          ('dock_material', tuple(value for _,value in MATERIALS)),
                          ('panel_collapse_style', ('bar', 'capsule', 'ball')),
@@ -154,8 +173,9 @@ def normalize(cfg):
         value=result.get(key);result[key]=max(low,min(high,value)) if type(value) is int else default
     size=result.get('settings_manual_size')
     result['settings_manual_size']=list(size) if isinstance(size,list) and len(size)==2 and all(type(v) is int and 200<=v<=10000 for v in size) else []
-    from clock_appearance import STYLES
+    from clock_appearance import STYLES,CALENDAR_STYLES
     if result['clock_style'] not in {value for _,value in STYLES}: result['clock_style']='digital'
+    if result['calendar_style'] not in dict(CALENDAR_STYLES).values():result['calendar_style']='calendar_card'
     from clock_appearance import normalize as normalize_clock
     result['clock_appearance']=normalize_clock(result.get('clock_appearance'),result)
     calendar_options=result.get('calendar_appearance')

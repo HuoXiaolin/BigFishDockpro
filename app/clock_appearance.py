@@ -11,6 +11,7 @@ DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_s
                 show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={},progress=None)
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
+CALENDAR_STYLES=(('月历','calendar_card'),('农历节气','almanac'))
 PRESETS=[(name,dict(values,design=preset_design(key),accent_color='',text_color='#ffffff' if values['material']=='clear' or values['theme']=='dark' else THEME_INKS.get(key,'#19384e'),text_effect='clear')) for key,(name,values) in zip(PRESET_IDS,PANEL_PRESETS)]
 DEFAULT_STYLE = dict(DEFAULTS, **PRESETS[PRESET_IDS.index(DEFAULT_PRESET_ID)][1])
 

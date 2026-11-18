@@ -2,9 +2,7 @@
 #include <limits>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 
-// Keep the native controls and their commands. Only their layout slots change.
-// In particular, moving a button's pixels with RenderTransform does not resize
-// its parent's slot, and an oversized PowerOptionsView can consume the footer.
+// Store the local values of app-list and search layout properties for teardown.
 struct BF_LocalLayout {
     winrt::weak_ref<FrameworkElement> element;
     std::vector<std::pair<DependencyProperty,wf::IInspectable>> values;
@@ -52,18 +50,6 @@ static FrameworkElement BF_DirectLayoutChild(const Controls::Grid& parent,Framew
     return nullptr;
 }
 
-static void BF_SetGridSlot(BF_LocalLayout& state,const FrameworkElement& element,int column) {
-    state.set(element,Controls::Grid::ColumnProperty(),winrt::box_value(column));
-    state.set(element,Controls::Grid::RowProperty(),winrt::box_value(0));
-    state.set(element,Controls::Grid::ColumnSpanProperty(),winrt::box_value(1));
-    state.set(element,Controls::Grid::RowSpanProperty(),winrt::box_value(1));
-    state.set(element,FrameworkElement::MarginProperty(),winrt::box_value(Thickness{}));
-    state.set(element,UIElement::RenderTransformProperty(),Media::CompositeTransform());
-    state.set(element,FrameworkElement::MinWidthProperty(),winrt::box_value(0.0));
-    state.set(element,FrameworkElement::WidthProperty(),winrt::box_value(std::numeric_limits<double>::quiet_NaN()));
-    state.set(element,FrameworkElement::HorizontalAlignmentProperty(),winrt::box_value(HorizontalAlignment::Stretch));
-}
-
 struct BF_StartColumns {
     struct ItemInsets {
         winrt::weak_ref<Controls::Panel> panel;
@@ -90,6 +76,29 @@ struct BF_StartColumns {
 };
 static thread_local std::vector<std::shared_ptr<BF_StartColumns>> bf_startColumns;
 static thread_local unsigned bf_startLayoutGeneration=0;
+
+static bool BF_IsStartMenuFlyout(const DependencyObject& node, int depth=4) {
+    if (!node) return false;
+    if (node.try_as<Controls::MenuFlyoutPresenter>() || node.try_as<Controls::FlyoutPresenter>()) return true;
+    if (!depth || node.try_as<Controls::ToolTip>()) return false;
+    const auto count=Media::VisualTreeHelper::GetChildrenCount(node);
+    for (int i=0;i<count;++i) {
+        if (BF_IsStartMenuFlyout(Media::VisualTreeHelper::GetChild(node,i),depth-1)) return true;
+    }
+    return false;
+}
+
+// Some command menus wrap the presenter in a layout root. Hover updates
+// inside either kind of popup must leave the underlying page alone.
+static bool BF_FooterMenuActive(const XamlRoot& root);
+static bool BF_StartMenuFlyoutOpen(const FrameworkElement& element) {
+    auto root=element.XamlRoot();
+    if (root && BF_FooterMenuActive(root)) return true;
+    if (root) for (const auto& popup:Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(root)) {
+        if (popup.IsOpen() && BF_IsStartMenuFlyout(popup.Child())) return true;
+    }
+    return false;
+}
 
 static void BF_SuspendStartColumns() {
     ++bf_startLayoutGeneration;
@@ -588,7 +597,9 @@ static bool BF_ArrangeStartColumns(const Controls::Grid& root) {
     // and let LayoutUpdated handle the later arrival of either native column.
     auto state=std::make_shared<BF_StartColumns>();state->root=winrt::make_weak(root);
     state->layout=root.LayoutUpdated(winrt::auto_revoke,[weak=std::weak_ptr(state)](auto&&,auto&&) {
-        if (auto live=weak.lock()) try {BF_UpdateStartColumns(live);}
+        if (auto live=weak.lock()) try {
+            if (auto root=live->root.get();root && !BF_StartMenuFlyoutOpen(root)) BF_UpdateStartColumns(live);
+        }
         catch(const winrt::hresult_error& error){Wh_Log(L"Error %08X: Start column layout",error.code());}
     });
     bf_startColumns.push_back(state);

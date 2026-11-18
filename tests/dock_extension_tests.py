@@ -75,6 +75,19 @@ def run(api,runtime,root,output,checks):
         assert dock.items[0]['_reflected'].toImage()==combined
         assert dock.extras.clock.isActive() and 0<dock.extras.clock.remainingTime()<=60000
         rectangles=dock.extras.rects();assert {'clock','quick','add'}==set(rectangles)
+        # Inspect both text draws and the colors supplied by the composed clock surface.
+        probe = MagicMock()
+        inks = []
+        probe.drawText.side_effect = lambda *args: inks.append(probe.setPen.call_args.args[0].name())
+        with patch.object(dock, 'preview', False), patch.object(dock, 'update') as repaint, \
+                patch('dock_extras.clock_surface_color', side_effect=[(49,18,80),(49,18,80),None,(250,250,250)]) as sample:
+            for _ in range(4):
+                dock.extras.refresh_clock_ink()
+                dock.extras.paint(probe, dock.theme_colors())
+            assert inks == ['#ffffff']*6 + ['#000000']*2
+            assert repaint.call_count == 2 and sample.call_count == 4
+            assert sample.call_args.args[1] == rectangles['clock']
+        checks.append('Dock time and date share the measured black/white foreground; stable and unavailable samples avoid repaint')
         for i,first in enumerate(rectangles.values()):
             for second in list(rectangles.values())[i+1:]:assert not first.intersects(second)
         apps_right=max(r[0]+r[1]/2 for r in dock.rects);assert apps_right<=min(rect.left() for rect in rectangles.values())
@@ -171,7 +184,7 @@ def run(api,runtime,root,output,checks):
             QApplication.sendEvent(widget,event)
         wheel_on(popup.tiles['flash'],-120);assert popup.pages.currentIndex()==1
         popup.grab().save(str(output/'dock-quick-components.png'))
-        for key,field in [('notes','notes_enabled'),('clock','clock_enabled'),('calendar','calendar_enabled'),('blur','glass'),('panel_auto_hide','panel_auto_hide'),('corners','screen_corners')]:
+        for key,field in [('notes','notes_enabled'),('clock','clock_enabled'),('calendar','calendar_enabled'),('watermark','watermark_enabled'),('blur','glass'),('panel_auto_hide','panel_auto_hide'),('corners','screen_corners')]:
             original_value=cfg[field]
             with patch.object(dock,'start_backdrop'):popup.tiles[key].click()
             assert cfg[field]!=original_value and api.load_config()[field]==cfg[field]

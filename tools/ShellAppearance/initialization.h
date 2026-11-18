@@ -49,6 +49,9 @@ static void CALLBACK BF_InitializeWhenReady(HWND,UINT,UINT_PTR timer,DWORD) {
 }
 
 static void BF_QueueShellInitialization() {
+#ifdef BIGFISH_START_ENGINE
+    if (bf_init_enabled) BF_RefreshStartInk();
+#endif
     if (!bf_init_enabled || bf_init_timer || BF_XamlInitialized()) return;
     bf_thread_init_generation = bf_init_generation;
     bf_thread_init_attempts = 0;

@@ -112,16 +112,30 @@ try {
     } elseif ($taskMode -in @('Quick','Auto') -and -not $taskFocused) {
         Invoke-TaskCheck 'dist/BigFishDockpro/BigFishDockpro.exe' 'artifacts/quick-runtime-test' 'directory-runtime' @('--runtime-check')
     }
+    if ($SingleFile -and -not $taskSkip) {
+        $runtimeTimer = [Diagnostics.Stopwatch]::StartNew()
+        & $taskPython tools/portable_dotnet.py verify
+        if ($LASTEXITCODE -ne 0) { throw 'Offline .NET portable startup or bridge validation failed' }
+        $runtimeTimer.Stop()
+        $taskTestSeconds += $runtimeTimer.Elapsed.TotalSeconds
+        $runtimeProof = 'artifacts/dotnet-portable-test/result.json'
+        $taskValidations.Add([ordered]@{kind='offline-dotnet-portable';path=$runtimeProof;sha256=(Get-FileHash -LiteralPath $runtimeProof -Algorithm SHA256).Hash.ToLowerInvariant();seconds=[math]::Round($runtimeTimer.Elapsed.TotalSeconds,2)})
+    }
     $taskHash = Get-FileHash -LiteralPath release/BigFishDockpro-Setup-x64.exe -Algorithm SHA256
     ('{0}  BigFishDockpro-Setup-x64.exe' -f $taskHash.Hash.ToLowerInvariant()) | Set-Content release/SHA256SUMS.txt -Encoding utf8
     $taskSingleHash = $null
-    if (Test-Path -LiteralPath release/BigFishDockpro.exe) {
+    $runtimeHash = ''
+    if ($SingleFile) {
         $taskSingleHash = Get-FileHash -LiteralPath release/BigFishDockpro.exe -Algorithm SHA256
         ('{0}  BigFishDockpro.exe' -f $taskSingleHash.Hash.ToLowerInvariant()) | Add-Content release/SHA256SUMS.txt -Encoding utf8
+        $runtimeExe = 'BigFishDockpro-Portable-dotNET-x64.exe'
+        $runtimeHash = (Get-FileHash -LiteralPath (Join-Path release $runtimeExe) -Algorithm SHA256).Hash.ToLowerInvariant()
+        ('{0}  {1}' -f $runtimeHash,$runtimeExe) | Add-Content release/SHA256SUMS.txt -Encoding utf8
     }
     $taskBuildTimer.Stop()
     $taskScope = switch ($taskMode) {'Auto' {if($taskFocused){'auto-shell'}else{'auto-runtime'}} 'Quick' {'quick-runtime'} 'Runtime' {'current-ui-runtime'} 'Full' {'full'} default {'none'}}
     $taskReceipt=[ordered]@{tests_skipped=$taskSkip;test_scope=$taskScope;change_plan=$taskPlan;validation_results=@($taskValidations.ToArray());test_seconds=[math]::Round($taskTestSeconds,2);build_seconds=[math]::Round($taskBuildTimer.Elapsed.TotalSeconds,2);installer_sha256=$taskHash.Hash.ToLowerInvariant();singlefile_sha256=$(if($taskSingleHash){$taskSingleHash.Hash.ToLowerInvariant()}else{''});version=$taskVersion}
+    $taskReceipt['dotnet_portable_sha256'] = $runtimeHash
     $taskReceipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath artifacts/build-validation.json -Encoding utf8
     if ($Deliver) {
         $taskDeliveryArgs=@('tools/release_tools.py','deliver','--source',$SourceDirectory,'--release',$ReleaseDirectory)

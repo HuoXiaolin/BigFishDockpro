@@ -11,6 +11,7 @@ from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,AI
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_metric_options
+from resource_options import RUNNER_ANIMALS, RUNNER_SPEEDS
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -77,7 +78,8 @@ class ResourceOptions(QDialog):
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery'},
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
+           'resource_runner_enabled','resource_runner_animal','resource_runner_speed'},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
@@ -85,7 +87,7 @@ class ResourceOptions(QDialog):
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
-        {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_reminder_sound'}]
+        {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound'}]
 
     def ensure_page(self,index):
         if index in self.loaded:return
@@ -114,6 +116,7 @@ class ResourceOptions(QDialog):
                 self.custom_box.setVisible(self.fields['resource_background'].currentData()=='custom')
             elif index == 2:
                 self.fields['resource_clock_format'].setEnabled(self.fields['resource_clock'].isChecked())
+                self.sync_runner_fields()
             elif index == 6:
                 self.fields['resource_face_switch_minutes'].setEnabled(self.fields['resource_face_auto_switch'].isChecked())
             elif index == 7:
@@ -324,6 +327,16 @@ class ResourceOptions(QDialog):
             clock_format=combo(form,'resource_clock_format','显示格式',[(label,key) for key,(label,_) in COMPACT_CLOCK_FORMATS.items()],
                                cfg['resource_clock_format'],self.fields)
             clock_format.setEnabled(show_clock.isChecked());show_clock.toggled.connect(clock_format.setEnabled)
+            running=section(layout,'跑步小动物')
+            show_runner = check('在收起胶囊右侧显示小动物', cfg['resource_runner_enabled'])
+            self.fields['resource_runner_enabled'] = show_runner
+            running.addWidget(show_runner)
+            form=QFormLayout();running.addLayout(form)
+            for key,title,choices in (('resource_runner_animal','动物形象',RUNNER_ANIMALS),
+                                      ('resource_runner_speed','奔跑速度',RUNNER_SPEEDS)):
+                combo(form,key,title,[(label,value) for value,label in choices.items()],cfg[key],self.fields)
+            show_runner.toggled.connect(self.sync_runner_fields)
+            self.sync_runner_fields()
             compact=section(layout,'收起时自动提醒')
             key='resource_alert_battery'
             self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
@@ -341,8 +354,11 @@ class ResourceOptions(QDialog):
                 field=check(AI_PROVIDER_NAMES.get(key,key),key in cfg['resource_ai_providers'])
                 self.ai_fields[key]=field;provider_grid.addWidget(field,i//3,i%3)
             info=QLabel('最多选择 7 个工具。读取本机已登录账号和用量记录；未连接时显示实际状态。');info.setWordWrap(True);deck.addWidget(info)
-            from deck_runtime import installed_runtime,RUNTIME_URL
-            runtime_note=QLabel('已检测到 .NET 10 桌面运行库' if installed_runtime() else 'AI / 音乐需要安装 .NET 10 桌面运行库（x64）');runtime_note.setWordWrap(True);deck.addWidget(runtime_note)
+            from deck_runtime import installed_runtime,private_runtime,RUNTIME_URL
+            bundled=private_runtime()
+            runtime_label=('正在使用便携包自带的 .NET 10 桌面运行库' if bundled else
+                           '已检测到 .NET 10 桌面运行库' if installed_runtime() else 'AI / 音乐需要安装 .NET 10 桌面运行库（x64）')
+            runtime_note=QLabel(runtime_label);runtime_note.setWordWrap(True);deck.addWidget(runtime_note)
             from PyQt5.QtGui import QDesktopServices
             from PyQt5.QtCore import QUrl
             deck.addWidget(button('打开运行库下载页',lambda:QDesktopServices.openUrl(QUrl(RUNTIME_URL))))
@@ -562,6 +578,8 @@ class ResourceOptions(QDialog):
             agenda.addWidget(self.fields['resource_agenda'])
             key='resource_alert_agenda'
             self.fields[key]=check('收起时显示日程提醒',cfg[key]);agenda.addWidget(self.fields[key])
+            key='resource_alert_almanac'
+            self.fields[key]=check('收起时显示农历节气与节日提醒',cfg[key]);agenda.addWidget(self.fields[key])
             agenda.addWidget(CalendarAccounts(self.service))
             agenda.addWidget(button('日程账号接入…',self.agenda_connections))
             timers=section(layout,'专注与喝水')
@@ -656,6 +674,11 @@ class ResourceOptions(QDialog):
         row = next((row for row in bridge.providers if row['id'] == provider), {}) if bridge else {}
         self.fill_ai_tray_metrics(row, '')
         self.sync_ai_tray_fields()
+
+    def sync_runner_fields(self):
+        enabled=self.fields['resource_runner_enabled'].isChecked()
+        for key in ('resource_runner_animal','resource_runner_speed'):
+            self.fields[key].setEnabled(enabled)
 
     def sync_ai_tray_fields(self):
         tray_on = self.fields['resource_ai_tray'].isChecked()

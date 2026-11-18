@@ -57,6 +57,8 @@ def run(output):
         run_usage_stats(api,runtime,root.name,output,checks)
         from shell_appearance_tests import run as run_shell_appearance
         run_shell_appearance(api,runtime,root.name,app,output,checks)
+        from watermark_tests import run as check_watermark
+        check_watermark(api,runtime,app,checks)
         from material_tests import check_zero_crystal
         check_zero_crystal(api,runtime,output,checks)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
@@ -78,8 +80,11 @@ def run(output):
         assert 0<clock.tick.remainingTime()<=60000
         clock.grab().save(str(output/'desktop-clock-digital.png'))
         clock.set_style('analog');app.processEvents();clock.grab().save(str(output/'desktop-clock-analog.png'))
+        # Moving the first visible clock is a user action after Windows settles the work area.
+        wait_for(app, lambda: not (runtime.layout.pending or runtime.layout.applying))
         clock.move(clock.x()-12,clock.y()+10);clock.resize(260,170);clock.save_geometry()
-        assert cfg['clock_layout'] and api.load_config()['clock_style']=='analog'
+        assert cfg['clock_layout'], 'Clock geometry was not persisted after the desktop settled'
+        assert api.load_config()['clock_style']=='analog', 'Saved analog clock style was not restored'
         after=memory()
         if before and after:(output/'clock-memory-sample.json').write_text(json.dumps({'scope':'one isolated UI process, immediate before and after opening one clock; preview mode, not steady state','before':before,'after':after,'delta':{key:after[key]-before[key] for key in before}},indent=2),encoding='utf-8')
         from desktop_clock import ClockOptions,format_clock_time

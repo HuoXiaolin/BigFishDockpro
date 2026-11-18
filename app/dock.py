@@ -2275,6 +2275,7 @@ class Dock(QWidget):
         self._cancel_folder_hover()
         self.blur_timer.stop()
         self.extras.clock.stop()
+        self.extras.clock_sample.stop()
         self.backdrop=None
         for item in self.items:
             for key in ('_scaled','_reflected','_reflection_key','_reflection_ratio'):item.pop(key,None)

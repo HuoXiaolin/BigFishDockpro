@@ -117,6 +117,10 @@ class StartupProbe:
                       animation_check,
                       'legacy lite settings are ignored; normal idle cleanup remains scheduled across opening and closing settings'],
                       'elapsed_seconds':round(elapsed,2)}
+            if os.environ.get('FISHDOCK_VERIFY_PRIVATE_DOTNET') == '1':
+                from deck_bridge_qt_tests import verify_bundled_runtime
+                result['private_runtime'] = verify_bundled_runtime(self.output)
+                result['checks'].append('standalone EXE launched in an otherwise empty folder; AI/media used both frameworks embedded in that executable')
             fixture=os.environ.get('FISHDOCK_EXIT_LAUNCH_FIXTURE')
             if fixture:
                 from external_launch import launch

@@ -31,7 +31,7 @@ class DesktopClock(QWidget):
         self.reposition(); self.loading = False; self.apply_lock()
         if self.kind=='clock':
             self.flipped=self.dock.cfg.get('clock_flipped',False);self.flip_progress=None
-            self.flip_button=button('',self.flip);self.flip_button.setParent(self);self.flip_button.setFixedSize(12,12);self.flip_button.setIconSize(QSize(12,12));self.flip_button.setToolTip('点击翻面：时钟 / 月历');self.flip_button.show()
+            self.flip_button=button('',self.flip);self.flip_button.setParent(self);self.flip_button.setFixedSize(12,12);self.flip_button.setIconSize(QSize(12,12));self.flip_button.setToolTip('时钟与农历卡片翻面');self.flip_button.setAccessibleName('时钟与农历卡片翻面');self.flip_button.show()
             self.flip_button.setStyleSheet('QPushButton {background:transparent;border:0;padding:0;min-width:0;min-height:0;max-width:12px;max-height:12px;} QPushButton:hover {background:transparent;}')
             self.flip_animation=QVariantAnimation(self);self.flip_animation.setDuration(240);self.flip_animation.setStartValue(0.0);self.flip_animation.setEndValue(1.0);self.flip_animation.setEasingCurve(QEasingCurve.InOutCubic)
             self.flip_animation.valueChanged.connect(self.advance_flip);self.flip_animation.finished.connect(self.finish_flip);self.position_flip()
@@ -116,6 +116,9 @@ class DesktopClock(QWidget):
         if not self.isVisible() or self.closed: return
         self.update()
         now = datetime.datetime.now()
+        if self.kind=='clock' and self.flipped:
+            from calendar_almanac import until_rotation
+            self.tick.start(until_rotation(now));return
         seconds=self.kind=='clock' and self.option('style')=='digital' and not getattr(self,'flipped',False)
         interval=1000 if seconds else 60000-now.second*1000
         self.tick.start(max(30,interval-now.microsecond//1000))
@@ -249,7 +252,16 @@ class DesktopClock(QWidget):
         menu=AlignedMenu(self)
         menu.addAction('时钟设置…').triggered.connect(self.open_settings)
         menu.addAction('时光进度与倒计时…').triggered.connect(self.open_progress)
-        menu.addAction('翻到时钟' if self.flipped else '翻到月历').triggered.connect(self.flip)
+        menu.addAction('翻到时钟' if self.flipped else '翻到农历卡片').triggered.connect(self.flip)
+        if self.flipped:
+            from calendar_almanac import almanac
+            model=almanac(datetime.date.today())
+            if model and model.festival and model.term_today:
+                prefer=getattr(self,'_term_for_day',None)==model.day
+                def switch_art():
+                    self._term_for_day=None if prefer else model.day
+                    self.update()
+                menu.addAction('查看'+(model.festival if prefer else model.term)+'彩绘').triggered.connect(switch_art)
         styles=menu.addMenu('时钟样式')
         for title,style in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.option('style')==style)
@@ -318,7 +330,8 @@ class DesktopClock(QWidget):
         if getattr(self,'flip_progress',None) is not None:
             face=self._flip_to if self.flip_progress>=.5 else self._flip_from
             painter.translate(self.width()/2,0);painter.scale(max(.015,abs(math.cos(math.pi*self.flip_progress))),1);painter.translate(-self.width()/2,0)
-        self.paint_face(painter,'calendar_card' if face else self.option('style'),_header_controls=self.kind=='clock')
+        self.paint_face(painter,'almanac' if face else self.option('style'),_header_controls=self.kind=='clock',
+                        _almanac_controls='clock',_almanac_prefer_term=getattr(self,'_term_for_day',None)==datetime.date.today())
 
     def paint_resize_targets(self,painter):
         if self.can_drag():paint_edge_targets(painter,self.rect())
@@ -371,6 +384,9 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     options=dict(options,**normalize_appearance(options))
     if not options.get('_host_palette'):
         options=effective_appearance(options,dock.cfg)
+    if style=='almanac':
+        from calendar_almanac_face import draw_almanac
+        return draw_almanac(painter,rect,dock,options)
     painter.save();painter.setRenderHint(QPainter.Antialiasing);painter.setRenderHint(QPainter.TextAntialiasing)
     w,h=rect.width(),rect.height();painter.translate(rect.left(),rect.top());rect=QRectF(0,0,w,h)
     material=options['material'];host=options.get('_host_palette')

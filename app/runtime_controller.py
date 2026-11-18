@@ -71,6 +71,8 @@ class RuntimeController:
         self.clock=DesktopClock(self)
         from desktop_calendar import DesktopCalendar
         self.calendar=DesktopCalendar(self)
+        from desktop_watermark import DesktopWatermarks
+        self.watermarks=DesktopWatermarks(self)
         from flash_capsule import FlashCapsule
         self.flash=FlashCapsule(self)
         self.spectrum = None
@@ -187,6 +189,7 @@ class RuntimeController:
         if changed:
             self.dock.sync_background_polling(refresh=not active)
             self.panels.set_blocked(active);self.notes.sync();self.clock.sync();self.calendar.sync();self.flash.sync()
+            self.watermarks.sync()
             self.sync_spectrum()
             self.sync_daily_picture()
             self.sync_custom_cards()
@@ -206,6 +209,8 @@ class RuntimeController:
                  capsule if cfg['resource_layer']=='top' and capsule and capsule.taskbar_slot() is None else None,
                  self.flash.edge,self.flash.panel,self.flash.toast]
         windows.extend(note for note in self.notes.windows.values() if note.row()['pinned'])
+        if cfg['watermark_layer']=='top':
+            windows.extend(self.watermarks.windows.values())
         visible=[w for w in windows if w is not None and w.isWindow() and w.isVisible()]
         if visible:
             from window_layers import repair_top
@@ -230,6 +235,11 @@ class RuntimeController:
                 controller=getattr(window,'_interaction_motion',None)
                 if controller:controller.stop()
         capsule_style=DOCK_GLASS | {'panel_appearance_source','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
+        if changed is None or any(key.startswith('watermark_') for key in changed):
+            self.watermarks.sync()
+            quick = self.dock.extras.popup
+            if quick and quick.isVisible():
+                quick.refresh()
         if changed is None or any(key.startswith('spectrum_') for key in changed) or changed & {'theme','theme_color','card_scale'}:
             self.sync_spectrum()
         if placement_changed or any(key.startswith('daily_picture_') for key in changed) or changed & (capsule_style|{'card_scale'}):
@@ -347,6 +357,7 @@ class RuntimeController:
         from wallpaper_source import invalidate_source
         invalidate_source()
         self.refresh_wallpaper_targets(*self.wallpaper_targets())
+        self.dock.extras.sync_clock()
 
     def check_wallpaper(self):
         if self.closed or self.session_ending or self.dock.preview:return
@@ -449,6 +460,7 @@ class RuntimeController:
         if self.closed: return
         self.click_policy.close()
         self.closed = True
+        self.watermarks.sync()
         self.shell_appearance.close()
         self.wallpaper_timer.stop()
         from probe_lifecycle import set_ending

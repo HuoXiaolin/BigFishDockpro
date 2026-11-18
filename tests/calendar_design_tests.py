@@ -19,6 +19,9 @@ def run(api,runtime,root,output,checks):
         runtime.apply_settings();assert not calendar.isVisible()
         calendar.set_enabled(True);app.processEvents();assert calendar.isVisible() and calendar.tick.isActive()
         assert calendar.tick.interval()>60000
+        from calendar_almanac_tests import dates_and_assets,render,compact_cases
+        dates_and_assets();compact_cases(runtime.resources)
+        render(runtime.dock,cfg['calendar_appearance'],output)
         before_clock=copy.deepcopy(cfg['clock_layout']);calendar.move(calendar.x()-120,calendar.y()+20);calendar.resize(330,300);calendar.save_geometry()
         assert cfg['calendar_layout'] and cfg['clock_layout']==before_clock
         calendar.view_year,calendar.view_month=2027,1;calendar.shift_month(-1);assert (calendar.view_year,calendar.view_month)==(2026,12)
@@ -33,6 +36,14 @@ def run(api,runtime,root,output,checks):
         assert (calendar.x(),calendar.width(),calendar.height())==(original_geometry.x()-26,original_geometry.width()+26,original_geometry.height())
         before_appearance=copy.deepcopy(cfg['clock_appearance'])
         dialog=ClockOptions(calendar);dialog.show();app.processEvents();assert 'style' not in dialog.fields and 'hour_format' not in dialog.fields
+        choice=dialog.fields['calendar_style'];choice.setCurrentIndex(choice.findData('almanac'))
+        assert dialog.commit() and api.load_config()['calendar_style']=='almanac'
+        calendar.view_day=datetime.date(2026,3,19);calendar.follow_today=False
+        calendar.next.click();assert calendar.view_day==datetime.date(2026,3,20) and calendar.other_art.isVisible()
+        calendar.other_art.click();assert calendar.prefer_term
+        calendar.next.click();assert calendar.other_art.isHidden() and not calendar.prefer_term
+        calendar.go_today();assert calendar.follow_today
+        choice.setCurrentIndex(choice.findData('calendar_card'));assert dialog.commit()
         dialog.fields['color'].setText('#9bc9d2');assert dialog.commit() and cfg['clock_appearance']==before_appearance
         dialog.grab().save(str(Path(output)/'calendar-options.png'));dialog.reject();dialog.deleteLater();dialog=None
         before=copy.deepcopy(cfg)
@@ -58,7 +69,10 @@ def run(api,runtime,root,output,checks):
         cfg['card_design']='aurora';clock.set_enabled(True);clock.set_style('digital');clock.resize(300,190)
         clock.flip_button.click();wait_for(app,lambda:clock.flip_progress is None and clock.flipped)
         assert cfg['clock_flipped'] and clock.flip_animation.state()==clock.flip_animation.Stopped
-        clock.grab().save(str(Path(output)/'clock-flip-calendar.png'))
+        assert '翻到时钟' in [action.text() for action in clock.build_menu().actions()]
+        with patch('calendar_almanac_face.draw_almanac',wraps=__import__('calendar_almanac_face').draw_almanac) as draw:
+            clock.grab().save(str(Path(output)/'clock-flip-almanac.png'))
+            assert draw.called and clock.tick.interval()<=600001
         clock.flip_button.click();wait_for(app,lambda:clock.flip_progress is None and not clock.flipped)
         assert not cfg['clock_flipped']
         note_id=runtime.notes.new();note=runtime.notes.windows[note_id];note.editor.setPlainText(chr(10).join(['正文保持原样','☐ 检查今日安排','☑ 完成一个任务']));runtime.notes.flush()

@@ -53,6 +53,9 @@ def main(output):
                 data.update(probe_tint_percent=str(expected), probe_tint_alpha=str(alpha))
                 if kind == 'start':
                     data['probe_core_apps'] = '1' if material == 'crystal' and theme == 'dark' else '0'
+                    data['probe_footer_hit_test'] = '1' if (material, theme, opacity, text_mode) in (
+                        ('crystal', 'light', 72, 'auto'), ('liquid', 'light', 0, 'auto')) else '0'
+                    data['trace_menu_input'] = data['probe_footer_hit_test']
                     assert 'StartDocked.StartSizingFrame' in data.values()
                     assert 'Cortana.UI.Views.TaskbarSearchPage' in data.values()
                     # Recreate these private classes with real Grid layout in the fixture.

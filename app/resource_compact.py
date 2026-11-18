@@ -6,7 +6,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainter
 from resource_status import metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import amount_text, quota_color, remaining_percent, used_percent
-from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,component_location
+from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RUNNER_SLOT,component_location
 
 
 STATUS_STEP=23
@@ -102,7 +102,7 @@ def compact_badges(service):
     cfg=service.cfg
     active=service.reminders()
     badges=list(active)
-    seen={kind if kind in ('battery','water','agenda') else 'pomodoro' for kind,_ in active}
+    seen={kind if kind in ('battery','water','agenda','almanac') else 'pomodoro' for kind,_ in active}
     selected=cfg['resource_compact_metrics']
     routine={}
     model=service.pomodoro
@@ -128,6 +128,11 @@ def compact_badges(service):
         else:routine['agenda']=('agenda','暂无日程')
     order=dict.fromkeys([*cfg['resource_compact_order'],*COMPACT_ROUTINES])
     badges.extend(routine[key] for key in order if key in routine)
+    if cfg['resource_alert_almanac'] and 'almanac' not in seen:
+        from datetime import date
+        from calendar_almanac import almanac
+        day=almanac(date.today())
+        if day:badges.append(('almanac',day.badge()))
     return badges,len(active)
 
 
@@ -190,7 +195,9 @@ def packed(values,available,dense=False):
 
 
 def plan(window,limit=None):
-    key=(limit,window.width(),window.height(),window.offset)
+    from datetime import date
+    key=(limit,window.width(),window.height(),window.offset,window.service.cfg['resource_runner_enabled'],
+         date.today() if window.service.cfg['resource_alert_almanac'] else None)
     cached=getattr(window,'_compact_cache',None)
     if cached and cached[0]==key:return cached[1]
     result=_make_plan(window,limit);window._compact_cache=(key,result);return result
@@ -203,7 +210,7 @@ def badge_slots(window,items,capacity,limit,priority=False):
     for index,(kind,label) in enumerate(items):
         if capacity<25:break
         text_width=metrics.horizontalAdvance(label)
-        cap=int(limit*.20) if kind=='agenda' else 72
+        cap=int(limit*.20) if kind=='agenda' else 110 if kind=='almanac' else 72
         budget=capacity-3
         if priority:
             others=(len(items)-index-1)*25
@@ -238,7 +245,8 @@ def _make_plan(window,limit=None):
     gap=cell_gap(dense)
     face_gap=4 if cfg['resource_face'] else 0
     face=min(round((30 if dense else 40)*cfg['resource_face_scale']/100),max_width-48-face_gap) if cfg['resource_face'] else 0
-    capacity=max(0,max_width-16-face-face_gap)
+    runner_width=RUNNER_SLOT if cfg['resource_runner_enabled'] else 0
+    capacity=max(0,max_width-16-face-face_gap-runner_width)
     available=capacity
     active,capacity=badge_slots(window,badges[:active_count],capacity,max_width,priority=True)
     ordinary_floor=26 if values and not active else 0
@@ -270,12 +278,12 @@ def _make_plan(window,limit=None):
     pages=(pages*((count+len(pages)-1)//len(pages)))[:count]
     pinned=[g[window.offset%len(g)] for g in pinned_groups]
     prefix=max((sum(min(cell_width(r,dense),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
-    natural=16+face+face_gap+tail+used+(gap if used and prefix else 0)+min(prefix,room)
+    natural=16+face+face_gap+tail+runner_width+used+(gap if used and prefix else 0)+min(prefix,room)
     from math import ceil
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
                 pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,clock=clock,clock_width=clock_width,
                 face=face,face_gap=face_gap,core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),
-                active_badges=active,routine_badges=routine,status=status)
+                active_badges=active,routine_badges=routine,status=status,runner_width=runner_width)
 
 
 def natural_width(window,limit):
@@ -543,7 +551,7 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
     cfg=window.service.cfg;c=window.colors;bridge=window.service.deck;mid=window.height()/2
     pages=layout['pages'];window.compact_pages=len(pages)
     _,rows=pages[window.offset%len(pages)];window.compact_shown=[];window.compact_providers=[];window.compact_media=False
-    right=window.width()-8;left=8.;window.compact_bounds=[]
+    right=window.width()-8-layout['runner_width'];left=8.;window.compact_bounds=[]
     if layout['face']:
         left+=layout['face']+layout['face_gap']
     window.reminder_bounds=[];window.reminder_kinds=[];window.status_bounds={}

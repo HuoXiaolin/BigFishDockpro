@@ -33,14 +33,23 @@ def run(output,checks):
     window=SimpleNamespace(screen=lambda:screen)
     bar={'screen':screen.name(),'rect':QRect(-1280,680,1280,40),
          'map':(-1920,0,-1280,0,2/3,2/3)}
-    get_dc,release=Mock(return_value=123),Mock()
-    get_pixel=Mock(side_effect=[0xffffff]*7+[0,0xffffffff])
-    with patch('resource_taskbar.taskbars',return_value=[bar]),patch('taskbar_surface._bindings',return_value=(get_dc,release,get_pixel)):
+    user, gdi = Mock(), Mock()
+    user.GetDC.return_value = 123
+    user.MonitorFromPoint.return_value = 1
+    gdi.CreateCompatibleDC.return_value = 456
+    gdi.SelectClipRgn.return_value = 2
+    gdi.GetPixel.side_effect = [0xffffff]*7 + [0,0xffffffff]
+    with patch('resource_taskbar.taskbars',return_value=[bar]),patch('taskbar_surface._bindings',return_value=(user,gdi)):
         assert taskbar_color(window)==(255,255,255)
-        assert all(-1920<x<0 and 1020<y<1080 for _,x,y in (c.args for c in get_pixel.call_args_list))
-        release.assert_called_once_with(None,123)
-        get_pixel.side_effect=None;get_pixel.return_value=0xffffffff
+        assert all(-1920<point.x<0 and 1020<point.y<1080 for point,_ in (c.args for c in user.MonitorFromPoint.call_args_list))
+        assert gdi.BitBlt.call_count==1 and all(c.args[0]==456 for c in gdi.GetPixel.call_args_list)
+        gdi.DeleteDC.assert_called_once_with(456)
+        user.ReleaseDC.assert_called_once_with(None,123)
+        gdi.BitBlt.return_value=0
+        gdi.GetPixel.reset_mock(side_effect=True)
+        gdi.GetPixel.return_value=0xffffffff
         assert taskbar_color(window) is None
+        assert all(c.args[0]==123 for c in gdi.GetPixel.call_args_list)
     for original in (None,0,1):
         with tempfile.TemporaryDirectory(prefix='bfp-taskbar-theme-') as folder:
             path=Path(folder)/'restore.json';state={'system':original,'apps':1};events=[]

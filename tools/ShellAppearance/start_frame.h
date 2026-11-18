@@ -94,6 +94,7 @@ static void BF_PublishStartPanel() {
     auto& state = *bf_startFrame;
     auto panel = state.panel.get();
     if (!panel) return;
+    if (!state.preparing && BF_StartMenuFlyoutOpen(panel)) return;
     if (!state.window) state.window = BF_LayoutWindow();
     try {
         auto rect = BF_PanelScreenRect(panel, state.window);
