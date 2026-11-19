@@ -55,7 +55,7 @@ def field_catalog(api, cfg):
         'corner_radius': (0, '屏幕圆角半径（像素）', 'number', (0, 120)),
         'taskbar_mode': (TASKBAR, '任务栏效果', 'combo', MODES),
         'taskbar_text_mode': (TASKBAR, '任务栏文字与系统图标', 'combo', TEXT_MODES),
-        'taskbar_text_auto': (TASKBAR, '文字随背景自动切换黑白色', 'check', None),
+        'taskbar_text_auto': (TASKBAR, '文字随壁纸自动切换黑白色', 'check', None),
         'taskbar_color': (TASKBAR, '任务栏颜色', 'color', None),
         'taskbar_opacity': (TASKBAR, '任务栏不透明度（%）', 'number', (0, 100)),
         'taskbar_blur': (TASKBAR, '任务栏模糊强度', 'number', (0, 50)),

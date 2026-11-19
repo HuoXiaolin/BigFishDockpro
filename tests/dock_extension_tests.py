@@ -146,7 +146,7 @@ def run(api,runtime,root,output,checks):
         settings.set_draft_values=lambda changes:SettingsDialog.set_draft_values(settings,changes)
         tray.settings_dialog=settings
         for mode,auto_enabled,label in [('light',False,'浅色文字 · 白字'),('dark',False,'深色文字 · 黑字'),
-                                        ('dark',True,'随背景自动配色'),('system',False,'跟随系统')]:
+                                        ('dark',True,'随壁纸自动配色'),('system',False,'跟随系统')]:
             before={key:cfg[key] for key in ('taskbar_text_mode','taskbar_text_auto')}
             popup.tiles['taskbar_text'].click()
             saved=api.load_config()

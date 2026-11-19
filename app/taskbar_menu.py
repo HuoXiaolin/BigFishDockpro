@@ -36,7 +36,7 @@ def add_menu(menu,runtime):
             action.setChecked(cfg[key]==value and (key!='taskbar_text_mode' or not cfg.get('taskbar_text_auto', False)));group.addAction(action)
             action.triggered.connect(lambda _,key=key,value=value:save_changes(runtime.tray,runtime.api,
                 {key:value, **({'taskbar_text_auto': False} if key=='taskbar_text_mode' else {})}))
-    automatic=menu.addAction('文字随背景自动切换黑白色');automatic.setCheckable(True);automatic.setChecked(cfg.get('taskbar_text_auto', False))
+    automatic=menu.addAction('文字随壁纸自动切换黑白色');automatic.setCheckable(True);automatic.setChecked(cfg.get('taskbar_text_auto', False))
     automatic.triggered.connect(lambda enabled:save_changes(runtime.tray,runtime.api,{'taskbar_text_auto':enabled}))
     state=auto_hide()
     action=menu.addAction('自动隐藏 Windows 任务栏');action.setCheckable(True);action.setChecked(bool(state));action.setEnabled(state is not None)

@@ -434,7 +434,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         auto = self.fields['taskbar_text_auto']
         auto.toggled.connect(lambda enabled: self.fields['taskbar_text_mode'].setEnabled(not enabled))
         self.fields['taskbar_text_mode'].setEnabled(not auto.isChecked())
-        self.taskbar_text_status=label('自动配色读取任务栏实际底色，透明任务栏可随背后窗口切换黑白字。系统默认任务栏随 Windows；退出 Dock 恢复原配色。','muted')
+        self.taskbar_text_status=label('自动配色按任务栏所在位置的壁纸选择黑字或白字。多屏共用 Windows 任务栏字色，优先取 Dock 所在屏幕。系统默认任务栏跟随 Windows。','muted')
         form.addRow(self.taskbar_text_status)
         self.add_field(form, 'taskbar_color')
         self.add_field(form, 'taskbar_opacity')

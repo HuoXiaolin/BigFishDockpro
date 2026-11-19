@@ -44,24 +44,38 @@ def _sample(key, rect):
 def wallpaper_color(window, local_rect=None):
     """Read wallpaper files only; never capture foreground applications."""
     from PyQt5.QtCore import QPoint, QRectF
-    from wallpaper_source import wallpaper_key
+    from PyQt5.QtGui import QGuiApplication
+    from wallpaper_source import wallpaper_key, image_file
     screen = window.screen()
     if screen is None:return None
-    key = wallpaper_key(window, screen)
-    monitor = QRectF(*key[4]); scale = monitor.width()/max(1, screen.geometry().width())
-    if local_rect is not None:
-        logical=screen.geometry()
-        origin=window.mapToGlobal(QPoint(0,0))
-        sy=monitor.height()/max(1,logical.height())
-        region=QRectF(monitor.x()+(origin.x()+local_rect.x()-logical.x())*scale,
-                      monitor.y()+(origin.y()+local_rect.y()-logical.y())*sy,
-                      local_rect.width()*scale,local_rect.height()*sy)
-        return _sample(key,region.getRect())
-    from resource_taskbar import taskbars
-    bar = next((b['rect'] for b in taskbars() if b['screen'] == screen.name()), None)
-    if bar is not None:
+    if local_rect is None:
+        from resource_taskbar import taskbars
+        bars = taskbars(include_hidden=True)
+        if not bars:return None
+        bar = next((item for item in bars if item['screen'] == screen.name()), bars[0])
+        if bar['screen'] != screen.name():
+            screen = next((item for item in QGuiApplication.screens() if item.name() == bar['screen']), None)
+            if screen is None:return None
+        key = wallpaper_key(bar['hwnd'], screen)
+        path, stamp = key[:2]
+        if path and (stamp is None or image_file(path, stamp).isNull()):return None
         logical = screen.geometry()
-        region = QRectF(monitor.x()+(bar.x()-logical.x())*scale, monitor.y()+(bar.y()-logical.y())*scale, bar.width()*scale, bar.height()*scale)
+        rect = bar['rect']
+        # A fixed strip at this edge stays in place when Explorer auto-hides the bar.
+        if rect.width() >= rect.height():
+            height = min(32, logical.height())
+            top = logical.top() if rect.center().y() < logical.center().y() else logical.bottom() + 1 - height
+            area = QRectF(logical.left(), top, logical.width(), height)
+        else:
+            width = min(32, logical.width())
+            left = logical.left() if rect.center().x() < logical.center().x() else logical.right() + 1 - width
+            area = QRectF(left, logical.top(), width, logical.height())
     else:
-        region = QRectF(monitor.x(), monitor.bottom()-48*scale, monitor.width(), 48*scale)
+        key = wallpaper_key(window, screen)
+        logical = screen.geometry()
+        area = QRectF(local_rect).translated(window.mapToGlobal(QPoint(0,0)))
+    monitor = QRectF(*key[4])
+    sx, sy = monitor.width()/max(1, logical.width()), monitor.height()/max(1, logical.height())
+    region = QRectF(monitor.x() + (area.x() - logical.x())*sx, monitor.y() + (area.y() - logical.y())*sy,
+                    area.width()*sx, area.height()*sy)
     return _sample(key, region.getRect())

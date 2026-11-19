@@ -321,8 +321,8 @@ class DockQuickSettings(QDialog):
         from taskbar_appearance import MODES
         values['taskbar'] = dict((key, title) for title, key in MODES).get(cfg.get('taskbar_mode'), '跟随系统')
         values['taskbar_text'] = {'system':'跟随系统','light':'浅色文字 · 白字','dark':'深色文字 · 黑字'}.get(cfg.get('taskbar_text_mode'), '跟随系统')
-        if cfg.get('taskbar_text_auto'):values['taskbar_text'] = '随背景自动配色'
-        self.tiles['taskbar_text'].setToolTip('点击循环切换：跟随系统 → 白字 → 黑字 → 随背景自动配色。')
+        if cfg.get('taskbar_text_auto'):values['taskbar_text'] = '随壁纸自动配色'
+        self.tiles['taskbar_text'].setToolTip('点击切换跟随系统、白字、黑字或随壁纸自动配色。')
         shell = getattr(runtime, 'shell_appearance', None)
         shell_supported = shell is not None and shell.supported
         for key in SHELL_ACTIONS:

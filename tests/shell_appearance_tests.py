@@ -467,7 +467,7 @@ def run(api, runtime, root, app, output, checks):
                 assert runtime.dock.cfg['shell_start_enabled'] and 'shell_start_layout' not in runtime.dock.cfg
                 assert runtime.dock.cfg['shell_start_source']=='system' and runtime.dock.cfg['shell_notifications_enabled']
                 assert runtime.dock.cfg['shell_notifications_toast'] is False
-                action(taskbar,'文字随背景自动切换黑白色').trigger()
+                action(taskbar,'文字随壁纸自动切换黑白色').trigger()
                 assert runtime.dock.cfg['taskbar_text_auto']
                 action(action(taskbar,'任务栏文字').menu(),'深色文字（黑字）').trigger()
                 assert runtime.dock.cfg['taskbar_text_auto'] is False and runtime.dock.cfg['taskbar_text_mode']=='dark'

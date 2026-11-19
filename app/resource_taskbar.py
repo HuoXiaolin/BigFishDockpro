@@ -39,7 +39,7 @@ class MonitorInfo(C.Structure):
     _fields_=[('size',W.DWORD),('monitor',W.RECT),('work',W.RECT),('flags',W.DWORD),('device',W.WCHAR*32)]
 
 
-def taskbars():
+def taskbars(*, include_hidden=False):
     user=C.windll.user32
     user.FindWindowW.argtypes=[W.LPCWSTR,W.LPCWSTR];user.FindWindowW.restype=W.HWND
     user.FindWindowExW.argtypes=[W.HWND,W.HWND,W.LPCWSTR,W.LPCWSTR];user.FindWindowExW.restype=W.HWND
@@ -54,15 +54,18 @@ def taskbars():
         handles.append(previous)
     result=[]
     for hwnd in handles:
-        if not hwnd or not user.IsWindowVisible(hwnd):continue
+        if not hwnd or (not include_hidden and not user.IsWindowVisible(hwnd)):continue
         info=MonitorInfo();info.size=C.sizeof(info);native=W.RECT()
         if not user.GetMonitorInfoW(user.MonitorFromWindow(hwnd,2),C.byref(info)) or not user.GetWindowRect(hwnd,C.byref(native)):continue
         screen=next((s for s in screens if s.name().casefold()==info.device.casefold()),None)
         if screen is None:continue
         base=screen.geometry();m=info.monitor
         mapping=(m.left,m.top,base.x(),base.y(),base.width()/max(1,m.right-m.left),base.height()/max(1,m.bottom-m.top))
-        rect=logical([native.left,native.top,native.right,native.bottom],mapping).intersected(base)
-        if min(rect.width(),rect.height())<14:continue
+        rect=logical([native.left,native.top,native.right,native.bottom],mapping)
+        if not include_hidden:
+            rect=rect.intersected(base)
+            if min(rect.width(),rect.height())<14:continue
+        if rect.isEmpty():continue
         result.append(dict(hwnd=int(hwnd),screen=screen.name(),rect=rect,map=mapping))
     return result
 

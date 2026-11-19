@@ -47,7 +47,8 @@ def desktop_wallpaper(window):
         method(pointer,11,ctypes.c_long,ctypes.POINTER(ctypes.c_int))(pointer,ctypes.byref(position));method(pointer,9,ctypes.c_long,ctypes.POINTER(wintypes.DWORD))(pointer,ctypes.byref(color))
         user=ctypes.windll.user32;user.MonitorFromWindow.argtypes=[wintypes.HWND,wintypes.DWORD];user.MonitorFromWindow.restype=wintypes.HANDLE
         class Info(ctypes.Structure):_fields_=[('size',wintypes.DWORD),('monitor',wintypes.RECT),('work',wintypes.RECT),('flags',wintypes.DWORD)]
-        info=Info();info.size=ctypes.sizeof(info);user.GetMonitorInfoW.argtypes=[wintypes.HANDLE,ctypes.POINTER(Info)];user.GetMonitorInfoW(user.MonitorFromWindow(int(window.winId()),2),ctypes.byref(info))
+        hwnd = window if isinstance(window, int) else int(window.winId())
+        info=Info();info.size=ctypes.sizeof(info);user.GetMonitorInfoW.argtypes=[wintypes.HANDLE,ctypes.POINTER(Info)];user.GetMonitorInfoW(user.MonitorFromWindow(hwnd,2),ctypes.byref(info))
         selected=None;bounds=QRect()
         for index in range(min(count.value,32)):
             name=ctypes.c_void_p();path=ctypes.c_void_p();rect=wintypes.RECT()

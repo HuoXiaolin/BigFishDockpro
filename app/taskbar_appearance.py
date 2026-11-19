@@ -227,25 +227,18 @@ class TaskbarAppearance:
         cfg = self.dock.cfg
         auto = cfg.get('taskbar_text_auto', False) and cfg.get('taskbar_mode', 'system') != 'system' and self.text.enabled
         timer = getattr(self, 'text_timer', None)
-        backdrop = None
-        surface = None
+        wallpaper = None
         if auto:
             try:
-                from taskbar_surface import taskbar_color
-                surface = taskbar_color(self.dock)
-            except (OSError, ValueError, AttributeError):
+                from background_contrast import wallpaper_color
+                wallpaper = wallpaper_color(self.dock)
+            except (OSError, ValueError, RuntimeError, AttributeError):
                 pass
-            if surface is None:
-                try:
-                    from background_contrast import wallpaper_color
-                    backdrop = wallpaper_color(self.dock)
-                except (OSError, ValueError, AttributeError):
-                    pass
         if timer is not None:
             if auto and not timer.isActive():timer.start()
             elif not auto:timer.stop()
         previous = self.text.selection
-        self.text.sync(background_mode(cfg, backdrop, surface=surface, previous=previous))
+        self.text.sync(background_mode(cfg, wallpaper, previous=previous))
         if previous != self.text.selection:
             runtime = getattr(getattr(self.dock, 'tray', None), 'runtime', None)
             resources = getattr(runtime, 'resources', None)

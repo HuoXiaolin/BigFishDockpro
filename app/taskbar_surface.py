@@ -6,23 +6,6 @@ from functools import lru_cache
 from statistics import median
 
 
-def native_point(mapping, x, y):
-    native_x, native_y, logical_x, logical_y, scale_x, scale_y = mapping
-    return (round(native_x + (x - logical_x) / scale_x),
-            round(native_y + (y - logical_y) / scale_y))
-
-
-def sample_points(bar):
-    rect = bar['rect']
-    across = (.12, .24, .36, .48, .59, .69, .79, .89, .96)
-    horizontal = rect.width() >= rect.height()
-    # Sample near the edge of the bar, away from the centered icons and clock.
-    for offset in across:
-        x = rect.x() + rect.width() * (offset if horizontal else .17)
-        y = rect.y() + rect.height() * (.17 if horizontal else offset)
-        yield native_point(bar['map'], x, y)
-
-
 @lru_cache(maxsize=1)
 def _bindings():
     user = ctypes.WinDLL('user32')
@@ -49,17 +32,6 @@ def _bindings():
     gdi.DeleteDC.argtypes = [wintypes.HDC]
     gdi.DeleteObject.argtypes = [wintypes.HGDIOBJ]
     return user, gdi
-
-
-def taskbar_color(window):
-    from resource_taskbar import taskbars
-    screen = window.screen()
-    if screen is None:
-        return None
-    bar = next((item for item in taskbars() if item['screen'] == screen.name()), None)
-    if bar is None:
-        return None
-    return composed_color(sample_points(bar))
 
 
 def _sample_screen_dc(gdi, dc, points):
