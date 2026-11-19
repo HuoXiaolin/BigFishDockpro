@@ -375,7 +375,7 @@ class ResourceCapsule(QObject):
                 if runner is None:
                     from resource_runner import RunningAnimal
                     runner = self.runners[target] = RunningAnimal(self, target)
-                runner.configure(self.cfg[prefix + 'animal'], self.cfg[prefix + 'speed'])
+                runner.configure(self.cfg[prefix + 'animal'], self.cfg[prefix + 'speed'], self.cfg[prefix + 'metric'])
             elif runner is not None:
                 self.runners.pop(target).close()
 
@@ -412,13 +412,12 @@ class ResourceCapsule(QObject):
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
         custom=getattr(self.runtime,'custom_cards',None)
         if custom:desktop.update(custom.needs())
-        if any(runner.speed == 'cpu' for runner in self.runners.values()):
-            desktop.add('cpu')
+        desktop.update(runner.metric for runner in self.runners.values())
         return desktop
 
     def active_keys(self):
         return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank','traffic','system_status',
-                               'battery','connection','volume'}
+                               'battery','connection','volume','disk_activity','network_utilization'}
 
     def strip_allowed(self):
         return not self.runtime.game_active or (
@@ -575,6 +574,8 @@ class ResourceCapsule(QObject):
         elif self.history is None:self.history=deque(maxlen=65)
         else:self.history=deque(({k:v for k,v in row.items() if k=='time' or k in keys} for row in self.history),maxlen=65)
         self.observed={k:v for k,v in self.observed.items() if k in self.latest}
+        for runner in self.runners.values():
+            runner.update_reading()
         if self.job and signature and not self.job.cancelled.is_set():self.job.reconfigure(signature)
         elif self.job:self.job.requestInterruption()
         else:self.start_job()
@@ -621,10 +622,9 @@ class ResourceCapsule(QObject):
             elif now-self.observed.get(key,float('-inf'))>max(4,2*interval+1):
                 self.latest.pop(key,None)
         if 'battery' in keys:self.check_battery_alert()
-        if 'cpu' in keys:
-            for runner in self.runners.values():
-                if runner.speed == 'cpu':
-                    runner.update_speed()
+        for runner in self.runners.values():
+            if runner.metric in keys:
+                runner.update_reading()
 
         while self.history and now-self.history[0]['time']>60:self.history.popleft()
         record={k:data[k] for k in ('cpu','memory','network','gpu') if k in keys and data.get(k) is not None}

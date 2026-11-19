@@ -18,6 +18,9 @@ class Productivity(QObject):
         if refresh and changed&{'display_layout','desktop_panels','merge_groups','merged_geometry','clock_layout','calendar_layout','sticky_notes','position','custom_bottom','bottom_margin','icon_size','merged_collapsed','merged_active','merged_panels'}:
             runtime.layout.apply()
             runtime.panels.restore_layout_state()
+        elif refresh and 'resource_card_layouts' in changed:
+            for card in runtime.resources.desktop_cards.values():
+                card.reposition()
         sync_main_fields(runtime.tray,{k:runtime.dock.cfg[k] for k in changed if k in runtime.dock.cfg})
 
     def commit(self,candidate,title,history=True,refresh=True):

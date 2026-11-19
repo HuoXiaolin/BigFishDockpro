@@ -35,6 +35,28 @@ def run(api,runtime,main,app,output,checks):
     unsafe=copy.deepcopy(profile);unsafe['layout']['values'].update(theme='injected',items=['injected'],notes_trash=['injected'])
     assert apply(changed,unsafe)['theme']=='dark' and 'items' not in apply(changed,unsafe)
     assert apply(changed,profile)==restored and original['desktop_panels'][0].get('merged') is None
+    first=dict(original,resource_runner_enabled=True,resource_runner_metric='disk_activity',
+               resource_tray_runner_enabled=False,resource_tray_runner_metric='gpu',calendar_style='almanac',
+               resource_alert_almanac=True,watermark_enabled=True,watermark_position='bottom',daily_picture_enabled=True,
+               shell_start_enabled=True,shell_notifications_enabled=False,
+               custom_cards=[dict(id='weather',visible=True,locked=False,layout=record,title='我的天气',url='private')])
+    second=copy.deepcopy(first)
+    second.update(resource_runner_enabled=False,resource_runner_metric='cpu',resource_tray_runner_enabled=True,
+                  resource_tray_runner_metric='network_utilization',calendar_style='calendar_card',
+                  resource_alert_almanac=False,watermark_enabled=False,watermark_position='center',daily_picture_enabled=False,
+                  shell_start_enabled=False,shell_notifications_enabled=True)
+    second['custom_cards'][0].update(visible=False,title='新标题',url='changed')
+    a,b=normalize_profiles([create(first,'日常'),create(second,'演示')])
+    applied=apply(second,a)
+    for key in ('resource_runner_enabled','resource_runner_metric','resource_tray_runner_enabled','resource_tray_runner_metric',
+                'calendar_style','resource_alert_almanac','watermark_enabled','watermark_position','daily_picture_enabled',
+                'shell_start_enabled','shell_notifications_enabled'):
+        assert applied[key]==first[key] and apply(applied,b)[key]==second[key],key
+    assert applied['custom_cards']==[dict(second['custom_cards'][0],visible=True)]
+    assert 'url' not in a['layout']['custom_cards']['weather']
+    legacy=copy.deepcopy(profile);legacy['layout'].pop('version',None)
+    assert apply(second,legacy)['resource_tray_runner_metric']=='network_utilization'
+    checks.append('Two persisted layout scenes restore per-surface runners and metrics, almanac, watermark, daily picture and shell choices; legacy profiles preserve newer controls and custom-card content.')
     checks.append('layout scenes restore geometry/group/fold defaults while retaining current names, themes, note text, references and newly created components; bounded validated profile input')
     from layout_dialog import LayoutDialog
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);dialog=None

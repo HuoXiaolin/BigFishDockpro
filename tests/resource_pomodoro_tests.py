@@ -296,10 +296,15 @@ def run(api,runtime,app,output,checks):
             assert len({battery_ink(level,'battery',light,'#888888') for level in levels})==3
         assert reminder_ink('battery',light,8)==battery_ink(8,'battery',light,'#888888')
     reader=DeviceStatus.__new__(DeviceStatus);reader.connection_cache=None
-    with patch.object(reader,'network_profile',side_effect=('办公无线','')):
-        assert reader.connection_name(b'wireless','Wi-Fi',20)=='办公无线'
-        assert reader.connection_name(b'wireless','Wi-Fi',24)=='办公无线'
-        assert reader.connection_name(b'wireless','Wi-Fi',26)=='Wi-Fi'
+    from resource_status import connection_labels
+    with patch.object(reader,'network_profile',side_effect=('办公网络','')) as profile, \
+         patch.object(reader,'connected_ssid',return_value='办公无线') as ssid:
+        assert reader.connection_name(b'wireless','Wi-Fi',20,True)==('Wi-Fi','办公无线')
+        assert reader.connection_name(b'wireless','Wi-Fi',24,True)==('Wi-Fi','办公无线')
+        ssid.assert_called_once();profile.assert_not_called()
+        assert reader.connection_name(b'ethernet','以太网',25)==('以太网','办公网络')
+        assert connection_labels(reader.connection_name(b'ethernet','以太网',31))==('以太网','网络名称未知')
+        assert reader.connection_name(None,'',32)==''
     try:
         cfg['resource_enabled']=False;service.sync()
         with tempfile.TemporaryDirectory(prefix='fishdock-pomodoro-') as folder:
@@ -320,10 +325,10 @@ def run(api,runtime,app,output,checks):
             service.sensors.values['brightness']={'value':76,'source':'Windows WMI','label':'亮度'}
             service.bluetooth.publish(devices([dict(id='00000000001A',name='BOW5.0',level=79)]),'')
             service.accept_sample(dict(time=now,cpu=18,memory=(64,10.2*2**30,16*2**30),gpu=22,network=(393216,83968),
-                system_status=dict(battery=(62,'charging'),volume=(44,False),connection='办公无线')))
+                system_status=dict(battery=(62,'charging'),volume=(44,False),connection=('WLAN','办公无线'))))
             app.processEvents()
             status=window.system_readout.accessibleName()
-            assert all(value in status for value in ('62%','充电中','44%','76%','办公无线')) and 'bps' not in status
+            assert all(value in status for value in ('62%','充电中','44%','76%','WLAN 办公无线')) and 'bps' not in status
             assert window.rings.height()==17 and window.rings.parent() is window.battery_section
             assert window.sensor_columns.geometry().top()==window.battery_section.geometry().top()
             assert window.sensor_columns.height()==window.battery_section.height()
@@ -398,7 +403,8 @@ def run(api,runtime,app,output,checks):
             assert {'battery','connection','volume'}<=service.active_keys() and 'system_status' not in service.active_keys()
             assert 'brightness' in service.sensors.keys
             service.sensors.values['brightness']={'value':76,'source':'演示数据','label':'亮度'}
-            service.accept_sample(dict(time=time.monotonic(),battery=(62,'charging'),volume=(44,False),connection='办公无线'))
+            service.accept_sample(dict(time=time.monotonic(),battery=(62,'charging'),volume=(44,False),connection=('WLAN','办公无线')))
+            assert ('connection','WLAN','办公无线',('WLAN','办公无线')) in status_values(service)
             status={key:value for key,_,value,_ in status_values(service)}
             assert {key:status[key] for key in COMPACT_DEVICE}==dict(battery='62%',connection='办公无线',volume='44%',brightness='76%')
             layout=plan(window,window.width())

@@ -1,10 +1,12 @@
 """Visible-only network cards for subscribed headlines and Bing pictures."""
 import time
+from http.client import HTTPException
+from pathlib import Path
 from PyQt5.QtCore import QByteArray,QBuffer,QIODevice,QPointF,QRectF,QSize,QStandardPaths,QTimer,Qt,QUrl,pyqtSignal
 from PyQt5.QtGui import QColor,QDesktopServices,QImage,QImageReader,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QAbstractButton,QFileDialog,QHBoxLayout,QToolButton,QVBoxLayout,QWidget
 from background_worker import BackgroundWorker
-from content_sources import BING,download_bing_original,fetch,read_bing,read_feed,read_local_pictures
+from content_sources import BING,download_bing_original,fetch,load_bing_preview,read_bing,read_feed,read_local_pictures,store_bing_preview
 from ui_style import label
 from card_design import paint_capsule_card
 
@@ -14,6 +16,7 @@ class ContentJob(BackgroundWorker):
     def __init__(self,kind,source,index):
         super().__init__()
         self.kind,self.source,self.index=kind,source,index
+        self.preview_bytes=b''
 
     def run(self):
         if self.kind=='news':
@@ -44,13 +47,29 @@ class ContentJob(BackgroundWorker):
                 items=items or read_bing(fetch(BING+'/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=zh-CN',128*1024))
                 if self.cancelled.is_set():return
                 if items:
-                    image=self.decode(fetch(items[self.index]['picture'],512*1024))
-            except (OSError,ValueError,TypeError,KeyError,IndexError):pass
+                    image=self.read_preview(items[self.index])
+            except (OSError,HTTPException,ValueError,TypeError,KeyError,IndexError):pass
             value=(items,image)
         if not self.cancelled.is_set():self.ready.emit(value)
 
+    def read_preview(self, item):
+        for url in (item['picture'], item.get('alternate')):
+            if self.cancelled.is_set() or not url:
+                break
+            try:
+                data = fetch(url, 512 * 1024)
+                image = self.decode(data)
+            except (OSError, HTTPException, ValueError):
+                continue
+            if not image.isNull():
+                self.preview_bytes = data
+                return image
+        return QImage()
+
     @staticmethod
     def decode(data):
+        if data.startswith(b'\xff\xd8') and b'\xff\xd9' not in data:
+            return QImage()
         buffer=QBuffer();buffer.setData(QByteArray(data));buffer.open(QIODevice.ReadOnly)
         reader=QImageReader(buffer);reader.setDecideFormatFromContent(True)
         size=reader.size()
@@ -135,6 +154,7 @@ class ContentView(QWidget):
         self.owner,self.kind=owner,kind
         self.job=None;self.source=None;self.items=[];self.index=0;self.next_fetch=0.
         self.is_local=False
+        self.picture_retry=None
         body=QVBoxLayout(self);body.setContentsMargins(0,0,0,0);body.setSpacing(4)
         head=QHBoxLayout();head.setSpacing(3)
         if kind=='picture':
@@ -217,7 +237,17 @@ class ContentView(QWidget):
                 self.heading.setToolTip('本地图片轮播' if self.is_local else '必应每日图片')
                 self.previous.setToolTip('上一张' if self.is_local else '前一天')
                 self.newer.setToolTip('下一张' if self.is_local else '后一天')
-                self.set_status('');self.set_picture(QImage());self.update_controls()
+                self.picture_retry=None
+                image=QImage()
+                if not self.is_local:
+                    self.picture_retry=(True,0)
+                    cached=load_bing_preview(self.picture_cache_path())
+                    if cached:
+                        rows,index,data=cached
+                        image=ContentJob.decode(data)
+                        if not image.isNull():
+                            self.items,self.index=rows,index
+                self.set_status('');self.set_picture(image);self.update_controls()
             if self.is_local:
                 if not paths:self.set_status('右键选择图片或文件夹')
                 elif not self.job and self.next_fetch==0:self.start(renew=True)
@@ -232,14 +262,19 @@ class ContentView(QWidget):
                 self.status.setText('订阅源已全部关闭。' if feeds else '在资源胶囊设置「天气与订阅」添加内置源，或填写 RSS / Atom 链接。')
                 self.update_controls()
                 return
-        if not self.job and time.monotonic()>=self.next_fetch and (self.kind=='news' or self.index==0):
-            self.start(renew=True)
+        if not self.job and time.monotonic()>=self.next_fetch:
+            if self.picture_retry is not None:
+                self.start(*self.picture_retry)
+            elif self.kind=='news' or self.index==0:
+                self.start(renew=True)
+
+    def picture_cache_path(self):
+        return Path(self.owner.service.runtime.api.CONFIG_DIR)/'cache'/'bing-last-preview.bin'
 
     def refresh_now(self):
         self.next_fetch=0.
-        if self.kind=='picture':
-            self.index=0
-            self.set_picture(QImage())
+        if self.kind=='picture' and not self.is_local:
+            self.picture_retry=(True,0)
         self.refresh()
 
     def turn(self,step):
@@ -247,9 +282,8 @@ class ContentView(QWidget):
         if self.is_local and len(self.items)>1:target%=len(self.items)
         if not self.job and 0<=target<len(self.items):
             if target==self.index:return
-            self.index=target
             if self.is_local:self.timer.start()
-            self.start()
+            self.start(index=target)
 
     def open_story(self):
         if self.items and self.items[self.index]['story']:
@@ -289,16 +323,22 @@ class ContentView(QWidget):
             runtime.dock.start_backdrop()
         self.set_status(message)
 
-    def start(self,renew=False):
+    def start(self,renew=False,index=0):
         if self.owner.service.runtime.dock.preview and not self.is_local:return
         if self.is_local:
             kind='local';source=(self.source[1],None if renew else self.items)
         else:
             kind=self.kind;source=self.source if self.kind=='news' else [] if renew else self.items
-        job=self.job=ContentJob(kind,source,self.index)
+        if kind=='picture':
+            self.picture_retry=(renew,index)
+        job=self.job=ContentJob(kind,source,index)
         job.ready.connect(self.receive,Qt.QueuedConnection)
         job.finished.connect(self.finished,Qt.QueuedConnection)
-        self.set_status('正在读取…');self.update_controls()
+        if kind=='picture':
+            self.set_status('等待每日图片' if self.photo.image.isNull() else '')
+        else:
+            self.set_status('正在读取…')
+        self.update_controls()
         job.start()
 
     def receive(self,result):
@@ -309,11 +349,19 @@ class ContentView(QWidget):
             self.next_fetch=time.monotonic()+900
         else:
             items,image=result
-            if items or self.is_local:self.items=items
-            self.set_picture(image)
-            if self.is_local and not items:self.set_status('未找到可用的本地图片')
-            else:self.set_status('图片暂时无法读取' if image.isNull() else '')
-            self.next_fetch=time.monotonic()+(3600 if self.items else 300)
+            if not self.is_local and (not items or image.isNull()):
+                self.set_status('' if not self.photo.image.isNull() else '等待每日图片')
+                self.next_fetch=time.monotonic()+60
+                if self.isVisible():
+                    self.timer.start(60000)
+            else:
+                self.items,self.index=items or [],self.job.index if items else 0
+                self.set_picture(image)
+                self.picture_retry=None
+                if not self.is_local:
+                    store_bing_preview(self.picture_cache_path(),self.items,self.index,self.job.preview_bytes)
+                self.set_status('未找到可用的本地图片' if not items else '图片暂时无法读取' if image.isNull() else '')
+                self.next_fetch=time.monotonic()+3600
         self.update_controls()
 
     def finished(self):

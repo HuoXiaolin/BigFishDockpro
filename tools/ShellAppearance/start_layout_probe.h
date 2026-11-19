@@ -4,6 +4,14 @@
 
 static void BF_ProbePump() { MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);} }
 
+static void BF_WriteProbeBitmap(const std::filesystem::path& path,int width,int height,const void* pixels) {
+    BITMAPINFOHEADER header{};header.biSize=sizeof(header);header.biWidth=width;header.biHeight=-height;
+    header.biPlanes=1;header.biBitCount=32;header.biSizeImage=width*height*4;
+    BITMAPFILEHEADER file{};file.bfType=0x4D42;file.bfOffBits=sizeof(file)+sizeof(header);file.bfSize=file.bfOffBits+header.biSizeImage;
+    std::ofstream image(path,std::ios::binary);image.write(reinterpret_cast<const char*>(&file),sizeof(file));
+    image.write(reinterpret_cast<const char*>(&header),sizeof(header));image.write(static_cast<const char*>(pixels),header.biSizeImage);
+}
+
 static void BF_SaveLayoutBitmap(const FrameworkElement& root,const std::filesystem::path& path) {
     Media::Imaging::RenderTargetBitmap bitmap;
     auto render=bitmap.RenderAsync(root);
@@ -16,11 +24,7 @@ static void BF_SaveLayoutBitmap(const FrameworkElement& root,const std::filesyst
     auto buffer=operation.GetResults();
     auto reader=winrt::Windows::Storage::Streams::DataReader::FromBuffer(buffer);
     std::vector<uint8_t> pixels(buffer.Length());reader.ReadBytes(pixels);
-    BITMAPFILEHEADER file{};file.bfType=0x4D42;file.bfOffBits=sizeof(file)+sizeof(BITMAPINFOHEADER);file.bfSize=file.bfOffBits+pixels.size();
-    BITMAPINFOHEADER header{};header.biSize=sizeof(header);header.biWidth=bitmap.PixelWidth();header.biHeight=-bitmap.PixelHeight();
-    header.biPlanes=1;header.biBitCount=32;header.biSizeImage=pixels.size();
-    std::ofstream image(path,std::ios::binary);image.write(reinterpret_cast<char*>(&file),sizeof(file));
-    image.write(reinterpret_cast<char*>(&header),sizeof(header));image.write(reinterpret_cast<char*>(pixels.data()),pixels.size());
+    BF_WriteProbeBitmap(path,bitmap.PixelWidth(),bitmap.PixelHeight(),pixels.data());
 }
 
 // Recreate the classic Shell's independent content roots, inherited view model,

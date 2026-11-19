@@ -5,6 +5,7 @@
 AppId={{EA308E7C-37E0-4CC4-858F-04342D329791}
 AppName=大肥鱼Dock
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}.0
 AppPublisher=HuoXiaolin
 AppPublisherURL=https://github.com/HuoXiaolin/BigFishDockpro
 DefaultDirName={localappdata}\Programs\BigFishDockpro

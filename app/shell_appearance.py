@@ -45,7 +45,7 @@ class ShellWindowEvents:
                 pid = W.DWORD()
                 user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                 if pid.value:
-                    self.wake(pid.value)
+                    self.wake(pid.value, hwnd)
             except Exception:
                 # WinEvent callbacks must not propagate into user32.
                 return
@@ -206,29 +206,45 @@ def foreground_target(hosts):
     return None
 
 
-def foreground_surface(hosts, start_bounds):
+def foreground_surface(hosts, start_bounds, shown_windows=()):
     target = foreground_target(hosts)
-    if target is None:
+    if not hosts or (target is None and not shown_windows):
         return None
     from ctypes import wintypes as W
     from taskbar_surface import composed_color
-    user, window, kind = target
-    rect = W.RECT()
-    if not user.GetWindowRect(window, ctypes.byref(rect)):
-        return None
-    if kind == 'start':
-        measured = start_bounds(window, user)
-        if (measured and rect.left - 1 <= measured[0] < measured[2] <= rect.right + 1 and
-                rect.top - 1 <= measured[1] < measured[3] <= rect.bottom + 1):
-            rect = W.RECT(*measured)
-    width, height = rect.right - rect.left, rect.bottom - rect.top
-    if width < 120 or height < 80:
-        return None
-    # Stay inside the glass and away from most labels and buttons.
-    points = ((rect.left + round(width*x), rect.top + round(height*y))
-              for x in (.1, .5, .9) for y in (.23, .41, .62, .81))
-    color = composed_color(points)
-    return (kind, color) if color is not None else None
+    from window_layers import native
+    user=native()
+    user.WindowFromPoint.argtypes=[W.POINT];user.WindowFromPoint.restype=W.HWND
+    user.GetAncestor.argtypes=[W.HWND,W.UINT];user.GetAncestor.restype=W.HWND
+    user.GetWindowThreadProcessId.argtypes=[W.HWND,ctypes.POINTER(W.DWORD)]
+    user.IsWindowVisible.argtypes=[W.HWND]
+    candidates=dict.fromkeys(([target[1]] if target else [])+list(shown_windows))
+    for window in candidates:
+        pid=W.DWORD();rect=W.RECT()
+        user.GetWindowThreadProcessId(window,ctypes.byref(pid))
+        kind=hosts.get(pid.value)
+        if not kind or not user.IsWindowVisible(window) or not user.GetWindowRect(window,ctypes.byref(rect)):
+            continue
+        if kind=='start':
+            measured=start_bounds(window,user)
+            if (measured and rect.left-1<=measured[0]<measured[2]<=rect.right+1
+                    and rect.top-1<=measured[1]<measured[3]<=rect.bottom+1):
+                rect=W.RECT(*measured)
+        width,height=rect.right-rect.left,rect.bottom-rect.top
+        if width<120 or height<80:continue
+        # Some shell hosts span the monitor or keep focus on the taskbar.
+        # Only sample points on the visible flyout, including its child windows.
+        root=user.GetAncestor(window,2)
+        points=[]
+        for x in (.06,.27,.51,.77,.94):
+            for y in (.13,.35,.57,.79,.94):
+                point=(rect.left+round(width*x),rect.top+round(height*y))
+                hit=user.WindowFromPoint(W.POINT(*point))
+                if hit and user.GetAncestor(hit,2)==root:points.append(point)
+        if len(points)>=5:
+            color=composed_color(points)
+            if color is not None:return kind,color
+    return None
 
 
 class ShellAppearance(QObject):
@@ -250,7 +266,11 @@ class ShellAppearance(QObject):
         self.start_surface = None
         self.pending_start_surface = None
         self.start_live_ink = None
+        self.start_footer_color = None
         self.start_window = None
+        self.shown_windows = {}
+        self.ink_open_deadline = 0.
+        self.notification_profile = self.notification_surface = None
         self.ink_timer = QTimer(self)
         self.ink_timer.setSingleShot(True)
         self.ink_timer.timeout.connect(self.refresh_foreground)
@@ -282,17 +302,23 @@ class ShellAppearance(QObject):
         self.next_attach.timeout.connect(self.sync)
         self.window_events = ShellWindowEvents(self.window_created)
 
-    def window_created(self, pid):
+    def window_created(self, pid, window=None):
         if self.closed or self.suspended or self.disabled:
             return
         kind = self.hosts.get(pid)
         if (kind == 'start' and self.start_paused) or (kind and not self.dock.cfg.get(f'shell_{kind}_enabled')):
             return
+        if window:
+            self.shown_windows.pop(pid,None)
+            self.shown_windows[pid]=window
+        sample_on_open = kind == 'start' or (kind and self.dock.cfg.get(f'shell_{kind}_text_mode', 'auto') == 'auto')
+        if sample_on_open:
+            self.ink_open_deadline=time.monotonic()+2.
         if pid in self.attached:
             # An existing process may create a new XAML thread. Ask the native
             # initializer to examine it even when the preferences did not change.
             self.signal(pid)
-            if kind == 'start' and self.dock.cfg.get('shell_start_text_mode', 'auto') == 'auto' and not self.ink_timer.isActive():
+            if sample_on_open and not self.ink_timer.isActive():
                 self.ink_timer.start(100)
         else:
             handoff = self.start_handoffs.get(pid)
@@ -464,26 +490,36 @@ class ShellAppearance(QObject):
         # Read only an active flyout already owned by a connected shell host.
         hosts = {pid: kind for pid, kind in self.hosts.items() if pid in self.attached and
                  self.dock.cfg.get(f'shell_{kind}_enabled') and
-                 self.dock.cfg.get(f'shell_{kind}_text_mode', 'auto') == 'auto' and
+                 (kind == 'start' or self.dock.cfg.get(f'shell_{kind}_text_mode', 'auto') == 'auto') and
                  shows_backdrop(appearance(self.dock.cfg, kind, light, transparent))}
-        return foreground_surface(hosts, self.start_panel_bounds)
+        windows=tuple(self.shown_windows[pid] for pid in reversed(self.shown_windows) if pid in hosts)
+        sample=foreground_surface(hosts,self.start_panel_bounds,windows)
+        if not self.ink_timer.isActive():
+            if sample:
+                self.ink_timer.start(500)
+            elif hosts and time.monotonic()<self.ink_open_deadline:
+                self.ink_timer.start(150)
+        return sample
 
     def remember_start_surface(self, sample, light, transparent):
         profile = appearance(self.dock.cfg, 'start', light, transparent)
         if profile != self.start_profile or not self.dock.cfg.get('shell_start_enabled'):
             self.start_profile = profile
             self.start_surface = self.pending_start_surface = None
+            self.start_footer_color = None
         if sample and sample[0] == 'start':
             self.pending_start_surface = sample[1]
-        if not self.dock.cfg.get('shell_start_enabled') or profile['text_mode'] != 'auto' or not shows_backdrop(profile):
+        if not self.dock.cfg.get('shell_start_enabled') or not shows_backdrop(profile):
             return False
         current = foreground_target(self.hosts)
-        if current and current[2] == 'start':
+        if (sample and sample[0]=='start') or (current and current[2]=='start'):
             # The opening animation can briefly report a zero-sized panel.
             if not self.ink_timer.isActive():
                 self.ink_timer.start(500)
             if sample and sample[0] == 'start':
-                return self.start_live_ink != panel_ink(profile, self.pending_start_surface)
+                ink_changed = profile['text_mode'] == 'auto' and self.start_live_ink != panel_ink(profile, sample[1])
+                color_changed = self.start_footer_color is None or any(abs(now-old) >= 12 for now,old in zip(sample[1],self.start_footer_color))
+                return ink_changed or color_changed
             return False
         # A windowed account/power flyout can change foreground ownership
         # during a press. Only rebuild the full theme once Start is offscreen.
@@ -493,6 +529,8 @@ class ShellAppearance(QObject):
         # foreground brush changes, preserving focus and native flyout commands.
         self.start_surface = self.pending_start_surface
         self.pending_start_surface = None
+        if profile['text_mode'] != 'auto':
+            return False
         ink = panel_ink(profile, self.start_surface)
         return self.themes.get('start') != ('Light' if ink == '#000000' else 'Dark')
 
@@ -505,7 +543,9 @@ class ShellAppearance(QObject):
             self.sync(sample)
         elif sample and sample[0] != 'start':
             kind, color = sample
-            ink = panel_ink(appearance(self.dock.cfg, kind, light, transparent), color)
+            profile = appearance(self.dock.cfg, kind, light, transparent)
+            self.notification_profile,self.notification_surface=profile,color
+            ink = panel_ink(profile, color)
             theme = 'Light' if ink == '#000000' else 'Dark'
             if self.themes.get(kind) != theme:
                 self.sync(sample)
@@ -534,6 +574,7 @@ class ShellAppearance(QObject):
             light, transparent = system_appearance(self.api)
             names = {}
             current = shell_hosts(names)
+            self.shown_windows={pid:window for pid,window in self.shown_windows.items() if pid in current}
             self.host_names = names
             self.check_start_exits(current, time.monotonic())
             requested = enabled
@@ -555,8 +596,12 @@ class ShellAppearance(QObject):
                     self.attempts.pop(pid, None)
             sample = sample if sample is not None else self.sampled_surface(light, transparent)
             self.remember_start_surface(sample, light, transparent)
-            surface_colors = dict((sample,)) if sample else {}
-            surface_colors['start'] = self.start_surface
+            profile=appearance(self.dock.cfg,'notifications',light,transparent)
+            if profile!=self.notification_profile or 'notifications' not in enabled:
+                self.notification_profile=profile
+                self.notification_surface=None
+            if sample and sample[0]=='notifications':self.notification_surface=sample[1]
+            surface_colors={'start':self.start_surface,'notifications':self.notification_surface}
             system_text_light = None
             if any(self.dock.cfg.get(f'shell_{kind}_text_mode') == 'system' for kind in enabled):
                 from taskbar_text import system_mode
@@ -568,8 +613,11 @@ class ShellAppearance(QObject):
                 if kind == 'start':
                     if (self.root / 'trace-start-menu-input').is_file():
                         data['trace_menu_input'] = '1'
-                    if 'bigfish_live_ink' in data and self.pending_start_surface is not None:
-                        data['bigfish_live_ink'] = panel_ink(self.start_profile, self.pending_start_surface)
+                    if self.pending_start_surface is not None:
+                        if 'bigfish_live_ink' in data:
+                            data['bigfish_live_ink'] = panel_ink(self.start_profile, self.pending_start_surface)
+                        self.start_footer_color = tuple(round(channel) for channel in self.pending_start_surface)
+                        data['bigfish_footer_surface'] = '#%02x%02x%02x' % self.start_footer_color
                     self.start_live_ink = data.get('bigfish_live_ink')
                 if kind == 'start' and self.start_paused:
                     data['enabled'] = '0'
@@ -753,6 +801,9 @@ class ShellAppearance(QObject):
         self.next_attach.stop()
         self.ink_timer.stop()
         self.start_window = None
+        self.shown_windows.clear()
+        self.ink_open_deadline = 0.
+        self.notification_profile=self.notification_surface=None
         self.window_events.stop()
         if self.disabled:
             return

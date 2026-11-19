@@ -17,6 +17,13 @@ BATTERY_WARNING_LEVEL = 15
 TRAY_RING_SIZES = (16, 20, 24, 32, 48, 64)
 
 
+def connection_labels(connection):
+    if isinstance(connection, tuple):
+        adapter,network=connection
+        return adapter or '网卡', network or '网络名称未知'
+    return '网卡', '—' if connection is None else connection or '未连接'
+
+
 def ring_dimensions(diameter, count=1):
     pitch = diameter / (2 * max(1, count) + 1)
     stroke = max(1., pitch * .64)

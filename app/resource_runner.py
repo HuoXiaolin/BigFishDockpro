@@ -1,25 +1,27 @@
 """Small, transparent running animals for the capsule and notification area."""
 from functools import lru_cache
+from math import ceil, floor, isfinite
 from pathlib import Path
 import sys
+from time import monotonic
 
 from PyQt5.QtCore import QObject, QRect, QTimer, Qt
-from PyQt5.QtGui import QIcon, QImage, QPixmap
-from PyQt5.QtWidgets import QSystemTrayIcon
+from PyQt5.QtGui import QCursor, QIcon, QImage, QPixmap
+from PyQt5.QtWidgets import QSystemTrayIcon, QToolTip
 
-from resource_options import RUNNER_ANIMALS, RUNNER_SLOT, RUNNER_SPEEDS
+from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS, RUNNER_SLOT
 
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets' / 'runner'
 FRAMES = 8
-FIXED_INTERVALS = {'fixed_140ms': 140, 'fixed_80ms': 80, 'fixed_50ms': 50}
+IDLE_FPS = 12
 
 
-def frame_interval(speed, cpu):
-    if speed in FIXED_INTERVALS:
-        return FIXED_INTERVALS[speed]
-    load = max(0, min(100, cpu or 0)) / 100
-    return round(300 / (1 + 3 * load))
+def frame_rate(speed, percent):
+    if speed in RUNNER_FIXED_RATES:
+        return RUNNER_FIXED_RATES[speed][1]
+    load = max(0, min(100, percent or 0)) / 100
+    return IDLE_FPS + (RUNNER_FIXED_RATES['fixed_high'][1] - IDLE_FPS) * load
 
 
 def capsule_rect(window):
@@ -43,8 +45,12 @@ def sprite(animal, frame, pixels):
 
 @lru_cache(maxsize=16)
 def tray_frame(animal, frame):
-    # Let Qt scale the original tile directly to the monitor's physical icon size.
-    return QIcon(sprite(animal, frame, _sheet(animal).height() // 2))
+    sheet = _sheet(animal)
+    side = sheet.height() // 2
+    tile = QRect(frame % 4 * side, frame // 4 * side, side, side)
+    inset = int(sheet.text('TrayInset') or 0)
+    # Qt scales this same square directly to each monitor's physical tray size.
+    return QIcon(QPixmap.fromImage(sheet.copy(tile.adjusted(inset, inset, -inset, -inset))))
 
 
 class RunningAnimal(QObject):
@@ -53,36 +59,78 @@ class RunningAnimal(QObject):
         self.service = service
         self.animal = None
         self.speed = None
+        self.metric = None
+        self.readout = ''
         self.frame = 0
+        self.fps = 0
+        self.next_frame = 0.0
         self.tray = QSystemTrayIcon(self) if target == 'tray' else None
         if self.tray is not None:
             self.tray.setContextMenu(service.runtime.tray.contextMenu())
+            self.tray.activated.connect(self.tray_activated)
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.PreciseTimer)
+        self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.advance)
 
-    def configure(self, animal, speed):
-        if (animal, speed) == (self.animal, self.speed):
+    def configure(self, animal, speed, metric):
+        if (animal, speed, metric) == (self.animal, self.speed, self.metric):
             return
         if self.animal != animal:
             self.frame = 0
-        self.animal, self.speed = animal, speed
+        self.animal, self.speed, self.metric = animal, speed, metric
+        self.update_reading()
         if self.tray is not None:
             self.tray.setIcon(tray_frame(self.animal, self.frame))
-            self.tray.setToolTip(f"{RUNNER_ANIMALS[animal]} · {RUNNER_SPEEDS[speed]}")
             self.tray.show()
         else:
             self.service.window.update(capsule_rect(self.service.window))
-        self.update_speed()
-        if not self.timer.isActive():
-            self.timer.start()
 
-    def update_speed(self):
-        interval = frame_interval(self.speed, self.service.latest.get('cpu'))
-        if self.timer.interval() != interval:
-            self.timer.setInterval(interval)
+    def update_reading(self):
+        value = self.service.latest.get(self.metric)
+        if self.metric == 'memory' and isinstance(value, (list, tuple)) and value:
+            value = value[0]
+        percent = max(0, min(100, value)) if isinstance(value, (int, float)) and isfinite(value) else None
+        fps = frame_rate(self.speed, percent)
+        if self.fps != fps:
+            now = monotonic()
+            # Preserve the current frame's progress when the sensor reading changes.
+            remaining = min(1., max(0., (self.next_frame - now) * self.fps)) if self.fps else 1.
+            self.fps = fps
+            self.next_frame = now + remaining / fps
+            self.schedule_frame(now)
+        label = '—' if percent is None else f'{percent:.0f}%'
+        text = f'{RUNNER_ANIMALS[self.animal]} {RUNNER_METRICS[self.metric]} {label}'
+        if text != self.readout:
+            self.readout = text
+            if self.tray is not None:
+                self.tray.setToolTip(text)
+            else:
+                window = self.service.window
+                if window.runner_hovered and QToolTip.isVisible() and capsule_rect(window).contains(window.mapFromGlobal(QCursor.pos())):
+                    self.show_reading(QCursor.pos())
+
+    def show_reading(self, point):
+        if self.tray is not None:
+            QToolTip.showText(point, self.readout)
+        else:
+            window = self.service.window
+            QToolTip.showText(point, self.readout, window, capsule_rect(window))
+
+    def tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.show_reading(QCursor.pos())
+
+    def schedule_frame(self, now):
+        self.timer.start(max(1, ceil((self.next_frame - now) * 1000)))
 
     def advance(self):
-        self.frame = (self.frame + 1) % FRAMES
+        now = monotonic()
+        # Keep fractional deadlines. After a delayed event, paint only the current frame.
+        steps = max(1, 1 + floor((now - self.next_frame) * self.fps))
+        self.next_frame += steps / self.fps
+        self.frame = (self.frame + steps) % FRAMES
+        self.schedule_frame(now)
         if self.tray is not None:
             self.tray.setIcon(tray_frame(self.animal, self.frame))
         else:

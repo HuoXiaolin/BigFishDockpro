@@ -25,7 +25,7 @@ def field_catalog(api, cfg):
     from taskbar_text import MODES as TEXT_MODES
     from feature_config import DOCK_ICON_SHAPES, SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
     from feature_config import WATERMARK_LAYERS, WATERMARK_MODES, WATERMARK_POSITIONS, WATERMARK_RANGES
-    from resource_options import FACE_SWITCH_RANGE, RUNNER_ANIMALS, RUNNER_SPEEDS
+    from resource_options import FACE_SWITCH_RANGE, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
     from shell_appearance_model import catalog as shell_catalog
 
     return {
@@ -61,6 +61,7 @@ def field_catalog(api, cfg):
         'taskbar_blur': (TASKBAR, '任务栏模糊强度', 'number', (0, 50)),
         'resource_tray_runner_enabled': (TASKBAR, '显示托盘小动物', 'check', None),
         'resource_tray_runner_animal': (TASKBAR, '动物形象', 'combo', [(label, value) for value, label in RUNNER_ANIMALS.items()]),
+        'resource_tray_runner_metric': (TASKBAR, '监测指标', 'combo', [(label, value) for value, label in RUNNER_METRICS.items()]),
         'resource_tray_runner_speed': (TASKBAR, '奔跑速度', 'combo', [(label, value) for value, label in RUNNER_SPEEDS.items()]),
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),

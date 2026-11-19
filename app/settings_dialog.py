@@ -423,7 +423,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         else:
             self.add_field(form, 'resource_taskbar')
         section_marker(form, '托盘小动物')
-        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_speed'):
+        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_metric', 'resource_tray_runner_speed'):
             self.add_field(form, key)
         self.fields['resource_tray_runner_enabled'].toggled.connect(self.sync_tray_runner_fields)
         self.sync_tray_runner_fields()
@@ -475,7 +475,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
 
     def sync_tray_runner_fields(self):
         enabled = self.fields['resource_tray_runner_enabled'].isChecked()
-        for key in ('resource_tray_runner_animal', 'resource_tray_runner_speed'):
+        for key in ('resource_tray_runner_animal', 'resource_tray_runner_metric', 'resource_tray_runner_speed'):
             self.fields[key].setEnabled(enabled)
 
     def build_panel(self, panel):

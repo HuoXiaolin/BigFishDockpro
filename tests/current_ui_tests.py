@@ -368,12 +368,15 @@ def run(output):
             app.sendPostedEvents(None, QEvent.DeferredDelete)
             assert len(tray.menu.findChildren(QMenu)) == len(original_menus)
         assert all(sip.isdeleted(menu) for menu in original_menus)
-        for menu in (tray.menu,dock.icon_context_menu(-1)):
-            titles={action.text() for action in menu.actions()}
-            assert {'应用批量管理…','Dock 布局','桌面卡片','便签','组件暂停','设置…','帮助与更新'}<=titles
-            pause_menu = next(action.menu() for action in menu.actions() if action.text() == '组件暂停')
-            assert [action.text() for action in pause_menu.actions()] == ['暂停桌面组件', '全屏自动暂停']
-            assert all(action.isCheckable() for action in pause_menu.actions())
+        titles={action.text() for action in tray.menu.actions()}
+        assert {'应用批量管理…','Dock 布局','桌面卡片','便签','资源胶囊','每日图片','组件暂停','设置…','帮助与更新'}<=titles
+        pause_menu = next(action.menu() for action in tray.menu.actions() if action.text() == '组件暂停')
+        assert [action.text() for action in pause_menu.actions()] == ['暂停桌面组件', '全屏自动暂停']
+        assert all(action.isCheckable() for action in pause_menu.actions())
+        context=dock.icon_context_menu(-1)
+        dock_actions=[action.text() for action in context.actions() if not action.isSeparator()]
+        assert dock_actions==['应用批量管理…','Dock 布局','设置…','隐藏 Dock','退出'],dock_actions
+        context.deleteLater()
         tray.add_separator();assert sum(bool(item.get('sep')) for item in cfg['items'])==1
         snapshot=copy.deepcopy(cfg['items'])
         with patch.object(tray,'showMessage') as messages:

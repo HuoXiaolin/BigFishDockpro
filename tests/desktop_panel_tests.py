@@ -37,6 +37,7 @@ def run(api, runtime, root, output, checks):
     original_dock = copy.deepcopy(cfg['items'])
     runtime.panels.close()
     cfg['desktop_auto_sort'] = True
+    cfg['merged_panels'] = False
     cfg['desktop_panels'] = []
     cfg['desktop_entries'] = []
     cfg['desktop_excluded'] = []

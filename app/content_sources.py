@@ -84,9 +84,43 @@ def read_bing(data):
         credit=image.get('copyright') or ''
         story=image.get('copyrightlink') or 'https://www.bing.com/'
         if picture and isinstance(title,str) and isinstance(credit,str) and isinstance(story,str):
-            rows.append(dict(picture=picture,original=BING+base+'_UHD.jpg',title=title[:140],credit=credit[:220],date=date,
+            alternate='https://th.bing.com'+base+'_1920x1080.jpg&w=640&h=360&c=7'
+            rows.append(dict(picture=picture,alternate=alternate,original=BING+base+'_UHD.jpg',title=title[:140],credit=credit[:220],date=date,
                              story=web_url(urljoin(BING,story))))
     return rows
+
+
+def store_bing_preview(path, items, index, preview):
+    """Commit the archive, selected page and downloaded preview together."""
+    import json
+    from config_store import _atomic
+    archive = [dict(urlbase=row['picture'][len(BING):-len('_640x360.jpg')],
+                    startdate=row['date'], title=row['title'], copyright=row['credit'],
+                    copyrightlink=row['story']) for row in items]
+    header = json.dumps(dict(images=archive, index=index), ensure_ascii=False).encode('utf-8')
+    try:
+        _atomic(path, header + b'\n' + preview)
+    except OSError:
+        pass  # A read-only cache still permits displaying the downloaded image.
+
+
+def load_bing_preview(path):
+    import json
+    try:
+        with path.open('rb') as stream:
+            header = stream.readline(64 * 1024)
+            if not header.endswith(b'\n'):
+                return None
+            archive = json.loads(header)
+            rows = read_bing(header)
+            index = archive['index']
+            preview = stream.read(512 * 1024 + 1)
+        if (len(rows) == len(archive['images']) and type(index) is int and 0 <= index < len(rows)
+                and 0 < len(preview) <= 512 * 1024):
+            return rows, index, preview
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        pass
+    return None
 
 
 def download_bing_original(url,destination,cancelled):

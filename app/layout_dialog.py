@@ -12,7 +12,7 @@ class LayoutDialog(QDialog):
         self.setWindowTitle('布局方案 · 大肥鱼Dock');self.resize(620,440);self.setMinimumSize(490,350)
         body=QVBoxLayout(self);body.setContentsMargins(18,12,18,12);body.setSpacing(10)
         body.addWidget(SettingsHeader(self,'布局方案'))
-        body.addWidget(label('保存组件的位置、尺寸、显隐与卡片分组，快速切换桌面布局。','muted'))
+        body.addWidget(label('保存桌面组件的位置、尺寸和分组，以及胶囊、托盘和系统面板的显示设置。','muted'))
         row=QHBoxLayout();row.setSpacing(8);row.addWidget(label('方案名称'))
         self.name=QLineEdit();self.name.setMaxLength(40);self.name.setPlaceholderText('例如：日常工作、专注、演示')
         self.name.setAccessibleName('布局方案名称');row.addWidget(self.name,1)
@@ -20,7 +20,6 @@ class LayoutDialog(QDialog):
         self.list=QListWidget();self.list.setAccessibleName('已保存的布局方案');self.list.setSpacing(2)
         self.list.currentItemChanged.connect(self.select);body.addWidget(self.list,1)
         self.empty=label('尚无布局方案，输入名称后保存当前布局。','muted');body.addWidget(self.empty)
-        body.addWidget(label('主题外观、便签内容和文件引用保持不变。','muted'))
         self.status=label('','muted');body.addWidget(self.status)
         footer=QHBoxLayout();footer.setSpacing(8)
         self.rename_button=button('重命名',self.rename_selected);self.delete_button=button('删除方案',self.delete_selected)
@@ -52,10 +51,18 @@ class LayoutDialog(QDialog):
             for enabled,title in [(values.get('dock_visible'),'Dock'),
                                   (values.get('panel_enabled') and values.get('panels_visible'),'卡片'),
                                   (values.get('notes_enabled') and values.get('notes_visible'),'便签'),
-                                  (values.get('clock_enabled'),'时钟'),(values.get('calendar_enabled'),'日历')]:
+                                  (values.get('clock_enabled'),'时钟'),(values.get('calendar_enabled'),'农历节气' if values.get('calendar_style')=='almanac' else '日历'),
+                                  (values.get('daily_picture_enabled'),'每日图片'),(values.get('spectrum_enabled'),'音乐频谱'),
+                                  (values.get('flash_enabled'),'闪念胶囊'),(values.get('resource_enabled'),'资源胶囊'),
+                                  (values.get('resource_runner_enabled') and values.get('resource_enabled'),'胶囊小动物'),
+                                  (values.get('resource_tray_runner_enabled'),'托盘小动物'),(values.get('resource_taskbar'),'任务栏监控'),
+                                  (values.get('resource_ai_tray'),'AI 托盘'),(values.get('resource_bt_tray'),'外设托盘'),
+                                  (values.get('watermark_enabled'),'桌面水印'),(values.get('shell_start_enabled'),'开始菜单'),
+                                  (values.get('shell_notifications_enabled'),'通知面板')]:
                 if enabled:visible.append(title)
-            detail=' · '.join(visible) if visible else '组件保持隐藏'
-            item=QListWidgetItem(row['name']+'\n'+detail);item.setData(Qt.UserRole,row['id']);item.setToolTip(row['name'])
+            detail=' · '.join(visible[:5]) or '已记录的组件均隐藏'
+            if len(visible)>5:detail+=f' 等 {len(visible)} 项'
+            item=QListWidgetItem(row['name']+'\n'+detail);item.setData(Qt.UserRole,row['id']);item.setToolTip(' · '.join(visible) or detail)
             item.setSizeHint(QSize(100,54));self.list.addItem(item)
             if row['id']==identity:self.list.setCurrentItem(item)
         self.list.blockSignals(False);self.empty.setVisible(not profiles)
@@ -107,6 +114,9 @@ class LayoutDialog(QDialog):
         self.runtime.panels.save_visible_geometry()
         for window in self.runtime.notes.windows.values():window.title.finish_edit();window.save_geometry()
         self.runtime.clock.save_geometry();self.runtime.calendar.save_geometry();self.runtime.layout.ensure_profiles()
+        for card in self.runtime.resources.desktop_cards.values():
+            if card.save_timer.isActive():
+                card.save_timer.stop();card.save_geometry()
         if not self.runtime.notes.flush():self.status.setText('便签保存失败，未保存布局。');return False
         profile=create(self.cfg,name)
         if existing:
@@ -120,6 +130,9 @@ class LayoutDialog(QDialog):
         if profile is None or not self.ready():return False
         candidate=apply(self.cfg,profile)
         if not self.persist(candidate,'应用布局方案',refresh=True):return False
+        resources=self.runtime.resources
+        if 'resource_collapsed' in profile['layout']['values'] and resources.auto_compact is not None:
+            resources.auto_compact=None;resources.sync()
         self.render(profile['id']);self.status.setText('已应用：'+profile['name']);return True
 
     def rename_selected(self):

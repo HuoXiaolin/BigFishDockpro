@@ -1,12 +1,13 @@
 """Windows resource counters. Imported by the sampler only while metrics are requested."""
 import ctypes as C
 from ctypes import wintypes as W
+import math
 import os
 import re
 import time
 
 U64=C.c_ulonglong
-NET_KEYS=frozenset(('network','traffic','system_status','connection'))
+NET_KEYS=frozenset(('network','traffic','system_status','connection','network_utilization'))
 DEVICE_KEYS=frozenset(('system_status','battery','connection','volume'))
 
 
@@ -41,7 +42,8 @@ class CounterItem(C.Structure):
 
 
 COUNTERS={'cpu_cores':{'cores':r'\Processor Information(*)\% Processor Time'},
-          'gpu':{'engines':r'\GPU Engine(*)\Utilization Percentage'}}
+          'gpu':{'engines':r'\GPU Engine(*)\Utilization Percentage'},
+          'disk_activity':{'disk_idle':r'\PhysicalDisk(*)\% Idle Time'}}
 ENGINE_NAME=re.compile(r'(luid_[0-9a-fx]+_[0-9a-fx]+_phys_\d+_eng_\d+)(?:_|$)',re.I)
 
 
@@ -131,12 +133,34 @@ def link_speed(row):
     return max((v for v in (row.rx_speed,row.tx_speed) if 0<v<2**63),default=0)
 
 
+def busiest_disk(idle):
+    loads = [100 - value for name, value in idle.items() if name.split(' ', 1)[0].isdigit() and math.isfinite(value)]
+    return max(0., min(100., max(loads))) if loads else None
+
+
+def network_utilization(previous, current, elapsed):
+    """Compare each direction with its own negotiated link rate. Links are full duplex."""
+    if elapsed <= 0 or not previous:
+        return None
+    peak = None
+    for adapter, ends in current.items():
+        starts = previous.get(adapter)
+        if starts is None:
+            continue
+        for (before, old_rate), (after, rate) in zip(starts, ends):
+            if rate == old_rate and 0 < rate < 2**63 and after >= before:
+                load = (after - before) * 800 / (elapsed * rate)
+                peak = load if peak is None else max(peak, load)
+    return min(100., peak) if peak is not None else None
+
+
 class Sampler:
     def __init__(self,metrics,traffic_path=None):
         self.metrics=frozenset();self.last_cpu=None;self.last_net=None;self.net_time=0
         self.traffic_path=traffic_path;self.traffic=None
         self.kernel=C.WinDLL('kernel32');self.ip=None;self.ranking=None;self.pdh=None
         self.device_status=None;self.adapter=None
+        self.link_sample=None;self.network_load=None
         self.configure(metrics)
 
     def configure(self,metrics):
@@ -155,6 +179,7 @@ class Sampler:
             self.ip.GetIfTable2.argtypes=[C.POINTER(C.POINTER(IfTable))]
             self.ip.FreeMibTable.argtypes=[C.c_void_p];self.ip.FreeMibTable.restype=None
         if not metrics & NET_KEYS:self.ip=self.last_net=None;self.net_time=0
+        if 'network_utilization' not in metrics:self.link_sample=self.network_load=None
         if metrics & DEVICE_KEYS and self.device_status is None:
             from device_status import DeviceStatus
             self.device_status=DeviceStatus(self.kernel)
@@ -186,9 +211,10 @@ class Sampler:
 
     def network(self,now):
         self.adapter=None
+        self.network_load=None
         table=C.POINTER(IfTable)()
         if self.ip.GetIfTable2(C.byref(table)) or not table:
-            self.last_net=None
+            self.last_net=self.link_sample=None
             if self.traffic:self.traffic.observe(None)
             return None
         try:
@@ -198,13 +224,17 @@ class Sampler:
             eligible=[r for r in rows if r.oper==1 and r.type not in (24,131)]
             rows_to_count=[r for r in eligible if r.flags&1] or eligible
             readings={r.luid:(r.received,r.sent) for r in rows_to_count}
+            if 'network_utilization' in self.metrics:
+                links={r.luid:((r.received,r.rx_speed),(r.sent,r.tx_speed)) for r in rows_to_count}
+                self.network_load=network_utilization(self.link_sample,links,now-self.net_time)
+                self.link_sample=links
             if 'system_status' in self.metrics or 'connection' in self.metrics:
                 def adapter_priority(row):
                     previous=(self.last_net or {}).get(row.luid)
                     activity=max(0,row.received-previous[0])+max(0,row.sent-previous[1]) if previous else 0
                     return (-activity,-link_speed(row),row.index)
                 primary=min(rows_to_count,key=adapter_priority,default=None)
-                self.adapter=(bytes(primary.guid),primary.alias or primary.description) if primary else (None,'')
+                self.adapter=(bytes(primary.guid),primary.alias or primary.description,primary.type==71) if primary else (None,'',False)
         finally:self.ip.FreeMibTable(table)
         result=network_rates(self.last_net,readings,now-self.net_time)
         self.last_net,self.net_time=readings,now
@@ -218,6 +248,7 @@ class Sampler:
         if self.metrics & NET_KEYS:
             rates=self.network(now)
             if 'network' in self.metrics:data['network']=rates
+            if 'network_utilization' in self.metrics:data['network_utilization']=self.network_load
             if 'traffic' in self.metrics:data['traffic']=self.traffic.snapshot()
         if self.device_status:
             full='system_status' in self.metrics
@@ -227,10 +258,16 @@ class Sampler:
             if full or 'volume' in self.metrics:
                 status['volume']=self.device_status.volume()
             if full or 'connection' in self.metrics:
-                status['connection']=self.device_status.connection_name(*self.adapter,now) if self.adapter is not None else None
+                if self.adapter is None:
+                    status['connection']=None
+                else:
+                    adapter,alias,wireless=self.adapter
+                    status['connection']=self.device_status.connection_name(adapter,alias,now,wireless)
             if full:data['system_status']=status
             data.update((key,value) for key,value in status.items() if key in self.metrics)
         ready=self.pdh and self.pdh.collect()
+        if 'disk_activity' in self.metrics:
+            data['disk_activity']=busiest_disk(self.pdh.read('disk_idle')) if ready else None
         if 'cpu_cores' in self.metrics:
             instances=self.pdh.read('cores') if ready else {}
             cores={tuple(map(int,name.split(','))):min(100.,max(0.,value))

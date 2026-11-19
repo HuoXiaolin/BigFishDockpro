@@ -237,8 +237,10 @@ class RuntimeController:
         capsule_style=DOCK_GLASS | {'panel_appearance_source','panel_color','panel_theme','panel_material','panel_highlight','panel_opacity','panel_blur','card_design'}
         if changed is None or any(key.startswith('watermark_') for key in changed):
             self.watermarks.sync()
-            quick = self.dock.extras.popup
-            if quick and quick.isVisible():
+        quick = self.dock.extras.popup
+        if quick and quick.isVisible():
+            from quick_actions import WIDGET_SWITCHES
+            if changed is None or 'watermark_enabled' in changed or any(row[2] in changed for row in WIDGET_SWITCHES.values()):
                 quick.refresh()
         if changed is None or any(key.startswith('spectrum_') for key in changed) or changed & {'theme','theme_color','card_scale'}:
             self.sync_spectrum()

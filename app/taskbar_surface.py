@@ -62,25 +62,6 @@ def taskbar_color(window):
     return composed_color(sample_points(bar))
 
 
-def clock_surface_color(window, rect):
-    """Side padding and the gap between the two strings stay clear of the clock."""
-    import os
-    if os.environ.get('FISHDOCK_TEST_DESKTOP') or not window.isVisible():
-        return None
-    from window_layers import native
-    user = native()
-    user.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
-    origin = wintypes.POINT()
-    if not user.ClientToScreen(int(window.winId()), ctypes.byref(origin)):
-        return None
-    scale = window.devicePixelRatioF()
-    positions = ((.03, .25), (.97, .25), (.03, .52), (.97, .52), (.03, .78), (.97, .78),
-                 (.25, .50), (.50, .50), (.75, .50))
-    points = ((origin.x + round((rect.x() + rect.width()*x) * scale),
-               origin.y + round((rect.y() + rect.height()*y) * scale)) for x, y in positions)
-    return composed_color(points)
-
-
 def _sample_screen_dc(gdi, dc, points):
     left, top = map(min, zip(*points))
     right, bottom = map(max, zip(*points))

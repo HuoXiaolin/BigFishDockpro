@@ -51,13 +51,14 @@ def add_menu(menu,runtime):
     monitor=menu.addAction('显示任务栏监控');monitor.setCheckable(True);monitor.setChecked(cfg['resource_taskbar'])
     monitor.triggered.connect(lambda on:runtime.resources.set_options(resource_taskbar=on))
     menu.addAction('任务栏监控设置…',lambda:runtime.resources.settings(page=1))
-    from resource_options import RUNNER_ANIMALS, RUNNER_SPEEDS
+    from resource_options import RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
     pets = menu.addMenu('托盘小动物')
     show = pets.addAction('显示托盘小动物')
     show.setCheckable(True)
     show.setChecked(cfg['resource_tray_runner_enabled'])
     show.triggered.connect(lambda on: runtime.resources.set_options(resource_tray_runner_enabled=on))
     for title, key, choices in (('动物形象', 'resource_tray_runner_animal', RUNNER_ANIMALS),
+                                ('监测指标', 'resource_tray_runner_metric', RUNNER_METRICS),
                                 ('奔跑速度', 'resource_tray_runner_speed', RUNNER_SPEEDS)):
         submenu = pets.addMenu(title)
         submenu.setEnabled(show.isChecked())

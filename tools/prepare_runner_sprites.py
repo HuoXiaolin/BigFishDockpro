@@ -1,7 +1,8 @@
 """Register the approved eight-pose illustrations for the tray and capsule."""
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
+from PIL.PngImagePlugin import PngInfo
 
 
 ASSETS = Path(__file__).resolve().parents[1] / 'assets' / 'runner'
@@ -20,6 +21,13 @@ def prepare(animal):
     order, clearance = POSES[animal]
     frames, bounds = [], []
     with Image.open(ASSETS / 'original' / (animal + '.png')) as source:
+        if animal == 'cat':
+            # Store the calico's white coat as opaque #FFFFFF. Keep antialiased edges.
+            red, green, blue, alpha = source.split()
+            light = ImageChops.darker(red, ImageChops.darker(green, blue))
+            white = light.point(lambda value: 255 if value >= 238 else 0)
+            interior = alpha.point(lambda value: 255 if value >= 240 else 0)
+            source.paste((255, 255, 255, 255), mask=ImageChops.darker(white, interior))
         for index in order:
             col, row = index % 4, index // 4
             cell = source.crop((round(col * source.width / 4), round(row * source.height / 2),
@@ -39,6 +47,7 @@ def prepare(animal):
     origin = (CELL - width * scale) / 2
     ground = (CELL + height * scale) / 2
     sheet = Image.new('RGBA', (4 * CELL, 2 * CELL))
+    tray_inset = CELL // 2
     for i, (cell, box, lift) in enumerate(zip(frames, bounds, clearance)):
         x1, y1, x2, y2 = box
         drawing = cell.crop((x1 - 2, y1 - 2, x2 + 2, y2 + 2))
@@ -49,7 +58,12 @@ def prepare(animal):
         frame = Image.new('RGBA', (CELL, CELL))
         frame.alpha_composite(drawing, (x, y))
         sheet.paste(frame, ((i % 4) * CELL, (i // 4) * CELL))
-    sheet.save(ASSETS / (animal + '.png'), optimize=True)
+        x_min, y_min, x_max, y_max = frame.getchannel('A').getbbox()
+        tray_inset = min(tray_inset, x_min, y_min, CELL - x_max, CELL - y_max)
+    # Remove only padding shared by every pose. The capsule uses the full tile.
+    metadata = PngInfo()
+    metadata.add_text('TrayInset', str(tray_inset))
+    sheet.save(ASSETS / (animal + '.png'), pnginfo=metadata, optimize=True)
 
 
 if __name__ == '__main__':

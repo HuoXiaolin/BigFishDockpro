@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt, QEventLoop, QTimer
 from PyQt5.QtWidgets import QApplication, QWidget
-from feature_config import normalize
+from feature_config import DEFAULTS, normalize
 from runtime_controller import RuntimeController
 from ui_style import apply_theme
 from update_service import parse_manifest, fetch_manifest
@@ -21,7 +21,7 @@ def run(api, dock, tray, root, output, checks):
     assert api.APP_NAME == PROJECT_ID and api.APP_TITLE == DISPLAY_NAME and api.COMPAT_NAME == 'BigFishDock'
     root, output = Path(root), Path(output)
     normalized = normalize(dict(cfg, corner_radius=999, startup_delay='broken', panel_material='unknown'))
-    assert normalized['corner_radius'] == 120 and normalized['startup_delay'] == 0 and normalized['panel_material'] == 'liquid'
+    assert normalized['corner_radius'] == 120 and normalized['startup_delay'] == 0 and normalized['panel_material'] == DEFAULTS['panel_material']
     legacy = normalize(dict(cfg, theme='gloss', panel_theme='gloss'))
     assert legacy['theme'] == legacy['panel_theme'] == 'light'
     assert legacy['dock_material'] == legacy['panel_material'] == 'gloss'
@@ -30,10 +30,11 @@ def run(api, dock, tray, root, output, checks):
     entries = []
     for n in range(61):
         path = root/('demo-%03d.url' % n)
-        path.write_text('[InternetShortcut]\nURL=https://example.com\n', encoding='utf-8')
+        path.write_text(f'[InternetShortcut]\nURL=https://example.com/demo/{n}\n', encoding='utf-8')
         entries.append({'path':str(path), 'name':['浏览器', '代码编辑器', '设计文档'][n % 3]+' %02d' % n,
                         'group':['网络', '开发', '办公'][n % 3]})
-    cfg['items'] = entries
+    from shortcut_mapping import map_items
+    cfg['items'] = map_items(entries)
     defaults = normalize({})
     assert all(defaults[key] for key in ('dock_visible', 'panel_enabled', 'merged_panels', 'screen_corners'))
     assert defaults['corner_radius'] == 16
@@ -55,7 +56,7 @@ def run(api, dock, tray, root, output, checks):
     items_before = list(cfg['items'])
     next(action for action in dock.icon_context_menu(0).actions() if action.text()=='移除').trigger()
     assert cfg['items'] == items_before[:offset]+items_before[offset+1:]
-    assert Path(items_before[offset]['path']).exists()
+    assert Path(items_before[offset]['source_path']).exists()
     cfg['items'] = items_before
     api.save_config(cfg)
     dock.reload()

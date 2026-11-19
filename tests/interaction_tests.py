@@ -104,7 +104,11 @@ def run(api, dock, importer, root, output, checks):
     assert batch.list.count()==2
     for i in range(batch.list.count()): batch.list.item(i).setCheckState(Qt.Checked if len(batch.list.item(i).data(Qt.UserRole)['_paths'])==2 else Qt.Unchecked)
     batch.perform();batch.commit()
-    assert len(dock.cfg['items'])==1 and dock.cfg['items'][0]['path']==special
+    assert len(dock.cfg['items'])==1
+    remaining=dock.cfg['items'][0]
+    assert launch_identity(remaining)==launch_identity(special)
+    assert Path(remaining['path']).samefile(program) and Path(remaining['source_path']).samefile(special)
+    assert remaining['arguments']=='--profile secondary',remaining
     importer.apply_items(original_items)
     batch.discovered(original_apps)
     batch.tabs.setCurrentIndex(0)

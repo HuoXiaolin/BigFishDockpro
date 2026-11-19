@@ -41,13 +41,22 @@ def _sample(key, rect):
     return tuple(sum(getattr(c, part)() for c in colors)/len(colors) for part in ('red', 'green', 'blue'))
 
 
-def wallpaper_color(window):
+def wallpaper_color(window, local_rect=None):
     """Read wallpaper files only; never capture foreground applications."""
-    from PyQt5.QtCore import QRectF
+    from PyQt5.QtCore import QPoint, QRectF
     from wallpaper_source import wallpaper_key
     screen = window.screen()
+    if screen is None:return None
     key = wallpaper_key(window, screen)
     monitor = QRectF(*key[4]); scale = monitor.width()/max(1, screen.geometry().width())
+    if local_rect is not None:
+        logical=screen.geometry()
+        origin=window.mapToGlobal(QPoint(0,0))
+        sy=monitor.height()/max(1,logical.height())
+        region=QRectF(monitor.x()+(origin.x()+local_rect.x()-logical.x())*scale,
+                      monitor.y()+(origin.y()+local_rect.y()-logical.y())*sy,
+                      local_rect.width()*scale,local_rect.height()*sy)
+        return _sample(key,region.getRect())
     from resource_taskbar import taskbars
     bar = next((b['rect'] for b in taskbars() if b['screen'] == screen.name()), None)
     if bar is not None:

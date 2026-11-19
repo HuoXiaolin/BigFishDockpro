@@ -4,7 +4,14 @@ from content_sources import NEWS_FEED_PRESETS, clean_feeds
 from screen_layout import valid_record
 
 RUNNER_ANIMALS = {'cat': '小猫', 'dog': '小狗', 'rabbit': '小兔'}
-RUNNER_SPEEDS = {'cpu': '跟随 CPU 占用', 'fixed_140ms': '匀速 · 低', 'fixed_80ms': '匀速 · 中', 'fixed_50ms': '匀速 · 高'}
+RUNNER_FIXED_RATES = {'fixed_low': ('低', 24), 'fixed_medium': ('中', 48), 'fixed_high': ('高', 96)}
+RUNNER_SPEEDS = {'adaptive': '跟随占用率'}
+RUNNER_SPEEDS.update({key: f'匀速 · {label}（{fps:g} 帧/秒）' for key, (label, fps) in RUNNER_FIXED_RATES.items()})
+LEGACY_RUNNER_SPEEDS = {
+    'cpu': 'adaptive', 'low': 'fixed_low', 'medium': 'fixed_low', 'high': 'fixed_medium',
+    'fixed_140ms': 'fixed_low', 'fixed_80ms': 'fixed_medium', 'fixed_50ms': 'fixed_high',
+}
+RUNNER_METRICS = {'cpu': 'CPU', 'gpu': 'GPU', 'memory': '内存', 'disk_activity': '磁盘', 'network_utilization': '网络'}
 RUNNER_SLOT = 26
 
 METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'外设电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
@@ -82,8 +89,8 @@ DEFAULTS.update(resource_system_status=True,resource_peripheral_profiles=[],reso
                 resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
 DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_agenda=True,resource_alert_focus=True,
                 resource_alert_water=True,resource_alert_battery=False,resource_alert_almanac=True,resource_reminder_sound=True)
-DEFAULTS.update(resource_runner_enabled=False, resource_runner_animal='cat', resource_runner_speed='cpu',
-                resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='cpu')
+DEFAULTS.update(resource_runner_enabled=False, resource_runner_animal='cat', resource_runner_speed='adaptive', resource_runner_metric='cpu',
+                resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='adaptive', resource_tray_runner_metric='cpu')
 DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
@@ -240,15 +247,17 @@ def normalize(cfg,strict=False):
     cfg.pop('resource_runner_color', None)
     for prefix in ('resource_runner_', 'resource_tray_runner_'):
         cfg.setdefault(prefix + 'animal', 'cat')
-        speed = cfg.setdefault(prefix + 'speed', 'cpu')
+        cfg.setdefault(prefix + 'metric', 'cpu')
+        speed = cfg.setdefault(prefix + 'speed', 'adaptive')
         if isinstance(speed, str):
-            cfg[prefix + 'speed'] = {'low': 'fixed_140ms', 'medium': 'fixed_140ms', 'high': 'fixed_80ms'}.get(speed, speed)
+            cfg[prefix + 'speed'] = LEGACY_RUNNER_SPEEDS.get(speed, speed)
     options={'resource_background':('global','app','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
              'resource_ai_tray_mode':('auto','fixed'),
              'resource_runner_animal':tuple(RUNNER_ANIMALS),'resource_tray_runner_animal':tuple(RUNNER_ANIMALS),
              'resource_runner_speed':tuple(RUNNER_SPEEDS),'resource_tray_runner_speed':tuple(RUNNER_SPEEDS),
+             'resource_runner_metric':tuple(RUNNER_METRICS),'resource_tray_runner_metric':tuple(RUNNER_METRICS),
              'resource_expand_mode':('hover','click'),'resource_open_page':tuple(OPEN_PAGES),
              'resource_face_mood':('random','default','happy','wink','love','star','shy','pout','squint'),
              'resource_compact_density':('auto','dense'),

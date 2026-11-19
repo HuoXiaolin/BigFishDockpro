@@ -3,7 +3,7 @@ from functools import lru_cache
 import time
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainterPathStroker,QPen,QPixmap,QConicalGradient,QBrush,QRegion,QTransform
-from resource_status import metric_ink,metric_number
+from resource_status import connection_labels,metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import amount_text, quota_color, remaining_percent, used_percent
 from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RUNNER_SLOT,component_location
@@ -85,7 +85,7 @@ def status_values(service):
     brightness=reading.get('value')
     rows=(
         ('battery','充电中' if state=='charging' else '电池',f'{level}%' if level is not None else 'AC' if state=='ac' else '—',(level,state)),
-        ('connection','网卡','—' if connection is None else connection or '未连接',connection),
+        ('connection',*connection_labels(connection),connection),
         ('volume','音量','—' if volume is None else '静音' if volume[1] else f'{volume[0]}%',volume),
         ('brightness','亮度','—' if brightness is None else f'{brightness:.0f}%',brightness),
     )

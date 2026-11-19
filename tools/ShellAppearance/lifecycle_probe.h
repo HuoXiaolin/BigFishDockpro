@@ -16,6 +16,7 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
         autoInk[L"bigfish_live_ink"]=L"#ffffff";
         auto darkerInk=autoInk;
         darkerInk[L"bigfish_live_ink"]=L"#000000";
+        darkerInk[L"bigfish_footer_surface"]=L"#119de0";
         transportStable=transportStable && BF_StyleSettingsEqual(autoInk,darkerInk);
         darkerInk.erase(L"bigfish_live_ink");
         transportStable=transportStable && !BF_StyleSettingsEqual(autoInk,darkerInk);

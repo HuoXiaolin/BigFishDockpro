@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QWidget
 
 from resource_compact import ring, text
 from resource_options import content_columns
-from resource_status import BATTERY_WARNING_LEVEL, band_ink, low_battery_ink
+from resource_status import BATTERY_WARNING_LEVEL, band_ink, connection_labels, low_battery_ink
 
 
 BATTERY_STATES = {
@@ -65,8 +65,9 @@ class SystemReadout(QWidget):
         volume_text='—' if volume is None else '静音' if volume[1] else f'{volume[0]}%'
         brightness_text='—' if brightness is None else f'{brightness:.0f}%'
         battery_text=f'电池 {level}% {BATTERY_STATES[state]}' if level is not None else BATTERY_STATES[state]
-        connection_text='—' if connection is None else connection or '未连接'
-        self.setAccessibleName(f'{battery_text}，音量 {volume_text}，亮度 {brightness_text}，网卡 {connection_text}')
+        connection_text=' '.join(connection_labels(connection))
+        self.setAccessibleName(f'{battery_text}，音量 {volume_text}，亮度 {brightness_text}，{connection_text}')
+        self.setToolTip(connection_text)
         self.update()
 
     def paintEvent(self,event):
@@ -102,6 +103,8 @@ class SystemReadout(QWidget):
         bottom=self.height()-19
         p.setPen(QPen(QColor(c['hover']),1))
         p.drawLine(QPointF(0,bottom),QPointF(width,bottom))
-        text(p,QRectF(0,bottom+2,28,16),'网卡',c['muted'],10)
-        connection_text='—' if connection is None else connection or '未连接'
-        text(p,QRectF(30,bottom+2,width-30,16),connection_text,c['ink'] if connection else c['muted'],11)
+        adapter,network=connection_labels(connection)
+        font=p.font();font.setPixelSize(10);font.setWeight(font.Normal);p.setFont(font)
+        label_width=min(p.fontMetrics().horizontalAdvance(adapter)+2,width//2)
+        text(p,QRectF(0,bottom+2,label_width,16),adapter,c['muted'],10)
+        text(p,QRectF(label_width+6,bottom+2,max(0,width-label_width-6),16),network,c['ink'] if connection else c['muted'],11)

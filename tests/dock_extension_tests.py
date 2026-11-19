@@ -75,19 +75,32 @@ def run(api,runtime,root,output,checks):
         assert dock.items[0]['_reflected'].toImage()==combined
         assert dock.extras.clock.isActive() and 0<dock.extras.clock.remainingTime()<=60000
         rectangles=dock.extras.rects();assert {'clock','quick','add'}==set(rectangles)
-        # Inspect both text draws and the colors supplied by the composed clock surface.
+        # Inspect both text draws and the shared wallpaper sample.
         probe = MagicMock()
         inks = []
         probe.drawText.side_effect = lambda *args: inks.append(probe.setPen.call_args.args[0].name())
         with patch.object(dock, 'preview', False), patch.object(dock, 'update') as repaint, \
-                patch('dock_extras.clock_surface_color', side_effect=[(49,18,80),(49,18,80),None,(250,250,250)]) as sample:
+                patch('dock_extras.wallpaper_color', side_effect=[(49,18,80),(49,18,80),None,(250,250,250)]) as sample:
             for _ in range(4):
                 dock.extras.refresh_clock_ink()
                 dock.extras.paint(probe, dock.theme_colors())
             assert inks == ['#ffffff']*6 + ['#000000']*2
             assert repaint.call_count == 2 and sample.call_count == 4
             assert sample.call_args.args[1] == rectangles['clock']
-        checks.append('Dock time and date share the measured black/white foreground; stable and unavailable samples avoid repaint')
+        monitor=dock.screen().geometry().getRect()
+        dark=('',None,0,QColor('#311250').rgba(),monitor,monitor)
+        bright=('',None,0,QColor('#fafafa').rgba(),monitor,monitor)
+        with patch.object(dock,'preview',False), patch('wallpaper_source.wallpaper_key',return_value=dark) as wallpaper, \
+             patch('taskbar_surface.composed_color',side_effect=AssertionError('Dock sampled the foreground window')):
+            for event in (QEvent.WindowActivate,QEvent.WindowDeactivate,QEvent.WindowActivate):
+                QApplication.sendEvent(dock,QEvent(event))
+                dock.extras.refresh_clock_ink()
+                dock.extras.paint(probe,dock.theme_colors())
+                assert inks[-2:]==['#ffffff','#ffffff']
+            wallpaper.return_value=bright
+            dock.extras.refresh_clock_ink();dock.extras.paint(probe,dock.theme_colors())
+            assert inks[-2:]==['#000000','#000000']
+        checks.append('Dock time and date keep the same wallpaper-based foreground on window activation and deactivation; changing the wallpaper updates both.')
         for i,first in enumerate(rectangles.values()):
             for second in list(rectangles.values())[i+1:]:assert not first.intersects(second)
         apps_right=max(r[0]+r[1]/2 for r in dock.rects);assert apps_right<=min(rect.left() for rect in rectangles.values())
@@ -191,13 +204,16 @@ def run(api,runtime,root,output,checks):
             with patch.object(dock,'start_backdrop'):popup.tiles[key].click()
             assert cfg[field]==original_value
         wheel_on(popup.tiles['settings'],120);assert popup.pages.currentIndex()==0
-        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_ORDER,PRIORITY_ORDER,MIME,SHELL_ACTIONS
+        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_DEFAULT,PREVIOUS_ORDER,PRIORITY_ORDER,MIME,SHELL_ACTIONS,WIDGET_SWITCHES
         def without_shell(order):
-            return [key for key in order if key not in SHELL_ACTIONS]
-        assert DEFAULT_ORDER[:len(PRIORITY_ORDER)] == PRIORITY_ORDER and normalize_order(PREVIOUS_ORDER) == DEFAULT_ORDER
+            return [key for key in order if key not in SHELL_ACTIONS and key not in WIDGET_SWITCHES]
+        assert [key for key in DEFAULT_ORDER if key not in WIDGET_SWITCHES][:len(PRIORITY_ORDER)]==PRIORITY_ORDER
+        assert normalize_order(PREVIOUS_ORDER)==normalize_order(PREVIOUS_DEFAULT)==DEFAULT_ORDER
+        reversed_order=list(reversed(PREVIOUS_DEFAULT))
+        assert normalize_order(reversed_order)==reversed_order+list(WIDGET_SWITCHES)
         assert without_shell(normalize_order(['clock','clock','not-an-action']))==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
         assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
-        assert normalize_order(without_shell(DEFAULT_ORDER))==DEFAULT_ORDER
+        assert normalize_order([key for key in DEFAULT_ORDER if key not in SHELL_ACTIONS])==DEFAULT_ORDER
         previous=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
         assert normalize_order(previous+['lite'])==DEFAULT_ORDER
         custom_order=list(reversed(previous))
@@ -248,6 +264,13 @@ def run(api,runtime,root,output,checks):
         popup.set_page(0);popup.toggle_edit();assert not popup.editing
 
         old=cfg['magnify'];popup.tiles['magnify'].click();assert cfg['magnify']!=old and api.load_config()['magnify']==cfg['magnify']
+        for key,(_,_,field,_,tip) in WIDGET_SWITCHES.items():
+            previous_value=cfg[field]
+            tile=popup.tiles[key]
+            tile.click()
+            assert cfg[field]!=previous_value and api.load_config()[field]==cfg[field]
+            assert tile.accessibleDescription()==('已开启' if cfg[field] else '已关闭') and tile.toolTip()==tip
+            tile.click();assert cfg[field]==previous_value
         size=cfg['icon_size']
         with patch.object(api.IconProvider,'get',side_effect=icon):popup.tiles['size'].click()
         assert cfg['icon_size']!=size

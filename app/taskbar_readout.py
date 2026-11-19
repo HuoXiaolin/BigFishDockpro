@@ -41,17 +41,21 @@ def columns(service):
                 number=entry[0] if key=='memory' else entry
                 value=f'{number:.1f}%' if key=='memory' else f'{number:.0f}%'
         return (label,value,key,number,tip)
-    network=data.get('network')
-    pair=[(arrow,transfer(network[i]) if network is not None else '—','network',None,'下载' if i==0 else '上传') for i,arrow in enumerate(('↓','↑'))] if 'network' in enabled else [None,None]
     groups = {
         'cpu_temp': [(cell('cpu_temp','CPU'),cell('cpu_power','CPWR'))],
         'gpu_temp': [(cell('gpu_temp','GPU'),cell('gpu_power','GPWR'))],
         'memory': [(cell('memory','内存'),cell('fps','FPS'))],
-        'network': [tuple(pair)],
+        'network': [],
         'cpu': [(cell('cpu','CPU占用'),cell('gpu','GPU占用'))],
         'traffic': [],
         'sensors': [],
     }
+    if 'network' in enabled:
+        download, upload = data.get('network') or (None, None)
+        groups['network'].append((
+            ('↑', transfer(upload) if upload is not None else '—', 'network', None, '上传'),
+            ('↓', transfer(download) if download is not None else '—', 'network', None, '下载'),
+        ))
     if 'traffic' in enabled:
         from resource_traffic import amount
         traffic=data.get('traffic',{})

@@ -433,6 +433,8 @@ class ResourceWindow(ResourceContentHost):
     def __init__(self,service):
         super().__init__(service)
         self.setProperty('clickThroughKey','resource')
+        self.runner_hovered=False
+        self.setMouseTracking(True)
         self.press=None;self.offset=0;self.last_layer=None
         self.taskbar_placement=None
         self.taskbar_size=None
@@ -1168,7 +1170,27 @@ class ResourceWindow(ResourceContentHost):
         if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
             self.expand_from(self.mapFromGlobal(cursor),automatic=True)
 
+    def runner_at(self,point):
+        runner=self.service.runners.get('capsule') if self.service.compact else None
+        if runner:
+            from resource_runner import capsule_rect
+            if capsule_rect(self).contains(point):return runner
+        return None
+
+    def event(self,event):
+        if event.type()==QEvent.ToolTip:
+            runner=self.runner_at(event.pos())
+            if runner:
+                runner.show_reading(event.globalPos())
+                event.accept()
+                return True
+        return super().event(event)
+
     def expand_from(self,point,automatic=False):
+        runner=self.runner_at(point)
+        if runner:
+            runner.show_reading(self.mapToGlobal(point))
+            return
         badges=self.service.reminders()
         icon_only=self.width()<70 or self.service.cfg['resource_fold']=='ball'
         if badges and icon_only:
@@ -1200,6 +1222,7 @@ class ResourceWindow(ResourceContentHost):
             if target and self.page_enabled(target):
                 self.select_page(target)
     def leaveEvent(self,event):
+        self.runner_hovered=False
         self.enter_timer.stop()
         super().leaveEvent(event)
     def fold_idle(self):
@@ -1222,7 +1245,16 @@ class ResourceWindow(ResourceContentHost):
             self.liquid.begin()
         else:super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
-        if self.press is None:return
+        if self.press is None:
+            runner=self.runner_at(event.pos())
+            if bool(runner)!=self.runner_hovered:
+                self.runner_hovered=bool(runner)
+                if runner:
+                    self.enter_timer.stop()
+                    runner.show_reading(event.globalPos())
+                elif self.service.compact and self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource'):
+                    self.enter_timer.start()
+            return
         delta=event.globalPos()-self.press
         if delta.manhattanLength()>=QApplication.startDragDistance():self.moved=True
         if self.moved:

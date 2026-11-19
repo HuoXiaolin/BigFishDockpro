@@ -4,11 +4,10 @@ from PyQt5.QtCore import QObject,QTimer,Qt,QRectF,QPointF,QSize,QPoint,QMimeData
 from PyQt5.QtGui import QPixmap,QPainter,QColor,QLinearGradient,QFont,QPen,QDrag,QPainterPath
 from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QApplication,QStackedWidget,QWidget,QFrame
 
-from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,normalize_order
+from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,WIDGET_SWITCHES,normalize_order
 from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
 from dock_icon_shape import circular_icon
-from background_contrast import foreground
-from taskbar_surface import clock_surface_color
+from background_contrast import foreground, wallpaper_color
 
 REFLECTION_BUDGET=2*1024*1024
 
@@ -79,6 +78,17 @@ def symbol(p,rect,kind,color):
     elif kind=='watermark':
         p.drawRoundedRect(QRectF(2,4,20,16),2,2)
         p.translate(12,12);p.rotate(-18);p.drawLine(-4,-4,4,-4);p.drawLine(0,-4,0,5)
+    elif kind in ('paw','tray_paw'):
+        if kind=='tray_paw':
+            p.drawLine(3,21,21,21);p.translate(2,0);p.scale(.84,.84)
+        for x,y in ((4,9),(9,5),(15,5),(20,9)):p.drawEllipse(QPointF(x,y),1.6,2.1)
+        pad=QPainterPath(QPointF(6,17));pad.cubicTo(6,14,10,10,12,10);pad.cubicTo(15,10,20,16,17,18)
+        pad.cubicTo(15,20,13,17,11,18);pad.cubicTo(8,19,6,19,6,17);p.drawPath(pad)
+    elif kind=='leaf':
+        leaf=QPainterPath(QPointF(5,18));leaf.cubicTo(0,7,13,4,21,3);leaf.cubicTo(20,14,16,21,5,18);p.drawPath(leaf);p.drawLine(3,21,15,9)
+    elif kind=='picture':
+        p.drawRoundedRect(QRectF(2,4,20,16),2,2);p.drawEllipse(QPointF(8,9),1.4,1.4)
+        p.drawLine(3,17,8,13);p.drawLine(8,13,11,15);p.drawLine(11,15,17,9);p.drawLine(17,9,21,13)
     elif kind=='calendar':
         p.drawRoundedRect(QRectF(3,5,18,16),2,2);p.drawLine(3,10,21,10);p.drawLine(8,3,8,7);p.drawLine(16,3,16,7)
         for x in (8,13,18):p.drawPoint(x,14);p.drawPoint(x,18)
@@ -289,6 +299,10 @@ class DockQuickSettings(QDialog):
                 'search':'应用 / 文件 / 便签','undo':'暂无可撤销',
                 'layouts':'保存 / 切换布局','references':'检查 / 重新定位'}
         values['taskbar_monitor']='已开启' if cfg['resource_taskbar'] else '已关闭'
+        for key,(_,_,field,_,tip) in WIDGET_SWITCHES.items():
+            values[key]='已开启' if cfg[field] else '已关闭'
+            self.tiles[key].setToolTip(tip)
+            self.tiles[key].setAccessibleDescription(values[key])
         self.tiles['clock'].setToolTip('左键开关时钟，右键设置时光进度与倒计时')
         values['resources']='已开启' if cfg['resource_enabled'] else '已关闭'
         self.tiles['resources'].setToolTip('切换桌面资源胶囊')
@@ -415,6 +429,9 @@ class DockQuickSettings(QDialog):
             if key == 'appearance' and notes and not notes.flush():
                 self.status.setText('便签保存失败，外观切换已取消。');return
             changes=next_cycle(cfg,key)
+        elif key in WIDGET_SWITCHES:
+            field=WIDGET_SWITCHES[key][2]
+            changes={field:not cfg[field]}
         elif key=='panels':changes={'panel_enabled':not cfg['panel_enabled'],'panels_visible':True}
         elif key=='magnify':changes={'magnify':not cfg['magnify']}
         elif key=='notes':changes={'notes_enabled':not (cfg['notes_enabled'] and cfg['notes_visible']),'notes_visible':True}
@@ -574,7 +591,10 @@ class DockExtras(QObject):
         if self.dock.preview or not self.dock.isVisible() or not self.dock.cfg.get('dock_clock', True):
             return
         rect = self.rects()['clock']
-        surface = clock_surface_color(self.dock, rect)
+        try:
+            surface = wallpaper_color(self.dock, rect)
+        except (OSError, ValueError, RuntimeError):
+            return
         if surface is not None:
             ink = QColor(foreground(surface))
             if ink != self.clock_ink:

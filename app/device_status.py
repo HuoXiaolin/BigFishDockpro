@@ -2,6 +2,7 @@
 import ctypes as C
 from ctypes import wintypes as W
 from contextlib import contextmanager
+from functools import lru_cache
 from uuid import UUID
 
 
@@ -30,6 +31,26 @@ ENDPOINT_VOLUME = GUID.from_buffer_copy(UUID('5CDF2C82-841E-4546-9722-0CF7407822
 NETWORK_MANAGER_CLASS = GUID.from_buffer_copy(UUID('DCB00C01-570F-4A9B-8D69-199FDBA5723B').bytes_le)
 NETWORK_MANAGER = GUID.from_buffer_copy(UUID('DCB00000-570F-4A9B-8D69-199FDBA5723B').bytes_le)
 OUT_INTERFACE = C.POINTER(C.c_void_p)
+
+
+class WlanConnectionHeader(C.Structure):
+    # WLAN_CONNECTION_ATTRIBUTES through wlanAssociationAttributes.dot11Ssid.
+    _fields_ = [('state', W.DWORD), ('mode', W.DWORD), ('profile', W.WCHAR * 256),
+                ('ssid_length', W.DWORD), ('ssid', C.c_ubyte * 32)]
+
+
+@lru_cache(maxsize=1)
+def wlan_api():
+    try:
+        wlan=C.WinDLL('wlanapi')
+    except OSError:
+        return None
+    wlan.WlanOpenHandle.argtypes=[W.DWORD,C.c_void_p,C.POINTER(W.DWORD),C.POINTER(W.HANDLE)]
+    wlan.WlanQueryInterface.argtypes=[W.HANDLE,C.POINTER(GUID),C.c_int,C.c_void_p,C.POINTER(W.DWORD),OUT_INTERFACE,C.c_void_p]
+    wlan.WlanFreeMemory.argtypes=[C.c_void_p]
+    wlan.WlanFreeMemory.restype=None
+    wlan.WlanCloseHandle.argtypes=[W.HANDLE,C.c_void_p]
+    return wlan
 
 
 def invoke(instance, slot, result, types, *args):
@@ -101,14 +122,45 @@ class DeviceStatus:
             finally:
                 release(endpoint,device,enum)
 
-    def connection_name(self,adapter,fallback,now):
+    def connection_name(self,adapter,alias,now,wireless=False):
         if adapter is None:
             self.connection_cache=None
-            return fallback
+            return ''
         cache=self.connection_cache
         if cache is None or cache[0]!=adapter or now>=cache[1]:
-            cache=self.connection_cache=(adapter,now+5,self.network_profile(adapter))
-        return cache[2] or fallback
+            ssid=self.connected_ssid(adapter) if wireless else ''
+            cache=self.connection_cache=(adapter,now+5,ssid or self.network_profile(adapter))
+        return alias,cache[2]
+
+    def connected_ssid(self,adapter):
+        """Read the association on this interface, including when its network profile was renamed."""
+        wlan=wlan_api()
+        if wlan is None:
+            return ''
+        version,size,handle,buffer=W.DWORD(),W.DWORD(),W.HANDLE(),C.c_void_p()
+        if wlan.WlanOpenHandle(2,None,C.byref(version),C.byref(handle)):
+            return ''
+        try:
+            guid=GUID.from_buffer_copy(adapter)
+            if wlan.WlanQueryInterface(handle,C.byref(guid),7,None,C.byref(size),C.byref(buffer),None):
+                return ''
+            if not buffer or size.value<C.sizeof(WlanConnectionHeader):
+                return ''
+            row=C.cast(buffer,C.POINTER(WlanConnectionHeader)).contents
+            if row.state!=1 or not 0<row.ssid_length<=32:
+                return ''
+            raw=bytes(row.ssid[:row.ssid_length])
+            for encoding in ('utf-8','mbcs'):
+                try:
+                    name=raw.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+                if name.isprintable():
+                    return name
+            return ''
+        finally:
+            if buffer:wlan.WlanFreeMemory(buffer)
+            wlan.WlanCloseHandle(handle,None)
 
     def network_profile(self,adapter):
         with self.apartment() as ready:

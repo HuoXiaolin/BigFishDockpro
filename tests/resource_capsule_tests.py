@@ -282,6 +282,13 @@ def run(api,runtime,root,app,output,checks):
                                    resource_gpu_temp=True,resource_gpu_power=True,resource_palette='vivid')
         assert service.bluetooth is bt and service.fps and service.sensors and service.sensors.keys=={'cpu_temp','cpu_power','gpu_temp','gpu_power','brightness',*FAN_METRICS}
         from taskbar_readout import columns
+        with patch.dict(cfg, resource_task_metrics=['network']):
+            for sample, up, down in (((9*1024,350*1024),'350K/s','9K/s'), ((4096,0),'0B/s','4K/s'), (None,'—','—')):
+                with patch.dict(service.latest, network=sample):
+                    top, bottom = columns(service)[0]
+                    assert (top[0], top[1], top[4]) == ('↑', up, '上传')
+                    assert (bottom[0], bottom[1], bottom[4]) == ('↓', down, '下载')
+        checks.append('Taskbar network speed: upload is the upper row and download the lower row, including zero and missing samples.')
         with patch.dict(cfg,resource_task_metrics=list(FAN_METRICS)):
             for missing in FAN_METRICS:
                 service.sensors.values={key:dict(label=METRICS[key],source='测试转速计',value=0 if key=='gpu_fan' else 1200)

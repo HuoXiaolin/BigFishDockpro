@@ -8,6 +8,79 @@ from PyQt5.QtGui import QContextMenuEvent,QMouseEvent,QImage,QPainter,QColor,QSc
 from PyQt5.QtWidgets import QApplication,QWidget
 
 
+def daily_picture_recovery_checks(runtime,app,output,checks):
+    import json
+    from daily_picture_card import DailyPictureCard
+    from desktop_panel_tests import wait_for
+    from tempfile import TemporaryDirectory
+    from pathlib import Path
+
+    photo=QImage(48,27,QImage.Format_RGB32)
+    photo.fill(QColor('#166a92'))
+    fixture=output/'daily-recovery-preview.jpg'
+    assert photo.save(str(fixture),'JPG')
+    preview=fixture.read_bytes()
+    day=['19']
+    failure=[None]
+    requested=[]
+    def fetch(url,_maximum):
+        requested.append(url)
+        if failure[0]=='offline':
+            raise OSError('fixture offline')
+        if 'HPImageArchive' in url:
+            return json.dumps({'images':[dict(urlbase='/th?id=OHR.Fixture'+d,startdate='202611'+d,
+                           title='图片'+d,copyright='说明'+d,copyrightlink='/search?q='+d)
+                           for d in (day[0],'18')]}).encode()
+        if failure[0]=='primary' and url.startswith('https://www.bing.com/'):
+            return b'incomplete'
+        return b'incomplete' if failure[0]=='image' else preview
+
+    def shown(view):
+        return (view.title.text(),view.credit.text(),view.position.text(),view.items[view.index]['story'],
+                view.photo.image.pixelColor(4,4).rgb())
+
+    with TemporaryDirectory() as temp, patch.object(runtime.api,'CONFIG_DIR',temp), \
+         patch.dict(runtime.dock.cfg,{'daily_picture_enabled':True,'daily_picture_source':'bing'}), \
+         patch.object(runtime.dock,'preview',False),patch('resource_content.fetch',side_effect=fetch):
+        cards=[]
+        def open_card():
+            card=DailyPictureCard(runtime);cards.append(card)
+            card.sync();card.show();app.processEvents()
+            wait_for(app,lambda:card.content.job is None)
+            return card.content
+        try:
+            failure[0]='primary'
+            view=open_card()
+            first=shown(view)
+            assert first[:3]==('图片19','说明19','11/19  1/2')
+            assert [url.split('/')[2] for url in requested if '/th?' in url]==['www.bing.com','th.bing.com']
+            cache=view.picture_cache_path();original=cache.read_bytes()
+            failure[0]='offline'
+            view.previous.click();wait_for(app,lambda:view.job is None)
+            assert shown(view)==first and view.status.isHidden() and view.previous.isEnabled() and not view.newer.isEnabled()
+            failure[0]=None;view.next_fetch=0;view.tick();wait_for(app,lambda:view.job is None)
+            second=shown(view)
+            assert second[:3]==('图片18','说明18','11/18  2/2') and cache.read_bytes()!=original
+            saved=cache.read_bytes();day[0]='20';failure[0]='image'
+            view.reload.click();assert shown(view)==second and view.status.isHidden()
+            wait_for(app,lambda:view.job is None)
+            assert shown(view)==second and cache.read_bytes()==saved
+            cards[-1].hide();failure[0]='offline'
+            restored=open_card()
+            assert shown(restored)==second and restored.status.isHidden() and cache.read_bytes()==saved
+            failure[0]=None;restored.next_fetch=0;restored.tick();wait_for(app,lambda:restored.job is None)
+            assert shown(restored)[:3]==('图片20','说明20','11/20  1/2') and cache.read_bytes()!=saved
+            cards[-1].hide();cache.write_bytes(b'incomplete');failure[0]='offline'
+            empty=open_card()
+            assert not empty.items and empty.photo.image.isNull() and empty.status.text()=='等待每日图片'
+            assert cache==Path(temp)/'cache'/'bing-last-preview.bin'
+        finally:
+            for card in cards:
+                card.hide();card.deleteLater()
+            app.processEvents()
+    checks.append('Daily picture loads from a second Bing image source on a cold start, retains its image and page through outages, corrupt downloads and offline restarts, and updates after recovery.')
+
+
 def daily_picture_wallpaper_checks(runtime,app,output,wallpapers,checks):
     from ctypes import addressof,wintypes
     from io import BytesIO
@@ -292,6 +365,7 @@ def run(api,runtime,app,output,checks):
         finally:
             foreground.close();foreground.deleteLater();wallpaper.invalidate_source()
         daily_picture_wallpaper_checks(runtime,app,output,wallpapers,checks)
+        daily_picture_recovery_checks(runtime,app,output,checks)
         service.fold(True)
         folded_geometry=w.geometry();start=QPoint(w.width()//2,w.height()//2);point=w.mapToGlobal(start)
         event(w,QEvent.MouseButtonPress,start,point)

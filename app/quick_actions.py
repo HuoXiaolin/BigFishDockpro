@@ -19,6 +19,16 @@ FIRST_PAGE_SETTINGS = ['settings', 'taskbar', 'taskbar_text', *SHELL_ACTIONS, 'm
 PRIORITY_ORDER = FIRST_PAGE_SETTINGS + [key for key in OLD_PRIORITY_ORDER if key not in FIRST_PAGE_SETTINGS]
 PRIORITY_ORDER.insert(PRIORITY_ORDER.index('calendar')+1, 'watermark')
 DEFAULT_ORDER = PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in PRIORITY_ORDER]
+PREVIOUS_DEFAULT = list(DEFAULT_ORDER)
+WIDGET_SWITCHES = {
+    'capsule_pet': ('胶囊小动物','paw','resource_runner_enabled','resources','收起胶囊时显示小动物'),
+    'tray_pet': ('托盘小动物','tray_paw','resource_tray_runner_enabled','taskbar_monitor','在系统托盘显示小动物'),
+    'almanac_alert': ('节气提醒','leaf','resource_alert_almanac','calendar','在资源胶囊显示农历节气与节日提醒'),
+    'daily_picture': ('每日图片','picture','daily_picture_enabled','watermark','显示每日图片组件'),
+}
+for key,(title,icon,field,anchor,tip) in WIDGET_SWITCHES.items():
+    ACTIONS.append((key,title,icon))
+    DEFAULT_ORDER.insert(DEFAULT_ORDER.index(anchor)+1,key)
 PRODUCTIVITY_ACTIONS=('search','undo','layouts','references','flash','resources','taskbar_monitor')
 MIME='application/x-bigfishdock-quick-action'
 
@@ -33,7 +43,7 @@ def normalize_order(value):
     previous_default = list(old_default)
     previous_default[1], previous_default[-1] = previous_default[-1], previous_default[1]
     old_priority = OLD_PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in OLD_PRIORITY_ORDER]
-    old_orders = (PREVIOUS_ORDER, previous_twenty, old_default, previous_default, previous_default[:-1], old_priority)
+    old_orders = (PREVIOUS_ORDER, PREVIOUS_DEFAULT, previous_twenty, old_default, previous_default, previous_default[:-1], old_priority)
     if not order or order in old_orders or any(order == [key for key in layout if key != 'watermark'] for layout in old_orders):
         return list(DEFAULT_ORDER)
     # Add missing system controls in functional order, leaving saved positions intact.
@@ -45,4 +55,5 @@ def normalize_order(value):
         if key not in order:
             order.insert(order.index(anchor) + 1, key)
         anchor = key
+    order.extend(key for key in WIDGET_SWITCHES if key not in order)
     return order

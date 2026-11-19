@@ -100,7 +100,7 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         action=menu.addAction('显示 / 隐藏 Dock');action.setCheckable(True);action.setChecked(tray.dock.isVisible())
         action.triggered.connect(lambda:runtime.toggle_dock() if runtime else None)
     menu.addAction('应用批量管理…').triggered.connect(lambda:runtime.show_batch() if runtime else tray.importer.show())
-    if runtime and hasattr(runtime,'productivity'):
+    if not dock_context and runtime and hasattr(runtime,'productivity'):
         tools=menu.addMenu('查找与整理')
         tools.addAction('统一搜索…').triggered.connect(runtime.productivity.open_search)
         undo=tools.addAction('撤销上次整理');undo.setEnabled(bool(runtime.productivity.history.entries));undo.triggered.connect(runtime.productivity.undo)
@@ -111,6 +111,18 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     layout=menu.addMenu('Dock 布局');separator_actions(layout,tray,insert_at)
     if getattr(tray.dock,'page_count',1)>1:
         layout.addSeparator();layout.addAction('上一页').triggered.connect(lambda:tray.dock.change_page(-1));layout.addAction('下一页').triggered.connect(lambda:tray.dock.change_page(1))
+    if not dock_context:
+        component_actions(menu,tray,runtime)
+    menu.addSeparator();menu.addAction('设置…').triggered.connect(lambda:runtime.show_settings() if runtime else tray.show_settings())
+    if not dock_context:
+        help_actions(menu,tray,runtime)
+    menu.addSeparator()
+    if dock_context:
+        menu.addAction('隐藏 Dock').triggered.connect(lambda:runtime.set_dock_visible(False) if runtime else tray.dock.hide())
+    menu.addAction('退出').triggered.connect(lambda:runtime.request_exit() if runtime else QApplication.instance().quit())
+
+
+def component_actions(menu,tray,runtime):
     panels=menu.addMenu('桌面卡片');panels.menuAction().setEnabled(runtime is not None)
     visible=panels.addAction('显示 / 隐藏桌面卡片');visible.setCheckable(True)
     visible.setChecked(bool(runtime and any(window.isVisible() for window in runtime.panels.windows.values())))
@@ -173,7 +185,9 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     for title,key,callback in [('暂停桌面组件','game_mode',lambda on:runtime.set_desktop_paused(on) if runtime else None),
                                ('全屏自动暂停','fullscreen_detection',lambda on:runtime.set_fullscreen_pause(on) if runtime else None)]:
         action=pause.addAction(title);action.setCheckable(True);action.setChecked(tray.cfg[key]);action.triggered.connect(callback)
-    menu.addSeparator();menu.addAction('设置…').triggered.connect(lambda:runtime.show_settings() if runtime else tray.show_settings())
+
+
+def help_actions(menu,tray,runtime):
     help_menu=menu.addMenu('帮助与更新')
     def refresh():
         tray.refresh_now()
@@ -184,9 +198,6 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     help_menu.addAction('刷新玻璃背景').triggered.connect(refresh)
     help_menu.addAction('检查更新').triggered.connect(lambda:runtime.updater.check() if runtime else None)
     help_menu.addAction('使用说明').triggered.connect(tray.open_readme)
-    menu.addSeparator()
-    if dock_context:menu.addAction('隐藏 Dock').triggered.connect(lambda:runtime.set_dock_visible(False) if runtime else tray.dock.hide())
-    menu.addAction('退出').triggered.connect(lambda:runtime.request_exit() if runtime else QApplication.instance().quit())
 
 
 def rebuild(tray):

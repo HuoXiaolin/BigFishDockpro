@@ -10,11 +10,30 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'app'), str(ROOT / 'tools')]
 
 
+def check_probe(executable, library, case, report_name, timeout, timeout_retries):
+    report = case / report_name
+    for attempt in range(2):
+        report.unlink(missing_ok=True)
+        try:
+            result = subprocess.run([str(executable), str(library), str(case)],
+                                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if attempt:
+                raise
+            timeout_retries.append(case.name)
+            continue
+        data = json.loads(report.read_text()) if report.exists() else {}
+        if result.returncode or not data.get('passed'):
+            raise AssertionError(f'{case.name}: exit={result.returncode}, result={data}')
+        return
+
+
 def main(output):
     from run_isolated_test import assert_isolated
     from shell_appearance_model import START_MENU_SIZE, settings, encode_ini, normalize
     output = Path(output).resolve()
     checks = []
+    timeout_retries = []
     try:
         desktop = assert_isolated()
         executable = ROOT / 'artifacts/shell-build/BigFishShellProbe.exe'
@@ -53,8 +72,10 @@ def main(output):
                 data.update(probe_tint_percent=str(expected), probe_tint_alpha=str(alpha))
                 if kind == 'start':
                     data['probe_core_apps'] = '1' if material == 'crystal' and theme == 'dark' else '0'
+                    if (material, theme, opacity, text_mode) == ('liquid', 'light', 0, 'auto'):
+                        data['bigfish_footer_surface'] = '#209ff0'
                     data['probe_footer_hit_test'] = '1' if (material, theme, opacity, text_mode) in (
-                        ('crystal', 'light', 72, 'auto'), ('liquid', 'light', 0, 'auto')) else '0'
+                        ('crystal', 'light', 72, 'auto'), ('crystal', 'dark', 0, 'auto'), ('liquid', 'light', 0, 'auto')) else '0'
                     data['trace_menu_input'] = data['probe_footer_hit_test']
                     assert 'StartDocked.StartSizingFrame' in data.values()
                     assert 'Cortana.UI.Views.TaskbarSearchPage' in data.values()
@@ -74,12 +95,7 @@ def main(output):
                             data[key] = value.replace('ControlCenter.PaginatedToggleButton',
                                                       'Windows.UI.Xaml.Controls.Primitives.ToggleButton')
                 (case / f'{kind}.{build}.ini').write_bytes(encode_ini(data))
-                result = subprocess.run([str(executable), str(payload / filename), str(case)],
-                                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=12)
-                report = case / (kind + '-probe.json')
-                data = json.loads(report.read_text()) if report.exists() else {}
-                if result.returncode or not data.get('passed'):
-                    raise AssertionError(f'{case.name}: exit={result.returncode}, result={data}')
+                check_probe(executable, payload / filename, case, kind + '-probe.json', 12, timeout_retries)
                 checks.append(case.name + ': verified tint and ' + inspected)
                 if kind == 'start' and material == 'crystal' and theme == 'light':
                     data = settings(cfg, kind, os.getpid())
@@ -97,18 +113,14 @@ def main(output):
                     observed = output / 'start-observer-layout'
                     observed.mkdir(parents=True, exist_ok=True)
                     (observed / f'{kind}.{build}.ini').write_bytes(encode_ini(data))
-                    process = subprocess.run([str(executable), str(payload / filename), str(observed)],
-                                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
-                    report = observed / 'start-layout.json'
-                    result = json.loads(report.read_text()) if report.exists() else {}
-                    if process.returncode or not result.get('passed'):
-                        raise AssertionError(f'real observer layout: exit={process.returncode}, report={result}')
+                    check_probe(executable, payload / filename, observed, 'start-layout.json', 15, timeout_retries)
                     checks.append('start-observer-layout: complete layout through real TAP, refresh and production teardown')
         result = {'passed': True, 'scope': 'native-xaml-isolated', 'desktop': desktop, 'checks': checks,
                   'profile': 'layout' if focused else 'full',
                   'limits': ['Synthetic native XAML; no injection into the user shell or live Windows start/notification interaction.']}
     except Exception:
         result = {'passed': False, 'checks': checks, 'error': traceback.format_exc()}
+    result['timeout_retries'] = timeout_retries
     (output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     return 0 if result['passed'] else 1
 
