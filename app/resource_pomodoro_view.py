@@ -18,6 +18,7 @@ def reminder_ink(kind,light,battery_level=None):
     if kind=='battery':
         return low_battery_ink(BATTERY_WARNING_LEVEL if battery_level is None else battery_level,light)
     palette={'agenda':('#6246a2','#c8b6ff'), 'almanac':('#356551','#a4dbb2'),
+             'mail_code':('#2357a0','#a7d8ff'),
              'water':('#1268ab','#83c7ff'), 'rest':('#087959','#72dfb4'),
              'paused':('#59657b','#b9c5d8'), 'focus':('#ab412d','#ffa08a')}
     return palette[kind.removesuffix('_done')][0 if light else 1]
@@ -29,7 +30,18 @@ def reminder_icon(p,rect,kind,ink):
         p.translate(rect.topLeft());p.scale(rect.width()/16,rect.height()/16)
         p.setPen(Qt.NoPen);p.setBrush(QColor(ink))
         path=QPainterPath()
-        if kind=='agenda':
+        if kind in ('mail','mail_new','mail_code'):
+            color=QColor(ink)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(color,1.4,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(1.5,3.6,13,9.8),1.6,1.6)
+            path.moveTo(2.7,5)
+            path.lineTo(8,9)
+            path.lineTo(13.3,5)
+            p.drawPath(path)
+            if kind=='mail_new':
+                p.setPen(Qt.NoPen);p.setBrush(color);p.drawEllipse(QPointF(13.1,3.1),2.7,2.7)
+        elif kind=='agenda':
             p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(ink),1.5,Qt.SolidLine,Qt.RoundCap))
             p.drawRoundedRect(QRectF(2,3,12,11),2,2)
             p.drawLine(QPointF(2.5,7),QPointF(13.5,7))

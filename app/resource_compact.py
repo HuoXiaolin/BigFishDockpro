@@ -44,7 +44,7 @@ def halo_brushes():
     return tuple(layers)
 
 
-def paint_halo(window,p):
+def paint_halo(window,p,damage=None):
     if not window.service.cfg['resource_halo']:return
     r=QRectF(window.rect()).adjusted(4.5,4.5,-4.5,-4.5)
     radius=(12 if window.service.cfg['resource_fold']=='bar' else r.height()/2) if window.service.compact else 17
@@ -56,6 +56,7 @@ def paint_halo(window,p):
         window.halo_key=key
         stroke=QPainterPathStroker();stroke.setWidth(10);stroke.setJoinStyle(Qt.RoundJoin)
         window.halo_region=QRegion(stroke.createStroke(window.halo_path).toFillPolygon().toPolygon())
+    if damage is not None and not damage.intersects(window.halo_region):return
     p.setBrush(Qt.NoBrush)
     transform = QTransform.fromTranslate(r.center().x(), r.center().y())
     transform.scale(r.width() / 2, r.height() / 2)
@@ -102,7 +103,7 @@ def compact_badges(service):
     cfg=service.cfg
     active=service.reminders()
     badges=list(active)
-    seen={kind if kind in ('battery','water','agenda','almanac') else 'pomodoro' for kind,_ in active}
+    seen={kind if kind in ('battery','water','agenda','almanac','mail_code') else 'pomodoro' for kind,_ in active}
     selected=cfg['resource_compact_metrics']
     routine={}
     model=service.pomodoro
@@ -246,7 +247,8 @@ def _make_plan(window,limit=None):
     face_gap=4 if cfg['resource_face'] else 0
     face=min(round((30 if dense else 40)*cfg['resource_face_scale']/100),max_width-48-face_gap) if cfg['resource_face'] else 0
     runner_width=RUNNER_SLOT if cfg['resource_runner_enabled'] else 0
-    capacity=max(0,max_width-16-face-face_gap-runner_width)
+    mail_width=STATUS_STEP if cfg['resource_mail'] and cfg['resource_mail_icon'] else 0
+    capacity=max(0,max_width-16-face-face_gap-runner_width-mail_width)
     available=capacity
     active,capacity=badge_slots(window,badges[:active_count],capacity,max_width,priority=True)
     ordinary_floor=26 if values and not active else 0
@@ -278,12 +280,12 @@ def _make_plan(window,limit=None):
     pages=(pages*((count+len(pages)-1)//len(pages)))[:count]
     pinned=[g[window.offset%len(g)] for g in pinned_groups]
     prefix=max((sum(min(cell_width(r,dense),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
-    natural=16+face+face_gap+tail+runner_width+used+(gap if used and prefix else 0)+min(prefix,room)
+    natural=16+face+face_gap+tail+runner_width+mail_width+used+(gap if used and prefix else 0)+min(prefix,room)
     from math import ceil
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
                 pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,clock=clock,clock_width=clock_width,
                 face=face,face_gap=face_gap,core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),
-                active_badges=active,routine_badges=routine,status=status,runner_width=runner_width)
+                active_badges=active,routine_badges=routine,status=status,runner_width=runner_width,mail_width=mail_width)
 
 
 def natural_width(window,limit):
@@ -556,6 +558,9 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         left+=layout['face']+layout['face_gap']
     window.reminder_bounds=[];window.reminder_kinds=[];window.status_bounds={}
     if layout['active_badges']:right=paint_badges(window,p,layout['active_badges'],right,mid,overlays)
+    if layout['mail_width']:
+        right-=layout['mail_width']
+        paint_mail_status(window,p,QRectF(right,0,layout['mail_width'],window.height()))
     clock=layout['clock'];width=layout['clock_width']
     if clock:
         now=time.localtime();line=min(20 if len(clock)==1 else 12,(window.height()-4)/len(clock))
@@ -579,14 +584,22 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         window.setAccessibleName(window.accessibleName().split('\n额度提示：')[0]+'\n额度提示：'+bridge.alert)
 
 
-def paint_compact(window,p,scroll=None):
+def paint_compact(window,p,scroll=None,damage=None):
     """Keep one bounded layer of stationary labels, with live motion above it."""
+    cached=getattr(window,'_compact_surface',None)
+    plan_cache=getattr(window,'_compact_cache',None)
+    if (cached and plan_cache and cached[0] is plan_cache[1] and not scroll and damage is not None
+            and cached[0]['runner_width'] and window.service.runners.get('capsule')):
+        from resource_runner import capsule_rect
+        if capsule_rect(window).contains(damage.boundingRect()):
+            # The runner has its own slot. Restore its background without advancing other animations.
+            p.drawPixmap(QPointF(),cached[2])
+            return
     layout=plan(window,window.width())
     dpr=window.devicePixelRatioF()
     stamp=tuple(time.strftime(pattern) for pattern in layout['clock'])
     key=(window.size(),dpr,window.font().key(),tuple(window.colors.items()),
          badge_height(window),stamp,window.marquee_title,bool(scroll))
-    cached=getattr(window,'_compact_surface',None)
     if not cached or cached[0] is not layout or cached[1]!=key:
         overlays=[]
         # A huge user-resized/DPI-scaled capsule should not retain a huge bitmap.
@@ -622,7 +635,23 @@ def paint_ball_reminder(window,p,rect):
     ink=QColor(reminder_ink(kind,window.colors['light'],level))
     p.setBrush(Qt.NoBrush);p.setPen(QPen(ink,2,Qt.SolidLine,Qt.RoundCap))
     p.drawArc(rect.adjusted(3.5,3.5,-3.5,-3.5),-9*16,77*16)
-    if rect.width()>=36:
-        mark=QRectF(rect.center().x()+4,rect.top()+3,13,13)
+    if rect.width()>=36 or kind=='mail_code':
+        if kind=='mail_code':
+            size=min(13,max(8,rect.width()*.36))
+            mark=QRectF(rect.right()-size-3,rect.top()+3,size,size)
+        else:
+            mark=QRectF(rect.center().x()+4,rect.top()+3,13,13)
         p.setPen(Qt.NoPen);p.setBrush(QColor(window.colors['surface']));p.drawEllipse(mark)
         reminder_icon(p,mark.adjusted(1.5,1.5,-1.5,-1.5),kind,ink)
+        window.reminder_bounds=[mark];window.reminder_kinds=[kind]
+
+
+def paint_mail_status(window,p,rect):
+    from resource_pomodoro_view import reminder_icon,reminder_ink
+    has_mail=bool(window.service.mail and window.service.mail.unseen)
+    size=min(16,rect.width()-2,rect.height()-2)
+    if size<=0:return
+    center=rect.center()
+    ink=reminder_ink('mail_code',window.colors['light']) if has_mail else window.colors['muted']
+    reminder_icon(p,QRectF(center.x()-size/2,center.y()-size/2,size,size),'mail_new' if has_mail else 'mail',ink)
+    window.status_bounds['mail']=rect

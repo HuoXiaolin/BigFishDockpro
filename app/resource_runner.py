@@ -30,27 +30,33 @@ def capsule_rect(window):
     return QRect(window.width() - inset - side, (window.height() - side) // 2, side, side)
 
 
-@lru_cache(maxsize=2)
-def _sheet(animal):
-    return QImage(str(ASSETS / (animal + '.png'))).convertToFormat(QImage.Format_ARGB32_Premultiplied)
+def _tiles(animal, *, tray=False):
+    sheet = QImage(str(ASSETS / (animal + '.png'))).convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    side = sheet.height() // 2
+    inset = int(sheet.text('TrayInset') or 0) if tray else 0
+    for frame in range(FRAMES):
+        rect = QRect(frame % 4 * side, frame // 4 * side, side, side)
+        yield sheet.copy(rect.adjusted(inset, inset, -inset, -inset))
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=4)
+def _capsule_frames(animal, pixels):
+    return tuple(QPixmap.fromImage(tile.scaled(pixels, pixels, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+                 for tile in _tiles(animal))
+
+
+@lru_cache(maxsize=1)
+def _tray_frames(animal):
+    # Keep full-resolution tray frames so Qt can serve every monitor DPI.
+    return tuple(QIcon(QPixmap.fromImage(tile)) for tile in _tiles(animal, tray=True))
+
+
 def sprite(animal, frame, pixels):
-    sheet = _sheet(animal)
-    side = sheet.height() // 2
-    tile = sheet.copy(frame % 4 * side, frame // 4 * side, side, side)
-    return QPixmap.fromImage(tile.scaled(pixels, pixels, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+    return _capsule_frames(animal, pixels)[frame]
 
 
-@lru_cache(maxsize=16)
 def tray_frame(animal, frame):
-    sheet = _sheet(animal)
-    side = sheet.height() // 2
-    tile = QRect(frame % 4 * side, frame // 4 * side, side, side)
-    inset = int(sheet.text('TrayInset') or 0)
-    # Qt scales this same square directly to each monitor's physical tray size.
-    return QIcon(QPixmap.fromImage(sheet.copy(tile.adjusted(inset, inset, -inset, -inset))))
+    return _tray_frames(animal)[frame]
 
 
 class RunningAnimal(QObject):
@@ -147,4 +153,7 @@ class RunningAnimal(QObject):
         self.timer.stop()
         if self.tray is not None:
             self.tray.hide()
+            _tray_frames.cache_clear()
+        else:
+            _capsule_frames.cache_clear()
         self.deleteLater()

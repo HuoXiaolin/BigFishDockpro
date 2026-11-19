@@ -283,7 +283,7 @@ def build(toolchain):
                 '    return disableNewStartMenuLayout;\n}')
         generated=BUILD/(kind+'.cpp')
         generated.write_text(('#define BIGFISH_START_ENGINE 1\n' if kind=='start' else '')+'#include "engine_adapter.h"\n'+code+'\n#include "engine_probe.h"\n#include "engine_lifecycle.cpp"\n',encoding='utf-8')
-        engine_commands.append([compiler,*cxx,'-shared','-static',generated,*objects,'-lcomctl32','-lgdi32','-lole32','-loleaut32','-lruntimeobject','-lshlwapi','-lshell32','-ladvapi32','-luuid','-lversion','-Wl,--no-insert-timestamp','-o',PAYLOAD/output])
+        engine_commands.append([compiler,*cxx,'-shared','-static',generated,*objects,'-lcomctl32','-ldwmapi','-lgdi32','-lole32','-loleaut32','-lruntimeobject','-lshlwapi','-lshell32','-ladvapi32','-luuid','-lversion','-Wl,--no-insert-timestamp','-o',PAYLOAD/output])
     with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(run,engine_commands))
     print('Building '+NAMES[0],flush=True)

@@ -11,7 +11,7 @@ from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,AI
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_metric_options
-from resource_options import RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
+from resource_options import MAIL_INTERVAL_RANGE, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -30,7 +30,7 @@ COMPACT_GROUPS = (
 )
 PLACEMENT_GROUPS = (
     ('监控与媒体', ('resources','ai','music','traffic')),
-    ('日常内容', ('weather','pomodoro','agenda','news')),
+    ('日常内容', ('weather','pomodoro','agenda','news','mail')),
     ('桌面组件', tuple(DESKTOP_COMPONENTS)),
 )
 
@@ -79,7 +79,7 @@ class ResourceOptions(QDialog):
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
-           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric'},
+           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_mail_icon'},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
@@ -87,7 +87,8 @@ class ResourceOptions(QDialog):
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
-        {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound'}]
+        {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound',
+         'resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval'}]
 
     def ensure_page(self,index):
         if index in self.loaded:return
@@ -327,6 +328,9 @@ class ResourceOptions(QDialog):
             clock_format=combo(form,'resource_clock_format','显示格式',[(label,key) for key,(label,_) in COMPACT_CLOCK_FORMATS.items()],
                                cfg['resource_clock_format'],self.fields)
             clock_format.setEnabled(show_clock.isChecked());show_clock.toggled.connect(clock_format.setEnabled)
+            mail=section(layout,'邮箱图标')
+            key='resource_mail_icon'
+            self.fields[key]=check('收起时显示邮箱图标',cfg[key]);mail.addWidget(self.fields[key])
             running=section(layout,'跑步小动物')
             show_runner = check('在收起胶囊右侧显示小动物', cfg['resource_runner_enabled'])
             self.fields['resource_runner_enabled'] = show_runner
@@ -583,6 +587,17 @@ class ResourceOptions(QDialog):
             self.fields[key]=check('收起时显示农历节气与节日提醒',cfg[key]);agenda.addWidget(self.fields[key])
             agenda.addWidget(CalendarAccounts(self.service))
             agenda.addWidget(button('日程账号接入…',self.agenda_connections))
+            mail=section(layout,'邮件通知')
+            for key,title in (('resource_mail','显示邮箱卡片并同步邮件'),('resource_mail_notifications','来信时通知'),
+                              ('resource_alert_mail_code','收起时显示验证码方块')):
+                self.fields[key]=check(title,cfg[key]);mail.addWidget(self.fields[key])
+            form=QFormLayout();mail.addLayout(form)
+            interval=ModernSpinBox()
+            interval.setRange(*MAIL_INTERVAL_RANGE);interval.setValue(cfg['resource_mail_interval'])
+            self.fields['resource_mail_interval']=interval
+            form.addRow('刷新周期（秒）',interval)
+            from resource_mail_settings import edit_mail_accounts
+            mail.addWidget(button('邮箱账号管理…',lambda:edit_mail_accounts(self.service,self)))
             timers=section(layout,'专注与喝水')
             self.fields['resource_pomodoro']=check('显示番茄钟与喝水提醒',cfg['resource_pomodoro'])
             timers.addWidget(self.fields['resource_pomodoro'])

@@ -12,6 +12,7 @@ def daily_picture_recovery_checks(runtime,app,output,checks):
     import json
     from daily_picture_card import DailyPictureCard
     from desktop_panel_tests import wait_for
+    from ui_test_events import check_edge_resize
     from tempfile import TemporaryDirectory
     from pathlib import Path
 
@@ -40,7 +41,8 @@ def daily_picture_recovery_checks(runtime,app,output,checks):
                 view.photo.image.pixelColor(4,4).rgb())
 
     with TemporaryDirectory() as temp, patch.object(runtime.api,'CONFIG_DIR',temp), \
-         patch.dict(runtime.dock.cfg,{'daily_picture_enabled':True,'daily_picture_source':'bing'}), \
+         patch.dict(runtime.dock.cfg,{'daily_picture_enabled':True,'daily_picture_source':'bing',
+                                     'daily_picture_layout':{},'daily_picture_manual_size':False,'daily_picture_locked':False}), \
          patch.object(runtime.dock,'preview',False),patch('resource_content.fetch',side_effect=fetch):
         cards=[]
         def open_card():
@@ -54,6 +56,25 @@ def daily_picture_recovery_checks(runtime,app,output,checks):
             first=shown(view)
             assert first[:3]==('图片19','说明19','11/19  1/2')
             assert [url.split('/')[2] for url in requested if '/th?' in url]==['www.bing.com','th.bing.com']
+            card=view.owner
+            automatic_size=card.size()
+            with patch.object(runtime,'daily_picture',card):
+                check_edge_resize(card)
+                saved_geometry=card.geometry()
+                assert runtime.dock.cfg['daily_picture_manual_size']
+                assert runtime.api.load_config()['daily_picture_layout']['rect']==list(saved_geometry.getRect())
+                assert runtime.set_daily_picture_options(daily_picture_locked=True)
+                check_edge_resize(card,locked=True)
+                app.processEvents()
+                assert card.geometry()==saved_geometry and view.photo.height()>100
+                assert card.grab().save(str(output/'daily-picture-edge-resize.png'))
+                assert runtime.set_daily_picture_options(daily_picture_locked=False)
+                restarted=DailyPictureCard(runtime);cards.append(restarted);restarted.sync()
+                assert restarted.geometry()==saved_geometry
+                restarted.hide();cards.remove(restarted);restarted.deleteLater()
+                assert runtime.set_daily_picture_options(daily_picture_manual_size=False)
+                assert card.size()==automatic_size
+            checks.append('Daily picture: all edges and corners resize, lock preserves size, manual frame and photograph layout restore after reopening, default size can be restored.')
             cache=view.picture_cache_path();original=cache.read_bytes()
             failure[0]='offline'
             view.previous.click();wait_for(app,lambda:view.job is None)

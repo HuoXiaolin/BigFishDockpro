@@ -96,6 +96,7 @@ class ResourceCapsule(QObject):
         self.runners = {}
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
         self.reminder_audio=None
+        self.mail=None
         self.calendar_sync=None;self.calendar_checked=False
         self.desktop_cards={}
         self.dependency_prompts=None
@@ -306,6 +307,12 @@ class ResourceCapsule(QObject):
             self.calendar_sync.schedule()
         return self.calendar_sync
 
+    def get_mail(self):
+        if self.mail is None:
+            from resource_mail import MailInbox
+            self.mail=MailInbox(self)
+        return self.mail
+
     def calendar_changed(self):
         if self.agenda:self.agenda.sync()
         else:self.get_agenda()
@@ -334,6 +341,8 @@ class ResourceCapsule(QObject):
 
     def reminders(self):
         badges=[]
+        code=self.mail.current_code() if self.compact and self.mail else None
+        if code:badges.append(('mail_code',code.value))
         due=self.agenda.due() if self.agenda else ()
         if due:
             title=due[0]['title']
@@ -445,6 +454,7 @@ class ResourceCapsule(QObject):
 
     def sync(self):
         if self.closed or self.runtime.session_ending:return
+        if self.mail or self.cfg['resource_mail']:self.get_mail().sync()
         if self.reminder_audio and (self.runtime.game_active or not self.cfg['resource_reminder_sound']):
             self.reminder_audio.stop()
         visible=self.cfg['resource_enabled'] and not self.runtime.game_active
@@ -761,6 +771,7 @@ class ResourceCapsule(QObject):
             job,self.job=self.job,None
             job.requestInterruption();job.deleteLater()
         self.stop_runners()
+        if self.mail:self.mail.close()
         for key in ('sensors','bluetooth','peripherals','app_traffic','fps','deck'):
             reader=getattr(self,key)
             setattr(self,key,None)
@@ -770,6 +781,7 @@ class ResourceCapsule(QObject):
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
         self.stop_runners()
+        if self.mail:self.mail.close()
         if self.reminder_audio:self.reminder_audio.stop()
         if self.pomodoro:self.pomodoro.timer.stop()
         if self.agenda:self.agenda.timer.stop()

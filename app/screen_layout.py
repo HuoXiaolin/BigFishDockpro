@@ -144,6 +144,9 @@ class DisplayEvents(QAbstractNativeEventFilter):
         elif msg.message==0x001a and msg.wParam==0x002f:self.layout.changed()  # SPI_SETWORKAREA
         elif msg.message==0x007e:self.layout.changed()  # WM_DISPLAYCHANGE
         elif msg.message==0x02b1 and msg.hWnd==self.session_hwnd:  # WM_WTSSESSION_CHANGE
+            if msg.wParam==7:
+                mail=getattr(getattr(self.layout.runtime,'resources',None),'mail',None)
+                if mail:mail.session_locked()
             # Console/remote connect or disconnect, unlock, remote control or desktop ready.
             if msg.wParam in (1, 2, 3, 4, 8, 9, 15):
                 self.layout.session_changed()

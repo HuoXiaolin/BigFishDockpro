@@ -1,4 +1,5 @@
 #pragma once
+#include <dwmapi.h>
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
@@ -36,6 +37,7 @@ struct BF_FooterMenu {
     std::vector<BF_FooterRow> rows;
     HWND roundedWindow=nullptr;
     HMENU roundedMenu=nullptr;
+    std::vector<HWND> framedWindows;
     winrt::weak_ref<BF_FooterCommandButton> anchor;
     HWND owner=nullptr;
     UINT_PTR measureTimer=0;

@@ -1,11 +1,15 @@
 """A separate desktop card for the current Bing picture and its archive."""
 from PyQt5.QtCore import QEvent, QPoint, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QPainter, QPalette
-from PyQt5.QtWidgets import QColorDialog, QFileDialog, QInputDialog, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDialog, QLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from capsule_glass import CapsuleGlass
 from resource_content import ContentView
 from screen_layout import capture, project, screen_records
+from window_edges import edges_at, paint_edge_targets, resize_cursor, resized_rect
+
+
+MINIMUM_SIZE = (270, 156)
 
 
 def add_menu_actions(menu,runtime):
@@ -17,6 +21,8 @@ def add_menu_actions(menu,runtime):
     lock=menu.addAction('锁定位置')
     lock.setCheckable(True);lock.setChecked(cfg['daily_picture_locked'])
     lock.triggered.connect(lambda on:runtime.set_daily_picture_options(daily_picture_locked=on))
+    size=menu.addAction('恢复默认大小',lambda:runtime.set_daily_picture_options(daily_picture_manual_size=False))
+    size.setEnabled(cfg['daily_picture_manual_size'] and not cfg['daily_picture_locked'])
     appearance=menu.addMenu('外观来源')
     for name,value in APPEARANCE_SOURCES:
         action=appearance.addAction(name);action.setCheckable(True)
@@ -64,12 +70,17 @@ class DailyPictureCard(QWidget):
         self.setProperty('clickThroughKey','picture')
         self.runtime=runtime;self.service=runtime.resources
         self.drag=None;self.placement=None
+        self.flexible_size=False
         self.glass=CapsuleGlass();self.colors={};self.appearance={};self.border={}
         self.setWindowTitle('每日图片 · 大肥鱼Dock')
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TranslucentBackground)
         body=QVBoxLayout(self);body.setContentsMargins(10,7,10,7)
+        if not self.embedded:
+            self.setMouseTracking(True)
+            body.setSizeConstraint(QLayout.SetNoConstraint)
         self.content=ContentView(self,'picture')
+        self.content.installEventFilter(self)
         body.addWidget(self.content)
         self.setStyleSheet("""
             QWidget#DailyPictureContent {background:transparent;}
@@ -83,10 +94,14 @@ class DailyPictureCard(QWidget):
     def cfg(self):return self.runtime.dock.cfg
 
     def sync(self):
-        placement=(self.cfg['daily_picture_layout'],self.cfg['card_scale'])
+        placement=(self.cfg['daily_picture_layout'],self.cfg['card_scale'],self.cfg['daily_picture_manual_size'])
         if placement!=self.placement:
             self.placement=placement;self.reposition()
-        if self.cfg['daily_picture_locked']:self.drag=None
+        if self.cfg['daily_picture_locked']:
+            self.unsetCursor()
+            if self.drag is not None:
+                self.drag=None
+                self.reposition()
         from flash_view import palette_for
         from appearance_presets import dock_appearance, material_design, panel_appearance
         following = self.cfg['daily_picture_appearance_source'] == 'app'
@@ -126,7 +141,13 @@ class DailyPictureCard(QWidget):
         width=round(max(270,min(440,338*density)))
         photo_height=round((width-20)*9/16)
         record=self.cfg['daily_picture_layout']
-        target=project(record,screens,minimum=(1,1)) if record else None
+        manual=self.cfg['daily_picture_manual_size']
+        target=project(record,screens,minimum=MINIMUM_SIZE if manual else (1,1))
+        if target and manual:
+            self.allow_resize()
+            self.setGeometry(*target)
+            return
+        self.flexible_size=False
         x,y,w,h=screens[0]['area']
         self.content.photo.setFixedHeight(photo_height)
         self.setFixedWidth(width)
@@ -135,6 +156,7 @@ class DailyPictureCard(QWidget):
         self.move(self.clamped(point))
 
     def fit_height(self):
+        if self.flexible_size:return False
         height=self.layout().sizeHint().height()
         if height==self.maximumHeight():return False
         self.setFixedHeight(height);return True
@@ -145,17 +167,32 @@ class DailyPictureCard(QWidget):
             if not self.embedded:self.move(self.clamped(self.pos()))
         return handled
 
+    def eventFilter(self,watched,event):
+        if watched is self.content and event.type()==QEvent.Enter and self.drag is None:
+            self.unsetCursor()
+        return super().eventFilter(watched,event)
+
     def resize_photo(self):
         height=min(235,round(max(1,self.width()-20)*9/16))
         if self.content.photo.height()!=height:self.content.photo.setFixedHeight(height)
         self.fit_height()
+
+    def allow_resize(self):
+        if self.flexible_size:return
+        self.flexible_size=True
+        self.setMinimumSize(*MINIMUM_SIZE)
+        self.setMaximumSize(16777215,16777215)
+        photo=self.content.photo
+        photo.setMinimumHeight(48)
+        photo.setMaximumHeight(16777215)
+        photo.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Expanding)
+        self.content.layout().setStretchFactor(photo,1)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if self.embedded and hasattr(self,'content') and event.size().width()!=event.oldSize().width():self.resize_photo()
 
     def clamped(self,point):
-        from PyQt5.QtWidgets import QApplication
         screen=QApplication.screenAt(point+self.rect().center()) or QApplication.primaryScreen()
         if screen:
             area=screen.availableGeometry()
@@ -170,31 +207,58 @@ class DailyPictureCard(QWidget):
 
     def hideEvent(self,event):
         self.glass.clear()
+        if self.drag is not None:
+            self.drag=None
+            self.reposition()
         super().hideEvent(event)
 
     def mousePressEvent(self,event):
         if event.button()==Qt.LeftButton and not self.embedded and not self.cfg['daily_picture_locked']:
-            self.drag=(self.pos(),event.globalPos())
+            edges=edges_at(self.rect(),event.pos())
+            self.drag=(self.geometry(),event.globalPos(),edges)
+            if edges:self.allow_resize()
+            self.setCursor(resize_cursor(edges))
             event.accept()
+        else:super().mousePressEvent(event)
 
     def mouseMoveEvent(self,event):
         if self.drag:
-            start,pointer=self.drag
-            self.move(start+event.globalPos()-pointer)
-            self.runtime.resources.preview_component_at('picture',event.globalPos())
+            original,pointer,edges=self.drag
+            delta=event.globalPos()-pointer
+            if edges:
+                self.setGeometry(resized_rect(original,edges,delta,MINIMUM_SIZE))
+            else:
+                self.move(original.topLeft()+delta)
+                self.runtime.resources.preview_component_at('picture',event.globalPos())
+            event.accept()
+        elif not self.embedded and not self.cfg['daily_picture_locked']:
+            edges=edges_at(self.rect(),event.pos())
+            self.setCursor(resize_cursor(edges) if edges else Qt.ArrowCursor)
 
     def mouseReleaseEvent(self,event):
-        if event.button()!=Qt.LeftButton or not self.drag:return
+        if event.button()!=Qt.LeftButton or not self.drag:
+            super().mouseReleaseEvent(event)
+            return
         self.mouseMoveEvent(event)
-        start,_=self.drag;self.drag=None
-        if self.pos()==start:
-            self.runtime.resources.preview_component_at('picture');return
-        from card_snap import finish_drag
-        self.move(self.clamped(self.pos()))
-        if finish_drag(self,event.globalPos(),component='picture'):return
+        original,_,edges=self.drag;self.drag=None
+        self.unsetCursor()
+        self.update()
+        event.accept()
+        if self.geometry()==original:
+            if edges and not self.cfg['daily_picture_manual_size']:self.reposition()
+            elif not edges:self.runtime.resources.preview_component_at('picture')
+            return
+        if not edges:
+            from card_snap import finish_drag
+            self.move(self.clamped(self.pos()))
+            if finish_drag(self,event.globalPos(),component='picture'):return
         if self.runtime.layout.pending or self.runtime.layout.applying:return
         record=capture(list(self.geometry().getRect()),screen_records())
-        if record and not self.runtime.set_daily_picture_options(daily_picture_layout=record):self.move(start)
+        changes={'daily_picture_layout':record}
+        if edges:changes['daily_picture_manual_size']=True
+        if not record or not self.runtime.set_daily_picture_options(**changes):
+            if edges and not self.cfg['daily_picture_manual_size']:self.reposition()
+            self.setGeometry(original)
 
     def contextMenuEvent(self,event):
         from ui_style import AlignedMenu
@@ -209,5 +273,7 @@ class DailyPictureCard(QWidget):
             paint_capsule_card(p,QRectF(self.rect()),self.colors,'ice',self.appearance,radius=12)
             return
         rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
+        if not self.cfg['daily_picture_locked']:
+            paint_edge_targets(p,self.rect())
         self.glass.paint(p,self,self,12,self.drag is not None,self.appearance)
         paint_design(p,rect,self.border,clear=self.appearance['material']=='clear',corner_radius=12,header_separator=False)

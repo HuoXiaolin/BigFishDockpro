@@ -3,8 +3,45 @@ import copy
 import time
 from unittest.mock import patch
 
-from PyQt5.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QTimer, Qt
-from PyQt5.QtGui import QImage, QPainter
+from PyQt5.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QRectF, QTimer, Qt
+from PyQt5.QtGui import QColor, QImage, QPainter, QRegion
+
+
+def check_mirror_damage(runtime):
+    from desktop_spectrum import DesktopSpectrum, draw_spectrum
+    with patch.dict(runtime.dock.cfg, spectrum_style='mirror'):
+        spectrum = DesktopSpectrum(runtime)
+        spectrum.resize(253,119)
+        try:
+            for dpr in (1.,1.25,2.):
+                def draw(image,clip=None):
+                    p=QPainter(image)
+                    if clip is not None:p.setClipRect(clip)
+                    p.setCompositionMode(QPainter.CompositionMode_Source)
+                    p.fillRect(spectrum.rect(),Qt.transparent)
+                    p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+                    p.setRenderHint(QPainter.Antialiasing)
+                    draw_spectrum(p,QRectF(spectrum.rect()),spectrum.levels,'mirror',QColor('cyan'),True,spectrum.peaks)
+                    p.end()
+                image=QImage(round(253*dpr),round(119*dpr),QImage.Format_ARGB32_Premultiplied)
+                image.setDevicePixelRatio(dpr)
+                image.fill(Qt.transparent)
+                draw(image)
+                for level in (.12,1.,.1,.1,0.):
+                    previous=spectrum.levels
+                    with patch.object(spectrum,'update') as update:
+                        spectrum.set_levels([level]*120)
+                    if spectrum.levels==previous:
+                        update.assert_not_called()
+                    else:
+                        update.assert_called_once()
+                        draw(image,update.call_args.args[0])
+                    expected=image.copy()
+                    draw(expected)
+                    assert image==expected,(dpr,level)
+        finally:
+            spectrum.close()
+            spectrum.deleteLater()
 
 
 def run(api, runtime, app, output, checks):
@@ -16,6 +53,7 @@ def run(api, runtime, app, output, checks):
     reminders = patch.object(service, 'reminders', return_value=())
     reminders.start()
     try:
+        check_mirror_damage(runtime)
         cfg.update(copy.deepcopy(DEFAULTS))
         cfg.update(resource_enabled=True, resource_collapsed=True, resource_auto_hide=False,
                    resource_compact_auto_width=False, resource_compact_width=500,
@@ -30,7 +68,7 @@ def run(api, runtime, app, output, checks):
             service.accept_sample(dict(time=time.monotonic(), cpu=cpu, memory=(40, 8, 20),
                                        gpu=10, network=(1000, 2000)))
 
-        def render(cached=True, scroll=None, dpr=None):
+        def render(cached=True, scroll=None, dpr=None, damage=None):
             dpr=window.devicePixelRatioF() if dpr is None else dpr
             image = QImage(round(window.width()*dpr), round(window.height()*dpr), QImage.Format_ARGB32_Premultiplied)
             image.setDevicePixelRatio(dpr)
@@ -38,9 +76,10 @@ def run(api, runtime, app, output, checks):
             painter = QPainter(image)
             painter.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
             painter.setFont(window.font())
+            if damage is not None:painter.setClipRegion(damage)
             try:
                 if cached:
-                    compact.paint_compact(window, painter, scroll)
+                    compact.paint_compact(window, painter, scroll, damage)
                 else:
                     compact.paint_compact_body(window, painter, compact.plan(window, window.width()), scroll)
             finally:
@@ -92,6 +131,17 @@ def run(api, runtime, app, output, checks):
         with patch.object(window.liquid, 'paint_face', wraps=window.liquid.paint_face) as face:
             for _ in range(5): render()
             assert face.call_count == 5
+
+        from resource_runner import capsule_rect
+        cfg['resource_runner_enabled']=True
+        service.sync()
+        render()
+        hit_targets=list(window.compact_bounds)
+        damage=QRegion(capsule_rect(window))
+        with patch.object(window.liquid,'paint_face',wraps=window.liquid.paint_face) as face:
+            partial=render(damage=damage)
+            face.assert_not_called()
+        assert partial==render(False,damage=damage) and window.compact_bounds==hit_targets
 
         # The dirty halo region must include every changed pixel, including corners.
         for folded, size in ((True, (500, 35)), (False, (500, 280))):

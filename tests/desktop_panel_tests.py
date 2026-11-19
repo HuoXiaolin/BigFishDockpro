@@ -193,7 +193,7 @@ def run(api, runtime, root, output, checks):
         target.expand_timer.setInterval(250)
         glass_panel.QCursor = original_cursor
     manager.update_panel(custom, locked=True, opacity=48, highlight=68, material='liquid')
-    assert target.minimumSize() == target.maximumSize() and not target.grip.isVisible()
+    assert target.minimumSize() == target.maximumSize() and not target.resize_edges(QPoint(2,2))
     size = target.size()
     target.resize(800, 600)
     assert target.size() == size

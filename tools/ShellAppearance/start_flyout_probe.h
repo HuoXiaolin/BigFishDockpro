@@ -58,8 +58,16 @@ static bool BF_ProbeFooterRow(const BF_FooterMenu& menu,const RECT& row,const st
     const bool insetHover=!selected || GetPixel(dc,x+MulDiv(7,menu.dpi,96),y)==BF_FooterBlend(menu.fill,menu.ink,10);
     const int w=info.bmiHeader.biWidth,h=-info.bmiHeader.biHeight;
     HRGN region=CreateRectRgn(0,0,0,0);
-    const bool rounded=region && GetWindowRgn(popup,region)==COMPLEXREGION && PtInRegion(region,w/2,h/2) &&
+    const int regionKind=region ? GetWindowRgn(popup,region) : ERROR;
+    DWM_WINDOW_CORNER_PREFERENCE corner=DWMWCP_DEFAULT;
+    const bool compositor=regionKind==ERROR && menu.roundedWindow==popup &&
+        SUCCEEDED(DwmGetWindowAttribute(popup,DWMWA_WINDOW_CORNER_PREFERENCE,&corner,sizeof(corner))) &&
+        corner==DWMWCP_ROUND;
+    const bool clipped=regionKind==COMPLEXREGION && PtInRegion(region,w/2,h/2) &&
         !PtInRegion(region,2,2) && !PtInRegion(region,w-3,2) && !PtInRegion(region,2,h-3) && !PtInRegion(region,w-3,h-3);
+    const int edge=clipped ? 1 : 0;
+    const bool frameFill=GetPixel(dc,w/2,edge)==menu.fill && GetPixel(dc,edge,y)==menu.fill &&
+        GetPixel(dc,w-1-edge,y)==menu.fill && GetPixel(dc,w/2,h-1-edge)==menu.fill;
     bool divider=true;
     for (int pos=0,n=GetMenuItemCount(menu.handle);pos<n;++pos) {
         MENUITEMINFOW item{sizeof(item)};item.fMask=MIIM_FTYPE;
@@ -70,18 +78,19 @@ static bool BF_ProbeFooterRow(const BF_FooterMenu& menu,const RECT& row,const st
         divider=GetPixel(dc,x+3,lineY)==menu.fill && GetPixel(dc,w/2,lineY)==BF_FooterBlend(menu.fill,menu.ink,14);
         if (!divider) break;
     }
-    bool complete=printed && rounded && divider && measured && width>=required && height>=size.cy && palette && insetHover && hasInk(x+2,textLeft-1);
+    bool complete=printed && (compositor || clipped) && frameFill && divider && measured && width>=required && height>=size.cy && palette && insetHover && hasInk(x+2,textLeft-1);
     int start=0;
     for (size_t i=0;complete && i<label.size();++i) {
         if (label[i]!=L' ' && advances[i]>start) complete=hasInk(textLeft+start,textLeft+advances[i]);
         start=advances[i];
     }
     detail+=" required_px="+std::to_string(required)+" popup_capture="+std::to_string(printed)+
-        " rounded="+std::to_string(rounded)+" divider="+std::to_string(divider)+" inset_hover="+std::to_string(selected && insetHover);
+        " compositor_rounding="+std::to_string(compositor)+" region_fallback="+std::to_string(clipped)+
+        " frame_fill="+std::to_string(frameFill)+" divider="+std::to_string(divider)+" inset_hover="+std::to_string(selected && insetHover);
     if (printed && selected && (label==L"登录选项" || label==L"更改帐户设置")) {
-        // PrintWindow supplies the menu pixels. Composite its actual hit region on a neutral preview ground.
+        // PrintWindow captures the menu pixels before DWM composites them.
         GdiFlush();
-        if (rounded) for (int py=0;py<h;++py) for (int px=0;px<w;++px)
+        if (clipped) for (int py=0;py<h;++py) for (int px=0;px<w;++px)
             if (!PtInRegion(region,px,py)) static_cast<DWORD*>(bits)[py*w+px]=0x00c2cbd2;
         BF_WriteProbeBitmap(bf_root/(label==L"登录选项" ? L"footer-power.bmp" : L"footer-account.bmp"),w,h,bits);
     }

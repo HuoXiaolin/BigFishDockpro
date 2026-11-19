@@ -5,7 +5,7 @@ import time
 from PyQt5.QtCore import Qt,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics,QCursor,QPixmap,QPalette,QRegion
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
-    QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy)
+    QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy,QToolTip)
 from ui_style import AlignedMenu
 from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
@@ -19,7 +19,7 @@ from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metri
 from capsule_glass import CapsuleGlass
 
 
-COMPACT_PAGES={**dict.fromkeys(COMPACT_STATUS,'resources'),'weather':'weather','music':'music','ai':'ai'}
+COMPACT_PAGES={**dict.fromkeys(COMPACT_STATUS,'resources'),'weather':'weather','music':'music','ai':'ai','mail':'mail'}
 COMPACT_FRAME_MS = 16
 COMPACT_SCROLL_SECONDS = .24
 
@@ -445,7 +445,7 @@ class ResourceWindow(ResourceContentHost):
         self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
         self._ai_view=self._music_view=None
         self._traffic_view=self._weather_view=None
-        self._news_view=self._pomodoro_view=self._agenda_view=None
+        self._news_view=self._pomodoro_view=self._agenda_view=self._mail_view=None
         self._reminder_key=();self.reminder_bounds=();self.reminder_kinds=()
         self.status_bounds={};self.marquee_title='';self.marquee_since=0.;self.marquee_span=0
         for key in DESKTOP_COMPONENTS:setattr(self,'_'+key+'_view',None)
@@ -684,7 +684,7 @@ class ResourceWindow(ResourceContentHost):
         if self.service.compact:
             from resource_compact import compact_badges
             badges,_=compact_badges(self.service)
-            key=tuple((kind,value if kind in ('agenda','water','almanac') else '') for kind,value in badges)
+            key=tuple((kind,len(value) if kind=='mail_code' else value if kind in ('agenda','water','almanac') else '') for kind,value in badges)
             self._compact_cache=None
             if key!=self._reminder_key:
                 self._reminder_key=key;self.reposition()
@@ -1050,7 +1050,8 @@ class ResourceWindow(ResourceContentHost):
                 if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
         reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注','almanac':'农历',
                          'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停'}
-        tips.extend(reminder_labels[kind]+' '+value for kind,value in self.service.reminders())
+        tips.extend('邮箱验证码，点击复制' if kind=='mail_code' else reminder_labels[kind]+' '+value
+                    for kind,value in self.service.reminders())
         if self.service.compact:
             from resource_compact import status_values
             tips.extend(label+' '+value for _,label,value,_ in status_values(self.service))
@@ -1108,9 +1109,9 @@ class ResourceWindow(ResourceContentHost):
         self.glass.paint(p,self,self,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
                          self.liquid.radii(radius))
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
-        paint_halo(self,p)
-        ink=QColor(c['ink']);accent=QColor(metric_colors(self.service)['cpu']);font=QFont(self.font());font.setPixelSize(13)
+        paint_halo(self,p,event.region())
         if compact and (self.width()<70 or (cfg['resource_fold']=='ball')):
+            self.reminder_bounds=[];self.reminder_kinds=[];self.status_bounds={}
             runner=self.service.runners.get('capsule')
             if runner:
                 from resource_runner import capsule_rect
@@ -1118,9 +1119,13 @@ class ResourceWindow(ResourceContentHost):
             if cfg['resource_face']:
                 self.liquid.paint_face(p,rect.center(),min(rect.width(),max(12,rect.width()-10)))
             else:
-                q=rect.center();p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
+                q=rect.center();p.setPen(QPen(QColor(metric_colors(self.service)['cpu']),2,Qt.SolidLine,Qt.RoundCap))
                 for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
             paint_ball_reminder(self,p,rect)
+            if cfg['resource_mail'] and cfg['resource_mail_icon']:
+                from resource_compact import paint_mail_status
+                side=min(15,rect.width()/2,rect.height()/2)
+                paint_mail_status(self,p,QRectF(rect.left()+2,rect.bottom()-side-2,side,side))
             if runner:runner.paint(p,self)
             return
         if not compact:
@@ -1131,9 +1136,9 @@ class ResourceWindow(ResourceContentHost):
             if cfg['resource_face']:
                 self.liquid.paint_face(p,QPointF(7+self.header_face_width/2,17),self.header_face_width)
             else:
-                p.setPen(QPen(accent,2,Qt.SolidLine,Qt.RoundCap))
+                p.setPen(QPen(QColor(metric_colors(self.service)['cpu']),2,Qt.SolidLine,Qt.RoundCap))
                 for n,h in enumerate((6,13,9)):p.drawLine(16+n*4,24,16+n*4,24-h)
-            font.setWeight(QFont.DemiBold);font.setPixelSize(15);p.setFont(font);p.setPen(ink)
+            font=QFont(self.font());font.setWeight(QFont.DemiBold);font.setPixelSize(15);p.setFont(font);p.setPen(QColor(c['ink']))
             bridge=self.service.deck
             header_left=self.nav_end+4;header_width=max(0,self.width()-68-header_left)
             if bridge and bridge.alert_until>time.monotonic() and cfg['resource_quota_alert'] and header_width>=80:
@@ -1151,7 +1156,7 @@ class ResourceWindow(ResourceContentHost):
             progress = (time.monotonic() - since) / COMPACT_SCROLL_SECONDS
             if progress < 1:
                 scroll = previous, max(0., progress), direction
-        paint_compact(self,p,scroll)
+        paint_compact(self,p,scroll,event.region())
         runner = self.service.runners.get('capsule')
         if runner:runner.paint(p,self)
         return
@@ -1184,6 +1189,15 @@ class ResourceWindow(ResourceContentHost):
                 runner.show_reading(event.globalPos())
                 event.accept()
                 return True
+            if self.service.compact:
+                point=QPointF(event.pos())
+                if any(kind=='mail_code' and area.contains(point) for kind,area in zip(self.reminder_kinds,self.reminder_bounds)):
+                    QToolTip.showText(event.globalPos(),'点击复制验证码',self)
+                    return True
+                rect=self.status_bounds.get('mail')
+                if rect is not None and rect.contains(point):
+                    QToolTip.showText(event.globalPos(),'有新邮件 · 点击查看' if self.service.mail and self.service.mail.unseen else '邮箱 · 点击查看',self)
+                    return True
         return super().event(event)
 
     def expand_from(self,point,automatic=False):
@@ -1193,18 +1207,19 @@ class ResourceWindow(ResourceContentHost):
             return
         badges=self.service.reminders()
         icon_only=self.width()<70 or self.service.cfg['resource_fold']=='ball'
-        if badges and icon_only:
+        mail_rect=self.status_bounds.get('mail')
+        if mail_rect is not None and mail_rect.contains(QPointF(point)):
+            if not automatic:self.service.open_component('mail')
+            return
+        kind=next((kind for kind,rect in zip(self.reminder_kinds,self.reminder_bounds) if rect.contains(QPointF(point))),None)
+        if not kind and badges and icon_only and badges[0][0]!='mail_code':
             kind=badges[0][0]
-        elif not icon_only:
-            kind=next((kind for kind,rect in zip(self.reminder_kinds,self.reminder_bounds) if rect.contains(QPointF(point))),None)
-        else:kind=None
-        if kind=='almanac':
-            if not automatic:
-                from calendar_almanac_face import open_capsule_card
-                open_capsule_card(self, self.mapToGlobal(point))
+        if kind=='mail_code':
+            if not automatic and self.service.mail and self.service.mail.copy_code():
+                QToolTip.showText(self.mapToGlobal(point),'验证码已复制',self,self.rect(),1200)
             return
         if kind:
-            target={'agenda':'agenda','battery':'resources'}.get(kind,'pomodoro')
+            target={'agenda':'agenda','battery':'resources','almanac':None}.get(kind,'pomodoro')
         else:
             row=next((key for key,rect in zip(getattr(self,'compact_shown',()),getattr(self,'compact_bounds',()))
                       if rect.contains(QPointF(point))),None) if not icon_only else None

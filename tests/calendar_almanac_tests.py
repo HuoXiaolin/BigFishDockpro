@@ -69,3 +69,35 @@ def compact_cases(service):
                 assert (('almanac',label) in badges[:count])==special
             with patch.dict(service.cfg,resource_alert_almanac=False):
                 assert 'almanac' not in dict(compact_badges(service)[0])
+
+
+def check_badge_expansion(service, app, automatic=False):
+    from PyQt5.QtCore import QEvent, QPointF, Qt
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtWidgets import QMenu
+
+    assert service.fold(True)
+    app.processEvents()
+    window = service.window
+    window.grab()
+    if service.cfg['resource_fold'] == 'ball' or window.width() < 70:
+        assert service.reminders()[0][0] == 'almanac'
+        point = window.rect().center()
+    else:
+        index = window.reminder_kinds.index('almanac')
+        point = window.reminder_bounds[index].center().toPoint()
+    page = service.cfg['resource_open_page']
+    if page == 'last':
+        page = window.page_key
+    elif not window.page_enabled(page):
+        page = window.first_page()
+    with patch.object(service, 'fold', wraps=service.fold) as fold, patch.object(QMenu, 'popup') as popup:
+        if automatic:
+            window.expand_from(point, automatic=True)
+        else:
+            screen_point = QPointF(window.mapToGlobal(point))
+            for event, buttons in ((QEvent.MouseButtonPress, Qt.LeftButton), (QEvent.MouseButtonRelease, Qt.NoButton)):
+                app.sendEvent(window, QMouseEvent(event, QPointF(point), screen_point, Qt.LeftButton, buttons, Qt.NoModifier))
+        fold.assert_called_once_with(False, automatic=automatic)
+        assert not service.compact and window.detail.isVisible() and window.page_key == page
+        popup.assert_not_called()

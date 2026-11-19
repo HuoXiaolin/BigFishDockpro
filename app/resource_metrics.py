@@ -215,7 +215,7 @@ class Sampler:
         table=C.POINTER(IfTable)()
         if self.ip.GetIfTable2(C.byref(table)) or not table:
             self.last_net=self.link_sample=None
-            if self.traffic:self.traffic.observe(None)
+            if self.traffic:self.traffic.update_readings(None)
             return None
         try:
             count=table.contents.count
@@ -238,7 +238,7 @@ class Sampler:
         finally:self.ip.FreeMibTable(table)
         result=network_rates(self.last_net,readings,now-self.net_time)
         self.last_net,self.net_time=readings,now
-        if 'traffic' in self.metrics:self.traffic.observe(readings)
+        if 'traffic' in self.metrics:self.traffic.update_readings(readings)
         return result
 
     def sample(self,sample_rank=True):

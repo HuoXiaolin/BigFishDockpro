@@ -39,7 +39,9 @@ def run(api,runtime,root,app,output,checks):
         bounds=list(panel.bounds());icon=panel.list.iconSize();reference=panel.ui_factor
         def ball():
             runtime.panels.update_panel(panel.identity,fold={'style':'ball','ratio':1});panel.collapse();app.processEvents()
-            size=(panel.width(),panel.height());assert size[0]==size[1]
+            size=(panel.width(),panel.height())
+            assert size[0]==size[1],(size,panel.collapsed,runtime.layout.pending,panel.minimumSize(),
+                                     panel.maximumSize(),getattr(panel,'_fold_target',None),cfg['appearance_mode'])
             panel.expand();app.processEvents();return size
         compact_ball=ball()
         dialog=CardSizingDialog(runtime);dialog.show();app.processEvents()

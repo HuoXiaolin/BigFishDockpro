@@ -28,6 +28,25 @@ class FooterLabel(QLabel):
                                   self.palette(), self.isEnabled(), text, self.foregroundRole())
 
 
+class CollectionHint(FooterLabel):
+    drop_text = '拖入文件、文件夹或快捷方式'
+    empty_text = '拖入内容，或等待桌面自动分类'
+
+    def has_room(self):
+        view = self.parentWidget()
+        scroll = view.verticalScrollBar()
+        if scroll.value() < scroll.maximum():
+            return False
+        if not view.count():
+            return True
+        last = view.visualItemRect(view.item(view.count() - 1))
+        return view.viewport().y() + last.bottom() < self.y()
+
+    def paintEvent(self, event):
+        if self.text() not in (self.drop_text, self.empty_text) or self.has_room():
+            super().paintEvent(event)
+
+
 class PagerTitle(FooterLabel):
     ink = '#ffffff'
 
@@ -50,7 +69,7 @@ class PagerTitle(FooterLabel):
 
 
 class PagePager(QFrame):
-    def __init__(self, parent, step, *, bottom=PAGER_BOTTOM, leading=None, grip=None):
+    def __init__(self, parent, step, *, bottom=PAGER_BOTTOM, leading=None, outlined=True):
         super().__init__(parent)
         self.setObjectName('FooterPager')
         self.setAttribute(Qt.WA_StyledBackground)
@@ -59,7 +78,6 @@ class PagePager(QFrame):
         self.step = step
         self.bottom = bottom
         self.leading = leading
-        self.grip = grip
         self.wheel_units = 0
         self.appearance = None
         self.setFixedSize(PAGER_WIDTH, PAGER_HEIGHT)
@@ -70,7 +88,8 @@ class PagePager(QFrame):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
         self.previous = self.arrow(row, '上一页', -1)
-        self.name = PagerTitle(parent=self)
+        label_type = PagerTitle if outlined else FooterLabel
+        self.name = label_type(parent=self)
         self.name.setObjectName('FooterPagerName')
         self.name.setAlignment(Qt.AlignCenter)
         self.name.installEventFilter(self)
@@ -85,15 +104,10 @@ class PagePager(QFrame):
         y = max(0, parent.height() - self.height() - self.bottom)
         self.move(x, y)
         self.raise_()
-        grip_size = self.grip.sizeHint() if self.grip is not None else QSize()
         if self.leading is not None:
-            edge = parent.width() - max(0, grip_size.width()) if self.isHidden() else x
+            edge = parent.width() if self.isHidden() else x
             self.leading.setGeometry(0, y, max(0, edge - 5), self.height())
             self.leading.raise_()
-        if self.grip is not None:
-            self.grip.resize(grip_size)
-            self.grip.move(parent.width() - grip_size.width(), parent.height() - grip_size.height())
-            self.grip.raise_()
 
     def arrow(self, row, title, step):
         button = QToolButton(self)
@@ -122,7 +136,8 @@ class PagePager(QFrame):
         if self.appearance == ink:
             return
         self.appearance = ink
-        self.name.ink = ink
+        if isinstance(self.name, PagerTitle):
+            self.name.ink = ink
         for button, name in ((self.previous, 'back'), (self.next, 'fold')):
             button.setFixedSize(24, PAGER_HEIGHT)
             button.setIcon(icon(name, ink, 14))

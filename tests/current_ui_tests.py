@@ -470,6 +470,8 @@ def run(output):
         check_pomodoro(api,runtime,app,output,checks)
         from resource_calendar_tests import run as check_calendar_sync
         check_calendar_sync(app,output,checks)
+        from mail_tests import run as check_mail
+        check_mail(api,runtime,app,output,checks)
         from resource_gateway_tests import run as check_gateway
         check_gateway(api,runtime,app,output,checks)
         from shutdown_tests import run as check_shutdown

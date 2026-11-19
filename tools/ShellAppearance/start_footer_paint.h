@@ -7,8 +7,41 @@ static COLORREF BF_FooterBlend(COLORREF base,COLORREF ink,int percent) {
     return RGB(channel(GetRValue(base),GetRValue(ink)),channel(GetGValue(base),GetGValue(ink)),channel(GetBValue(base),GetBValue(ink)));
 }
 
-// The first on-screen item draw already has the native menu's final bounds.
-// Clip just this popup. Its original window and USER hit targets stay together.
+static bool BF_FillFooterFrame(HWND window,HDC dc,COLORREF fill) {
+    RECT frame{},client{};
+    if (!dc || !GetWindowRect(window,&frame) || !GetClientRect(window,&client)) return false;
+    MapWindowPoints(window,nullptr,reinterpret_cast<POINT*>(&client),2);
+    OffsetRect(&client,-frame.left,-frame.top);
+    const RECT bounds{0,0,frame.right-frame.left,frame.bottom-frame.top};
+    const int saved=SaveDC(dc);
+    if (!saved) return false;
+    ExcludeClipRect(dc,client.left,client.top,client.right,client.bottom);
+    SetDCBrushColor(dc,fill);
+    const bool painted=FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)))!=0;
+    RestoreDC(dc,saved);
+    return painted;
+}
+
+static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR color) {
+    const auto fill=static_cast<COLORREF>(color);
+    if (msg==WM_NCPAINT) {
+        if (HDC dc=GetWindowDC(window)) {
+            const bool painted=BF_FillFooterFrame(window,dc,fill);
+            ReleaseDC(window,dc);
+            if (painted) return 0;
+        }
+    } else if (msg==WM_PRINT && (lp&PRF_NONCLIENT)) {
+        const auto result=DefSubclassProc(window,msg,wp,lp);
+        BF_FillFooterFrame(window,reinterpret_cast<HDC>(wp),fill);
+        return result;
+    } else if (msg==WM_NCDESTROY) {
+        RemoveWindowSubclass(window,BF_PaintFooterFrame,id);
+    }
+    return DefSubclassProc(window,msg,wp,lp);
+}
+
+// Style the native popup before its first completed draw. DWM supplies
+// antialiased outer corners, with the same window handling all menu input.
 static void BF_RoundFooterWindow(BF_FooterMenu& menu,HMENU parent,HDC dc) {
     const HWND window=WindowFromDC(dc);
     if (!window || (window==menu.roundedWindow && parent==menu.roundedMenu)) return;
@@ -18,12 +51,28 @@ static void BF_RoundFooterWindow(BF_FooterMenu& menu,HMENU parent,HDC dc) {
         !GetMenuBarInfo(window,OBJID_CLIENT,0,&bar) || bar.hMenu!=parent || !GetWindowRect(window,&frame)) return;
     const int width=frame.right-frame.left,height=frame.bottom-frame.top;
     if (width<4 || height<4) return;
-    const int diameter=MulDiv(20,menu.dpi,96);
-    // Exclude the one-pixel square system border as well as its corners.
-    HRGN region=CreateRoundRectRgn(1,1,width,height,diameter,diameter);
-    if (!region) return;
     menu.roundedWindow=window;
     menu.roundedMenu=parent;
+    // The USER menu has a non-client outline of its own, separate from DWM.
+    if (SetWindowSubclass(window,BF_PaintFooterFrame,reinterpret_cast<UINT_PTR>(&menu),menu.fill)) {
+        if (std::find(menu.framedWindows.begin(),menu.framedWindows.end(),window)==menu.framedWindows.end())
+            menu.framedWindows.push_back(window);
+        if (HDC frameDC=GetWindowDC(window)) {
+            BF_FillFooterFrame(window,frameDC,menu.fill);
+            ReleaseDC(window,frameDC);
+        }
+    }
+    const DWM_WINDOW_CORNER_PREFERENCE corner=DWMWCP_ROUND;
+    if (SUCCEEDED(DwmSetWindowAttribute(window,DWMWA_WINDOW_CORNER_PREFERENCE,&corner,sizeof(corner)))) {
+        const COLORREF border=DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(window,DWMWA_BORDER_COLOR,&border,sizeof(border));
+        SetWindowRgn(window,nullptr,FALSE);
+        return;
+    }
+    // Keep the corners clipped when the compositor API is unavailable.
+    const int diameter=MulDiv(16,menu.dpi,96);
+    HRGN region=CreateRoundRectRgn(1,1,width,height,diameter,diameter);
+    if (!region) return;
     if (!SetWindowRgn(window,region,FALSE)) {
         menu.roundedWindow=nullptr;menu.roundedMenu=nullptr;
         DeleteObject(region);
@@ -124,6 +173,8 @@ struct BF_FooterPainting {
         }
     }
     ~BF_FooterPainting() {
+        for (HWND window:menu.framedWindows)
+            RemoveWindowSubclass(window,BF_PaintFooterFrame,reinterpret_cast<UINT_PTR>(&menu));
         if (attached) RemoveWindowSubclass(menu.owner,BF_PaintFooterItem,reinterpret_cast<UINT_PTR>(this));
     }
 };

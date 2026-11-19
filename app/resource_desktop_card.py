@@ -12,7 +12,7 @@ from ui_style import SubtleSizeGrip
 
 INITIAL_SIZES={'resources':(560,305),'ai':(450,360),'music':(430,164),
                'traffic':(430,150),'weather':(520,303),
-               'pomodoro':(470,173),'agenda':(550,315),'news':(360,248)}
+               'pomodoro':(470,173),'agenda':(550,315),'news':(360,248),'mail':(420,280)}
 
 
 class ResourceDesktopCard(ResourceContentHost):

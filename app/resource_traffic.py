@@ -14,8 +14,16 @@ def amount(value):
 
 def totals(days, now=None):
     day=(now or datetime.now()).strftime('%Y-%m-%d')
-    return {period:tuple(sum(v[i] for k,v in days.items() if k.startswith(prefix)) for i in (0,1))
-            for period,prefix in (('day',day),('month',day[:7]),('year',day[:4]))}
+    year,month=day[:4],day[:7]
+    year_down=year_up=month_down=month_up=0
+    for date,(down,up) in days.items():
+        if date.startswith(year):
+            year_down+=down
+            year_up+=up
+            if date.startswith(month):
+                month_down+=down
+                month_up+=up
+    return dict(day=tuple(days.get(day,(0,0))),month=(month_down,month_up),year=(year_down,year_up))
 
 
 class TrafficLedger:
@@ -40,9 +48,14 @@ class TrafficLedger:
 
     def observe(self,readings,now=None):
         now=now or datetime.now()
+        self.update_readings(readings,now)
+        return self.snapshot(now)
+
+    def update_readings(self,readings,now=None):
+        now=now or datetime.now()
         if readings is None:
             self.previous=None;self.previous_at=None
-            return self.snapshot(now)
+            return
         if self.previous is not None and self.previous_at and now>=self.previous_at:
             pairs=[(self.previous[k],v) for k,v in readings.items() if k in self.previous
                    and all(v[i]>=self.previous[k][i] for i in (0,1))]
@@ -60,7 +73,6 @@ class TrafficLedger:
                 self.add(now.strftime('%Y-%m-%d'),remaining)
         self.previous=dict(readings);self.previous_at=now
         if time.monotonic()-self.saved_at>=15:self.flush()
-        return self.snapshot(now)
 
     def add(self,day,delta):
         row=self.days.setdefault(day,[0,0])

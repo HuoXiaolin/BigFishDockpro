@@ -10,7 +10,7 @@ PANEL=('geometry','enabled','merged','merge_group','collapsed','compact','fold')
 NOTE=('geometry','layout','visible','collapsed','fold')
 CARD=('layout','visible','locked')
 RECORDS=('clock_layout','calendar_layout','spectrum_layout','flash_layout','daily_picture_layout')
-SWITCHES=('clock_flipped','clock_locked','calendar_locked','daily_picture_enabled','daily_picture_locked',
+SWITCHES=('clock_flipped','clock_locked','calendar_locked','daily_picture_enabled','daily_picture_locked','daily_picture_manual_size',
           'spectrum_locked','spectrum_manual_size','flash_enabled','flash_edge_hide','flash_auto_hide',
           'watermark_enabled','shell_start_enabled','shell_notifications_enabled',
           'shell_notifications_quick','shell_notifications_media','shell_notifications_toast','shell_notifications_calendar',
@@ -26,7 +26,8 @@ RESOURCE_FIELDS=tuple('resource_'+name for name in (
     'taskbar','taskbar_position','taskbar_layer','taskbar_anchor','task_metrics','task_order','task_music','task_media_parts',
     'capsule_taskbar','capsule_taskbar_position','capsule_taskbar_anchor','ai','ai_tray','ai_tray_mode','ai_tray_provider','ai_tray_metric',
     'bt_tray','traffic','music','agenda','pomodoro','weather','news','alert_almanac','water_enabled',
-    'runner_enabled','runner_animal','runner_speed','runner_metric','tray_runner_enabled','tray_runner_animal','tray_runner_speed','tray_runner_metric'))
+    'runner_enabled','runner_animal','runner_speed','runner_metric','tray_runner_enabled','tray_runner_animal','tray_runner_speed','tray_runner_metric',
+    'mail','mail_notifications','alert_mail_code','mail_icon','mail_interval'))
 VALUE_FIELDS=(*TOP,*SWITCHES,*CHOICES,*RESOURCE_FIELDS)
 
 

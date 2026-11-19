@@ -4,10 +4,10 @@ import ctypes
 import os
 from ctypes import wintypes
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, QMimeData, QUrl, QItemSelectionModel
+from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer, QSize, QRectF, QMimeData, QUrl, QItemSelectionModel
 from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
-    QListWidget, QListWidgetItem, QAbstractItemView, QSizeGrip, QApplication,
+    QListWidget, QListWidgetItem, QAbstractItemView, QApplication,
     QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy, QTabBar)
 from ui_style import AlignedMenu as QMenu
 from app_catalog import path_key
@@ -15,6 +15,7 @@ from liquid_glass import paint_liquid_glass, tint_palette
 from appearance_presets import PANEL_PRESETS
 from ui_style import label, button, ModernComboBox, ModernSpinBox, ModernCheckBox
 from dpi_support import metric, minimum, panel_css
+from window_edges import edges_at, paint_edge_targets, resize_cursor, resized_rect
 
 
 CATEGORY_COLORS={
@@ -66,6 +67,26 @@ def _category_icon(category,ink,size,dpr):
 
 
 class CollectionList(QListWidget):
+    def center_icons(self):
+        if self.viewMode()!=QListWidget.IconMode or not self.count():
+            return
+        grid=self.gridSize()
+        width=self.viewport().width()
+        if not grid.isValid() or grid.isEmpty() or width<=0:
+            return
+        columns=max(1,(width-1)//grid.width())
+        for first in range(0,self.count(),columns):
+            count=min(columns,self.count()-first)
+            left=max(0,(width-count*grid.width())//2)
+            top=(first//columns)*grid.height()
+            for column in range(count):
+                index=self.model().index(first+column,0)
+                rect=self.rectForIndex(index)
+                x=left+column*grid.width()+(grid.width()-rect.width())//2
+                position=QPoint(x,top)
+                if rect.topLeft()!=position:
+                    self.setPositionForIndex(position,index)
+
     def keyPressEvent(self,event):
         panel=self.window()
         if event.matches(QKeySequence.Copy):panel.copy_files(False);event.accept();return
@@ -190,6 +211,7 @@ class DesktopPanel(QDialog):
         self.fit_timer.setSingleShot(True)
         self.fit_timer.timeout.connect(self.fit_content)
         self.drag_origin = None
+        self.edge_drag = None
         self.dragged = False
         self.backdrop = None
         self.spec_x, self.spec_alpha = 0, 0
@@ -240,6 +262,7 @@ class DesktopPanel(QDialog):
         body.addLayout(header)
         self.content = QWidget()
         self.content.setObjectName('PanelContent')
+        self.content.installEventFilter(self)
         content = QVBoxLayout(self.content)
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(4)
@@ -261,11 +284,13 @@ class DesktopPanel(QDialog):
         self.list.setMinimumHeight(0)
         self.list.setViewMode(QListWidget.IconMode)
         self.list.setResizeMode(QListWidget.Adjust)
-        self.list.setMovement(QListWidget.Static)
+        self.list.setMovement(QListWidget.Free)
         self.list.setIconSize(QSize(34, 34))
         self.list.setGridSize(QSize(78, 78))
         self.list.setTextElideMode(Qt.ElideRight)
         self.list.setWordWrap(True)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         from card_file_ui import FileNameDelegate
         self.list.setItemDelegate(FileNameDelegate(self.list))
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -278,14 +303,15 @@ class DesktopPanel(QDialog):
         content.addWidget(self.list, 1)
         from flip_stack import ContentTransition
         self.page_transition=ContentTransition(self.list)
-        from page_footer import FooterLabel, PagePager
-        self.notice = FooterLabel('拖入文件、文件夹或快捷方式', self.content)
+        from page_footer import CollectionHint, PagePager
+        self.notice = CollectionHint(CollectionHint.drop_text, self.list)
         self.notice.setObjectName('PanelLabel')
         self.notice.setStyleSheet('font-size:11px;')
         self.notice.setContentsMargins(0, 0, 4, 0)
-        from ui_style import SubtleSizeGrip
-        self.grip = SubtleSizeGrip(self.content,lambda:self.colors().get('light',True))
-        self.page_pager = PagePager(self.content, self.shift_merged_page, bottom=0, leading=self.notice, grip=self.grip)
+        self.notice.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.list.verticalScrollBar().valueChanged.connect(self.notice.update)
+        self.list.verticalScrollBar().rangeChanged.connect(self.notice.update)
+        self.page_pager = PagePager(self.list, self.shift_merged_page, bottom=0, leading=self.notice, outlined=False)
         self.page_pager.hide()
         body.addWidget(self.content, 1)
         self.query.textChanged.connect(self.render)
@@ -335,7 +361,7 @@ class DesktopPanel(QDialog):
         self.query.blockSignals(True);self.query.setText(query);self.query.blockSignals(False)
         self.list.clearSelection();self._released_selection=set(selected)
         if self.isVisible():
-            self.render();self.list.doItemsLayout();self.list.verticalScrollBar().setValue(scroll)
+            self.render();self.fit_content();self.list.verticalScrollBar().setValue(scroll)
         else:self._idle_state=(query,set(selected),scroll)
 
     def select_tab(self, index):
@@ -383,11 +409,15 @@ class DesktopPanel(QDialog):
         self.layout().setSpacing(metric(4,factor))
         self.header_layout.setSpacing(metric(5,factor))
         self.content.layout().setSpacing(metric(4,factor))
-        self.grip.setFixedSize(metric(12,factor,6),metric(12,factor,6))
         self.notice.setStyleSheet('font-size:%dpx;'%metric(11,factor,6))
-        self.list.setViewportMargins(0, 0, 0, self.notice.sizeHint().height())
         view = self.model.get('view','small')
         self.list.setViewMode(QListWidget.ListMode if view=='list' else QListWidget.IconMode)
+        # Programmatic icon placement uses Free mode. File dragging is handled
+        # by CollectionList, and internal drops into this view stay disabled.
+        self.list.setMovement(QListWidget.Static if view=='list' else QListWidget.Free)
+        self.list.setDragEnabled(True)
+        self.list.setAcceptDrops(False)
+        self.list.viewport().setAcceptDrops(False)
         icon=metric(22 if view=='list' else 54 if view=='large' else 34,factor,12)
         self.list.setIconSize(QSize(icon,icon))
         # Reset explicit IconMode properties: a zero grid makes list rows overlap.
@@ -400,11 +430,7 @@ class DesktopPanel(QDialog):
         grid_height=max(metric(102 if view=='large' else 78,factor),icon+margin*3+font_height*3)
         self.list.setGridSize(QSize() if view=='list' else QSize(metric(108 if view=='large' else 78,factor),grid_height))
         self.list.setSpacing(0)
-        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWindowTitle(self.model['name']+' · 桌面收纳')
-        self.grip.setVisible(not self.option('locked'))
-        # Use min/max constraints as well as hiding the grip: native resize is locked too.
         if self.collapsed:
             self.set_collapsed_geometry(True)
         else:
@@ -412,6 +438,7 @@ class DesktopPanel(QDialog):
             self.setMaximumSize(16777215,16777215)
             self.setMinimumSize(min(minimum(factor)[0],self.width()),min(minimum(factor)[1],self.height()))
             if self.option('locked'):self.setFixedSize(self.size())
+        self.unsetCursor()
         colors = self.colors()
         ink = colors['fg'].name()
         self.page_pager.sync_appearance(ink)
@@ -461,6 +488,7 @@ class DesktopPanel(QDialog):
         if view!='list':
             grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*3+metric(12,factor))))
         self.render()
+        if self.isVisible():self.fit_timer.start(0)
         self.face_tracker.sync_face()
         from fold_options import header
         header(self,self.collapsed)
@@ -518,7 +546,7 @@ class DesktopPanel(QDialog):
                    tuple(metadata.get(path_key(row['path'])) for row in rows))
         self.title.setText(self.model['name'])
         self.count.setText(str(len(self.manager.rows(self.identity))))
-        self.notice.setText(self.manager.message or ('拖入文件、文件夹或快捷方式' if rows else '拖入内容，或等待桌面自动分类'))
+        self.notice.setText(self.manager.message or (self.notice.drop_text if rows else self.notice.empty_text))
         if not restoring_idle and signature==getattr(self,'_render_signature',None):return
         current=self.list.currentItem();current_key=path_key(current.data(Qt.UserRole)['path']) if current else None
         current_row=self.list.currentRow()
@@ -555,12 +583,14 @@ class DesktopPanel(QDialog):
 
     def fit_content(self):
         # Preserve freely chosen dimensions, including when merged pages switch.
+        self.fit_timer.stop()
         self.list.doItemsLayout()
+        self.list.center_icons()
+        self.notice.update()
 
     def set_compact(self, enabled):
         self.manual_resize = False
         if self.manager.is_merged(self.identity): self.manager.update_group(self.identity,compact=enabled)
-        if not enabled: self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         if self.manager.update_panel(self.identity, compact=enabled): self.fit_timer.start(0)
 
     def selected_keys(self):
@@ -812,6 +842,8 @@ class DesktopPanel(QDialog):
     def set_collapsed_geometry(self, collapsed):
         self.restoring = True
         self.collapsed = collapsed
+        self.edge_drag = None
+        self.unsetCursor()
         self.content.setVisible(not collapsed)
         self.setMinimumSize(1, 1)
         self.setMaximumSize(16777215, 16777215)
@@ -871,7 +903,7 @@ class DesktopPanel(QDialog):
         else: self.collapse()
 
     def collapse_if_outside(self):
-        if self.option('auto_hide') and self.isVisible() and not self.tabs.pressing and self.drag_origin is None and not self.rect().contains(self.mapFromGlobal(QCursor.pos())) and not QApplication.activePopupWidget():
+        if self.option('auto_hide') and self.isVisible() and not self.tabs.pressing and self.drag_origin is None and self.edge_drag is None and not self.rect().contains(self.mapFromGlobal(QCursor.pos())) and not QApplication.activePopupWidget():
             active = QApplication.activeWindow()
             if active and active is not self and self.isAncestorOf(active): return
             self.collapse()
@@ -885,6 +917,11 @@ class DesktopPanel(QDialog):
         if self.collapsed and self.option('expand_mode')=='hover': self.expand_timer.start()
         super().enterEvent(event)
 
+    def eventFilter(self, watched, event):
+        if watched is self.content and event.type() == QEvent.Enter and self.edge_drag is None:
+            self.unsetCursor()
+        return super().eventFilter(watched, event)
+
     def leaveEvent(self, event):
         self.expand_timer.stop()
         self.spec_alpha = 0
@@ -894,6 +931,14 @@ class DesktopPanel(QDialog):
 
     def mousePressEvent(self, event):
         if event.button()==Qt.LeftButton:self.face_tracker.press(True)
+        edges = self.resize_edges(event.pos())
+        if event.button() == Qt.LeftButton and edges:
+            self.edge_drag = (self.geometry(), event.globalPos(), edges)
+            self.resize_timer.stop()
+            self.refresh_timer.stop()
+            self.setCursor(resize_cursor(edges))
+            event.accept()
+            return
         if event.button() == Qt.LeftButton and event.pos().y() <= 44 and not self.option('locked'):
             self.drag_origin = event.globalPos()-self.pos()
             self.drag_start = event.globalPos()
@@ -904,15 +949,40 @@ class DesktopPanel(QDialog):
     def mouseMoveEvent(self, event):
         self.spec_x, self.spec_alpha = event.pos().x(), .7
         self.update()
-        if self.drag_origin is not None and event.buttons() & Qt.LeftButton:
+        if self.edge_drag is not None and event.buttons() & Qt.LeftButton:
+            self.resize_from_edge(event.globalPos())
+            event.accept()
+        elif self.drag_origin is not None and event.buttons() & Qt.LeftButton:
             if self.dragged or (event.globalPos()-self.drag_start).manhattanLength()>=QApplication.startDragDistance():
                 self.dragged = True
                 self.move(event.globalPos()-self.drag_origin)
                 if not self.merged_view:self.manager.preview_card_drop(self,event.globalPos())
-        else: super().mouseMoveEvent(event)
+        else:
+            edges = self.resize_edges(event.pos())
+            self.setCursor(resize_cursor(edges) if edges else Qt.ArrowCursor)
+            super().mouseMoveEvent(event)
+
+    def resize_edges(self, point):
+        return edges_at(self.rect(), point) if not self.collapsed and not self.option('locked') else 0
+
+    def resize_from_edge(self, point):
+        original, pointer, edges = self.edge_drag
+        self.setGeometry(resized_rect(original, edges, point - pointer, (self.minimumWidth(), self.minimumHeight())))
 
     def mouseReleaseEvent(self, event):
         if event.button()==Qt.LeftButton:self.face_tracker.press(False)
+        if event.button() == Qt.LeftButton and self.edge_drag is not None:
+            self.resize_from_edge(event.globalPos())
+            original, _, _ = self.edge_drag
+            self.edge_drag = None
+            if self.size() != original.size():
+                self.manual_resize = True
+            self.store_geometry()
+            self.refresh_timer.start(150)
+            edges = self.resize_edges(self.mapFromGlobal(event.globalPos()))
+            self.setCursor(resize_cursor(edges) if edges else Qt.ArrowCursor)
+            event.accept()
+            return
         if event.button()==Qt.LeftButton and self.drag_origin is not None:
             if self.dragged or (event.globalPos()-self.drag_start).manhattanLength()>=QApplication.startDragDistance():
                 self.dragged = True
@@ -930,13 +1000,15 @@ class DesktopPanel(QDialog):
     def moveEvent(self, event):
         super().moveEvent(event)
         badge=getattr(self,'fold_badge',None)
-        if not self.restoring and self.drag_origin is None and (not badge or badge.origin is None):
+        if not self.restoring and self.drag_origin is None and self.edge_drag is None and (not badge or badge.origin is None):
             self.resize_timer.start(250)
 
     def resizeEvent(self, event):
         if hasattr(self,'page_transition'):self.page_transition.cancel()
         super().resizeEvent(event)
-        if not self.restoring:
+        if not self.collapsed and event.oldSize().width()!=event.size().width():
+            self.fit_timer.start(0)
+        if not self.restoring and self.edge_drag is None:
             if self.collapsed:
                 target=getattr(self,'_fold_target',None);layout=getattr(self.runtime,'layout',None)
                 if target and (self.width(),self.height())!=target[2:] and layout:layout.changed()
@@ -968,7 +1040,6 @@ class DesktopPanel(QDialog):
         changes = {'geometry': geometry}
         if self.manual_resize:
             changes['compact'] = False
-            self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         if not persist:
             import copy
             panels=copy.deepcopy(self.dock.cfg['desktop_panels'])
@@ -1006,6 +1077,9 @@ class DesktopPanel(QDialog):
                 user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
 
     def hideEvent(self, event):
+        if self.edge_drag is not None:
+            self.manual_resize |= self.edge_drag[0].size() != self.size()
+            self.edge_drag = None
         self.face_tracker.hide_face()
         self.page_transition.cancel()
         if not self.disposed and not self.restoring: self.store_geometry()
@@ -1041,6 +1115,8 @@ class DesktopPanel(QDialog):
         shape = QPainterPath()
         radius=self.surface_radius()
         shape.addRoundedRect(rect,radius,radius)
+        if not self.collapsed and not self.option('locked'):
+            paint_edge_targets(painter, self.rect())
         from appearance_presets import material_design, panel_appearance
         style = panel_appearance(self.dock.cfg)
         colors = self.colors(style)
@@ -1130,6 +1206,16 @@ class PanelOptions(QDialog):
         self.panel,self.fields=panel,{};self.applying_preset=True
         self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
+        management=QHBoxLayout()
+        self.groups_button=button('分组管理…',panel.manager.manage_groups)
+        self.sizing_button=button('尺寸控制…',self.open_sizing)
+        management.addWidget(self.groups_button)
+        management.addWidget(self.sizing_button)
+        management.addStretch()
+        form.addRow(management)
+        self.text_size=ModernSpinBox()
+        self.text_size.setRange(8,48)
+        form.addRow('卡片文字大小（像素）',self.text_size)
         def choice(key,title,options):
             field=ModernComboBox()
             for name,value in options:field.addItem(name,value)
@@ -1175,6 +1261,8 @@ class PanelOptions(QDialog):
     def refresh_shared(self):
         if self.panel.disposed:return
         self.applying_preset=True
+        from card_metrics import normalize_profile
+        self.text_size.setValue(normalize_profile(self.panel.dock.cfg.get('card_sizing'))['font_size'])
         for key,field in self.fields.items():
             value=self.panel.option(key)
             if key=='material':
@@ -1191,6 +1279,14 @@ class PanelOptions(QDialog):
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
         self.applying_preset=False
         self.sync_source()
+
+    def open_sizing(self):
+        from card_metrics import normalize_profile
+        panel=self.panel
+        before=normalize_profile(panel.dock.cfg.get('card_sizing'))['font_size']
+        panel.runtime.open_card_sizing('panel',panel.identity)
+        current=normalize_profile(panel.dock.cfg.get('card_sizing'))['font_size']
+        if current!=before:self.text_size.setValue(current)
     def sync_source(self):
         custom = self.fields['appearance_source'].currentData() == 'custom'
         self.preset.setEnabled(custom)
@@ -1225,5 +1321,5 @@ class PanelOptions(QDialog):
         values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked(),face=self.face.isChecked(),face_interactive=self.face_interactive.isChecked())
         values['face_auto_switch'] = self.face_auto_switch.isChecked()
         values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio')}
-        if self.panel.manager.update_panel(self.panel.identity,**values):self.status.setText('已保存：外观共用，收起样式仅用于当前卡片或合并组。');return True
+        if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),**values):self.status.setText('已保存：外观共用，收起样式仅用于当前卡片或合并组。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

@@ -1,6 +1,7 @@
 """Visible-only network cards for subscribed headlines and Bing pictures."""
 import time
 from http.client import HTTPException
+from html import escape
 from pathlib import Path
 from PyQt5.QtCore import QByteArray,QBuffer,QIODevice,QPointF,QRectF,QSize,QStandardPaths,QTimer,Qt,QUrl,pyqtSignal
 from PyQt5.QtGui import QColor,QDesktopServices,QImage,QImageReader,QPainter,QPainterPath,QPen
@@ -121,9 +122,10 @@ class PictureExport(BackgroundWorker):
 
 
 class Headline(QAbstractButton):
-    def __init__(self,owner,entry):
+    def __init__(self,owner,entry,*,accent=None):
         super().__init__()
         self.owner,self.entry=owner,entry
+        self.accent=accent
         stamp=entry['stamp']
         when=time.strftime('%m/%d %H:%M',time.localtime(stamp)) if stamp is not None else ''
         self.metadata=' · '.join(value for value in (entry['source'],when) if value)
@@ -131,15 +133,22 @@ class Headline(QAbstractButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAccessibleName(entry['title'])
-        self.setToolTip(entry['title'])
+        self.setToolTip('<qt>'+escape(entry['title'])+'</qt>' if accent else entry['title'])
         self.clicked.connect(lambda:QDesktopServices.openUrl(QUrl(entry['url'])))
 
     def paintEvent(self,event):
         from resource_compact import text
         c=self.owner.colors
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        paint_capsule_card(p,QRectF(self.rect()),c,'lavender',self.owner.background,radius=7,
+        base=None
+        if self.accent:
+            from card_design import blend
+            base=blend(QColor('#f9fbfd' if c['light'] else '#1a212d'),QColor(self.accent),.27 if c['light'] else .36)
+        paint_capsule_card(p,QRectF(self.rect()),c,'lavender',self.owner.background,radius=7,base=base,
                            active=self.isDown() or self.underMouse(),focused=self.hasFocus())
+        if self.accent:
+            p.setPen(Qt.NoPen);p.setBrush(QColor(self.accent))
+            p.drawRoundedRect(QRectF(4,8,3,self.height()-16),1.5,1.5)
         text(p,QRectF(10,3,self.width()-37,17),self.entry['title'],c['ink'],12,True)
         text(p,QRectF(10,21,self.width()-37,13),self.metadata,c['muted'],10)
         p.setPen(QPen(QColor(c['muted']),1.3,Qt.SolidLine,Qt.RoundCap))

@@ -161,10 +161,19 @@ class DesktopSpectrum(QWidget):
     def set_levels(self, values):
         levels=tuple(values[:BANDS]) or SILENCE
         previous=self.peaks if len(self.peaks)==len(levels) else levels
-        release=.14 if self.cfg['spectrum_style']=='ring' else .055
+        style=self.cfg['spectrum_style']
+        release=.14 if style=='ring' else .055
         peaks=tuple(max(level,peak-release) for level,peak in zip(levels,previous)) if any(levels) else levels
-        if self.levels != levels or self.peaks!=peaks:
-            self.levels=levels;self.peaks=peaks
+        if self.levels==levels and self.peaks==peaks:return
+        old_levels=self.levels
+        self.levels=levels;self.peaks=peaks
+        if style=='mirror':
+            if old_levels==levels:return
+            area=spectrum_area(self.rect(),style)
+            # Include the previous bars so a falling level clears the entire old stroke.
+            extent=ceil(5+max(max(old_levels),max(levels))*area.height()*.43)
+            self.update(QRectF(area.left()-2,area.center().y()-extent,area.width()+4,2*extent).toAlignedRect())
+        else:
             self.update()
 
     def showEvent(self, event):
@@ -305,6 +314,17 @@ def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_he
     if style=='mirror':
         painter.setOpacity(.25);painter.setPen(QPen(brush,1))
         painter.drawLine(QPointF(area.left(),middle),QPointF(area.right(),middle))
+        width=max(1,step*.40);radius=width/2
+        bars=[(area.left()+(i+.5)*step-radius,2+level*(height*.43)) for i,level in enumerate(levels)]
+        painter.setPen(Qt.NoPen);painter.setBrush(brush)
+        painter.setOpacity(.9)
+        for x,length in bars:
+            painter.drawRoundedRect(QRectF(x,middle-length-1,width,length),radius,radius)
+        painter.setOpacity(.36)
+        for x,length in bars:
+            painter.drawRoundedRect(QRectF(x,middle+1,width,length),radius,radius)
+        painter.setOpacity(1)
+        return
     painter.setPen(Qt.NoPen);painter.setBrush(brush)
     for index,(level,peak) in enumerate(zip(levels,peaks)):
         x=area.left()+(index+.5)*step
@@ -315,10 +335,6 @@ def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_he
                 y=bottom-radius-row*(height-radius*2-4)/7
                 painter.setOpacity(.16 if row>active else .48+.07*row)
                 painter.drawEllipse(QPointF(x,y),radius,radius)
-        elif style=='mirror':
-            width=max(1,step*.40);length=2+level*(height*.43)
-            painter.setOpacity(.9);painter.drawRoundedRect(QRectF(x-width/2,middle-length-1,width,length),width/2,width/2)
-            painter.setOpacity(.36);painter.drawRoundedRect(QRectF(x-width/2,middle+1,width,length),width/2,width/2)
         else:
             width=max(1,step*.54);length=3+level*(height-9)
             painter.setOpacity(.15);painter.drawRoundedRect(QRectF(x-width*.68,bottom-length-1,width*1.36,length+2),width/2,width/2)

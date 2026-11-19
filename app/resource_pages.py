@@ -80,6 +80,9 @@ class InfoPage(CapsuleScrollArea):
         elif key=='agenda':
             from resource_agenda_view import AgendaView
             self.content=AgendaView(window)
+        elif key=='mail':
+            from resource_mail_view import MailView
+            self.content=MailView(window)
         else:
             from resource_content import ContentView
             self.content=ContentView(window,key)

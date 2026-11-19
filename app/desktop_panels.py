@@ -60,7 +60,7 @@ class DesktopPanels(QObject):
 
     def status(self, message):
         self.message = message
-        for window in self.windows.values(): window.notice.setText(message or '拖入文件、文件夹或快捷方式')
+        for window in self.windows.values(): window.notice.setText(message or window.notice.drop_text)
         if message: self.runtime.api.log(message)
 
     def apply_settings(self):
@@ -328,7 +328,7 @@ class DesktopPanels(QObject):
             else:current.update_identity_header()
             current.refresh_timer.stop()
             current.restore_page_state(new_state)
-            self.sync_windows();current.list.doItemsLayout();current.list.verticalScrollBar().setValue(new_state[2])
+            self.sync_windows();current.fit_content();current.list.verticalScrollBar().setValue(new_state[2])
             current.page_transition.begin(front,direction)
             current._interaction_motion.trigger('tab')
         else:self.sync_windows()
@@ -483,7 +483,7 @@ class DesktopPanels(QObject):
     def model(self, identity):
         return next(model for model in self.cfg['desktop_panels'] if model['id'] == identity)
 
-    def update_panel(self, identity, _layout=None, **values):
+    def update_panel(self, identity, _layout=None, _font_size=None, **values):
         panels = copy.deepcopy(self.cfg['desktop_panels'])
         from panel_preferences import KEYS,without_overrides
         shared={key:value for key,value in values.items() if key in KEYS}
@@ -492,6 +492,11 @@ class DesktopPanels(QObject):
         panels=without_overrides(panels)
         next(model for model in panels if model['id']==identity).update(local)
         changes={'desktop_panels':panels,**{'panel_'+key:value for key,value in shared.items()}}
+        if _font_size is not None:
+            from card_metrics import normalize_profile
+            sizing=normalize_profile(self.cfg.get('card_sizing'))
+            if sizing['font_size']!=_font_size:
+                changes['card_sizing']=dict(sizing,font_size=_font_size)
         if 'material' in shared and shared['material']!=self.cfg['panel_material']:
             from appearance_presets import material_design
             changes['card_design']=material_design(shared['material'],self.cfg.get('card_design','aurora'))
@@ -505,10 +510,12 @@ class DesktopPanels(QObject):
         if self.is_merged(identity) and 'collapsed' in values:changes.update(self.group_changes(identity,collapsed=values['collapsed']))
         history_title='编辑卡片' if set(values)&{'name','extensions','enabled','merged','merge_group','excluded','pinned_paths'} else None
         if self.commit(history_title=history_title,**changes):
-            if shared:
+            if shared or 'card_sizing' in changes:
                 for window in self.windows.values():
                     window.apply_options();window.collapse_timer.stop()
                     if window.isVisible() and window.option('auto_hide'):window.collapse_timer.start()
+                if 'card_sizing' in changes:
+                    for note in self.runtime.notes.windows.values():note.apply_style()
                 self.shared_settings_changed.emit()
             elif identity in self.windows:self.windows[identity].apply_options()
             return True

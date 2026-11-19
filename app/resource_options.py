@@ -47,7 +47,7 @@ COMPACT_CLOCK_FORMATS={
 }
 WEATHER_THRESHOLDS=(0,16,26,30)
 RESOURCE_PAGES={'resources':'资源','ai':'AI','music':'音乐','traffic':'流量','weather':'天气',
-                'pomodoro':'番茄钟','agenda':'日程','news':'新闻'}
+                'pomodoro':'番茄钟','agenda':'日程','news':'新闻','mail':'邮件'}
 DESKTOP_COMPONENTS={'notes':'便签','picture':'每日图片','custom':'原生卡片','clock':'时钟','calendar':'日历'}
 PLACED_COMPONENTS={**RESOURCE_PAGES,**DESKTOP_COMPONENTS}
 CAPSULE_PAGES=PLACED_COMPONENTS
@@ -69,8 +69,10 @@ REMINDER_OPTIONS={
     'resource_alert_agenda':'日程到提醒时间', 'resource_alert_focus':'番茄钟倒计时与完成',
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
     'resource_alert_almanac':'农历节气与节日',
+    'resource_alert_mail_code':'收起时显示邮箱验证码',
 }
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
+MAIL_INTERVAL_RANGE=(10,900)
 FACE_SWITCH_RANGE = (1, 1440)
 FACE_SWITCH_DEFAULT = 10
 
@@ -112,6 +114,8 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_quota_alert=True)
 DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={},
                 resource_card_transparency=20)
+DEFAULTS.update(resource_mail=False, resource_mail_accounts=[], resource_mail_notifications=True,
+                resource_alert_mail_code=True, resource_mail_icon=False, resource_mail_interval=30)
 
 
 def component_location(cfg,key):
@@ -231,6 +235,17 @@ def normalize(cfg,strict=False):
     cfg['resource_news_feeds']=clean_feeds(cfg.get('resource_news_feeds',DEFAULTS['resource_news_feeds']),strict)
     disabled_feeds=clean_feeds(cfg.get('resource_news_disabled_feeds',[]),strict)
     cfg['resource_news_disabled_feeds']=[url for url in cfg['resource_news_feeds'] if url in disabled_feeds]
+    accounts = cfg.get('resource_mail_accounts', [])
+    if accounts != []:
+        from mail_accounts import clean_accounts
+        accounts = clean_accounts(accounts, strict)
+    cfg['resource_mail_accounts'] = accounts
+    mail_interval = cfg.get('resource_mail_interval', DEFAULTS['resource_mail_interval'])
+    if type(mail_interval) is not int or not MAIL_INTERVAL_RANGE[0] <= mail_interval <= MAIL_INTERVAL_RANGE[1]:
+        if strict:
+            raise ValueError('邮箱刷新周期须为 10 至 900 秒。')
+        mail_interval = DEFAULTS['resource_mail_interval']
+    cfg['resource_mail_interval'] = mail_interval
     if type(cfg.get('resource_news')) is not bool:
         if strict:raise ValueError('资源胶囊设置无效：resource_news')
         cfg['resource_news']=False
@@ -272,7 +287,8 @@ def normalize(cfg,strict=False):
             cfg[key]=DEFAULTS[key]
     for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
-                'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',*REMINDER_OPTIONS):
+                'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',
+                'resource_mail','resource_mail_notifications','resource_mail_icon',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]

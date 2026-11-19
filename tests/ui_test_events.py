@@ -29,3 +29,22 @@ class Events:
         ):
             local=widget.mapFromGlobal(position)
             QApplication.sendEvent(widget,QMouseEvent(kind,QPointF(local),QPointF(position),button,buttons,Qt.NoModifier))
+
+
+def check_edge_resize(widget, *, locked=False):
+    """Exercise each real edge target, including the four diagonals."""
+    for horizontal,vertical in ((-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)):
+        before=widget.geometry()
+        rect=widget.rect()
+        x=rect.left()+2 if horizontal<0 else rect.right()-2 if horizontal>0 else rect.center().x()
+        y=rect.top()+2 if vertical<0 else rect.bottom()-2 if vertical>0 else rect.center().y()
+        point=QPoint(x,y)
+        assert widget.childAt(point) is None, point
+        step=QPoint(horizontal*8,vertical*6)
+        Events.drag(widget,point,step)
+        after=widget.geometry()
+        if locked:
+            assert after==before
+            continue
+        assert after.getRect()==(before.x()+min(0,step.x()),before.y()+min(0,step.y()),
+                                 before.width()+abs(step.x()),before.height()+abs(step.y())), (point,before,after)

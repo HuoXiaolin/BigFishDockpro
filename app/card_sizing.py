@@ -18,7 +18,7 @@ class CardSizingDialog(QDialog):
         self.height_field=ModernSpinBox();self.height_field.setRange(96,8192)
         self.text_field=ModernSpinBox();self.text_field.setRange(8,48)
         form.addRow('默认宽度（像素）',self.width_field);form.addRow('默认高度（像素）',self.height_field);form.addRow('文字大小（像素）',self.text_field)
-        body.addWidget(label('拖动卡片右下角可调整大小。独立卡片分别记住宽高，合并页面共用宽高；改文字不改变已有卡片尺寸。位置、内容、颜色和收起状态分别保留。','muted'))
+        body.addWidget(label('拖动桌面收纳卡片的边缘或四角可调整大小。独立卡片分别记住宽高，合并页面共用宽高。','muted'))
         self.status=label('修改后点击保存；关闭放弃尚未保存的改动。','muted');body.addWidget(self.status)
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));self.save_button=button('保存设置',self.commit,'primary');actions.addWidget(self.save_button);body.addLayout(actions)
         self.load();compact_dialog(self)

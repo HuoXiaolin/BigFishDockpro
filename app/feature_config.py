@@ -35,7 +35,7 @@ DEFAULTS = {
     'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_appearance_source': 'custom', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
     'spectrum_locked': False, 'spectrum_layout': {}, 'spectrum_manual_size': False,
     'spectrum_ring_height': 100,
-    'daily_picture_enabled': False, 'daily_picture_locked': False, 'daily_picture_layout': {},
+    'daily_picture_enabled': False, 'daily_picture_locked': False, 'daily_picture_layout': {}, 'daily_picture_manual_size': False,
     'daily_picture_appearance_source': 'custom', 'daily_picture_material': 'follow', 'daily_picture_color': '', 'daily_picture_source': 'bing',
     'daily_picture_local_paths': [], 'daily_picture_interval': 30,
     'custom_cards': [],
@@ -203,7 +203,7 @@ def normalize(cfg):
         result['spectrum_color_mode']='colorful'
     height=result['spectrum_ring_height']
     result['spectrum_ring_height']=max(0,min(RING_HEIGHT_MAX,height)) if type(height) is int else 100
-    for key in ('spectrum_enabled', 'spectrum_locked', 'spectrum_manual_size', 'daily_picture_enabled', 'daily_picture_locked'):
+    for key in ('spectrum_enabled', 'spectrum_locked', 'spectrum_manual_size', 'daily_picture_enabled', 'daily_picture_locked', 'daily_picture_manual_size'):
         if type(result[key]) is not bool:
             result[key] = DEFAULTS[key]
     if result['custom_cards']:
