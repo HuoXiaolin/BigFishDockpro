@@ -18,7 +18,8 @@ def start_headless(process, executable, data_dir, runtime):
     previous = kernel.GetErrorMode()
     kernel.SetErrorMode(previous | 0x0001 | 0x0002)  # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
     try:
-        process.start(str(executable), [str(data_dir)])
+        from probe_lifecycle import start
+        return start(process, executable, [str(data_dir)], graceful=True)
     finally:
         kernel.SetErrorMode(previous)
 
@@ -145,8 +146,9 @@ class DeckBridge(QObject):
             if not exe.is_file():self.status=self.ai_status='未找到 AI / 音乐组件';return
             self.launched_at=time.monotonic()
             self.launch_timed_out=False
+            if not start_headless(self.process, exe, Path(self.owner.runtime.api.CONFIG_DIR)/'deck-data', runtime):
+                return
             self.launch_watch.start(35000)
-            start_headless(self.process, exe, Path(self.owner.runtime.api.CONFIG_DIR)/'deck-data', runtime)
         self.send(op='configure',ai=signature[0],providers=signature[1],music=signature[2],lyrics=signature[3],equalizer=signature[4],presentation=signature[5],desktopSpectrum=signature[6])
         if starting and self.history_requested:self.send(op='history',range='all')
 

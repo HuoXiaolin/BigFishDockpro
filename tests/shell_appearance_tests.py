@@ -170,63 +170,87 @@ def run(api, runtime, root, app, output, checks):
         for kind in KINDS:
             dock.cfg.update({f'shell_{kind}_source': 'custom', f'shell_{kind}_material': 'liquid',
                              f'shell_{kind}_theme': 'dark', f'shell_{kind}_opacity': 0, f'shell_{kind}_blur': 24})
-        with patch('shell_appearance.foreground_surface', return_value=('start', (250, 250, 250))) as surface, \
-             patch('shell_appearance.foreground_target', return_value=(None, 1, 'start')) as open_panel:
+        with patch('shell_appearance.foreground_surface', return_value=('start', (250, 250, 250), 1)) as surface, \
+             patch('shell_appearance.foreground_target', return_value=(None, 1, 'start')) as open_panel, \
+             patch('shell_appearance.panel_visible', return_value=True), \
+             patch.object(controller,'start_window_visible',return_value=True) as visible, \
+             patch('shell_appearance.time.monotonic', return_value=1000.) as clock:
+            def settle_surface():
+                controller.refresh_foreground()
+                clock.return_value += .30
+                controller.refresh_foreground()
+                clock.return_value += .16
+                controller.refresh_foreground()
+
             signal.reset_mock()
-            controller.refresh_foreground()
-            surface.assert_called_with({1234: 'start'}, controller.start_panel_bounds, ())
+            settle_surface()
+            assert surface.call_args.args == ({1234: 'start'}, controller.start_panel_bounds, ())
             rendered = file.read_text(encoding='utf-16')
             assert 'bigfish_theme=Dark' in rendered and 'bigfish_live_ink=#000000' in rendered and 'bigfish_footer_surface=#fafafa' in rendered and signal.called
             timestamp = file.stat().st_mtime_ns
             signal.reset_mock();controller.refresh_foreground()
             assert file.stat().st_mtime_ns == timestamp and not signal.called
-            surface.return_value = ('start', (52, 158, 224))
+            surface.return_value = ('start', (40, 16, 65), 1)
+            settle_surface()
+            assert file.stat().st_mtime_ns == timestamp and not signal.called
+
+            controller.window_created(1234,1,hidden=True)
+            visible.return_value=False
+            open_panel.return_value=surface.return_value=None
             controller.refresh_foreground()
-            rendered = file.read_text(encoding='utf-16')
-            assert 'bigfish_live_ink=#000000' in rendered and 'bigfish_footer_surface=#349ee0' in rendered and signal.called
+            assert 'bigfish_theme=Light' in file.read_text(encoding='utf-16')
+            visible.return_value=True
+            open_panel.return_value=(None,1,'start')
+            surface.return_value=('start',(40,16,65),1)
             signal.reset_mock()
-            surface.return_value = ('start', (40, 16, 65))
-            controller.refresh_foreground()
+            settle_surface()
             assert 'bigfish_live_ink=#ffffff' in file.read_text(encoding='utf-16') and signal.called
-            surface.return_value = ('start', (250, 250, 250))
-            controller.refresh_foreground()
             open_panel.return_value = None
             surface.return_value = None
-            with patch.object(controller, 'start_window_visible', return_value=True):
-                timestamp = file.stat().st_mtime_ns
-                signal.reset_mock()
-                controller.refresh_foreground()
-                assert file.stat().st_mtime_ns == timestamp and not signal.called
-                assert 'bigfish_theme=Dark' in file.read_text(encoding='utf-16')
+            timestamp = file.stat().st_mtime_ns
+            signal.reset_mock()
+            controller.refresh_foreground()
+            assert file.stat().st_mtime_ns == timestamp and not signal.called
+            assert 'bigfish_theme=Light' in file.read_text(encoding='utf-16')
+            controller.window_created(1234,1,hidden=True)
+            visible.return_value=False
             controller.refresh_foreground()
             rendered = file.read_text(encoding='utf-16')
-            assert 'bigfish_theme=Light' in rendered and 'TintColor="#00313437"' in rendered
+            assert 'bigfish_theme=Dark' in rendered and 'TintColor="#00313437"' in rendered
             assert 'bigfish_theme=Dark' in notification.read_text(encoding='utf-16')
             timestamp = file.stat().st_mtime_ns
             signal.reset_mock();controller.refresh_foreground()
             assert file.stat().st_mtime_ns == timestamp and not signal.called
             dock.cfg['shell_start_text_mode']='system'
             with patch('taskbar_text.system_mode', return_value=0):controller.sync()
-            surface.assert_called_with({1234: 'start'}, controller.start_panel_bounds, ())
+            assert surface.call_args.args == ({1234: 'start'}, controller.start_panel_bounds, ())
             rendered = file.read_text(encoding='utf-16')
             assert 'bigfish_theme=Dark' in rendered and 'bigfish_live_ink=' not in rendered
-            surface.return_value = ('start', (39, 117, 184))
-            with patch('taskbar_text.system_mode', return_value=0):controller.refresh_foreground()
+            visible.return_value=True
+            surface.return_value = ('start', (39, 117, 184), 1)
+            with patch('taskbar_text.system_mode', return_value=0):settle_surface()
             rendered = file.read_text(encoding='utf-16')
             assert 'bigfish_footer_surface=#2775b8' in rendered and 'bigfish_theme=Dark' in rendered
         with patch('shell_appearance.shell_hosts',return_value={1234:'start',5678:'notifications'}), \
-             patch('shell_appearance.foreground_surface',return_value=None) as surface:
+             patch('shell_appearance.foreground_surface',return_value=None) as surface, \
+             patch('shell_appearance.panel_visible',return_value=True), \
+             patch('shell_appearance.time.monotonic',return_value=1100.) as clock:
             controller.sync()
             controller.window_created(5678,123)
             assert controller.ink_timer.isActive()
             for rgb,wanted in (((250,250,250),'Light'),((22,18,33),'Dark')):
-                surface.return_value=('notifications',rgb)
-                controller.refresh_foreground()
+                surface.return_value=('notifications',rgb,123)
+                settle_surface()
                 assert controller.notification_surface==rgb
-                surface.return_value=None;controller.sync()
                 assert 'bigfish_theme='+wanted in notification.read_text(encoding='utf-16')
                 assert 'bigfish_theme=Dark' in file.read_text(encoding='utf-16')
-                surface.assert_called_with({1234:'start',5678:'notifications'},controller.start_panel_bounds,(123,))
+                assert surface.call_args.args == ({1234:'start',5678:'notifications'},controller.start_panel_bounds,(123,))
+                surface.return_value=('notifications',tuple(255-v for v in rgb),123)
+                settle_surface()
+                assert controller.notification_surface==rgb
+                controller.window_created(5678,123,hidden=True)
+                controller.window_created(5678,123)
+            surface.return_value=None
         controller.suspend()
         assert not controller.timer.isActive() and 'enabled=0' in file.read_text(encoding='utf-16')
         controller.resume()

@@ -48,7 +48,9 @@ def run(api,runtime,root,app,output,checks):
         assert all(getattr(runtime.resources,key) is None for key in ('sensors','bluetooth','peripherals','app_traffic','fps','deck'))
         runtime.set_session_ending(True)  # Repeated top-level query notifications.
         msg.message=0x16;msg.wParam=1
-        assert runtime.layout.native_filter.nativeEventFilter(b'windows_generic_MSG',ctypes.addressof(msg))==(False,0) and runtime.session_ending
+        with patch.object(runtime,'finish_session') as finish:
+            assert runtime.layout.native_filter.nativeEventFilter(b'windows_generic_MSG',ctypes.addressof(msg))==(True,0)
+            finish.assert_called_once_with()
         panel=runtime.panels.windows[runtime.panels.active_window];collapsed=panel.collapsed
         note.close();panel.close();runtime.dock.close()
         assert runtime.notes.row(note_id)['visible'] and panel.collapsed==collapsed and cfg['dock_visible']

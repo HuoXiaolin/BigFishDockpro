@@ -29,6 +29,12 @@ def contrast(color, ink):
     return (light + .05) / (dark + .05)
 
 
+def majority_surface(colors):
+    """Keep a real sample whose luminance represents the majority of the surface."""
+    ordered = sorted(colors, key=_luminance)
+    return ordered[len(ordered)//2] if ordered else None
+
+
 @lru_cache(maxsize=12)
 def _sample(key, rect):
     from PyQt5.QtCore import QRect, QRectF, QSize

@@ -449,6 +449,15 @@ class RuntimeController:
         self.set_session_ending(True)
         return self.checkpoint_session()
 
+    def finish_session(self):
+        if self.closed:
+            return
+        try:
+            self.set_session_ending(True)
+            self.close()
+        finally:
+            QApplication.instance().quit()
+
     def request_exit(self):
         if not self.flash.save_draft(): return False
         if not self.notes.flush() and not self.notes.backup():
@@ -465,7 +474,7 @@ class RuntimeController:
         self.watermarks.sync()
         self.shell_appearance.close()
         self.wallpaper_timer.stop()
-        from probe_lifecycle import set_ending
+        from probe_lifecycle import drain, set_ending
         set_ending(True)
         if self.pawnio is not None:
             self.pawnio.close()
@@ -507,3 +516,4 @@ class RuntimeController:
         self.corners.close()
         self.panels.close(save_geometry=False,wait_ms=0 if shutdown else 100)
         self.taskbar.close(shutdown=shutdown)
+        drain()

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import sys
 import traceback
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'app'), str(ROOT / 'tools')]
@@ -123,6 +123,82 @@ def main(output):
             assert not guarded.start_recent_exits
             guarded.close()
         checks.append('Repeated early Start exits restore the system menu; the calendar stays connected and manual retry restores styling.')
+
+        # Exercise the same sampled-color path used when native Start opens.
+        dock.cfg.update(shell_start_source='custom', shell_start_material='crystal',
+                        shell_start_text_mode='auto', shell_start_opacity=0)
+        ink_controller = ShellAppearance(dock, api)
+        ink_controller.disabled = False
+        ink_controller.hosts = {2314: 'start'}
+        ink_controller.attached.add(2314)
+        base = ('start', (240, 242, 244), 1)
+        dark = ('start', (12, 15, 19), 1)
+        with patch.object(ink_controller, 'signal'), patch.object(ink_controller, 'sync') as reapplied, \
+             patch.object(ink_controller, 'sampled_surface') as surface, \
+             patch.object(ink_controller, 'start_window_visible', return_value=True), \
+             patch('shell_appearance.system_appearance', return_value=(True, True)), \
+             patch('shell_appearance.time.monotonic', return_value=100.) as clock:
+            ink_controller.ink_profiles(True, True)
+            assert ink_controller.start_profile['text_mode'] == 'auto'
+            ink_controller.window_created(2314, 1)
+            for when, frame in [(100., dark), (100.10, dark), (100.18, dark), (100.31, base),
+                                (100.55, dark), (100.72, base)]:
+                clock.return_value = when
+                surface.return_value = frame
+                ink_controller.refresh_foreground()
+            reapplied.assert_not_called()
+            for when in (101., 101.16):
+                clock.return_value = when
+                surface.return_value = dark
+                ink_controller.refresh_foreground()
+            reapplied.assert_called_once_with(dark)
+            assert ink_controller.pending_start_surface == dark[1]
+            for when in (101.40, 101.56, 101.75):
+                clock.return_value=when
+                surface.return_value=base
+                ink_controller.window_created(2314,1)  # Duplicate show/focus notices.
+                ink_controller.refresh_foreground()
+            reapplied.assert_called_once_with(dark)
+            ink_controller.window_created(2314,1,hidden=True)
+            ink_controller.window_created(2314,1)
+            for when in (102.,102.3,102.46):
+                clock.return_value=when
+                ink_controller.refresh_foreground()
+            assert [call.args[0] for call in reapplied.call_args_list]==[dark,base]
+            ink_controller.ink_timer.stop()
+        from background_contrast import foreground, majority_surface
+        assert foreground(majority_surface([(0,255,0),(255,0,255),(20,20,20)]))=='#000000'
+        assert foreground(majority_surface([(0,0,255),(30,20,30),(240,240,245)]))=='#ffffff'
+        checks.append('Start settles after the opening animation, honors the majority of real pixels, and keeps its text color until the same HWND closes and reopens.')
+
+        # Native panel bounds are physical pixels; a DPI-virtualized host
+        # rectangle and glass that hits through must not suppress the sample.
+        import ctypes
+        from ctypes import wintypes as W
+        from shell_appearance import foreground_surface
+        native=MagicMock()
+        native.SetThreadDpiAwarenessContext.return_value=11
+        native.GetAncestor.side_effect=lambda window,mode:window
+        native.WindowFromPoint.return_value=99  # Background owns input across the glass.
+        def window_pid(window,result):
+            ctypes.cast(result,ctypes.POINTER(W.DWORD))[0]=2314
+        def window_rect(window,result):
+            scope=native.SetThreadDpiAwarenessContext.call_args.args[0]
+            assert isinstance(scope,ctypes.c_void_p) and scope.value==ctypes.c_void_p(-4).value
+            ctypes.cast(result,ctypes.POINTER(W.RECT))[0]=W.RECT(0,200,730,1010)
+            return True
+        native.GetWindowThreadProcessId.side_effect=window_pid
+        native.GetWindowRect.side_effect=window_rect
+        bounds=(15,224,719,1005)
+        with patch('shell_appearance.foreground_target',return_value=(native,1,'start')), \
+             patch('shell_appearance.panel_visible',return_value=True), \
+             patch('window_layers.native',return_value=native), \
+             patch('taskbar_surface.composed_samples',return_value=((20,20,20),)*25) as pixels:
+            assert foreground_surface({2314:'start'},lambda window,user:bounds)==('start',(20,20,20),1)
+        dots=pixels.call_args.args[0]
+        assert len(dots)==25 and all(bounds[0]<x<bounds[2] and bounds[1]<y<bounds[3] for x,y in dots)
+        native.SetThreadDpiAwarenessContext.assert_called_with(11)
+        checks.append('Foreground Start samples the measured visible glass in physical coordinates even when Win32 hit testing sees the background.')
 
         listener = ShellWindowEvents(lambda pid: None)
         listener.start()

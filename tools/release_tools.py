@@ -9,7 +9,7 @@ from tempfile import NamedTemporaryFile
 from portable_dotnet import BASENAME as DOTNET_PORTABLE, digest as file_digest
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_ROOT_FILES=['dock.py','build.ps1','bootstrap.ps1','version.json','LICENSE','README.md','使用说明.md','CHANGELOG.md','CHANGELOG_HISTORY.md','.gitignore','1-启动.bat','2-关闭.bat','3-修复依赖.bat','4-调试启动.bat','references/BrimDeck-PIN.json','references/OpenQuota-PIN.json','references/Wisland-PIN.json']
+SOURCE_ROOT_FILES=['dock.py','build.ps1','bootstrap.ps1','version.json','LICENSE','README.md','使用说明.md','CHANGELOG.md','CHANGELOG_HISTORY.md','.gitignore','1-启动.bat','2-关闭.bat','3-修复依赖.bat','4-调试启动.bat','references/BrimDeck-PIN.json','references/OpenQuota-PIN.json','references/Wisland-PIN.json','references/pyinstaller-6.16.0.tar.gz']
 SOURCE_DIRECTORIES=['app','tests','tools','assets','docs','licenses','references/BrimDeck','references/Wisland','references/ShellStyler','references/MinHook']
 SOURCE_FILES=SOURCE_ROOT_FILES+sorted(path.relative_to(ROOT).as_posix() for directory in SOURCE_DIRECTORIES for path in (ROOT/directory).rglob('*') if path.is_file() and not {'__pycache__','bin','obj','.git'}.intersection(path.relative_to(ROOT).parts) and path.suffix not in ('.pyc','.pyo'))
 

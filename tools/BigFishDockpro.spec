@@ -22,7 +22,7 @@ if single_file:
     taskbar_data += [(str(payload / 'backend'), 'taskbar-payload/backend'),
                      (str(root / 'tools/install_taskbar_frameworks.ps1'), 'taskbar-payload')]
 a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('app','tests','tools')] + [str(pawnio_dir)],
-    binaries=[], datas=[(str(root / 'artifacts/generated/DesktopResourceProbe.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/PresentMon.exe'), 'resource-probe'), (str(root / 'licenses/PresentMon-LICENSE.txt'),'licenses'), (str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
+    binaries=[], datas=[(str(root / 'artifacts/generated/DesktopResourceProbe.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/PresentMon.exe'), 'resource-probe'), (str(root / 'artifacts/presentmon/DesktopFrameProbe.exe'), 'resource-probe'), (str(root / 'licenses/PresentMon-LICENSE.txt'),'licenses'), (str(root / 'assets/dock.ico'), 'assets'), (str(root / 'assets/holidays'), 'assets/holidays'), (str(root / '使用说明.md'), '.'), (str(root / 'LICENSE'), '.'),
                         (str(root / 'licenses'), 'licenses'),
                         (str(root / 'artifacts/shell-appearance'), 'shell-appearance'),
                         (str(root / 'docs/2.4G外设适配.md'), 'docs'),
@@ -63,12 +63,24 @@ pyz = PYZ(a.pure)
 windows_options = dict(debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=False,
                        manifest=str(root/'assets/BigFishDockpro.manifest'), icon=str(root/'assets/dock.ico'),
                        version=str(root/'artifacts/generated/version_info.txt'))
-exe = EXE(pyz, a.scripts, *( [a.binaries, a.datas] if single_file else [[]] ),
+# Keep the stock launcher for the installed directory bundle. Both portable
+# variants use the pinned windowed launcher with bounded session cleanup.
+class PortableEXE(EXE):
+    def _bootloader_file(self, exe, extension=None):
+        if exe != 'run' or extension != '.exe' or self.debug or self.console:
+            raise ValueError('The portable launcher requires a windowed Windows release build')
+        path = root / 'artifacts/portable-bootloader/runw.exe'
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        return str(path)
+
+exe_type = PortableEXE if single_file else EXE
+exe = exe_type(pyz, a.scripts, *( [a.binaries, a.datas] if single_file else [[]] ),
           exclude_binaries=not single_file, name='BigFishDockpro', **windows_options)
 if single_file:
     sys.path.insert(0, str(root/'tools'))
     from portable_dotnet import BASENAME, runtime_entries
-    bundled = EXE(pyz, a.scripts, a.binaries, a.datas, runtime_entries(),
+    bundled = PortableEXE(pyz, a.scripts, a.binaries, a.datas, runtime_entries(),
                   name=Path(BASENAME).stem, **windows_options)
 else:
     coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='BigFishDockpro')

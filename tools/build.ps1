@@ -66,7 +66,7 @@ try {
     }
     & $taskPython tools/prepare_pawnio.py
     if ($LASTEXITCODE -ne 0) { throw 'PawnIO offline package preparation failed' }
-    & $taskPython tools/prepare_presentmon.py
+    & $taskPython tools/prepare_presentmon.py --toolchain $Toolchain
     if ($LASTEXITCODE -ne 0) { throw 'FPS probe preparation failed' }
     & $taskPython tools/prepare_bluetooth.py --dotnet $taskDotnet
     if ($LASTEXITCODE -ne 0) { throw 'Bluetooth probe preparation failed' }
@@ -95,6 +95,8 @@ try {
     & $Iscc "/DAppVersion=$taskVersion" tools/installer.iss
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
     if ($SingleFile) {
+        & $taskPython tools/prepare_portable_bootloader.py --toolchain $Toolchain
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot build the portable Windows launcher' }
         $taskOldBundleMode = $env:FISHDOCK_ONEFILE
         try {
             $env:FISHDOCK_ONEFILE = '1'
@@ -113,6 +115,7 @@ try {
         Invoke-TaskCheck 'dist/BigFishDockpro/BigFishDockpro.exe' 'artifacts/quick-runtime-test' 'directory-runtime' @('--runtime-check')
     }
     if ($SingleFile -and -not $taskSkip) {
+        Invoke-TaskCheck 'tools/portable_shutdown_test.py' 'artifacts/portable-session-exit' 'portable-session-exit' @()
         $runtimeTimer = [Diagnostics.Stopwatch]::StartNew()
         & $taskPython tools/portable_dotnet.py verify
         if ($LASTEXITCODE -ne 0) { throw 'Offline .NET portable startup or bridge validation failed' }

@@ -1,4 +1,4 @@
-"""Per-foreground-process application Present rate; no overlay injection or frame recording."""
+"""Application Present rate with an on-demand desktop update count as backup."""
 import csv
 import ctypes as C
 from ctypes import wintypes as W
@@ -11,6 +11,23 @@ import uuid
 from PyQt5.QtCore import QObject,QTimer,Qt,pyqtSignal
 from background_worker import BackgroundWorker
 from resource_probes import binary
+from probe_lifecycle import allowed, release_native, start_native
+
+
+def open_stream(command, flags):
+    return start_native(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL, creationflags=flags)
+
+
+def close_stream(worker, process):
+    try:
+        if process.poll() is None:process.kill()
+    except OSError:
+        pass
+    finally:
+        process.stdout.close()
+        worker.release_process(process)
+        release_native(process)
 
 
 def foreground():
@@ -67,7 +84,7 @@ class FrameSources:
         self.streams={}
 
     def add(self,pid,name,chain,interval,now):
-        if name.casefold() in ('presentmon.exe','bigfishdockpro.exe') or not math.isfinite(interval) or not 0<interval<=5000:return
+        if name.casefold() in ('presentmon.exe','bigfishdockpro.exe','desktopframeprobe.exe') or not math.isfinite(interval) or not 0<interval<=5000:return False
         key=(pid,chain)
         if key not in self.streams:
             if len(self.streams)>=32:
@@ -75,6 +92,7 @@ class FrameSources:
                 del self.streams[oldest]
             self.streams[key]=(name,deque(maxlen=180))
         self.streams[key][1].append((now,interval))
+        return True
 
     def pick(self,pid,now):
         candidates=[]
@@ -97,6 +115,7 @@ class Capture(BackgroundWorker):
     updated=pyqtSignal(object)
     def __init__(self,pid):
         super().__init__();self.pid=pid;self.session='BigFishDockpro-'+str(os.getpid())+'-'+uuid.uuid4().hex[:12]
+        self.last_frame_at=0.
     def run(self):
         process=None
         try:
@@ -105,8 +124,8 @@ class Capture(BackgroundWorker):
                   '--v1_metrics','--output_stdout','--no_console_stats','--no_track_gpu',
                   '--no_track_input']
             if self.pid:args+=['--process_id',str(self.pid),'--terminate_on_proc_exit']
-            process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
-                                     creationflags=subprocess.DETACHED_PROCESS)
+            process=open_stream(args,subprocess.DETACHED_PROCESS)
+            if process is None:return
             self.own_process(process);sources=FrameSources();header=None;last=0
             for raw in process.stdout:
                 if self.cancelled.is_set():break
@@ -121,7 +140,8 @@ class Capture(BackgroundWorker):
                     pid=int(row[header['processid']])
                     if self.pid and pid!=self.pid:continue
                     now=time.monotonic()
-                    sources.add(pid,row[header['application']],row[header['swapchainaddress']],float(row[header['msbetweenpresents']]),now)
+                    if sources.add(pid,row[header['application']],row[header['swapchainaddress']],float(row[header['msbetweenpresents']]),now):
+                        self.last_frame_at=now
                     if now-last>=.5:
                         self.updated.emit(sources.pick(self.pid or foreground(),now));last=now
                 except (ValueError,IndexError):continue
@@ -131,37 +151,112 @@ class Capture(BackgroundWorker):
             if not self.cancelled.is_set():self.updated.emit((None,'当前无法启动帧率采集',time.monotonic()))
         finally:
             if process:
-                if process.poll() is None:process.kill()
-                process.stdout.close();self.release_process(process)
-            stop_trace(self.session)
+                close_stream(self,process)
+                stop_trace(self.session)
+
+
+class DesktopCapture(BackgroundWorker):
+    updated=pyqtSignal(object)
+
+    def run(self):
+        process=None
+        try:
+            process=open_stream([str(binary('DesktopFrameProbe.exe'))],subprocess.CREATE_NO_WINDOW)
+            if process is None:return
+            self.own_process(process)
+            for raw in process.stdout:
+                if self.cancelled.is_set():break
+                try:frames,microseconds=map(int,raw.split())
+                except ValueError:continue
+                if not 0<=frames<=10000 or not 0<microseconds<=3000000:continue
+                rate=frames*1000000/microseconds
+                if rate<=1000:self.updated.emit((rate,'桌面更新帧率 · DXGI',time.monotonic()))
+        except OSError:
+            pass
+        finally:
+            if process:close_stream(self,process)
 
 
 class FrameMonitor(QObject):
+    FALLBACK_DELAY=3.
+    STALL_TIMEOUT=10.
+    MAX_AGE=3.
+
     def __init__(self,owner):
-        super().__init__(owner);self.owner=owner;self.job=None;self.closed=False;self.retry_at=0
-        self.value=None;self.name='等待画面更新';self.at=0
+        super().__init__(owner);self.owner=owner;self.job=self.desktop_job=None;self.closed=False
+        self.retry_at=self.capture_at=self.desktop_at=0.
+        self.fallback_at=time.monotonic()+self.FALLBACK_DELAY
+        self.failures=0;self.primary_sample=self.desktop_sample=None
+        self.status=self.name='等待画面更新';self.value=None;self.at=0.
         self.timer=QTimer(self);self.timer.setInterval(1000);self.timer.timeout.connect(self.tick)
         if not owner.runtime.dock.preview:self.timer.start();self.tick()
 
     def tick(self):
+        if self.closed or not allowed():return
         now=time.monotonic()
         if self.job is None and now>=self.retry_at:
-            self.job=Capture(0);self.job.updated.connect(self.update_value,Qt.QueuedConnection)
+            self.capture_at=now;self.job=Capture(0);self.job.updated.connect(self.update_value,Qt.QueuedConnection)
             self.job.finished.connect(self.finished,Qt.QueuedConnection);self.job.start()
-        if self.value is not None and now-self.at>3:
-            self.value=None;self.name='等待画面更新';self.owner.display()
+        elif (self.job is not None and not self.job.isInterruptionRequested() and
+              now-max(self.capture_at,self.job.last_frame_at)>=self.STALL_TIMEOUT):
+            self.status='帧率采集暂无读数，正在重连'
+            self.job.requestInterruption()
+        if not self.fresh(self.primary_sample,now):
+            if self.desktop_job is None and now>=self.fallback_at:
+                self.desktop_at=now;self.desktop_job=DesktopCapture()
+                self.desktop_job.updated.connect(self.update_desktop,Qt.QueuedConnection)
+                self.desktop_job.finished.connect(self.desktop_finished,Qt.QueuedConnection)
+                self.desktop_job.start()
+            elif (self.desktop_job is not None and now-self.desktop_at>=self.STALL_TIMEOUT and
+                  not self.desktop_job.isInterruptionRequested()):
+                self.desktop_job.requestInterruption()
+        self.display_fresh(now)
+
+    def fresh(self,sample,now):
+        return sample if sample is not None and now-sample[2]<=self.MAX_AGE else None
+
+    def display_fresh(self,now):
+        result=self.fresh(self.primary_sample,now) or self.fresh(self.desktop_sample,now)
+        value,name,at=result if result else (None,self.status,0.)
+        changed=(value,name)!=(self.value,self.name)
+        self.value,self.name,self.at=value,name,at
+        if changed:self.owner.display()
 
     def update_value(self,info):
         if not self.closed and self.sender() is self.job:
-            self.value,self.name,self.at=info;self.owner.display()
+            if info[0] is not None:
+                self.primary_sample=info;self.failures=0
+                self.fallback_at=info[2]+self.FALLBACK_DELAY
+                self.status='等待画面更新'
+                self.stop_desktop()
+            else:self.status=info[1]
+            self.display_fresh(time.monotonic())
+
+    def update_desktop(self,info):
+        if not self.closed and self.sender() is self.desktop_job:
+            self.desktop_sample=info;self.desktop_at=info[2]
+            self.display_fresh(time.monotonic())
 
     def finished(self):
         job=self.sender()
         if job is not self.job:return
-        self.job=None;job.deleteLater();self.retry_at=time.monotonic()+30
+        self.job=None;job.deleteLater()
+        self.failures=min(self.failures+1,5)
+        self.retry_at=time.monotonic()+min(60,3*2**(self.failures-1))
+
+    def desktop_finished(self):
+        job=self.sender()
+        if job is not self.desktop_job:return
+        self.desktop_job=None;job.deleteLater();self.fallback_at=time.monotonic()+15
+
+    def stop_desktop(self):
+        job,self.desktop_job=self.desktop_job,None
+        self.desktop_sample=None
+        if job:job.requestInterruption();job.deleteLater()
 
     def close(self):
         self.closed=True;self.timer.stop()
+        self.stop_desktop()
         if self.job:
             job=self.job;job.requestInterruption();job.deleteLater()
             stop_trace(job.session)

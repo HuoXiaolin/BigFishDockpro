@@ -565,15 +565,15 @@ def run(api,runtime,root,app,output,checks):
         stream=BytesIO(b'Application,ProcessID,SwapChainAddress,PresentMode,MsBetweenPresents\n'
                        b'dwm.exe,13,0x1,Composed: Flip,20\ndwm.exe,13,0x1,Composed: Flip,20\n')
         process=Mock(stdout=stream,wait=Mock(return_value=0),poll=Mock(return_value=0))
-        native=SimpleNamespace(Popen=Mock(return_value=process),PIPE=subprocess.PIPE,DEVNULL=subprocess.DEVNULL,
-                               DETACHED_PROCESS=subprocess.DETACHED_PROCESS,TimeoutExpired=subprocess.TimeoutExpired)
         capture=Capture(0);samples=[];capture.updated.connect(samples.append)
-        with patch.multiple('resource_fps',subprocess=native,foreground=lambda:0,stop_trace=Mock(),
+        with patch('probe_lifecycle.subprocess.Popen',return_value=process) as launch, \
+             patch('probe_lifecycle.system_ending',return_value=False), \
+             patch.multiple('resource_fps',foreground=lambda:0,stop_trace=Mock(),
                             time=SimpleNamespace(monotonic=iter((1.,1.6)).__next__)):
             capture.run()
-        args,=native.Popen.call_args.args
+        args,=launch.call_args.args
         assert '--no_track_display' not in args and {'--no_track_gpu','--no_track_input'}<=set(args)
-        assert native.Popen.call_args.kwargs['creationflags']==subprocess.DETACHED_PROCESS
+        assert launch.call_args.kwargs['creationflags']==subprocess.DETACHED_PROCESS
         assert samples[-1][:2]==(50.,'桌面合成 · DWM') and stream.closed
         capture.deleteLater()
         checks.append('PresentMon preserves DWM/display tracing, GPU and input tracing stay off, and the detached CSV collector reports a composed desktop rate.')

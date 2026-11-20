@@ -11,7 +11,7 @@ from probe_lifecycle import allowed, start as start_probe
 def binary(name):
     if getattr(sys,'frozen',False):return Path(sys._MEIPASS)/'resource-probe'/name
     project=Path(__file__).resolve().parents[1]
-    directories={'PresentMon.exe':'presentmon'}
+    directories={'PresentMon.exe':'presentmon','DesktopFrameProbe.exe':'presentmon'}
     return project/'artifacts'/directories.get(name,'generated')/name
 
 

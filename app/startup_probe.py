@@ -14,6 +14,7 @@ class StartupProbe:
         self.autostart = '--autostart' in args
         self.fresh = '--fresh-profile' in args
         self.visibility = '--visibility-profile' in args
+        self.session_close = '--session-close-probe' in args
         self.resume = '--resume-profile' in args
         self.started = time.monotonic()
         api.CONFIG_DIR = str(self.output/'test-config')
@@ -37,7 +38,7 @@ class StartupProbe:
         cfg = dict(api.DEFAULT_CONFIG, card_scale=100,settings_size='small', items=[], autostart=False, glass=False, running_dots=False,
                    startup_delay=1, screen_corners=False, check_updates_on_start=False,
                    startup_animation=self.autostart, startup_animation_style='rolling',
-                   dock_visible=self.autostart, panels_visible=self.autostart, hide_tray=self.autostart,
+                   dock_visible=self.autostart or self.session_close, panels_visible=self.autostart, hide_tray=self.autostart,
                    runtime_lite=self.autostart, lite_enabled=True, panel_enabled=True, panel_auto_hide=False, desktop_auto_sort=False,
                    desktop_panels=[{'id':'images','name':'图片','geometry':[70,90,340,220],'collapsed':True}],
                    merged_panels=self.autostart, merged_active='images', merged_geometry=[88,96,360,240],
@@ -45,12 +46,36 @@ class StartupProbe:
         if not api.save_config(cfg):
             raise RuntimeError('Cannot prepare isolated startup configuration')
 
+    def prepare_session_close(self, dock, runtime):
+        import sys
+        from deck_runtime import private_runtime
+        from PyQt5.QtCore import QProcess
+        bundle = Path(sys._MEIPASS)
+        helper_pid = 0
+        if (private := private_runtime()) is not None:
+            from resource_deck import DeckBridge, start_headless
+            assert runtime.resources.deck is None
+            bridge = runtime.resources.deck = DeckBridge(runtime.resources)
+            start_headless(bridge.process, bundle/'deck-bridge/BigFishDeckBridge.exe',
+                           self.output/'deck-test-data', private)
+            if not bridge.process.waitForStarted(5000):
+                raise RuntimeError('Cannot start the bundled bridge for the session test')
+            helper_pid = int(bridge.process.processId())
+            assert bridge.process.state() == QProcess.Running and helper_pid
+        ready = self.output/'session-ready.json'
+        pending = ready.with_suffix('.tmp')
+        pending.write_text(json.dumps({'pid': os.getpid(), 'hwnd': int(dock.winId()),
+                                       'runtime_dir': str(bundle), 'helper_pid': helper_pid}), encoding='utf-8')
+        pending.replace(ready)
+
     def complete(self, state):
         from PyQt5.QtWidgets import QApplication
         import traceback
         if self.visibility:return self.complete_visibility(state)
         try:
             dock, tray, runtime = state['dock'], state['tray'], state['runtime']
+            if self.session_close:
+                return self.prepare_session_close(dock, runtime)
             elapsed = time.monotonic()-self.started
             animation_check = self.check_animation(state)
             from dpi_support import awareness

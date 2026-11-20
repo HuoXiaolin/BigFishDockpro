@@ -1,7 +1,9 @@
-"""Verify upstream PresentMon and brand the packaged copy's icon."""
+"""Prepare PresentMon and the small desktop frame-counting helper."""
+import argparse
 import hashlib
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from urllib.request import Request,urlopen
 
@@ -48,4 +50,25 @@ def prepare():
     os.replace(staged, TARGET)
     return TARGET
 
-if __name__=='__main__':print(prepare())
+def prepare_desktop_probe(toolchain):
+    source = ROOT/'tools'/'DesktopFrameProbe.cpp'
+    compiler = toolchain.resolve()/'mingw'/'mingw64'/'bin'/'g++.exe'
+    target = TARGET.with_name('DesktopFrameProbe.exe')
+    stamp = target.with_suffix('.sha256')
+    args = ['-std=c++17', '-O2', '-static', '-Wall', '-Wextra', '-Werror']
+    fingerprint = hashlib.sha256(source.read_bytes() + os.fsencode(compiler) +
+                                 subprocess.check_output([compiler, '-dumpfullversion']) +
+                                 ' '.join(args).encode('ascii')).hexdigest()
+    if not target.is_file() or not stamp.is_file() or stamp.read_text('ascii') != fingerprint:
+        staged = target.with_suffix('.pending.exe')
+        subprocess.run([compiler, *args, str(source), '-o', str(staged), '-ld3d11', '-ldxgi', '-ldxguid'], check=True)
+        os.replace(staged, target)
+        stamp.write_text(fingerprint, encoding='ascii')
+    return target
+
+
+if __name__=='__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--toolchain', type=Path, default=Path(r'D:\Agant\toolchain'))
+    print(prepare())
+    print(prepare_desktop_probe(parser.parse_args().toolchain))

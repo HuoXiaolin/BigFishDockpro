@@ -72,7 +72,7 @@ def _sample_screen_dc(gdi, dc, points):
     return [gdi.GetPixel(dc, x, y) for x, y in points]
 
 
-def composed_color(points):
+def composed_samples(points):
     user, gdi = _bindings()
     points = [(x, y) for x, y in points if user.MonitorFromPoint(wintypes.POINT(x, y), 0)]
     if len(points) < 5:
@@ -87,4 +87,9 @@ def composed_color(points):
     colors = [value for value in colors if value != 0xffffffff]
     if len(colors) < 5:
         return None
-    return tuple(median((value >> shift) & 255 for value in colors) for shift in (0, 8, 16))
+    return tuple(tuple((value >> shift) & 255 for shift in (0, 8, 16)) for value in colors)
+
+
+def composed_color(points):
+    colors = composed_samples(points)
+    return tuple(map(median, zip(*colors))) if colors else None
