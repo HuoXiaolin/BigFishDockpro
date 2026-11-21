@@ -13,7 +13,7 @@ from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
-from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, DATA, PAGE_GROUPS,
+from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, CURSORS, DATA, PAGE_GROUPS,
                               PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
                               WIDGETS, START_MENU, NOTIFICATIONS, field_catalog)
 from settings_design import SettingsNavigation
@@ -103,7 +103,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         APPEARANCE: 'build_appearance', COLLECTION: 'build_panel', APPS: 'build_apps', RUNNING: 'build_running',
         UPDATES: 'build_updates', USAGE: 'build_usage', ABOUT: 'build_info', TASKBAR: 'build_taskbar',
         WIDGETS: 'build_widgets', CAPSULES: 'build_capsules', DATA: 'build_data',
-        START_MENU: 'build_start_menu', NOTIFICATIONS: 'build_notifications',
+        START_MENU: 'build_start_menu', NOTIFICATIONS: 'build_notifications', CURSORS: 'build_cursor_styles',
     }
 
     def __init__(self, tray, api):
@@ -290,6 +290,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                     select_material(field, value)
                 elif key == 'panel_face_role':
                     field.select(value)
+                elif key == 'resource_tray_runner_device':
+                    pass  # Restore after the metric has been updated below.
                 elif isinstance(field, QComboBox):
                     field.setCurrentIndex(max(0, field.findData(value)))
                 elif isinstance(field, QSpinBox):
@@ -306,8 +308,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.fields['panel_face_switch_minutes'].setEnabled(self.fields['panel_face_auto_switch'].isChecked())
         if 'taskbar_text_auto' in changes and 'taskbar_text_mode' in self.fields:
             self.fields['taskbar_text_mode'].setEnabled(not changes['taskbar_text_auto'])
-        if 'resource_tray_runner_enabled' in changes and 'resource_tray_runner_animal' in self.fields:
-            self.sync_tray_runner_fields()
+        if ('resource_tray_runner_device' in self.fields and
+                changes.keys() & {'resource_tray_runner_enabled','resource_tray_runner_metric','resource_tray_runner_device'}):
+            self.sync_tray_runner_fields(changes.get('resource_tray_runner_device'))
         if 'watermark_mode' in changes and 'watermark_mode' in self.fields:
             self.sync_watermark_fields()
         if any(key.endswith('_appearance_source') for key in changes):
@@ -413,6 +416,14 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         from shell_appearance_settings import build_page
         build_page(self, form, 'notifications')
 
+    def build_cursor_styles(self, form):
+        from cursor_style_ui import CursorStylePanel
+        from settings_design import section_marker
+        service = getattr(getattr(self.tray, 'runtime', None), 'cursor_styles', None)
+        if service is not None:
+            section_marker(form, '鼠标方案')
+            form.addRow(CursorStylePanel(service))
+
     def build_taskbar(self, form):
         from settings_design import section_marker
         runtime = getattr(self.tray, 'runtime', None)
@@ -423,9 +434,17 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         else:
             self.add_field(form, 'resource_taskbar')
         section_marker(form, '托盘小动物')
-        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_metric', 'resource_tray_runner_speed'):
+        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_metric'):
             self.add_field(form, key)
+        from resource_device_picker import DevicePicker
+        key = 'resource_tray_runner_device'
+        device = self.fields[key] = DevicePicker(getattr(runtime, 'resources', None),
+                                                self._draft['resource_tray_runner_metric'], self._draft[key], form.parentWidget())
+        device.setAccessibleName(self.catalog[key][1])
+        form.addRow(self.field_label(self.catalog[key][1]), device)
+        self.add_field(form, 'resource_tray_runner_speed')
         self.fields['resource_tray_runner_enabled'].toggled.connect(self.sync_tray_runner_fields)
+        self.fields['resource_tray_runner_metric'].currentIndexChanged.connect(self.sync_tray_runner_fields)
         self.sync_tray_runner_fields()
         section_marker(form, '效果与文字')
         self.add_field(form, 'taskbar_mode')
@@ -473,10 +492,15 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                 for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
                     self.fields[key].setEnabled(False)
 
-    def sync_tray_runner_fields(self):
+    def sync_tray_runner_fields(self, selected=None):
+        from resource_options import DEVICE_SOURCES
         enabled = self.fields['resource_tray_runner_enabled'].isChecked()
         for key in ('resource_tray_runner_animal', 'resource_tray_runner_metric', 'resource_tray_runner_speed'):
             self.fields[key].setEnabled(enabled)
+        metric = self.fields['resource_tray_runner_metric'].currentData()
+        device = self.fields['resource_tray_runner_device']
+        device.set_metric(metric, selected if isinstance(selected, str) else None)
+        device.setEnabled(enabled and metric in DEVICE_SOURCES)
 
     def build_panel(self, panel):
         from settings_design import section_marker

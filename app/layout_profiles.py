@@ -26,7 +26,9 @@ RESOURCE_FIELDS=tuple('resource_'+name for name in (
     'taskbar','taskbar_position','taskbar_layer','taskbar_anchor','task_metrics','task_order','task_music','task_media_parts',
     'capsule_taskbar','capsule_taskbar_position','capsule_taskbar_anchor','ai','ai_tray','ai_tray_mode','ai_tray_provider','ai_tray_metric',
     'bt_tray','traffic','music','agenda','pomodoro','weather','news','alert_almanac','water_enabled',
-    'runner_enabled','runner_animal','runner_speed','runner_metric','tray_runner_enabled','tray_runner_animal','tray_runner_speed','tray_runner_metric',
+    'runner_enabled','runner_animal','runner_speed','runner_metric','runner_device',
+    'tray_runner_enabled','tray_runner_animal','tray_runner_speed','tray_runner_metric','tray_runner_device',
+    'gpu_device','network_device','disk_device','disk_activity','display_device',
     'mail','mail_notifications','alert_mail_code','mail_icon','mail_interval'))
 VALUE_FIELDS=(*TOP,*SWITCHES,*CHOICES,*RESOURCE_FIELDS)
 

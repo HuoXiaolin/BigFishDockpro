@@ -234,6 +234,7 @@ def run(api, runtime, root, app, output, checks):
         with patch('shell_appearance.shell_hosts',return_value={1234:'start',5678:'notifications'}), \
              patch('shell_appearance.foreground_surface',return_value=None) as surface, \
              patch('shell_appearance.panel_visible',return_value=True), \
+             patch('taskbar_text.system_mode',return_value=0), \
              patch('shell_appearance.time.monotonic',return_value=1100.) as clock:
             controller.sync()
             controller.window_created(5678,123)

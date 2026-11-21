@@ -136,6 +136,7 @@ class DisplayEvents(QAbstractNativeEventFilter):
             resources=getattr(self.layout.runtime,'resources',None)
             monitor=getattr(resources,'peripherals',None)
             if monitor:monitor.device_changed()
+            if resources:resources.hardware_topology_changed()
         if msg.message==0x0011:self.layout.runtime.set_session_ending(True)  # WM_QUERYENDSESSION: block retries immediately.
         elif msg.message==0x0016:  # WM_ENDSESSION
             if msg.wParam:
@@ -146,7 +147,10 @@ class DisplayEvents(QAbstractNativeEventFilter):
             if msg.hWnd==int(self.layout.dock.winId()):
                 self.layout.runtime.wallpaper_changed()
         elif msg.message==0x001a and msg.wParam==0x002f:self.layout.changed()  # SPI_SETWORKAREA
-        elif msg.message==0x007e:self.layout.changed()  # WM_DISPLAYCHANGE
+        elif msg.message==0x007e:  # WM_DISPLAYCHANGE
+            self.layout.changed()
+            resources=getattr(self.layout.runtime,'resources',None)
+            if resources:resources.hardware_topology_changed()
         elif msg.message==0x02b1 and msg.hWnd==self.session_hwnd:  # WM_WTSSESSION_CHANGE
             if msg.wParam==7:
                 mail=getattr(getattr(self.layout.runtime,'resources',None),'mail',None)

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 internal static class HardwareSensors {
     sealed class Value {
@@ -15,6 +16,10 @@ internal static class HardwareSensors {
 
     [StructLayout(LayoutKind.Sequential)]
     struct Adapter { public uint handle; public uint low; public int high; public uint sources; public int precise; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct AdapterLuid { public uint low; public int high; public uint handle; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct AdapterAddress { public uint bus, device, function; }
     [StructLayout(LayoutKind.Sequential)]
     struct EnumAdapters { public uint count; public IntPtr adapters; }
     [StructLayout(LayoutKind.Sequential)]
@@ -27,6 +32,7 @@ internal static class HardwareSensors {
         public byte overrideState;
     }
     [DllImport("gdi32.dll")] static extern int D3DKMTEnumAdapters2(ref EnumAdapters args);
+    [DllImport("gdi32.dll")] static extern int D3DKMTOpenAdapterFromLuid(ref AdapterLuid args);
     [DllImport("gdi32.dll")] static extern int D3DKMTQueryAdapterInfo(ref Info query);
     [DllImport("gdi32.dll")] static extern int D3DKMTCloseAdapter(ref uint handle);
     const DllImportSearchPath SystemOnly=DllImportSearchPath.System32;
@@ -34,6 +40,12 @@ internal static class HardwareSensors {
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlShutdown();
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetCount_v2(out uint n);
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetHandleByIndex_v2(uint i,out IntPtr dev);
+    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)] struct NvPciInfo {
+        [MarshalAs(UnmanagedType.ByValTStr,SizeConst=16)] public string legacyId;
+        public uint domain,bus,device,pciDevice,subsystem;
+        [MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)] public string busId;
+    }
+    [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetPciInfo_v3(IntPtr dev,out NvPciInfo pci);
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetPowerUsage(IntPtr dev,out uint mw);
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetTemperature(IntPtr dev,uint sensor,out uint deg);
     [DefaultDllImportSearchPaths(SystemOnly),DllImport("nvml.dll")] static extern int nvmlDeviceGetClockInfo(IntPtr dev,uint clock,out uint mhz);
@@ -47,7 +59,20 @@ internal static class HardwareSensors {
             data[key]=new Value{value=Math.Round(value,key.EndsWith("_power")?2:1),source=source,label=label};
     }
 
-    static void DriverTemperature(Dictionary<string,Value> data,HashSet<string> wanted) {
+    static AdapterAddress? PciAddress(ulong luid) {
+        var adapter = new AdapterLuid { low = (uint)luid, high = unchecked((int)(luid >> 32)) };
+        if (D3DKMTOpenAdapterFromLuid(ref adapter) != 0) return null;
+        int size = Marshal.SizeOf(typeof(AdapterAddress));
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try {
+            var query = new Info { handle = adapter.handle, type = 6, buffer = buffer, size = (uint)size }; // KMTQAITYPE_ADAPTERADDRESS
+            if (D3DKMTQueryAdapterInfo(ref query) == 0)
+                return (AdapterAddress)Marshal.PtrToStructure(buffer, typeof(AdapterAddress));
+            return null;
+        } finally { Marshal.FreeHGlobal(buffer); D3DKMTCloseAdapter(ref adapter.handle); }
+    }
+
+    static void DriverTemperature(Dictionary<string,Value> data,HashSet<string> wanted,ulong? target) {
         var args=new EnumAdapters();
         if(D3DKMTEnumAdapters2(ref args)!=0 || args.count<1 || args.count>64) return;
         int stride=Marshal.SizeOf(typeof(Adapter));
@@ -58,6 +83,7 @@ internal static class HardwareSensors {
             for(int i=0;i<args.count;i++){
                 var dev=(Adapter)Marshal.PtrToStructure(IntPtr.Add(args.adapters,i*stride),typeof(Adapter));
                 try {
+                    if (target.HasValue && (((ulong)(uint)dev.high << 32) | dev.low) != target.Value) continue;
                     Marshal.StructureToPtr(perf,buffer,false);
                     var query=new Info{handle=dev.handle,type=62,buffer=buffer,size=(uint)size};
                     if(D3DKMTQueryAdapterInfo(ref query)==0){
@@ -71,15 +97,30 @@ internal static class HardwareSensors {
         } finally {Marshal.FreeHGlobal(buffer);Marshal.FreeHGlobal(args.adapters);}
     }
 
-    static void Nvidia(Dictionary<string,Value> data,bool temp,bool watts,HashSet<string> wanted) {
+    static void Nvidia(Dictionary<string,Value> data,bool temp,bool watts,HashSet<string> wanted,ulong? target) {
+        AdapterAddress? address = target.HasValue ? PciAddress(target.Value) : null;
+        if (target.HasValue && !address.HasValue) return;
         if(nvmlInit_v2()!=0)return;
         try {
             uint count;
             if(nvmlDeviceGetCount_v2(out count)!=0)return;
+            var devices = new List<KeyValuePair<uint,IntPtr>>();
             for(uint i=0;i<Math.Min(32U,count);i++){
-                uint value;IntPtr dev;
+                IntPtr dev;
                 if(nvmlDeviceGetHandleByIndex_v2(i,out dev)!=0)continue;
-                string source="NVIDIA NVML · GPU "+i;
+                if (address.HasValue) {
+                    AdapterAddress pci = address.Value;
+                    NvPciInfo info;
+                    if (nvmlDeviceGetPciInfo_v3(dev,out info) != 0 || info.bus != pci.bus || info.device != pci.device ||
+                        !info.busId.EndsWith("." + pci.function.ToString("x"),StringComparison.OrdinalIgnoreCase)) continue;
+                }
+                devices.Add(new KeyValuePair<uint,IntPtr>(i,dev));
+            }
+            if (target.HasValue && devices.Count != 1) return;
+            foreach (var device in devices) {
+                uint value;
+                IntPtr dev = device.Value;
+                string source="NVIDIA NVML · GPU "+device.Key;
                 if(temp && nvmlDeviceGetTemperature(dev,0,out value)==0)Put(data,"gpu_temp",value,source,"GPU 温度");
                 if(watts && nvmlDeviceGetPowerUsage(dev,out value)==0)Put(data,"gpu_power",value/1000.0,source,"GPU 板卡功率");
                 if(wanted.Contains("gpu_frequency") && nvmlDeviceGetClockInfo(dev,0,out value)==0)Put(data,"gpu_frequency",value,source,"GPU 频率");
@@ -99,49 +140,100 @@ internal static class HardwareSensors {
     [StructLayout(LayoutKind.Sequential)]
     struct ScreenPoint { public int x,y; }
     [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+    struct MonitorInfo {
+        public uint size;
+        public int left,top,right,bottom,workLeft,workTop,workRight,workBottom;
+        public uint flags;
+        [MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)] public string device;
+    }
+    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
     struct PhysicalMonitor {
         public IntPtr handle;
         [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]
         public string description;
     }
     [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(ScreenPoint point,uint flags);
+    delegate bool MonitorCallback(IntPtr monitor,IntPtr dc,IntPtr bounds,IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc,IntPtr bounds,MonitorCallback callback,IntPtr data);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
     [DllImport("dxva2.dll")] static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr monitor,out uint count);
     [DllImport("dxva2.dll")] static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr monitor,uint count,[Out] PhysicalMonitor[] devices);
     [DllImport("dxva2.dll")] static extern bool DestroyPhysicalMonitors(uint count,[In] PhysicalMonitor[] devices);
     [DllImport("dxva2.dll")] static extern bool GetMonitorCapabilities(IntPtr monitor,out uint caps,out uint temperatures);
     [DllImport("dxva2.dll")] static extern bool GetMonitorBrightness(IntPtr monitor,out uint min,out uint value,out uint max);
 
-    static void Brightness(Dictionary<string,Value> data) {
+    static IntPtr DisplayMonitor(string device) {
+        if (device == null) return MonitorFromPoint(new ScreenPoint(),1);
+        IntPtr result = IntPtr.Zero;
+        EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,(monitor,dc,bounds,context)=>{
+            var info = new MonitorInfo { size = (uint)Marshal.SizeOf(typeof(MonitorInfo)) };
+            if (!GetMonitorInfo(monitor,ref info) || !String.Equals(info.device,device,StringComparison.OrdinalIgnoreCase)) return true;
+            result = monitor;
+            return false;
+        },IntPtr.Zero);
+        return result;
+    }
+
+    static void Brightness(Dictionary<string,Value> data,string display,string instance) {
         try {
-            Query(@"root\wmi","SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE",row=>{
+            Query(@"root\wmi","SELECT InstanceName, CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE",row=>{
+                if (display != null && (String.IsNullOrEmpty(instance) ||
+                    !String.Equals(Convert.ToString(row["InstanceName"]),instance,StringComparison.OrdinalIgnoreCase) &&
+                    !Convert.ToString(row["InstanceName"]).StartsWith(instance+"_",StringComparison.OrdinalIgnoreCase))) return;
                 if (row["CurrentBrightness"] is byte && (byte)row["CurrentBrightness"]<=100)
                     Put(data,"brightness",(byte)row["CurrentBrightness"],"Windows WMI · 内置屏幕","亮度");
             });
         } catch(ManagementException) {} catch(UnauthorizedAccessException) {} catch(COMException) {}
         if (data.ContainsKey("brightness")) return;
-        var primary=MonitorFromPoint(new ScreenPoint(),1);
+        var monitor=DisplayMonitor(display);
         uint count;
-        if (primary==IntPtr.Zero || !GetNumberOfPhysicalMonitorsFromHMONITOR(primary,out count) || count<1 || count>16) return;
+        if (monitor==IntPtr.Zero || !GetNumberOfPhysicalMonitorsFromHMONITOR(monitor,out count) || count<1 || count>16) return;
         var devices=new PhysicalMonitor[count];
-        if (!GetPhysicalMonitorsFromHMONITOR(primary,count,devices)) return;
+        if (!GetPhysicalMonitorsFromHMONITOR(monitor,count,devices)) return;
         try {
             foreach(var device in devices) {
                 uint caps,temperatures,min,value,max;
                 if (GetMonitorCapabilities(device.handle,out caps,out temperatures) && (caps&2)!=0 &&
                     GetMonitorBrightness(device.handle,out min,out value,out max) && max>min && value>=min && value<=max) {
-                    Put(data,"brightness",Math.Round(100.0*(value-min)/(max-min)),"主显示器 · DDC/CI","亮度");
+                    Put(data,"brightness",Math.Round(100.0*(value-min)/(max-min)),"显示器 · DDC/CI","亮度");
                     break;
                 }
             }
         } finally { DestroyPhysicalMonitors(count,devices); }
     }
 
-    public static object Read(string options) {
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+    static extern SafeFileHandle CreateFile(string name,uint access,uint share,IntPtr security,uint mode,uint flags,IntPtr template);
+    [DllImport("kernel32.dll",SetLastError=true)]
+    static extern bool DeviceIoControl(SafeFileHandle disk,uint control,byte[] query,uint querySize,[Out] byte[] result,
+                                       uint resultSize,out uint received,IntPtr overlapped);
+
+    static void DiskTemperature(Dictionary<string,Value> data,uint disk) {
+        using (var file = CreateFile(@"\\.\PhysicalDrive"+disk,0,3,IntPtr.Zero,3,0,IntPtr.Zero)) {
+            if (file.IsInvalid) return;
+            foreach (byte property in new byte[] {52,51}) { // Device, then adapter temperature for this disk.
+                var query = new byte[12]; query[0] = property;
+                var result = new byte[1024];
+                uint received;
+                if (!DeviceIoControl(file,0x2d1400,query,(uint)query.Length,result,(uint)result.Length,out received,IntPtr.Zero) || received < 24) continue;
+                // STORAGE_TEMPERATURE_DATA_DESCRIPTOR: 24-byte header, 16-byte sensor entries.
+                int count = Math.Min((int)BitConverter.ToUInt16(result,12),(int)(received-24)/16);
+                for (int i=0;i<count;i++)
+                    Put(data,"disk_temp",BitConverter.ToInt16(result,26+i*16),"Windows 存储驱动 · 磁盘 "+disk,"磁盘温度");
+                if (data.ContainsKey("disk_temp")) return;
+            }
+        }
+    }
+
+    public static object Read(string options,ulong? gpu=null,uint? disk=null,string display=null,string instance=null) {
         var wanted=new HashSet<string>(options.Split(','));
         var data=new Dictionary<string,Value>();
-        if(wanted.Contains("gpu_temp") || wanted.Contains("gpu_frequency") || wanted.Contains("gpu_fan"))try{DriverTemperature(data,wanted);}catch(Exception){}
+        if(wanted.Contains("gpu_temp") || wanted.Contains("gpu_frequency") || wanted.Contains("gpu_fan"))try{DriverTemperature(data,wanted,gpu);}catch(Exception){}
         bool wantGpuTemp=wanted.Contains("gpu_temp") && !data.ContainsKey("gpu_temp");
-        if(wantGpuTemp || wanted.Contains("gpu_power") || wanted.Contains("gpu_frequency") || wanted.Contains("gpu_memory"))try{Nvidia(data,wantGpuTemp,wanted.Contains("gpu_power"),wanted);}catch(Exception){}
+        if(wantGpuTemp || wanted.Contains("gpu_power") || wanted.Contains("gpu_frequency") || wanted.Contains("gpu_memory"))try{Nvidia(data,wantGpuTemp,wanted.Contains("gpu_power"),wanted,gpu);}catch(Exception){}
+        // Sources without a device identity can still provide the automatic readings.
+        if (gpu.HasValue) wanted.RemoveWhere(k => k.StartsWith("gpu_",StringComparison.Ordinal));
+        if (disk.HasValue && wanted.Remove("disk_temp")) try { DiskTemperature(data,disk.Value); } catch(Exception) {}
         if(wanted.Contains("cpu_temp") || wanted.Contains("cpu_power")){
             try {CpuSensors.Collect(wanted.Contains("cpu_temp"),wanted.Contains("cpu_power"),(key,value,source,label)=>Put(data,key,value,source,label));}
             catch(System.IO.IOException){}catch(UnauthorizedAccessException){}catch(System.Security.SecurityException){}catch(ExternalException){}
@@ -176,7 +268,7 @@ internal static class HardwareSensors {
             });}catch(Exception){}
         try{HardwareExtended.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));}catch(Exception){}
         HardwareFans.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));
-        if(wanted.Contains("brightness"))try{Brightness(data);}catch(Exception){}
+        if(wanted.Contains("brightness"))try{Brightness(data,display,instance);}catch(Exception){}
         return data;
     }
 }

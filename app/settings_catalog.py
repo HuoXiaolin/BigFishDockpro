@@ -1,18 +1,18 @@
 """Settings navigation and searchable field definitions without Qt widgets."""
 
 APPEARANCE, COLLECTION, APPS, RUNNING, UPDATES, USAGE, ABOUT, TASKBAR, WIDGETS, CAPSULES, DATA = range(11)
-START_MENU, NOTIFICATIONS = 11, 12
+START_MENU, NOTIFICATIONS, CURSORS = 11, 12, 13
 PAGES = ('Dock 外观', '桌面收纳', '应用管理', '启动与运行', '更新设置', '使用统计',
-         '关于', '任务栏', '桌面组件', '胶囊与监控', '数据与备份', '开始菜单', '通知面板')
+         '关于', '任务栏', '桌面组件', '胶囊与监控', '数据与备份', '开始菜单', '通知面板', '鼠标样式')
 PAGE_SYMBOLS = ('palette', 'panels', 'apps', 'startup', 'update', 'size', 'info',
-                'position', 'calendar', 'wave', 'notes', 'apps', 'calendar')
+                'position', 'calendar', 'wave', 'notes', 'apps', 'calendar', 'cursor')
 PAGE_GROUPS = (
-    ('外观与系统', (APPEARANCE, TASKBAR, START_MENU, NOTIFICATIONS)),
+    ('外观与系统', (APPEARANCE, TASKBAR, START_MENU, NOTIFICATIONS, CURSORS)),
     ('收纳与组件', (COLLECTION, APPS, WIDGETS, CAPSULES)),
     ('运行与数据', (RUNNING, UPDATES, USAGE, DATA, ABOUT)),
 )
 PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@capsules': CAPSULES, '@data': DATA,
-                '@start': START_MENU, '@notifications': NOTIFICATIONS}
+                '@start': START_MENU, '@notifications': NOTIFICATIONS, '@cursors': CURSORS}
 
 
 def field_catalog(api, cfg):
@@ -62,6 +62,7 @@ def field_catalog(api, cfg):
         'resource_tray_runner_enabled': (TASKBAR, '显示托盘小动物', 'check', None),
         'resource_tray_runner_animal': (TASKBAR, '动物形象', 'combo', [(label, value) for value, label in RUNNER_ANIMALS.items()]),
         'resource_tray_runner_metric': (TASKBAR, '监测指标', 'combo', [(label, value) for value, label in RUNNER_METRICS.items()]),
+        'resource_tray_runner_device': (TASKBAR, '监测设备', 'combo', ()),
         'resource_tray_runner_speed': (TASKBAR, '奔跑速度', 'combo', [(label, value) for value, label in RUNNER_SPEEDS.items()]),
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
@@ -163,7 +164,8 @@ def targets(catalog):
         result.append(dict(key=key, title=title, page='组件与整理', options=''))
     for key, options in (('@usage', '操作趋势 功能排行 重置统计'), ('@taskbar', '任务栏效果 监控'),
                          ('@widgets', '桌面时钟 日历 音乐频谱 每日图片'), ('@capsules', '资源胶囊 闪念胶囊'),
-                         ('@data', '导入配置 导出配置 恢复默认')):
+                         ('@data', '导入配置 导出配置 恢复默认'),
+                         ('@cursors', '鼠标指针 光标 导入方案 恢复系统默认 cur ani')):
         name = PAGES[PAGE_TARGETS[key]]
         result.append(dict(key=key, title=name, page='总设置', options=options))
     return result

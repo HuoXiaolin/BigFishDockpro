@@ -1,13 +1,14 @@
 """Windows resource counters. Imported by the sampler only while metrics are requested."""
 import ctypes as C
 from ctypes import wintypes as W
+from contextlib import contextmanager
 import math
 import os
 import re
 import time
 
 U64=C.c_ulonglong
-NET_KEYS=frozenset(('network','traffic','system_status','connection','network_utilization'))
+NET_KEYS=frozenset(('network','traffic','system_status','connection','network_utilization','network_devices'))
 DEVICE_KEYS=frozenset(('system_status','battery','connection','volume'))
 
 
@@ -44,7 +45,60 @@ class CounterItem(C.Structure):
 COUNTERS={'cpu_cores':{'cores':r'\Processor Information(*)\% Processor Time'},
           'gpu':{'engines':r'\GPU Engine(*)\Utilization Percentage'},
           'disk_activity':{'disk_idle':r'\PhysicalDisk(*)\% Idle Time'}}
-ENGINE_NAME=re.compile(r'(luid_[0-9a-fx]+_[0-9a-fx]+_phys_\d+_eng_\d+)(?:_|$)',re.I)
+ENGINE_NAME=re.compile(r'(luid_(?:0x)?[0-9a-f]+_(?:0x)?[0-9a-f]+_phys_\d+_eng_\d+)(?:_|$)',re.I)
+
+
+def ip_helper():
+    lib = C.WinDLL('iphlpapi')
+    lib.GetIfTable2.argtypes = [C.POINTER(C.POINTER(IfTable))]
+    lib.FreeMibTable.argtypes = [C.c_void_p]
+    lib.FreeMibTable.restype = None
+    return lib
+
+
+@contextmanager
+def interface_rows(ip):
+    table = C.POINTER(IfTable)()
+    if ip.GetIfTable2(C.byref(table)) or not table:
+        yield None
+        return
+    try:
+        count = table.contents.count
+        yield ((IfRow * count).from_address(C.addressof(table.contents) + IfTable.rows.offset)
+               if count <= 65536 else None)
+    finally:
+        ip.FreeMibTable(table)
+
+
+def network_key(row):
+    guid = bytes(row.guid)
+    return 'net:' + guid.hex() if any(guid) else ''
+
+
+def selectable_interface(row):
+    return row.type not in (24, 131) and not row.flags & 2  # Skip loopback, tunnel and NDIS filter layers.
+
+
+def interfaces_as_devices(rows):
+    from resource_devices import Device
+    adapters = sorted((r for r in rows if selectable_interface(r) and (r.alias or r.description)),
+                      key=lambda r: (not r.flags & 1, r.oper != 1, r.alias.casefold(), r.index))
+    return {key: Device(r.alias or r.description, r.luid) for r in adapters if (key := network_key(r))}
+
+
+def network_devices():
+    with interface_rows(ip_helper()) as rows:
+        return interfaces_as_devices(rows or ())
+
+
+def scan_devices(metric):
+    from resource_devices import disk_devices, display_devices, gpu_devices
+    discover = {'gpu': gpu_devices, 'disk_activity': disk_devices,
+                'network_utilization': network_devices, 'display': display_devices}
+    try:
+        return discover[metric]()
+    except (OSError, AttributeError):
+        return {}
 
 
 class PerformanceCounters:
@@ -121,6 +175,17 @@ def busiest_engine(values):
     return min(100.,max(engines.values())) if engines else None
 
 
+def gpu_loads(engines):
+    """Find each adapter's busiest engine after summing per-process engine activity."""
+    loads = {}
+    for name, usage in engines.items():
+        _, high, low, *_ = name.split('_')
+        luid = (int(high, 16) << 32) | int(low, 16)
+        if math.isfinite(usage):
+            loads[luid] = min(100., max(loads.get(luid, 0.), usage))
+    return loads
+
+
 def network_rates(previous,current,elapsed):
     if previous is None or elapsed<=0:return None
     pairs=[(previous[k],v) for k,v in current.items() if k in previous
@@ -133,25 +198,46 @@ def link_speed(row):
     return max((v for v in (row.rx_speed,row.tx_speed) if 0<v<2**63),default=0)
 
 
+def disk_loads(idle):
+    loads = {}
+    for name, value in idle.items():
+        number = name.split(' ', 1)[0]
+        if number.isascii() and number.isdecimal() and math.isfinite(value):
+            index = int(number)
+            loads[index] = max(loads.get(index, 0.), min(100., 100. - value))
+    return loads
+
+
 def busiest_disk(idle):
-    loads = [100 - value for name, value in idle.items() if name.split(' ', 1)[0].isdigit() and math.isfinite(value)]
-    return max(0., min(100., max(loads))) if loads else None
+    return max(disk_loads(idle).values(), default=None)
 
 
 def network_utilization(previous, current, elapsed):
     """Compare each direction with its own negotiated link rate. Links are full duplex."""
     if elapsed <= 0 or not previous:
         return None
-    peak = None
-    for adapter, ends in current.items():
-        starts = previous.get(adapter)
-        if starts is None:
-            continue
-        for (before, old_rate), (after, rate) in zip(starts, ends):
-            if rate == old_rate and 0 < rate < 2**63 and after >= before:
-                load = (after - before) * 800 / (elapsed * rate)
-                peak = load if peak is None else max(peak, load)
+    return max((value for key, ends in current.items() if key in previous
+                and (value := link_utilization(previous[key], ends, elapsed)) is not None), default=None)
+
+
+def link_utilization(starts, ends, elapsed):
+    loads = ((after - before) * 800 / (elapsed * rate)
+             for (before, old_rate), (after, rate) in zip(starts, ends)
+             if rate == old_rate and 0 < rate < 2**63 and after >= before)
+    peak = max(loads, default=None)
     return min(100., peak) if peak is not None else None
+
+
+def network_device_readings(previous, current, elapsed):
+    if not previous or elapsed <= 0:
+        return {}
+    readings = {}
+    for key, ends in current.items():
+        starts = previous.get(key)
+        if starts is not None and all(end[0] >= start[0] for start, end in zip(starts, ends)):
+            rates = tuple((end[0] - start[0]) / elapsed for start, end in zip(starts, ends))
+            readings[key] = (rates, link_utilization(starts, ends, elapsed))
+    return readings
 
 
 class Sampler:
@@ -160,7 +246,10 @@ class Sampler:
         self.traffic_path=traffic_path;self.traffic=None
         self.kernel=C.WinDLL('kernel32');self.ip=None;self.ranking=None;self.pdh=None
         self.device_status=None;self.adapter=None
+        self.network_device=''
         self.link_sample=None;self.network_load=None
+        self.device_links=None;self.network_per_device={}
+        self.inventory={};self.inventory_due={}
         self.configure(metrics)
 
     def configure(self,metrics):
@@ -174,12 +263,15 @@ class Sampler:
         if 'cpu' in added:self.kernel.GetSystemTimes.argtypes=[C.POINTER(W.FILETIME)]*3
         if 'cpu' not in metrics:self.last_cpu=None
         if 'memory' in added:self.kernel.GlobalMemoryStatusEx.argtypes=[C.POINTER(MemoryStatus)]
-        if metrics & NET_KEYS and not self.ip:
-            self.ip=C.WinDLL('iphlpapi')
-            self.ip.GetIfTable2.argtypes=[C.POINTER(C.POINTER(IfTable))]
-            self.ip.FreeMibTable.argtypes=[C.c_void_p];self.ip.FreeMibTable.restype=None
+        if metrics & NET_KEYS and not self.ip:self.ip=ip_helper()
         if not metrics & NET_KEYS:self.ip=self.last_net=None;self.net_time=0
         if 'network_utilization' not in metrics:self.link_sample=self.network_load=None
+        if 'network_devices' not in metrics:
+            self.device_links=None;self.network_per_device={}
+            self.inventory_due.pop('network_devices', None)
+        for key in self.inventory.keys() - metrics:
+            self.inventory.pop(key)
+            self.inventory_due.pop(key)
         if metrics & DEVICE_KEYS and self.device_status is None:
             from device_status import DeviceStatus
             self.device_status=DeviceStatus(self.kernel)
@@ -209,46 +301,65 @@ class Sampler:
         if not self.kernel.GlobalMemoryStatusEx(C.byref(record)) or not record.total:return None
         return ((record.total-record.available)*100./record.total,record.total-record.available,record.total)
 
-    def network(self,now):
+    def network(self,now,data):
         self.adapter=None
         self.network_load=None
-        table=C.POINTER(IfTable)()
-        if self.ip.GetIfTable2(C.byref(table)) or not table:
-            self.last_net=self.link_sample=None
-            if self.traffic:self.traffic.update_readings(None)
-            return None
-        try:
-            count=table.contents.count
-            if count>65536:return None
-            rows=(IfRow*count).from_address(C.addressof(table.contents)+IfTable.rows.offset)
-            eligible=[r for r in rows if r.oper==1 and r.type not in (24,131)]
+        self.network_per_device={}
+        with interface_rows(self.ip) as rows:
+            if rows is None:
+                self.last_net=self.link_sample=self.device_links=None
+                if self.traffic:self.traffic.update_readings(None)
+                return None
+            eligible=[r for r in rows if r.oper==1 and selectable_interface(r)]
             rows_to_count=[r for r in eligible if r.flags&1] or eligible
             readings={r.luid:(r.received,r.sent) for r in rows_to_count}
             if 'network_utilization' in self.metrics:
                 links={r.luid:((r.received,r.rx_speed),(r.sent,r.tx_speed)) for r in rows_to_count}
                 self.network_load=network_utilization(self.link_sample,links,now-self.net_time)
                 self.link_sample=links
+            if 'network_devices' in self.metrics:
+                devices = {key: ((r.received,r.rx_speed),(r.sent,r.tx_speed)) for r in eligible if (key := network_key(r))}
+                self.network_per_device = network_device_readings(self.device_links, devices, now-self.net_time)
+                self.device_links = devices
+                if now >= self.inventory_due.get('network_devices', 0):
+                    data.setdefault('hardware_inventory', {})['network_utilization'] = interfaces_as_devices(rows)
+                    self.inventory_due['network_devices'] = now + 15
             if 'system_status' in self.metrics or 'connection' in self.metrics:
                 def adapter_priority(row):
                     previous=(self.last_net or {}).get(row.luid)
                     activity=max(0,row.received-previous[0])+max(0,row.sent-previous[1]) if previous else 0
                     return (-activity,-link_speed(row),row.index)
-                primary=min(rows_to_count,key=adapter_priority,default=None)
-                self.adapter=(bytes(primary.guid),primary.alias or primary.description,primary.type==71) if primary else (None,'',False)
-        finally:self.ip.FreeMibTable(table)
+                if self.network_device:
+                    primary=next((row for row in rows if network_key(row)==self.network_device),None)
+                else:
+                    primary=min(rows_to_count,key=adapter_priority,default=None)
+                self.adapter=((bytes(primary.guid) if primary.oper==1 else None),primary.alias or primary.description,primary.type==71) if primary else (None,'',False)
         result=network_rates(self.last_net,readings,now-self.net_time)
         self.last_net,self.net_time=readings,now
         if 'traffic' in self.metrics:self.traffic.update_readings(readings)
         return result
+
+    def map_devices(self, key, metric, readings, now, sample):
+        if now >= self.inventory_due.get(key, 0):
+            devices = scan_devices(metric)
+            sample.setdefault('hardware_inventory', {})[metric] = devices
+            self.inventory[key] = devices
+            self.inventory_due[key] = now + 15
+        values = {}
+        for identifier, device in self.inventory[key].items():
+            value = max((readings[n] for n in (device.number, *device.aliases) if n in readings), default=None)
+            if value is not None:values[identifier] = value
+        return values
 
     def sample(self,sample_rank=True):
         now=time.monotonic();data={'time':now}
         if 'cpu' in self.metrics:data['cpu']=self.cpu()
         if 'memory' in self.metrics:data['memory']=self.memory()
         if self.metrics & NET_KEYS:
-            rates=self.network(now)
+            rates=self.network(now,data)
             if 'network' in self.metrics:data['network']=rates
             if 'network_utilization' in self.metrics:data['network_utilization']=self.network_load
+            if 'network_devices' in self.metrics:data['network_devices']=self.network_per_device
             if 'traffic' in self.metrics:data['traffic']=self.traffic.snapshot()
         if self.device_status:
             full='system_status' in self.metrics
@@ -258,16 +369,21 @@ class Sampler:
             if full or 'volume' in self.metrics:
                 status['volume']=self.device_status.volume()
             if full or 'connection' in self.metrics:
+                data['connection_device'] = self.network_device
                 if self.adapter is None:
                     status['connection']=None
                 else:
                     adapter,alias,wireless=self.adapter
-                    status['connection']=self.device_status.connection_name(adapter,alias,now,wireless)
+                    name=self.device_status.connection_name(adapter,alias,now,wireless)
+                    status['connection']=(alias,'未连接') if alias and adapter is None else name
             if full:data['system_status']=status
             data.update((key,value) for key,value in status.items() if key in self.metrics)
         ready=self.pdh and self.pdh.collect()
         if 'disk_activity' in self.metrics:
-            data['disk_activity']=busiest_disk(self.pdh.read('disk_idle')) if ready else None
+            loads=disk_loads(self.pdh.read('disk_idle')) if ready else {}
+            data['disk_activity']=max(loads.values(),default=None)
+            if 'disk_devices' in self.metrics:
+                data['disk_devices']=self.map_devices('disk_devices','disk_activity',loads,now,data)
         if 'cpu_cores' in self.metrics:
             instances=self.pdh.read('cores') if ready else {}
             cores={tuple(map(int,name.split(','))):min(100.,max(0.,value))
@@ -276,6 +392,8 @@ class Sampler:
         if 'gpu' in self.metrics:
             engines=self.pdh.read('engines',group_engines=True) if ready else {}
             data['gpu']=min(100.,max(engines.values())) if engines else None
+            if 'gpu_devices' in self.metrics:
+                data['gpu_devices']=self.map_devices('gpu_devices','gpu',gpu_loads(engines),now,data)
         if self.ranking and sample_rank:data['rank']=self.ranking.sample(now)
         return data
 

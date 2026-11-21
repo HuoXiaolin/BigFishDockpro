@@ -158,10 +158,16 @@ class Capture(BackgroundWorker):
 class DesktopCapture(BackgroundWorker):
     updated=pyqtSignal(object)
 
+    def __init__(self, display=None):
+        super().__init__()
+        self.display = display
+
     def run(self):
         process=None
         try:
-            process=open_stream([str(binary('DesktopFrameProbe.exe'))],subprocess.CREATE_NO_WINDOW)
+            args = [str(binary('DesktopFrameProbe.exe'))]
+            if self.display:args += ['--display', self.display.number]
+            process=open_stream(args,subprocess.CREATE_NO_WINDOW)
             if process is None:return
             self.own_process(process)
             for raw in process.stdout:
@@ -170,7 +176,10 @@ class DesktopCapture(BackgroundWorker):
                 except ValueError:continue
                 if not 0<=frames<=10000 or not 0<microseconds<=3000000:continue
                 rate=frames*1000000/microseconds
-                if rate<=1000:self.updated.emit((rate,'桌面更新帧率 · DXGI',time.monotonic()))
+                if rate <= 1000:
+                    name = '桌面更新帧率 · DXGI'
+                    if self.display:name += ' · ' + self.display.name
+                    self.updated.emit((rate,name,time.monotonic()))
         except OSError:
             pass
         finally:
@@ -188,11 +197,28 @@ class FrameMonitor(QObject):
         self.fallback_at=time.monotonic()+self.FALLBACK_DELAY
         self.failures=0;self.primary_sample=self.desktop_sample=None
         self.status=self.name='等待画面更新';self.value=None;self.at=0.
+        self.display_key='';self.display_target=None
         self.timer=QTimer(self);self.timer.setInterval(1000);self.timer.timeout.connect(self.tick)
+        owner.hardware_changed.connect(self.refresh_scope)
+        self.refresh_scope()
         if not owner.runtime.dock.preview:self.timer.start();self.tick()
+
+    def refresh_scope(self):
+        if self.closed:return
+        selected = self.owner.cfg['resource_display_device']
+        target = self.owner.hardware.get('display', {}).get(selected)
+        if selected:self.owner.discover_hardware('display')
+        if (selected, target) != (self.display_key, self.display_target):
+            self.display_key, self.display_target = selected, target
+            self.stop_desktop()
+            if selected and self.primary_sample and self.primary_sample[1] == '桌面合成 · DWM':
+                self.primary_sample = None
+            self.fallback_at = time.monotonic()
+            self.display_fresh(self.fallback_at)
 
     def tick(self):
         if self.closed or not allowed():return
+        if self.display_key:self.owner.discover_hardware('display')
         now=time.monotonic()
         if self.job is None and now>=self.retry_at:
             self.capture_at=now;self.job=Capture(0);self.job.updated.connect(self.update_value,Qt.QueuedConnection)
@@ -202,8 +228,8 @@ class FrameMonitor(QObject):
             self.status='帧率采集暂无读数，正在重连'
             self.job.requestInterruption()
         if not self.fresh(self.primary_sample,now):
-            if self.desktop_job is None and now>=self.fallback_at:
-                self.desktop_at=now;self.desktop_job=DesktopCapture()
+            if self.desktop_job is None and now>=self.fallback_at and (not self.display_key or self.display_target):
+                self.desktop_at=now;self.desktop_job=DesktopCapture(self.display_target)
                 self.desktop_job.updated.connect(self.update_desktop,Qt.QueuedConnection)
                 self.desktop_job.finished.connect(self.desktop_finished,Qt.QueuedConnection)
                 self.desktop_job.start()
@@ -217,13 +243,15 @@ class FrameMonitor(QObject):
 
     def display_fresh(self,now):
         result=self.fresh(self.primary_sample,now) or self.fresh(self.desktop_sample,now)
-        value,name,at=result if result else (None,self.status,0.)
+        status = self.owner.hardware_name('display', self.display_key) if self.display_key and self.display_target is None else self.status
+        value,name,at=result if result else (None,status,0.)
         changed=(value,name)!=(self.value,self.name)
         self.value,self.name,self.at=value,name,at
         if changed:self.owner.display()
 
     def update_value(self,info):
         if not self.closed and self.sender() is self.job:
+            if self.display_key and info[1] == '桌面合成 · DWM':return
             if info[0] is not None:
                 self.primary_sample=info;self.failures=0
                 self.fallback_at=info[2]+self.FALLBACK_DELAY

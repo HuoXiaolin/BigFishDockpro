@@ -6,13 +6,13 @@ from unittest.mock import patch
 
 
 def dates_and_assets():
-    from calendar_almanac import ART, ASSETS, FIRST_DAY, LAST_DAY, almanac, edition, next_festival, term_dates, until_rotation, verse_index
-    assert len(ART)==36 and all(len(set(art.verses))==4 for art in ART.values())
-    assert len({line for art in ART.values() for line in art.verses if line})==144
+    from calendar_almanac import ART, ASSETS, CIVIL_HOLIDAYS, FIRST_DAY, LAST_DAY, almanac, edition, next_civil_holiday, next_festival, term_dates, until_rotation, verse_index
+    assert len(ART)==36+len(CIVIL_HOLIDAYS) and all(len(set(art.verses))==4 for art in ART.values())
+    assert len({line for art in ART.values() for line in art.verses if line})==4*len(ART)
     periods=[datetime(2026,11,19,8,m) for m in (0,10,20,30,40)]
     assert [edition(t) for t in periods]==[0,1,0,1,0] and [verse_index(t) for t in periods]==[0,1,2,3,0]
     files=[ASSETS/'pictures'/f'{art.key}{suffix}.jpg' for art in ART.values() for suffix in ('','-print')]
-    assert len({sha256(path.read_bytes()).digest() for path in files})==72
+    assert len({sha256(path.read_bytes()).digest() for path in files})==2*len(ART)
     assert all(len(term_dates(y))==24 for y in range(1901,2101))
     assert almanac(FIRST_DAY).term=='冬至' and almanac(LAST_DAY).next_term=='小寒'
     assert almanac(FIRST_DAY-timedelta(days=1)) is None
@@ -32,6 +32,15 @@ def dates_and_assets():
     assert mid.card().name=='中秋节' and '婵娟' in mid.card().verses[0]
     assert {almanac(date(2026,1,1)+timedelta(days=i)).festival for i in range(365)} >= {
         '春节','元宵节','龙抬头','端午节','七夕','中元节','中秋节','重阳节','腊八节','北方小年','南方小年','除夕'}
+    for (month, number), art in CIVIL_HOLIDAYS.items():
+        day = date(2026,month,number)
+        assert next_civil_holiday(day-timedelta(days=1)) == (art.name,1)
+        assert almanac(day).card() == art and almanac(day).civil_countdown() == '今日'+art.name
+    assert next_civil_holiday(date(2026,12,31)) == ('元旦',1)
+    assert next_civil_holiday(date(2026,5,1)) == ('青年节',3)
+    assert almanac(date(2026,11,21)).civil_countdown() == '距元旦 41 天'
+    double = almanac(date(2031,1,1))
+    assert double.events == ('元旦','腊八节') and [double.card(i).name for i in range(3)] == ['元旦','腊八节','元旦']
     boundary=datetime(2026,11,19,23,59,59,990000)
     assert 10<=until_rotation(boundary)<=11 and edition(boundary)==1 and edition(boundary+timedelta(milliseconds=10))==0
 
@@ -44,13 +53,18 @@ def render(dock, cfg, output):
     for name, day, size, minute, term in [
             ('normal',date(2026,11,19),(360,235),0,False),('snow',date(2026,11,22),(360,235),0,False),
             ('moon',date(2026,9,25),(360,235),0,False),('moon-print',date(2026,9,25),(360,235),10,False),
+            ('national-day',date(2026,10,1),(360,235),0,False),('national-day-print',date(2026,10,1),(360,235),10,False),
             ('overlap-festival',date(2026,3,20),(260,230),0,False),('overlap-term',date(2026,3,20),(260,230),0,True),
             ('clock-min',date(2026,11,19),(160,100),10,False),('portrait',date(2026,6,19),(260,360),0,False)]:
         image=QImage(*size,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
         painter=QPainter(image)
         try:
-            draw_clock(painter,QRectF(0,0,*size),dock,dict(cfg, _now=datetime(2026,1,1,8,minute),
-                       _almanac_date=day,_almanac_prefer_term=term,_almanac_controls='clock' if name=='clock-min' else ''),'almanac')
+            from calendar_almanac_face import _line
+            with patch('calendar_almanac_face._line',wraps=_line) as line:
+                draw_clock(painter,QRectF(0,0,*size),dock,dict(cfg, _now=datetime(2026,1,1,8,minute),
+                           _almanac_date=day,_almanac_art=term,_almanac_controls='clock' if name=='clock-min' else ''),'almanac')
+                civil = next(call for call in line.call_args_list if call.args[2].startswith('公历'))
+                assert civil.args[1].height()>=10 and civil.args[1].bottom() < line.call_args.args[1].top()
         finally:painter.end()
         assert image.save(str(folder/f'almanac-{name}.png'))
 

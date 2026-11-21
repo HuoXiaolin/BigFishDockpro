@@ -11,7 +11,8 @@ from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,AI
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_metric_options
-from resource_options import MAIL_INTERVAL_RANGE, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
+from resource_device_picker import DevicePicker
+from resource_options import DEVICE_SOURCES, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -20,7 +21,7 @@ PAGE_NAMES = ('胶囊行为','任务栏监控','收起显示','AI 与音乐','�
 NAV_SYMBOLS = ('startup','position','size','wave','palette','monitor','corner','notes','panels','calendar')
 NAV_GROUPS = (('胶囊',(0,2,4,6,8)),('监控',(5,1)),('内容与接入',(9,7,3)))
 COMPACT_GROUPS = (
-    ('性能与流量', ('cpu','gpu','memory','network','fps','traffic')),
+    ('性能与流量', ('cpu','gpu','memory','disk_activity','network','fps','traffic')),
     ('电脑状态（右侧图标）', COMPACT_STATUS),
     ('专注与日程', tuple(COMPACT_ROUTINES)),
     ('内容', tuple(COMPACT_CONTENT)),
@@ -79,11 +80,11 @@ class ResourceOptions(QDialog):
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
-           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_mail_icon'},
+           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon'},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
-        {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable'},
+        {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
@@ -95,6 +96,9 @@ class ResourceOptions(QDialog):
         self.loaded.add(index);self.builders[index]()
         draft = self.drafts.get(index)
         if draft:
+            if index == 2:
+                fields = draft['stores']['fields']
+                self.fields['resource_runner_device'].set_metric(fields['resource_runner_metric'], fields['resource_runner_device'])
             for name, values in draft['stores'].items():
                 store = getattr(self, name)
                 for key, value in values.items():
@@ -102,6 +106,8 @@ class ResourceOptions(QDialog):
                     blocked = widget.blockSignals(True)
                     if key == 'resource_face_role':
                         widget.select(value)
+                    elif isinstance(widget, DevicePicker):
+                        widget.select_device(value)
                     elif isinstance(widget, ModernComboBox):
                         widget.setCurrentIndex(max(0, widget.findData(value)))
                     elif isinstance(widget, ModernSpinBox):
@@ -238,6 +244,11 @@ class ResourceOptions(QDialog):
         def spin(form,key,title,low,high,value,store):
             field=ModernSpinBox();field.setRange(low,high);field.setValue(value);field.setAccessibleName(title)
             form.addRow(title,field);store[key]=field
+        def hardware_picker(form, key, title, metric):
+            field = DevicePicker(self.service, metric, cfg[key])
+            field.setAccessibleName(title)
+            form.addRow(title, field)
+            self.fields[key] = field
         def check(title,on):
             field=ModernCheckBox(title);field.setChecked(on);return field
 
@@ -288,6 +299,7 @@ class ResourceOptions(QDialog):
             controls=QGridLayout();bar.addLayout(controls)
             for i,key in enumerate(TASK_METRICS):
                 field=check(METRICS[key],key in cfg['resource_task_metrics']);self.task_fields[key]=field;controls.addWidget(field,i//3,i%3)
+            bar.addWidget(button('选择硬件设备…', lambda: self.tabs.setCurrentIndex(5)))
             bar.addWidget(button('监控列排序…', lambda: self.edit_order('resource_task_order', TASK_COLUMN_NAMES)))
             layout.addStretch()
 
@@ -336,11 +348,12 @@ class ResourceOptions(QDialog):
             self.fields['resource_runner_enabled'] = show_runner
             running.addWidget(show_runner)
             form=QFormLayout();running.addLayout(form)
-            for key,title,choices in (('resource_runner_animal','动物形象',RUNNER_ANIMALS),
-                                      ('resource_runner_metric','监测指标',RUNNER_METRICS),
-                                      ('resource_runner_speed','奔跑速度',RUNNER_SPEEDS)):
-                combo(form,key,title,[(label,value) for value,label in choices.items()],cfg[key],self.fields)
+            combo(form,'resource_runner_animal','动物形象',[(label,value) for value,label in RUNNER_ANIMALS.items()],cfg['resource_runner_animal'],self.fields)
+            metric = combo(form,'resource_runner_metric','监测指标',[(label,value) for value,label in RUNNER_METRICS.items()],cfg['resource_runner_metric'],self.fields)
+            hardware_picker(form, 'resource_runner_device', '监测设备', cfg['resource_runner_metric'])
+            combo(form,'resource_runner_speed','奔跑速度',[(label,value) for value,label in RUNNER_SPEEDS.items()],cfg['resource_runner_speed'],self.fields)
             show_runner.toggled.connect(self.sync_runner_fields)
+            metric.currentIndexChanged.connect(self.sync_runner_fields)
             self.sync_runner_fields()
             compact=section(layout,'收起时自动提醒')
             key='resource_alert_battery'
@@ -464,6 +477,14 @@ class ResourceOptions(QDialog):
                 hint = QLabel('监控继续显示可读取的数据。需要 PawnIO 时，可将离线安装包交给管理员。')
                 hint.setWordWrap(True)
                 readouts.addWidget(hint)
+            devices = section(layout, '硬件设备')
+            form = QFormLayout();devices.addLayout(form)
+            for key, title in (('gpu', 'GPU'), ('network', '网速'), ('disk_activity', '磁盘'), ('display', '显示器')):
+                hardware_picker(form, MONITOR_DEVICES[key], title, key)
+            hint = QLabel('资源胶囊、桌面资源卡和任务栏监控共用此设置。自动显示最忙 GPU、最忙磁盘和已连接网卡汇总。指定设备后显示该设备的读数。')
+            hint.setWordWrap(True);devices.addWidget(hint)
+            note = QLabel('显示器选择用于亮度和桌面更新帧率。应用帧率按应用读取。')
+            note.setWordWrap(True);devices.addWidget(note)
             thresholds=section(layout,'阈值与颜色')
             self.fields['resource_threshold']=check('按阈值改变读数颜色',cfg['resource_threshold'])
             thresholds.addWidget(self.fields['resource_threshold'])
@@ -695,6 +716,10 @@ class ResourceOptions(QDialog):
         enabled=self.fields['resource_runner_enabled'].isChecked()
         for key in ('resource_runner_animal','resource_runner_metric','resource_runner_speed'):
             self.fields[key].setEnabled(enabled)
+        metric = self.fields['resource_runner_metric'].currentData()
+        device = self.fields['resource_runner_device']
+        device.set_metric(metric)
+        device.setEnabled(enabled and metric in DEVICE_SOURCES)
 
     def sync_ai_tray_fields(self):
         tray_on = self.fields['resource_ai_tray'].isChecked()

@@ -82,6 +82,14 @@ No GlassDesk or GlassBoard source or proprietary assets are included.
   weather component's remarks. The app requests only configured city names
   or coordinates and a three-day forecast; no location permission is used.
 
+## Mouse pointers
+
+- The Bibata Modern Amber Regular and Ice Regular cursor files are from
+  [Bibata Cursor v2.0.6](https://github.com/ful1e5/Bibata_Cursor/releases/tag/v2.0.6)
+  by Abdulkaiz Khatri. The original CUR and ANI files are stored losslessly.
+  The [v2.0.6 source](https://github.com/ful1e5/Bibata_Cursor/tree/v2.0.6) is
+  available under GPL-3.0-or-later. See the included GPL v3 license text.
+
 ## Natural reminder sounds
 
 The recordings used in the bundled reminder sounds are licensed under

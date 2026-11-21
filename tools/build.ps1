@@ -2,6 +2,8 @@ param(
     [string]$Toolchain = 'D:\Agant\toolchain',
     [string]$Iscc = '',
     [switch]$Deliver,
+    [switch]$LocalCursorStyles,
+    [switch]$BundleDotNet,
     [ValidateSet('Auto','Quick','Runtime','Full','None')][string]$TestMode = 'Auto',
     [switch]$SkipTests,
     [switch]$RuntimeChecks,
@@ -21,6 +23,7 @@ if (-not (Test-Path -LiteralPath $taskPython)) { throw 'Run bootstrap.ps1 first.
 if (-not (Test-Path -LiteralPath $Iscc)) { throw "Missing shared Inno Setup compiler: $Iscc" }
 if (-not (Test-Path -LiteralPath $taskDotnet -PathType Leaf)) { throw "Missing shared .NET 10 SDK: $taskDotnet" }
 if ($SkipTests -and $RuntimeChecks) { throw 'Do not combine SkipTests and RuntimeChecks.' }
+if ($BundleDotNet -and -not $SingleFile) { throw 'BundleDotNet requires the single-file build.' }
 $taskMode = if ($SkipTests) {'None'} elseif ($RuntimeChecks) {'Runtime'} else {$TestMode}
 $taskSkip = $taskMode -eq 'None'
 $taskExtended = $taskMode -in @('Runtime','Full')
@@ -31,6 +34,8 @@ New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 $taskLock = [IO.File]::Open((Join-Path $taskRoot 'artifacts\release.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
 $taskPriorFixture = $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE
 $taskPriorShellProfile = $env:FISHDOCK_SHELL_TEST_PROFILE
+$taskPriorLocalCursors = $env:FISHDOCK_LOCAL_CURSOR_STYLES
+$taskPriorBundledRuntime = $env:FISHDOCK_BUNDLE_DOTNET
 $taskPlan = $null
 $taskFocused = $false
 $taskValidations = [Collections.Generic.List[object]]::new()
@@ -48,6 +53,12 @@ function Invoke-TaskCheck([string]$Target,[string]$Output,[string]$Kind,[string[
     $taskValidations.Add([ordered]@{kind=$Kind;path=$taskResult.Replace('\','/');sha256=(Get-FileHash -LiteralPath $taskResult -Algorithm SHA256).Hash.ToLowerInvariant();seconds=[math]::Round($taskTimer.Elapsed.TotalSeconds,2)})
 }
 try {
+    $env:FISHDOCK_LOCAL_CURSOR_STYLES = if ($LocalCursorStyles) {'1'} else {$null}
+    $env:FISHDOCK_BUNDLE_DOTNET = if ($BundleDotNet) {'1'} else {$null}
+    if ($LocalCursorStyles) {
+        & $taskPython tools/pack_cursor_styles.py prepare
+        if ($LASTEXITCODE -ne 0) { throw 'Local cursor style preparation failed' }
+    }
     if ($taskMode -eq 'Auto') {
         $taskProfile = & $taskPython tools/build_plan.py --source $SourceDirectory --output artifacts/build-plan.json
         if ($LASTEXITCODE -ne 0) { throw 'Build check selection failed' }
@@ -116,6 +127,8 @@ try {
     }
     if ($SingleFile -and -not $taskSkip) {
         Invoke-TaskCheck 'tools/portable_shutdown_test.py' 'artifacts/portable-session-exit' 'portable-session-exit' @()
+    }
+    if ($BundleDotNet -and -not $taskSkip) {
         $runtimeTimer = [Diagnostics.Stopwatch]::StartNew()
         & $taskPython tools/portable_dotnet.py verify
         if ($LASTEXITCODE -ne 0) { throw 'Offline .NET portable startup or bridge validation failed' }
@@ -124,6 +137,13 @@ try {
         $runtimeProof = 'artifacts/dotnet-portable-test/result.json'
         $taskValidations.Add([ordered]@{kind='offline-dotnet-portable';path=$runtimeProof;sha256=(Get-FileHash -LiteralPath $runtimeProof -Algorithm SHA256).Hash.ToLowerInvariant();seconds=[math]::Round($runtimeTimer.Elapsed.TotalSeconds,2)})
     }
+    if ($LocalCursorStyles) {
+        [string[]]$cursorOptions = if ($SingleFile) {'--single-file'} else {@()}
+        & $taskPython tools/pack_cursor_styles.py verify @cursorOptions
+        if ($LASTEXITCODE -ne 0) { throw 'Local cursor style payload verification failed' }
+        $cursorProof = 'artifacts/local-cursor-styles/result.json'
+        $taskValidations.Add([ordered]@{kind='local-cursor-payload';path=$cursorProof;sha256=(Get-FileHash -LiteralPath $cursorProof -Algorithm SHA256).Hash.ToLowerInvariant()})
+    }
     $taskHash = Get-FileHash -LiteralPath release/BigFishDockpro-Setup-x64.exe -Algorithm SHA256
     ('{0}  BigFishDockpro-Setup-x64.exe' -f $taskHash.Hash.ToLowerInvariant()) | Set-Content release/SHA256SUMS.txt -Encoding utf8
     $taskSingleHash = $null
@@ -131,6 +151,8 @@ try {
     if ($SingleFile) {
         $taskSingleHash = Get-FileHash -LiteralPath release/BigFishDockpro.exe -Algorithm SHA256
         ('{0}  BigFishDockpro.exe' -f $taskSingleHash.Hash.ToLowerInvariant()) | Add-Content release/SHA256SUMS.txt -Encoding utf8
+    }
+    if ($BundleDotNet) {
         $runtimeExe = 'BigFishDockpro-Portable-dotNET-x64.exe'
         $runtimeHash = (Get-FileHash -LiteralPath (Join-Path release $runtimeExe) -Algorithm SHA256).Hash.ToLowerInvariant()
         ('{0}  {1}' -f $runtimeHash,$runtimeExe) | Add-Content release/SHA256SUMS.txt -Encoding utf8
@@ -139,6 +161,7 @@ try {
     $taskScope = switch ($taskMode) {'Auto' {if($taskFocused){'auto-shell'}else{'auto-runtime'}} 'Quick' {'quick-runtime'} 'Runtime' {'current-ui-runtime'} 'Full' {'full'} default {'none'}}
     $taskReceipt=[ordered]@{tests_skipped=$taskSkip;test_scope=$taskScope;change_plan=$taskPlan;validation_results=@($taskValidations.ToArray());test_seconds=[math]::Round($taskTestSeconds,2);build_seconds=[math]::Round($taskBuildTimer.Elapsed.TotalSeconds,2);installer_sha256=$taskHash.Hash.ToLowerInvariant();singlefile_sha256=$(if($taskSingleHash){$taskSingleHash.Hash.ToLowerInvariant()}else{''});version=$taskVersion}
     $taskReceipt['dotnet_portable_sha256'] = $runtimeHash
+    $taskReceipt['local_cursor_styles'] = [bool]$LocalCursorStyles
     $taskReceipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath artifacts/build-validation.json -Encoding utf8
     if ($Deliver) {
         $taskDeliveryArgs=@('tools/release_tools.py','deliver','--source',$SourceDirectory,'--release',$ReleaseDirectory)
@@ -146,4 +169,10 @@ try {
         & $taskPython @taskDeliveryArgs
         if ($LASTEXITCODE -ne 0) { throw 'Delivery failed' }
     }
-} finally { $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = $taskPriorFixture; $env:FISHDOCK_SHELL_TEST_PROFILE = $taskPriorShellProfile; $taskLock.Dispose() }
+} finally {
+    $env:FISHDOCK_NATIVE_LAUNCH_FIXTURE = $taskPriorFixture
+    $env:FISHDOCK_SHELL_TEST_PROFILE = $taskPriorShellProfile
+    $env:FISHDOCK_LOCAL_CURSOR_STYLES = $taskPriorLocalCursors
+    $env:FISHDOCK_BUNDLE_DOTNET = $taskPriorBundledRuntime
+    $taskLock.Dispose()
+}

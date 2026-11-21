@@ -5,7 +5,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter
 from PyQt5.QtWidgets import QWidget,QApplication
 from resource_taskbar import Placement
 from ui_style import AlignedMenu
-from resource_options import FAN_METRICS,SENSOR_UNITS,METRICS,TASK_COLUMN_NAMES,TASKBAR_LAYERS
+from resource_options import FAN_METRICS,SENSOR_UNITS,METRICS,MONITOR_DEVICES,TASK_COLUMN_NAMES,TASKBAR_LAYERS
 from component_passthrough import enabled as passthrough_enabled
 from taskbar_text import foreground_ink, system_mode
 
@@ -37,6 +37,7 @@ def columns(service):
                 if number is not None:value=f'{number:.0f}'
         else:
             entry=data.get(key)
+            if key in MONITOR_DEVICES:tip=service.monitor_scope(key)
             if entry is not None:
                 number=entry[0] if key=='memory' else entry
                 value=f'{number:.1f}%' if key=='memory' else f'{number:.0f}%'
@@ -52,9 +53,10 @@ def columns(service):
     }
     if 'network' in enabled:
         download, upload = data.get('network') or (None, None)
+        scope = ' · ' + service.monitor_scope('network') if service.cfg['resource_network_device'] else ''
         groups['network'].append((
-            ('↑', transfer(upload) if upload is not None else '—', 'network', None, '上传'),
-            ('↓', transfer(download) if download is not None else '—', 'network', None, '下载'),
+            ('↑', transfer(upload) if upload is not None else '—', 'network', None, '上传' + scope),
+            ('↓', transfer(download) if download is not None else '—', 'network', None, '下载' + scope),
         ))
     if 'traffic' in enabled:
         from resource_traffic import amount
@@ -64,6 +66,7 @@ def columns(service):
             groups['traffic'].append(tuple((label+arrow,amount(v[i]).replace(' ',''),'traffic',None,label+'流量'+('下载' if i==0 else '上传'))
                                if v is not None else (label+arrow,'—','traffic',None,'等待流量统计') for i,arrow in enumerate(('↓','↑'))))
     extras=[cell(k,METRICS[k]) for k in SENSOR_UNITS if k not in ('cpu_temp','gpu_temp','cpu_power','gpu_power')]
+    if 'disk_activity' in enabled:extras.append(cell('disk_activity', '磁盘'))
     for i in range(0,len(extras),2):groups['sensors'].append(tuple((extras[i:i+2]+[None])[:2]))
     order = service.cfg.get('resource_task_order', TASK_COLUMN_NAMES)
     return [pair for key in order for pair in groups[key] if any(pair)]

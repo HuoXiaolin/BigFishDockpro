@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 using Microsoft::WRL::ComPtr;
 
@@ -31,21 +32,39 @@ static ComPtr<IDXGIOutputDuplication> open_output(HMONITOR monitor) {
     return {};
 }
 
-static HMONITOR selected_monitor() {
+struct DisplayTarget { const char* name; HMONITOR monitor; };
+
+static BOOL CALLBACK match_monitor(HMONITOR monitor, HDC, LPRECT, LPARAM context) {
+    auto& target = *reinterpret_cast<DisplayTarget*>(context);
+    MONITORINFOEXA info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoA(monitor, &info) || _stricmp(info.szDevice, target.name) != 0) return TRUE;
+    target.monitor = monitor;
+    return FALSE;
+}
+
+static HMONITOR selected_monitor(const char* display) {
+    if (display) {
+        DisplayTarget target{display, nullptr};
+        EnumDisplayMonitors(nullptr, nullptr, match_monitor, reinterpret_cast<LPARAM>(&target));
+        return target.monitor;
+    }
     HWND window = GetForegroundWindow();
     return window ? MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY) :
                     MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
 }
 
 int main(int argc, char** argv) {
-    const unsigned limit = argc == 2 ? std::strtoul(argv[1], nullptr, 10) : 0;
+    const char* display = argc >= 3 && std::strcmp(argv[1], "--display") == 0 ? argv[2] : nullptr;
+    if (argc > (display ? 4 : 2)) return 1;
+    const unsigned limit = argc == (display ? 4 : 2) ? std::strtoul(argv[argc - 1], nullptr, 10) : 0;
     LARGE_INTEGER frequency{}, previous{};
     if (!QueryPerformanceFrequency(&frequency)) return 1;
     HMONITOR monitor = nullptr;
     ComPtr<IDXGIOutputDuplication> duplication;
     bool held = false;
     for (unsigned samples = 0; !limit || samples < limit; ++samples) {
-        HMONITOR active = selected_monitor();
+        HMONITOR active = display && duplication ? monitor : selected_monitor(display);
         if (!duplication || active != monitor) {
             if (held) duplication->ReleaseFrame();
             duplication.Reset();

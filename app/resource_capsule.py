@@ -3,22 +3,23 @@ from collections import deque
 from itertools import zip_longest
 import time
 import threading
-from PyQt5.QtCore import QObject,pyqtSignal,Qt
+from PyQt5.QtCore import QObject,QTimer,pyqtSignal,Qt
 from background_worker import BackgroundWorker
-from resource_options import (CAPSULE_PAGES,COMPACT_DEVICE,RESOURCE_PAGES,component_available,
-                              component_location,resource_page_active)
+from resource_options import (CAPSULE_PAGES,COMPACT_DEVICE,DEVICE_SAMPLE_KEYS,DEVICE_SOURCES,MONITOR_DEVICES,
+                              RESOURCE_PAGES,component_available,component_location,resource_page_active)
 from resource_status import BATTERY_WARNING_LEVEL
 
 
 class MonitorJob(BackgroundWorker):
     sample_ready=pyqtSignal(object)
     traffic_reset=pyqtSignal(object,str)
-    def __init__(self,keys,seconds,traffic_path=None):
+    def __init__(self,keys,seconds,network_device='',traffic_path=None):
         super().__init__()
         self.traffic_path=traffic_path
-        self.signature=(frozenset(keys),seconds)
+        self.signature=(frozenset(keys),seconds,network_device)
         self.lock=threading.Lock();self.wake=threading.Event()
         self.reset_pending=False
+        self.hardware_pending=False
 
     def reconfigure(self,signature):
         with self.lock:self.signature=signature;self.wake.set()
@@ -29,6 +30,11 @@ class MonitorJob(BackgroundWorker):
     def reset_traffic(self):
         with self.lock:
             self.reset_pending=True
+            self.wake.set()
+
+    def rescan_hardware(self):
+        with self.lock:
+            self.hardware_pending = True
             self.wake.set()
 
     def run(self):
@@ -42,8 +48,9 @@ class MonitorJob(BackgroundWorker):
             while not self.cancelled.is_set():
                 with self.lock:
                     self.wake.clear()
-                    keys,interval=self.signature
+                    keys,interval,network_device=self.signature
                     reset,self.reset_pending=self.reset_pending,False
+                    rescan,self.hardware_pending=self.hardware_pending,False
                 if reset:
                     from resource_traffic import TrafficLedger
                     try:
@@ -52,12 +59,16 @@ class MonitorJob(BackgroundWorker):
                     except OSError:
                         self.traffic_reset.emit(None,'重置总流量历史失败，原记录已保留。')
                 now=time.monotonic()
-                if (keys,interval)!=previous_signature:
+                if rescan:
+                    reader.inventory_due.clear()
+                    next_full=now
+                if (keys,interval,network_device)!=previous_signature:
                     reader.configure(keys)
+                    reader.network_device = network_device
                     next_full=now
                     if 'rank' in keys-previous_keys:next_rank=now
                     previous_keys=keys
-                    previous_signature=(keys,interval)
+                    previous_signature=(keys,interval,network_device)
                 rank_due='rank' in keys and now>=next_rank
                 warming=rank_due and not reader.ranking.previous
                 value=None
@@ -78,10 +89,38 @@ class MonitorJob(BackgroundWorker):
             if reader:reader.close()
 
 
+def device_reading(sample, metric, device):
+    value = sample.get(DEVICE_SAMPLE_KEYS[metric], {}).get(device)
+    if value is not None:
+        if metric == 'network':
+            return value[0]
+        if metric == 'network_utilization':
+            return value[1]
+    return value
+
+
+class HardwareScan(BackgroundWorker):
+    ready = pyqtSignal(object)
+
+    def __init__(self, metrics):
+        super().__init__()
+        self.metrics = metrics
+
+    def run(self):
+        from resource_metrics import scan_devices
+        for metric in self.metrics:
+            if self.cancelled.is_set():
+                break
+            devices = scan_devices(metric)
+            if not self.cancelled.is_set():
+                self.ready.emit({metric: devices})
+
+
 class ResourceCapsule(QObject):
     traffic_updated=pyqtSignal()
     app_traffic_updated=pyqtSignal()
     ai_data_changed=pyqtSignal()
+    hardware_changed=pyqtSignal()
 
     def __init__(self,runtime):
         super().__init__(runtime.dock)
@@ -94,6 +133,14 @@ class ResourceCapsule(QObject):
         self.history=None;self.latest={};self.observed={};self.signature=None;self.closed=False
         self.sensors=self.fps=None;self.auto_compact=None;self.deck=None;self.ai_tray=None
         self.runners = {}
+        self.hardware = {}
+        self.hardware_times = {}
+        self.hardware_pending = set()
+        self.hardware_job = None
+        self.hardware_timer = None
+        self.device_readings = {}
+        self.runner_totals = {}
+        self.monitor_sources = {}
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
         self.reminder_audio=None
         self.mail=None
@@ -384,7 +431,8 @@ class ResourceCapsule(QObject):
                 if runner is None:
                     from resource_runner import RunningAnimal
                     runner = self.runners[target] = RunningAnimal(self, target)
-                runner.configure(self.cfg[prefix + 'animal'], self.cfg[prefix + 'speed'], self.cfg[prefix + 'metric'])
+                runner.configure(self.cfg[prefix + 'animal'], self.cfg[prefix + 'speed'],
+                                 self.cfg[prefix + 'metric'], self.cfg[prefix + 'device'])
             elif runner is not None:
                 self.runners.pop(target).close()
 
@@ -392,6 +440,88 @@ class ResourceCapsule(QObject):
         for runner in self.runners.values():
             runner.close()
         self.runners.clear()
+
+    def discover_hardware(self, *metrics):
+        if self.closed or self.runtime.session_ending or self.runtime.dock.preview:
+            return
+        now = time.monotonic()
+        running = self.hardware_job.metrics if self.hardware_job else ()
+        self.hardware_pending.update(metric for metric in metrics if metric in DEVICE_SOURCES
+                                     and now - self.hardware_times.get(metric, -60) >= 15 and metric not in running)
+        if self.hardware_pending and not self.hardware_job:
+            self.hardware_job = HardwareScan(self.hardware_pending)
+            self.hardware_pending = set()
+            self.hardware_job.ready.connect(self.update_hardware, Qt.QueuedConnection)
+            self.hardware_job.finished.connect(self.hardware_finished, Qt.QueuedConnection)
+            self.hardware_job.start()
+
+    def hardware_topology_changed(self):
+        if self.closed or self.runtime.session_ending or not self.hardware_times:
+            return
+        if self.hardware_timer is None:
+            self.hardware_timer = QTimer(self)
+            self.hardware_timer.setSingleShot(True)
+            self.hardware_timer.timeout.connect(self.rescan_hardware)
+        self.hardware_timer.start(250)
+
+    def rescan_hardware(self):
+        self.hardware_times.clear()
+        sampled = self.signature[0] if self.signature else ()
+        devices = set(self.sensors.scopes) if self.sensors else set()
+        if self.fps and self.fps.display_key:devices.add('display')
+        if self.editing:devices.update(self.hardware)
+        if self.job and set(DEVICE_SAMPLE_KEYS.values()).intersection(sampled):
+            self.job.rescan_hardware()
+            devices.difference_update(metric for metric in devices if DEVICE_SAMPLE_KEYS.get(metric) in sampled)
+        self.discover_hardware(*devices)
+
+    def update_hardware(self, inventory):
+        if self.closed or self.runtime.session_ending:
+            return
+        now = time.monotonic()
+        changed = False
+        for metric, devices in inventory.items():
+            changed |= self.hardware.get(metric) != devices
+            self.hardware[metric] = devices
+            self.hardware_times[metric] = now
+        if changed:
+            self.hardware_changed.emit()
+            for runner in self.runners.values():
+                if runner.device and runner.metric in inventory:
+                    runner.update_reading()
+
+    def hardware_finished(self):
+        if self.sender() is self.hardware_job:
+            job, self.hardware_job = self.hardware_job, None
+            job.deleteLater()
+            self.discover_hardware()
+
+    def stop_hardware(self):
+        if self.hardware_timer:self.hardware_timer.stop()
+        self.hardware_pending.clear()
+        if self.hardware_job:
+            job, self.hardware_job = self.hardware_job, None
+            job.requestInterruption()
+            job.deleteLater()
+
+    def hardware_name(self, metric, device):
+        if metric == 'network':
+            metric = 'network_utilization'
+        entry = self.hardware.get(metric, {}).get(device)
+        return entry.name if entry else f'已选{DEVICE_SOURCES[metric][1]}（未检测到）'
+
+    def monitor_scope(self, metric):
+        device = self.cfg[MONITOR_DEVICES[metric]]
+        if device:
+            return self.hardware_name(metric, device)
+        return '已连接网卡汇总' if metric == 'network' else DEVICE_SOURCES[metric][2]
+
+    def runner_reading(self, metric, device):
+        if device:
+            return device_reading(self.device_readings, metric, device)
+        if metric in DEVICE_SOURCES:
+            return self.runner_totals.get(metric)
+        return self.latest.get(metric)
 
     def runner_visibility_changed(self, window):
         if (self.window is window and self.cfg['resource_runner_enabled']
@@ -521,7 +651,7 @@ class ResourceCapsule(QObject):
         self.check_dependencies(want_media or bool(want_ai and self.cfg['resource_ai_providers']))
         if self.sensors:
             if not sensors:self.sensors.close();self.sensors=None
-            elif self.sensors.keys!=sensors:self.sensors.reconfigure(sensors)
+            else:self.sensors.reconfigure(sensors)
         if sensors and not self.sensors:
             from resource_probes import SensorRead
             self.sensors=SensorRead(self,sensors)
@@ -529,6 +659,7 @@ class ResourceCapsule(QObject):
         if want_fps and not self.fps:
             from resource_fps import FrameMonitor
             self.fps=FrameMonitor(self)
+        elif want_fps:self.fps.refresh_scope()
         elif not want_fps and self.fps:
             self.fps.close();self.fps=None
         self.sync_monitor()
@@ -568,8 +699,25 @@ class ResourceCapsule(QObject):
 
     def sync_monitor(self):
         keys=self.active_keys()
+        sources = {metric: self.cfg[key] for metric, key in MONITOR_DEVICES.items() if self.cfg[key]}
+        changed = {key for key in MONITOR_DEVICES if self.monitor_sources.get(key) != sources.get(key)}
+        self.monitor_sources = sources
+        for key in changed:
+            self.latest.pop(key, None)
+            self.observed.pop(key, None)
+        if 'network' in changed:
+            self.latest.pop('connection', None)
+            if self.latest.get('system_status'):
+                self.latest['system_status'].pop('connection', None)
+        if changed and self.history is not None:
+            for row in self.history:
+                for key in changed:
+                    row.pop(key, None)
+        keys.update(DEVICE_SAMPLE_KEYS[key] for key in sources if key in keys)
+        keys.update(DEVICE_SAMPLE_KEYS[runner.metric] for runner in self.runners.values() if runner.device)
         interval=max(self.cfg['resource_interval'],2 if self.compact and not self.detached('resources') else 1)
-        signature=(frozenset(keys),interval) if keys else None
+        network_device = sources.get('network', '') if keys.intersection(('system_status','connection')) else ''
+        signature=(frozenset(keys),interval,network_device) if keys else None
         if signature==self.signature:return
         self.signature=signature
         now=time.monotonic()
@@ -584,6 +732,8 @@ class ResourceCapsule(QObject):
         elif self.history is None:self.history=deque(maxlen=65)
         else:self.history=deque(({k:v for k,v in row.items() if k=='time' or k in keys} for row in self.history),maxlen=65)
         self.observed={k:v for k,v in self.observed.items() if k in self.latest}
+        self.device_readings={key:value for key,value in self.device_readings.items() if key in keys}
+        self.runner_totals={key:value for key,value in self.runner_totals.items() if key in keys and key in self.observed}
         for runner in self.runners.values():
             runner.update_reading()
         if self.job and signature and not self.job.cancelled.is_set():self.job.reconfigure(signature)
@@ -612,7 +762,7 @@ class ResourceCapsule(QObject):
 
     def accept_sample(self,data):
         if not self.signature or self.history is None:return
-        keys,interval=self.signature
+        keys,interval,network_device=self.signature
         now=data['time']
         if data.get('rank_only'):
             if 'rank' in keys and data.get('rank') is not None:
@@ -624,12 +774,20 @@ class ResourceCapsule(QObject):
                 if card and card.dashboard is not None:card.show_ranking()
             return
         traffic_before=self.latest.get('traffic')
+        self.update_hardware(data.get('hardware_inventory', {}))
+        self.device_readings={key:data.get(key,{}) for key in DEVICE_SAMPLE_KEYS.values() if key in keys}
+        self.runner_totals={key:data.get(key) for key in keys & DEVICE_SOURCES.keys()}
+        record = {}
         for key in keys:
+            if key in self.device_readings:continue
             if key=='traffic' and self.traffic_reset_pending:continue
-            value=data.get(key)
+            if key in ('connection','system_status') and data.get('connection_device', network_device) != network_device:continue
+            device = self.monitor_sources.get(key)
+            value = device_reading(self.device_readings, key, device) if device else data.get(key)
             if value is not None and (key!='cpu_cores' or value):
                 self.latest[key]=value;self.observed[key]=now
-            elif now-self.observed.get(key,float('-inf'))>max(4,2*interval+1):
+                if key in ('cpu','memory','network','gpu'):record[key] = value
+            elif device or now-self.observed.get(key,float('-inf'))>max(4,2*interval+1):
                 self.latest.pop(key,None)
         if 'battery' in keys:self.check_battery_alert()
         for runner in self.runners.values():
@@ -637,7 +795,6 @@ class ResourceCapsule(QObject):
                 runner.update_reading()
 
         while self.history and now-self.history[0]['time']>60:self.history.popleft()
-        record={k:data[k] for k in ('cpu','memory','network','gpu') if k in keys and data.get(k) is not None}
         self.history.append(dict(record,time=now));self.display()
         if self.latest.get('traffic')!=traffic_before:self.traffic_updated.emit()
 
@@ -771,6 +928,7 @@ class ResourceCapsule(QObject):
             job,self.job=self.job,None
             job.requestInterruption();job.deleteLater()
         self.stop_runners()
+        self.stop_hardware()
         if self.mail:self.mail.close()
         for key in ('sensors','bluetooth','peripherals','app_traffic','fps','deck'):
             reader=getattr(self,key)
@@ -781,6 +939,7 @@ class ResourceCapsule(QObject):
     def close(self):
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
         self.stop_runners()
+        self.stop_hardware()
         if self.mail:self.mail.close()
         if self.reminder_audio:self.reminder_audio.stop()
         if self.pomodoro:self.pomodoro.timer.stop()

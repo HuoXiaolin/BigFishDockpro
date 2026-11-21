@@ -40,8 +40,13 @@ def run(api,runtime,root,output,checks):
         assert dialog.commit() and api.load_config()['calendar_style']=='almanac'
         calendar.view_day=datetime.date(2026,3,19);calendar.follow_today=False
         calendar.next.click();assert calendar.view_day==datetime.date(2026,3,20) and calendar.other_art.isVisible()
-        calendar.other_art.click();assert calendar.prefer_term
-        calendar.next.click();assert calendar.other_art.isHidden() and not calendar.prefer_term
+        calendar.other_art.click();assert calendar.art_choice == 1
+        calendar.next.click();assert calendar.other_art.isHidden() and calendar.art_choice == 0
+        calendar.view_day=datetime.date(2030,12,31)
+        calendar.next.click()
+        assert calendar.other_art.isVisible() and calendar.other_art.text() == '看腊八节 ›'
+        calendar.other_art.click()
+        assert calendar.art_choice == 1 and calendar.other_art.text() == '看元旦 ›'
         calendar.go_today();assert calendar.follow_today
         choice.setCurrentIndex(choice.findData('calendar_card'));assert dialog.commit()
         dialog.fields['color'].setText('#9bc9d2');assert dialog.commit() and cfg['clock_appearance']==before_appearance

@@ -58,6 +58,13 @@ def symbol(p,rect,kind,color):
         p.drawPath(outline)
         p.drawArc(QRectF(9,17,6,5),180*16,180*16)
         p.drawLine(12,2,12,4)
+    elif kind=='cursor':
+        outline = QPainterPath(QPointF(5,3))
+        outline.lineTo(20,13)
+        outline.lineTo(13,14)
+        outline.lineTo(9,21)
+        outline.closeSubpath()
+        p.drawPath(outline)
     elif kind=='panels':p.drawRoundedRect(QRectF(3,3,8,18),2,2);p.drawRoundedRect(QRectF(14,3,8,8),2,2);p.drawRoundedRect(QRectF(14,14,8,7),2,2)
     elif kind=='magnify':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21);p.drawLine(6,9,12,9);p.drawLine(9,6,9,12)
     elif kind=='search':p.drawEllipse(QRectF(3,3,13,13));p.drawLine(14,14,21,21)
@@ -144,6 +151,13 @@ class QuickTile(QPushButton):
                 if clock:
                     self.popup.close()
                     clock.open_progress()
+            elif self.key == 'cursor_styles':
+                runtime = getattr(self.popup.dock.tray, 'runtime', None)
+                if runtime:
+                    from settings_catalog import CURSORS
+                    from shell_menu import open_settings
+                    self.popup.close()
+                    open_settings(runtime, CURSORS)
             return
         from ui_style import AlignedMenu
         menu=AlignedMenu(self);order=self.popup.order();page=order.index(self.key)//9
@@ -338,6 +352,17 @@ class DockQuickSettings(QDialog):
                 values[key] = '仅 Windows 11' if shell is not None else '暂不可用'
                 tile.setToolTip('系统面板美化需要 Windows 11。' if shell is not None else '')
             tile.setAccessibleDescription(values[key])
+        cursors = getattr(runtime, 'cursor_styles', None)
+        cursor_tile = self.tiles['cursor_styles']
+        cursor_styles = cursors.styles() if cursors is not None else []
+        cursor_tile.setEnabled(bool(cursor_styles and cursors.system.enabled) or self.editing)
+        cursor_tile.setToolTip('点击循环切换鼠标方案，最后恢复系统默认。右键打开设置。')
+        try:
+            _, cursor_title = cursors.current(cursor_styles) if cursors is not None else (None, '系统默认')
+        except OSError:
+            cursor_title = '读取失败'
+        values['cursor_styles'] = cursor_title
+        cursor_tile.setAccessibleDescription(cursor_title)
         taskbar = getattr(runtime, 'taskbar', None)
         if taskbar is not self._bound_taskbar:
             old=getattr(self._bound_taskbar,'changed',None)
@@ -394,6 +419,19 @@ class DockQuickSettings(QDialog):
         tray=self.dock.tray;runtime=getattr(tray,'runtime',None)
         if not tray:return
         self.status.setToolTip('')
+        if key == 'cursor_styles':
+            from cursor_styles import PACK_ERRORS
+            cursors = getattr(runtime, 'cursor_styles', None)
+            if cursors is not None and cursors.system.enabled:
+                try:
+                    title = cursors.cycle()
+                except PACK_ERRORS as error:
+                    self.status.setText('鼠标样式应用失败')
+                    self.status.setToolTip(str(error))
+                else:
+                    self.refresh()
+                    self.status.setText('已应用 · ' + title)
+            return
         if key=='taskbar_monitor':
             if runtime:runtime.resources.set_options(resource_taskbar=not runtime.dock.cfg['resource_taskbar'])
             self.refresh();return

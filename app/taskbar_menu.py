@@ -51,7 +51,8 @@ def add_menu(menu,runtime):
     monitor=menu.addAction('显示任务栏监控');monitor.setCheckable(True);monitor.setChecked(cfg['resource_taskbar'])
     monitor.triggered.connect(lambda on:runtime.resources.set_options(resource_taskbar=on))
     menu.addAction('任务栏监控设置…',lambda:runtime.resources.settings(page=1))
-    from resource_options import RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
+    from resource_device_picker import device_choices
+    from resource_options import DEVICE_SOURCES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
     pets = menu.addMenu('托盘小动物')
     show = pets.addAction('显示托盘小动物')
     show.setCheckable(True)
@@ -69,7 +70,35 @@ def add_menu(menu,runtime):
             action.setCheckable(True)
             action.setChecked(cfg[key] == value)
             group.addAction(action)
-            action.triggered.connect(lambda _, key=key, value=value: runtime.resources.set_options(**{key: value}))
+            def choose(_, key=key, value=value):
+                changes = {key: value}
+                if key == 'resource_tray_runner_metric' and value != cfg[key]:
+                    changes['resource_tray_runner_device'] = ''
+                runtime.resources.set_options(**changes)
+            action.triggered.connect(choose)
+
+    devices = pets.addMenu('监测设备')
+    devices.menuAction().setVisible(cfg['resource_tray_runner_metric'] in DEVICE_SOURCES)
+
+    def discover():
+        metric = cfg['resource_tray_runner_metric']
+        devices.menuAction().setVisible(metric in DEVICE_SOURCES)
+        devices.setEnabled(cfg['resource_tray_runner_enabled'])
+        if devices.menuAction().isVisible():
+            runtime.resources.discover_hardware(metric)
+
+    def fill_devices():
+        metric = cfg['resource_tray_runner_metric']
+        selected = cfg['resource_tray_runner_device']
+        devices.clear()
+        for value, name in device_choices(runtime.resources, metric, selected).items():
+            action = devices.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(value == selected)
+            action.triggered.connect(lambda _, value=value: runtime.resources.set_options(resource_tray_runner_device=value))
+
+    pets.aboutToShow.connect(discover)
+    devices.aboutToShow.connect(fill_devices)
     from shell_menu import open_settings
     from settings_catalog import TASKBAR
     menu.addAction('任务栏外观设置…',lambda:open_settings(runtime,TASKBAR))

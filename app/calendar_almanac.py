@@ -88,6 +88,34 @@ class Illustration:
 ART = {name: Illustration(name, f'{group}-{index}', (verse,*OTHER_VERSES[name]))
        for group, entries in (SEASONS | FESTIVALS).items()
        for index, (name, verse) in enumerate(entries, 1)}
+
+CIVIL_HOLIDAYS = {
+    (1, 1): Illustration('元旦', 'civil-new-year', (
+        '万象从新起，一晨迎岁光。', '昨宵星未落，今朝日更新。',
+        '翻开新一页，且把春光候。', '一缕晨光入，万家新岁来。')),
+    (3, 8): Illustration('妇女节', 'civil-womens-day', (
+        '她向春风里，坚定自成光。', '各有花开处，同怀向远心。',
+        '春光终有意，献与每一程。', '自有风华在，何须借月明。')),
+    (3, 12): Illustration('植树节', 'civil-arbor-day', (
+        '今日栽新绿，他年纳晚凉。', '一锹春土柔，半尺小芽新。',
+        '前人栽树，后人乘凉。', '且种庭前木，听风过满枝。')),
+    (5, 1): Illustration('劳动节', 'civil-labour-day', (
+        '一双勤作手，百业有新声。', '汗随春日落，万物自成形。',
+        '铸就寻常事，方知寸寸功。', '一分耕耘，一分收获。')),
+    (5, 4): Illustration('青年节', 'civil-youth-day', (
+        '趁此春风好，携书走远方。', '少年心事当拏云。',
+        '青衿逢旭日，行路有回声。', '前路多山水，一步一晴明。')),
+    (6, 1): Illustration('儿童节', 'civil-childrens-day', (
+        '儿童散学归来早，忙趁东风放纸鸢。', '小手牵风去，笑声落草间。',
+        '泡泡飞过篱笆，童心追着云霞。', '纸鸢牵细线，一路到晴空。')),
+    (9, 10): Illustration('教师节', 'civil-teachers-day', (
+        '随风潜入夜，润物细无声。', '一灯照书页，两鬓染秋霜。',
+        '春风化雨，桃李成蹊。', '拾笔传微火，清光在此间。')),
+    (10, 1): Illustration('国庆节', 'civil-national-day', (
+        '秋色铺山海，灯明照万家。', '金风吹广陌，街巷共良辰。',
+        '山河入画卷，烟火在人间。', '长街灯似昼，共赏此秋光。')),
+}
+ART.update((art.name, art) for art in CIVIL_HOLIDAYS.values())
 _names = tuple(name for entries in SEASONS.values() for name, verse in entries)
 JANUARY_ORDER = _names[-2:] + _names[:-2]
 
@@ -118,6 +146,14 @@ def next_festival(day):
     return '', 0
 
 
+def next_civil_holiday(day):
+    for (month, number), art in CIVIL_HOLIDAYS.items():
+        holiday = date(day.year, month, number)
+        if holiday > day:
+            return art.name, (holiday-day).days
+    return CIVIL_HOLIDAYS[1, 1].name, (date(day.year+1, 1, 1)-day).days
+
+
 ROTATION_MINUTES = 10
 
 
@@ -143,9 +179,21 @@ class AlmanacDay:
     next_term: str
     days_left: int
     festival: str
+    civil_festival: str
 
-    def card(self, prefer_term=False):
-        return ART[self.term if prefer_term and self.term_today else self.festival or self.term]
+    @property
+    def events(self):
+        return tuple(name for name in (self.civil_festival, self.festival, self.term if self.term_today else '') if name)
+
+    def card(self, choice=0):
+        events = self.events
+        return ART[events[choice % len(events)] if events else self.term]
+
+    def civil_countdown(self):
+        if self.civil_festival:
+            return f'今日{self.civil_festival}'
+        holiday, distance = next_civil_holiday(self.day)
+        return f'距{holiday} {distance} 天'
 
     def badge(self):
         names = ([self.festival] if self.festival else []) + ([self.term] if self.term_today else [])
@@ -161,4 +209,5 @@ def almanac(day):
     previous, term = entries[at-1] if at else (None, '冬至')
     upcoming, name = entries[at]
     _, lunar, festival = lunar_details(day)
-    return AlmanacDay(day, lunar, term, previous == day, name, (upcoming-day).days, festival)
+    civil = CIVIL_HOLIDAYS.get((day.month, day.day))
+    return AlmanacDay(day, lunar, term, previous == day, name, (upcoming-day).days, festival, civil.name if civil else '')

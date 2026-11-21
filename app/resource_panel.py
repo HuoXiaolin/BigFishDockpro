@@ -10,7 +10,7 @@ from ui_style import AlignedMenu
 from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
-from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,OPEN_PAGES,RUNNER_SLOT,SENSOR_UNITS,
+from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,MONITOR_DEVICES,OPEN_PAGES,RUNNER_SLOT,SENSOR_UNITS,
                               background,component_available,component_location,content_columns)
 from flash_view import palette_for,icon
 
@@ -27,11 +27,11 @@ COMPACT_SCROLL_SECONDS = .24
 def display_values(service,compact=None):
     cfg=service.cfg;data=service.latest;rows=[]
     compact=service.compact if compact is None else compact
-    for key in ('cpu','memory','network','gpu','fps',*SENSOR_UNITS):
+    for key in ('cpu','memory','network','gpu','disk_activity','fps',*SENSOR_UNITS):
         if not cfg['resource_'+key]:continue
         if compact and key not in cfg['resource_compact_metrics']:continue
         value=data.get(key);label=METRICS[key];tip='';display='—'
-        if key in ('cpu','gpu') and value is not None:display=f'{value:.0f}%'
+        if key in ('cpu','gpu','disk_activity') and value is not None:display=f'{value:.0f}%'
         elif key=='memory' and value:
             display=f'{value[0]:.0f}%';tip=f'{value[1]/2**30:.1f} / {value[2]/2**30:.1f} GB'
         elif key=='network' and value:display='↓ '+rate(value[0])+'   ↑ '+rate(value[1])
@@ -44,7 +44,7 @@ def display_values(service,compact=None):
             else:
                 if key in FAN_METRICS or cfg['resource_hide_unavailable']:continue
                 tip='当前传感器未提供读数'
-        if key=='gpu':tip='所有显卡中最忙引擎的利用率' if value is not None else '等待显卡驱动计数器'
+        if key in MONITOR_DEVICES:tip=service.monitor_scope(key)
         rows.append((key,label,display,tip))
     return rows
 
@@ -412,7 +412,7 @@ class ResourceContentHost(QWidget):
         cfg=self.service.cfg
         if self.dashboard is None:
             self.build_dashboard()
-        basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network')]
+        basics=[row for row in self.values if row[0] in ('cpu','gpu','memory','network','disk_activity')]
         self.graph.refresh(basics);self.sensor_columns.refresh([row for row in self.values if row not in basics])
         peripherals=bool(cfg.get('resource_peripheral_profiles'))
         self.no_readings.setVisible(not self.values and not (cfg['resource_rank'] or cfg['resource_bluetooth'] or cfg['resource_system_status'] or peripherals))

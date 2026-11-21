@@ -89,8 +89,9 @@ class StartupProbe:
                             'resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density'):
                     assert dock.cfg[key] == preset[key], key
                 assert dock.cfg['taskbar_text_mode']=='system'
-                assert dock.cfg['dock_quick_order'][:8] == [
-                    'settings', 'taskbar', 'taskbar_text', 'shell_start', 'shell_notifications', 'manage', 'appearance', 'panels']
+                assert dock.cfg['dock_quick_order'][:9] == [
+                    'settings', 'taskbar', 'taskbar_text', 'shell_start', 'shell_notifications',
+                    'cursor_styles', 'manage', 'appearance', 'panels']
                 assert dock.isVisible() == preset['dock_visible'] and tray.isVisible() != preset['hide_tray']
                 assert not dock.cfg['items'] and not dock.cfg['desktop_entries']
                 assert not dock.cfg['sticky_notes'] and not dock.cfg['flash_entries']

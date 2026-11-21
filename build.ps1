@@ -2,6 +2,8 @@ param(
     [string]$Toolchain = 'D:\Agant\toolchain',
     [string]$Iscc = '',
     [switch]$Deliver,
+    [switch]$LocalCursorStyles,
+    [switch]$BundleDotNet,
     [ValidateSet('Auto','Quick','Runtime','Full','None')][string]$TestMode = 'Auto',
     [switch]$SkipTests,
     [switch]$RuntimeChecks,

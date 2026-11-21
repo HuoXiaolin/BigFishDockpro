@@ -37,13 +37,13 @@ def draw_almanac(painter, rect, dock, options):
         painter.fillRect(rect, QColor('#f6eedf'))
         _line(painter, rect.adjusted(10,0,-10,0), '农历节气支持 1901–2099 年', options['date_font'], 14, QColor('#40392c'))
         return '#40392c'
-    art = model.card(options.get('_almanac_prefer_term', False))
+    art = model.card(options.get('_almanac_art', 0))
     version = edition(now)
-    event = model.term_today or bool(model.festival)
+    events = model.events
     light = (options.get('_host_palette') or dock.base_theme_colors(options['theme']))['light']
     ink = QColor('#252f29' if light else '#fff7e5')
     detail = QColor('#52594e' if light else '#e2decc')
-    accent = QColor(('#874129' if model.festival else '#385d50') if light else '#f5d89e')
+    accent = QColor(('#874129' if model.festival or model.civil_festival else '#385d50') if light else '#f5d89e')
     from desktop_clock import contrast_ink
     paper = QColor('#f6efdf' if light else '#263532')
     if not options['auto_contrast'] and options['text_color']:
@@ -95,11 +95,8 @@ def draw_almanac(painter, rect, dock, options):
         reserve = 116 if controls=='calendar' else 27 if controls=='clock' else 0
         stamp = f'{day.month}月{day.day}日  周{"一二三四五六日"[day.weekday()]}'
         line(5 if tight else 8,19 if tight else 26,stamp,11 if tight else 13,detail,width=max(35,usable-reserve))
-        main = art.name if event else model.lunar
-        alternate = model.term if art.name==model.festival else model.festival
-        secondary = model.lunar if event else f'{model.term}时节'
-        if event and alternate and model.festival and model.term_today:
-            secondary += ' · '+alternate
+        main = art.name if events else model.lunar
+        secondary = ' · '.join((model.lunar, *(name for name in events if name != art.name))) if events else f'{model.term}时节'
         verse_size = min(18,max(10,w*.038))
         verse_h = max(19,min(44,h*.17))
         quote_y = h-verse_h
@@ -108,23 +105,21 @@ def draw_almanac(painter, rect, dock, options):
         for stop,alpha in ((0,0),(.35,192),(1,241)):
             tint = QColor(paper); tint.setAlpha(alpha); foot.setColorAt(stop,tint)
         painter.fillRect(QRectF(0,quote_y-5,w,verse_h+5),foot)
-        title_y = 24 if tight else max(40,h*.24)
-        title_h = min(h*.21,64) if not tight else max(18,h*.19)
+        title_y = 22 if tight else max(34,h*.20)
+        title_h = min(h*.205,64) if not tight else max(18,h*.19)
         line(title_y,title_h,main,min(45,max(16,w*.093)),ink,QFont.DemiBold,
              width=usable*.78,face='Microsoft YaHei UI' if version else 'SimSun')
         label_y = title_y+title_h
+        rows = [(secondary, 11 if tight else 14, detail, QFont.Normal),
+                (f'距{model.next_term} {model.days_left} 天', 12 if tight else 16, accent, QFont.DemiBold)]
         if not tight:
-            line(label_y, min(25,h*.105),secondary,14,detail,width=usable*.80)
-        countdown = f'距{model.next_term} {model.days_left} 天'
-        if tight:
-            line(label_y, max(13,(quote_y-label_y)/2),secondary,11,detail)
-            line((label_y+quote_y)/2, max(13,(quote_y-label_y)/2),countdown,12,accent,QFont.DemiBold)
-        else:
-            count_y = max(label_y+min(25,h*.105)+3,quote_y-59)
-            line(count_y,25,countdown,16,accent,QFont.DemiBold)
             upcoming, distance = next_festival(day)
-            if upcoming and count_y+41<=quote_y:
-                line(count_y+23,19,f'距{upcoming} {distance} 天',12,detail)
+            if upcoming:rows.append((f'距{upcoming} {distance} 天', 12, detail, QFont.Normal))
+        rows.append((f'公历 · {model.civil_countdown()}', 11 if tight else 13, accent, QFont.DemiBold))
+        row_height = min(24, (quote_y-label_y-2)/len(rows))
+        width = usable * .72 if controls=='calendar' and len(events)>1 else usable
+        for index, (value,size,color,weight) in enumerate(rows):
+            line(label_y+index*row_height,row_height,value,size,color,weight,width=width)
         line(quote_y,verse_h,art.verses[verse_index(now)],verse_size,ink,width=usable,face='SimSun')
     finally:
         painter.restore()

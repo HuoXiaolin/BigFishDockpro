@@ -23,7 +23,7 @@ class ClockPreview(QWidget):
         h=min(self.height()-18,(self.width()-24)/ratio);w=h*ratio
         clock=self.dialog.clock;o=self.dialog.values()
         if clock.kind=='calendar':o=dict(o,_calendar_year=clock.view_year,_calendar_month=clock.view_month,
-                                         _almanac_date=clock.view_day,_almanac_prefer_term=clock.prefer_term,_almanac_controls='calendar')
+                                         _almanac_date=clock.view_day,_almanac_art=clock.art_choice,_almanac_controls='calendar')
         logical_width=self.dialog.fields['width'].value();logical_height=self.dialog.fields['height'].value()
         key=(round(w*self.devicePixelRatioF()),round(h*self.devicePixelRatioF()),logical_width,logical_height)
         if key!=getattr(self,'_sample_key',None):

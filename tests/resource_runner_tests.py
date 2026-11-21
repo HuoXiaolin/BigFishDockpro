@@ -34,7 +34,8 @@ def run(api, runtime, app, output, checks):
     from config_transfer import normalize as import_config
     from resource_compact import plan
     from resource_options import RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SLOT, RUNNER_SPEEDS
-    from resource_metrics import busiest_disk,network_utilization
+    from resource_devices import Device, device_key
+    from resource_metrics import busiest_disk, disk_loads, gpu_loads, network_device_readings, network_utilization
     from resource_runner import ASSETS, FRAMES, capsule_rect, frame_rate, sprite, tray_frame
     from resource_settings import ResourceOptions
     from settings_catalog import TASKBAR
@@ -42,6 +43,7 @@ def run(api, runtime, app, output, checks):
     service = runtime.resources
     cfg = service.cfg
     before, auto = copy.deepcopy(cfg), service.auto_compact
+    before_hardware, before_times = dict(service.hardware), dict(service.hardware_times)
     dialog = main = None
     tray = runtime.tray
 
@@ -61,6 +63,7 @@ def run(api, runtime, app, output, checks):
     try:
         cfg.update(resource_runner_enabled=False, resource_runner_animal='cat', resource_runner_speed='adaptive',resource_runner_metric='cpu',
                    resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='adaptive',resource_tray_runner_metric='cpu',
+                   resource_runner_device='', resource_tray_runner_device='', resource_gpu_device='', resource_network_device='', resource_disk_device='',
                    resource_enabled=False, resource_taskbar=False,
                    resource_capsule_taskbar=False, resource_cpu=False, resource_collapsed=True,
                    resource_auto_hide=False, resource_fold='pill', resource_clock=True)
@@ -135,21 +138,28 @@ def run(api, runtime, app, output, checks):
         for load in (0, 25, 50, 75, 100):
             service.accept_sample(dict(time=time.monotonic(), cpu=load))
             speeds.append(runner.fps)
+            assert runner.timer.isActive() == (load > 0)
             assert runner.tray.toolTip()==f'小狗 CPU {load}%'
             if load==50:
                 runner.tray.activated.emit(QSystemTrayIcon.Trigger)
                 assert QToolTip.text()=='小狗 CPU 50%'
                 QToolTip.hideText()
-        assert speeds == [12, 33, 54, 75, 96], speeds
-        assert [frame_rate('adaptive', load) for load in (-1, None, 120)] == [12, 12, 96]
+        assert speeds == [0, 24, 48, 72, 96], speeds
+        assert [frame_rate('adaptive', load) for load in (-1, None, float('nan'), 120)] == [0, 0, 0, 96]
+        current = runner.frame
+        service.accept_sample(dict(time=time.monotonic(), cpu=0))
+        runner.advance()
+        assert runner.frame == current and not runner.timer.isActive()
+        service.accept_sample(dict(time=time.monotonic(), cpu=.00000001))
+        assert 0 < runner.fps < 1 and runner.timer.interval() <= 2_147_483_647
         for key,label in RUNNER_METRICS.items():
             action(action(pet_menu(),'监测指标').menu(),label).trigger()
             assert key in service.active_keys() and api.load_config()['resource_tray_runner_metric']==key
             now=time.monotonic()
             service.accept_sample({'time':now,key:(50.,100,200) if key=='memory' else 50.})
-            assert runner.fps==54 and runner.tray.toolTip()==f'小狗 {label} 50%'
+            assert runner.fps==48 and runner.tray.toolTip()==f'小狗 {label} 50%'
             service.accept_sample({'time':now+20,key:None})
-            assert runner.fps==12 and runner.tray.toolTip()==f'小狗 {label} —'
+            assert runner.fps==0 and not runner.timer.isActive() and runner.tray.toolTip()==f'小狗 {label} —'
         for mode, fps in (('fixed_low',24), ('fixed_medium',48), ('fixed_high',96)):
             menu = pet_menu()
             action(action(menu, '奔跑速度').menu(), RUNNER_SPEEDS[mode]).trigger()
@@ -160,7 +170,7 @@ def run(api, runtime, app, output, checks):
         first_deadline = runner.next_frame
         wake = first_deadline
         first_frame = runner.frame
-        with patch('resource_runner.monotonic') as clock:
+        with patch('resource_runner.perf_counter') as clock:
             for _ in range(96):
                 clock.return_value = wake
                 runner.advance()
@@ -169,7 +179,7 @@ def run(api, runtime, app, output, checks):
             clock.return_value = runner.next_frame + 4.25 / runner.fps
             runner.advance()
             assert runner.frame == (first_frame + 5) % FRAMES
-        now = time.monotonic()
+        now = time.perf_counter()
         runner.next_frame = now + 1 / runner.fps
         runner.schedule_frame(now)
         action(action(pet_menu(), '动物形象').menu(), '小猫').trigger()
@@ -230,7 +240,7 @@ def run(api, runtime, app, output, checks):
         cfg['resource_runner_speed'] = 'adaptive'
         service.sync()
         service.accept_sample(dict(time=time.monotonic(), memory=(50,1,2),network_utilization=36))
-        assert capsule.fps == 54 and runner.fps == 96
+        assert capsule.fps == 48 and runner.fps == 96
         assert capsule.readout=='小兔 内存 50%' and runner.tray.toolTip()=='小猫 网络 36%'
         for form in ('pill', 'bar', 'ball'):
             cfg['resource_fold'] = form
@@ -256,7 +266,7 @@ def run(api, runtime, app, output, checks):
                     assert hit.right() <= rect.left(), (form, hit, rect)
             previous = capsule.frame
             cache = window._compact_surface
-            with patch('resource_runner.monotonic',return_value=capsule.next_frame):
+            with patch('resource_runner.perf_counter',return_value=capsule.next_frame):
                 capsule.advance()
             assert capsule.frame == (previous + 1) % FRAMES and cache is window._compact_surface
         service.fold(False, automatic=True)
@@ -273,7 +283,7 @@ def run(api, runtime, app, output, checks):
         service.sync()
         assert not service.runners and 'cpu' not in service.needs()
         assert 'network_utilization' not in service.active_keys()
-        checks.append('Running cat, dog and rabbit: legacy settings and layouts retain their tiers, capsule and tray use independent 24/48/96 fps speeds, and utilization targets 12/33/54/75/96 fps at 0/25/50/75/100 percent.')
+        checks.append('Running cat, dog and rabbit: independent 24/48/96 fps tiers, 0/24/48/72/96 fps at 0/25/50/75/100 percent, zero stops the timer and tiny positive loads keep a precise deadline.')
         checks.append('Five utilization sources: independent saved capsule/tray metrics, real Qt tooltip and mouse-click paths, measured percentages in fixed speed mode, absent data and demand release.')
         assert busiest_disk({'0 C:':80,'1 D:':12,'_Total':0})==88 and busiest_disk({'0':100})==0
         assert busiest_disk({'0':float('nan'),'_Total':20}) is None
@@ -283,13 +293,77 @@ def run(api, runtime, app, output, checks):
         assert network_utilization(base,base,1)==0 and network_utilization({},sample,2) is None
         assert network_utilization(base,{1:((0,8000),(2500,8000))},1) is None
         assert network_utilization(base,{1:((9000,8000),(9999,4000))},1)==100
+        assert network_device_readings(base,sample,2)=={1:((200,250),50),2:((300,300),30)}
+        assert disk_loads({'0 C:':80,'1 D:':12,'_Total':0})=={0:20,1:88}
+        assert gpu_loads({'luid_0x1_0x2_phys_0_eng_0':10,'luid_0x1_0x2_phys_0_eng_1':38,
+                          'luid_0x1_0x3_phys_0_eng_0':116})=={0x100000002:38,0x100000003:100}
         checks.append('Disk activity excludes the aggregate instance. Network load uses negotiated per-direction rates and rejects counter resets, new links and speed changes.')
         checks.append('Runner artwork: eight distinct poses per animal at 16/20/24/32 px, pure-white calico, black-and-white dog and apricot-gray rabbit on both Qt surfaces. One shared square fits the tray without losing a single nontransparent pixel.')
+
+        from resource_panel import display_values
+        from taskbar_readout import columns
+        gpu_a, gpu_b = (device_key('gpu', x) for x in ('first', 'second'))
+        disk = device_key('disk', 'second')
+        net = 'net:' + '05' * 16
+        display_a, display_b = (device_key('display', x) for x in ('first', 'second'))
+        service.update_hardware({'gpu': {gpu_a:Device('GPU A',13),gpu_b:Device('GPU B',21)},
+                                 'disk_activity': {disk:Device('磁盘 1',1)},
+                                 'network_utilization': {net:Device('以太网',20)},
+                                 'display': {display_a:Device('第一屏',r'\\.\DISPLAY1'),display_b:Device('第二屏',r'\\.\DISPLAY2')}})
+        dialog.deleteLater()
+        dialog = ResourceOptions(service)
+        dialog.tabs.setCurrentIndex(2)
+        dialog.fields['resource_runner_enabled'].setChecked(True)
+        choose(dialog.fields['resource_runner_metric'], 'gpu')
+        choose(dialog.fields['resource_runner_device'], gpu_b)
+        dialog.tabs.setCurrentIndex(5)
+        for key,value in (('gpu',gpu_a),('network',net),('disk',disk),('display',display_b)):
+            choose(dialog.fields[f'resource_{key}_device'], value)
+        dialog.fields['resource_disk_activity'].setChecked(True)
+        dialog.tabs.setCurrentIndex(2)
+        assert dialog.fields['resource_runner_device'].currentData() == gpu_b
+        assert dialog.commit()
+        assert service.set_options(resource_tray_runner_enabled=True,resource_tray_runner_metric='network_utilization',
+                                   resource_tray_runner_speed='adaptive',resource_gpu=True,resource_network=True,
+                                   resource_fold='pill',resource_collapsed=True,
+                                   resource_compact_metrics=['gpu','network','disk_activity'],resource_task_metrics=['gpu','network','disk_activity'])
+        main = None
+        menu = pet_menu()
+        submenu = action(menu,'监测设备').menu()
+        submenu.aboutToShow.emit()
+        action(submenu,'以太网').trigger()
+        stored = api.load_config()
+        assert stored['resource_gpu_device'] == gpu_a and stored['resource_runner_device'] == gpu_b
+        assert stored['resource_tray_runner_device'] == net and stored['resource_display_device'] == display_b
+        assert import_config(stored,api)['resource_disk_device'] == disk
+        from layout_profiles import snapshot
+        assert clean_snapshot(snapshot(stored))['values']['resource_display_device'] == display_b
+        now = time.monotonic()
+        common = {'time':now,'gpu':99,'disk_activity':88,'network':(8000,16000),'network_utilization':90}
+        service.accept_sample(dict(common,gpu_devices={gpu_a:15,gpu_b:75},disk_devices={disk:34},
+                                   network_devices={net:((1024,2048),25)}))
+        assert service.latest['gpu'] == 15 and service.history[-1]['gpu'] == 15
+        assert service.latest['disk_activity'] == 34 and service.latest['network'] == (1024,2048)
+        assert service.runners['capsule'].fps == 72 and service.runners['tray'].fps == 24
+        assert [r[2] for r in display_values(service,False) if r[0]=='disk_activity'] == ['34%']
+        speed = next(pair for pair in columns(service) if pair[0] and pair[0][2] == 'network')
+        assert (speed[0][1],speed[1][1]) == ('2K/s','1K/s')
+        service.accept_sample(common)
+        assert not {'gpu','network','disk_activity'} & service.latest.keys()
+        assert all(runner.fps == 0 and not runner.timer.isActive() for runner in service.runners.values())
+        assert service.set_options(resource_gpu_device='',resource_network_device='',resource_disk_device='')
+        assert all(not {'gpu','network'} & row.keys() for row in service.history)
+        service.accept_sample(common)
+        assert (service.latest['gpu'],service.latest['disk_activity'],service.latest['network']) == (99,88,(8000,16000))
+        assert all(runner.fps == 0 for runner in service.runners.values())
+        checks.append('Hardware sources: shared GPU/disk/NIC monitor, independent capsule/tray metrics, device dropdowns and tray menu, settings and layout persistence, missing devices and source-specific chart history.')
     finally:
         if main is not None and main.isVisible():main.reject()
         if dialog is not None:dialog.deleteLater()
         cfg.clear()
         cfg.update(before)
+        service.hardware = before_hardware
+        service.hardware_times = before_times
         service.auto_compact = auto
         service.sync()
         api.save_config(cfg)

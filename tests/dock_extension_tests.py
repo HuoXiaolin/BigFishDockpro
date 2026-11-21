@@ -204,21 +204,23 @@ def run(api,runtime,root,output,checks):
             with patch.object(dock,'start_backdrop'):popup.tiles[key].click()
             assert cfg[field]==original_value
         wheel_on(popup.tiles['settings'],120);assert popup.pages.currentIndex()==0
-        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_DEFAULT,PREVIOUS_ORDER,PRIORITY_ORDER,MIME,SHELL_ACTIONS,WIDGET_SWITCHES
-        def without_shell(order):
-            return [key for key in order if key not in SHELL_ACTIONS and key not in WIDGET_SWITCHES]
+        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_DEFAULT,PREVIOUS_ORDER,PRIORITY_ORDER,MIME,SHELL_ACTIONS,SYSTEM_ACTIONS,WIDGET_SWITCHES
+        def without_system(order):
+            return [key for key in order if key not in SYSTEM_ACTIONS and key not in WIDGET_SWITCHES]
         assert [key for key in DEFAULT_ORDER if key not in WIDGET_SWITCHES][:len(PRIORITY_ORDER)]==PRIORITY_ORDER
         assert normalize_order(PREVIOUS_ORDER)==normalize_order(PREVIOUS_DEFAULT)==DEFAULT_ORDER
         reversed_order=list(reversed(PREVIOUS_DEFAULT))
-        assert normalize_order(reversed_order)==reversed_order+list(WIDGET_SWITCHES)
-        assert without_shell(normalize_order(['clock','clock','not-an-action']))==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
+        with_cursor=list(reversed_order)
+        with_cursor.insert(with_cursor.index('shell_notifications')+1,'cursor_styles')
+        assert normalize_order(reversed_order)==with_cursor+list(WIDGET_SWITCHES)
+        assert without_system(normalize_order(['clock','clock','not-an-action']))==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
         assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
         assert normalize_order([key for key in DEFAULT_ORDER if key not in SHELL_ACTIONS])==DEFAULT_ORDER
         previous=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
         assert normalize_order(previous+['lite'])==DEFAULT_ORDER
         custom_order=list(reversed(previous))
         migrated_order=normalize_order(['lite']+custom_order)
-        assert without_shell(migrated_order)==custom_order+list(PRODUCTIVITY_ACTIONS)
+        assert without_system(migrated_order)==custom_order+list(PRODUCTIVITY_ACTIONS)
         index=migrated_order.index('taskbar_text')+1
         assert tuple(migrated_order[index:index+2])==SHELL_ACTIONS
         legacy=[key for key in previous if key!='taskbar_text']
@@ -227,9 +229,9 @@ def run(api,runtime,root,output,checks):
         assert normalize_order(legacy)==normalize_order(legacy[:-1])==DEFAULT_ORDER
         custom=list(reversed(legacy));upgraded=normalize_order(custom)
         assert upgraded[upgraded.index('taskbar')+1]=='taskbar_text'
-        assert [key for key in without_shell(upgraded) if key!='taskbar_text' and key not in PRODUCTIVITY_ACTIONS]==custom
+        assert [key for key in without_system(upgraded) if key!='taskbar_text' and key not in PRODUCTIVITY_ACTIONS]==custom
         rearranged=['taskbar_text']+custom
-        assert without_shell(normalize_order(rearranged))==rearranged+list(PRODUCTIVITY_ACTIONS)
+        assert without_system(normalize_order(rearranged))==rearranged+list(PRODUCTIVITY_ACTIONS)
         arranged_new=['shell_notifications','references']+[key for key in DEFAULT_ORDER if key not in ('shell_notifications','references')]
         assert normalize_order(arranged_new)==arranged_new
         popup.toggle_edit();assert popup.editing

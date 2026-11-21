@@ -3,7 +3,7 @@ from functools import lru_cache
 from math import ceil, floor, isfinite
 from pathlib import Path
 import sys
-from time import monotonic
+from time import perf_counter
 
 from PyQt5.QtCore import QObject, QRect, QTimer, Qt
 from PyQt5.QtGui import QCursor, QIcon, QImage, QPixmap
@@ -14,14 +14,13 @@ from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS,
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets' / 'runner'
 FRAMES = 8
-IDLE_FPS = 12
 
 
 def frame_rate(speed, percent):
     if speed in RUNNER_FIXED_RATES:
         return RUNNER_FIXED_RATES[speed][1]
-    load = max(0, min(100, percent or 0)) / 100
-    return IDLE_FPS + (RUNNER_FIXED_RATES['fixed_high'][1] - IDLE_FPS) * load
+    load = max(0, min(100, percent)) if isinstance(percent, (int, float)) and isfinite(percent) else 0
+    return RUNNER_FIXED_RATES['fixed_high'][1] * (load / 100)
 
 
 def capsule_rect(window):
@@ -66,10 +65,12 @@ class RunningAnimal(QObject):
         self.animal = None
         self.speed = None
         self.metric = None
+        self.device = ''
         self.readout = ''
         self.frame = 0
         self.fps = 0
         self.next_frame = 0.0
+        self.frame_remaining = 1.0
         self.tray = QSystemTrayIcon(self) if target == 'tray' else None
         if self.tray is not None:
             self.tray.setContextMenu(service.runtime.tray.contextMenu())
@@ -79,12 +80,12 @@ class RunningAnimal(QObject):
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.advance)
 
-    def configure(self, animal, speed, metric):
-        if (animal, speed, metric) == (self.animal, self.speed, self.metric):
+    def configure(self, animal, speed, metric, device=''):
+        if (animal, speed, metric, device) == (self.animal, self.speed, self.metric, self.device):
             return
         if self.animal != animal:
             self.frame = 0
-        self.animal, self.speed, self.metric = animal, speed, metric
+        self.animal, self.speed, self.metric, self.device = animal, speed, metric, device
         self.update_reading()
         if self.tray is not None:
             self.tray.setIcon(tray_frame(self.animal, self.frame))
@@ -93,20 +94,28 @@ class RunningAnimal(QObject):
             self.service.window.update(capsule_rect(self.service.window))
 
     def update_reading(self):
-        value = self.service.latest.get(self.metric)
+        value = self.service.runner_reading(self.metric, self.device)
         if self.metric == 'memory' and isinstance(value, (list, tuple)) and value:
             value = value[0]
         percent = max(0, min(100, value)) if isinstance(value, (int, float)) and isfinite(value) else None
         fps = frame_rate(self.speed, percent)
         if self.fps != fps:
-            now = monotonic()
+            now = perf_counter()
             # Preserve the current frame's progress when the sensor reading changes.
-            remaining = min(1., max(0., (self.next_frame - now) * self.fps)) if self.fps else 1.
+            if self.fps:
+                self.frame_remaining = (min(1., max(0., (self.next_frame - now) * self.fps))
+                                        if isfinite(self.next_frame) else 1.)
             self.fps = fps
-            self.next_frame = now + remaining / fps
-            self.schedule_frame(now)
+            if fps:
+                self.next_frame = now + self.frame_remaining / fps
+                self.schedule_frame(now)
+            else:
+                self.timer.stop()
         label = '—' if percent is None else f'{percent:.0f}%'
         text = f'{RUNNER_ANIMALS[self.animal]} {RUNNER_METRICS[self.metric]} {label}'
+        if self.device:
+            name = self.service.hardware_name(self.metric, self.device)
+            text += f' · {name}'
         if text != self.readout:
             self.readout = text
             if self.tray is not None:
@@ -128,10 +137,15 @@ class RunningAnimal(QObject):
             self.show_reading(QCursor.pos())
 
     def schedule_frame(self, now):
-        self.timer.start(max(1, ceil((self.next_frame - now) * 1000)))
+        self.timer.start(max(1, ceil(min(2_147_483_647, (self.next_frame - now) * 1000))))
 
     def advance(self):
-        now = monotonic()
+        if not self.fps:
+            return
+        now = perf_counter()
+        if now < self.next_frame:
+            self.schedule_frame(now)
+            return
         # Keep fractional deadlines. After a delayed event, paint only the current frame.
         steps = max(1, 1 + floor((now - self.next_frame) * self.fps))
         self.next_frame += steps / self.fps

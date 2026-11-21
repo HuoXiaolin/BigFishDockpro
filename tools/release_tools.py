@@ -78,6 +78,22 @@ def deliver(source_dir, release_dir, skip_tests=False):
             if not result_path.is_relative_to((ROOT/'artifacts').resolve()):raise RuntimeError('Validation path is outside project artifacts.')
             if hashlib.sha256(result_path.read_bytes()).hexdigest()!=item['sha256']:raise RuntimeError('Validation result changed after this build.')
             if not json.loads(result_path.read_text(encoding='utf-8-sig')).get('passed'):raise RuntimeError('Current build validation failed.')
+    source_files = list(SOURCE_FILES)
+    if receipt.get('local_cursor_styles'):
+        # Keep the source mirror reproducible without adding local themes to its Git tree.
+        cursor_root = ROOT / 'artifacts/local-cursor-styles'
+        proof = next((item for item in current_results or [] if item['kind'] == 'local-cursor-payload'), None)
+        proof_path = cursor_root / 'result.json'
+        if (proof is None or (ROOT / proof['path']).resolve() != proof_path.resolve() or
+                file_digest(proof_path) != proof['sha256']):
+            raise RuntimeError('Local cursor styles require the current payload verification result.')
+        files = json.loads(proof_path.read_text(encoding='utf-8'))['local_files']
+        for name, expected in files.items():
+            path = cursor_root / name
+            if (path.parent != cursor_root or ':' in name or
+                    (name != 'index.json' and not name.endswith('.tar.xz')) or file_digest(path) != expected):
+                raise RuntimeError('Local cursor payload changed after verification.')
+            source_files.append(path.relative_to(ROOT).as_posix())
     if not skip_tests and current_results is None and not (ROOT/'artifacts/bundle-test/result.json').exists():
         raise RuntimeError('A verified installer is required before delivery.')
     if not skip_tests and current_results is None and not json.loads((ROOT/'artifacts/bundle-test/result.json').read_text(encoding='utf-8'))['passed']:
@@ -96,7 +112,7 @@ def deliver(source_dir, release_dir, skip_tests=False):
         packages.append((single, single_digest))
     offline = ROOT/'release'/DOTNET_PORTABLE
     offline_hash = None
-    if receipt.get('singlefile_sha256'):
+    if receipt.get('dotnet_portable_sha256'):
         offline_hash = file_digest(offline)
         if offline_hash != receipt.get('dotnet_portable_sha256'):
             raise RuntimeError('Self-contained .NET executable does not match the current build.')
@@ -122,20 +138,20 @@ def deliver(source_dir, release_dir, skip_tests=False):
     manifest = [expected+'  '+package.name for package, expected in packages]
     shutil.copy2(ROOT/'artifacts/generated/version.json', ROOT/'version.json')
     source.mkdir(parents=True, exist_ok=True)
-    for name in SOURCE_FILES:
+    for name in source_files:
         destination=source/name;destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(ROOT/name,destination)
     # Retire only explicitly listed, obsolete source files.
     layout=json.loads((ROOT/'tools/source_layout.json').read_text(encoding='utf-8'))
     for name in layout['legacy_flat_files'] + layout.get('retired_source_files', []):
         path=source/name
-        if name not in SOURCE_FILES and path.resolve().is_relative_to(source) and path.is_file():path.unlink()
+        if name not in source_files and path.resolve().is_relative_to(source) and path.is_file():path.unlink()
     source_hashes = []
     for path in sorted(source.rglob('*')):
         relative = path.relative_to(source)
         if '.git' in relative.parts or not path.is_file() or path.name == 'SOURCE_SHA256SUMS.txt':
             continue
-        if relative.as_posix() not in SOURCE_FILES:
+        if relative.as_posix() not in source_files:
             continue
         source_hashes.append(hashlib.sha256(path.read_bytes()).hexdigest()+'  '+relative.as_posix())
     (source/'SOURCE_SHA256SUMS.txt').write_text('\n'.join(source_hashes)+'\n', encoding='utf-8')

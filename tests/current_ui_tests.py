@@ -463,6 +463,8 @@ def run(output):
         check_flash_capsule(api,runtime,root.name,app,output,checks)
         from settings_interaction_tests import run as check_settings_interaction
         check_settings_interaction(api,runtime,root.name,app,output,checks)
+        from cursor_styles_tests import run as check_cursor_styles
+        check_cursor_styles(api,runtime,app,output,checks)
         from window_layer_tests import run as run_window_layers, bluetooth_rings
         run_window_layers(api,runtime,app,output,checks)
         bluetooth_rings(checks)

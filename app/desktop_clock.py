@@ -256,12 +256,13 @@ class DesktopClock(QWidget):
         if self.flipped:
             from calendar_almanac import almanac
             model=almanac(datetime.date.today())
-            if model and model.festival and model.term_today:
-                prefer=getattr(self,'_term_for_day',None)==model.day
+            if model and len(model.events)>1:
+                day, choice = getattr(self, '_art_for_day', (None,0))
+                next_art = choice+1 if day==model.day else 1
                 def switch_art():
-                    self._term_for_day=None if prefer else model.day
+                    self._art_for_day=(model.day, next_art)
                     self.update()
-                menu.addAction('查看'+(model.festival if prefer else model.term)+'彩绘').triggered.connect(switch_art)
+                menu.addAction('查看'+model.card(next_art).name+'彩绘').triggered.connect(switch_art)
         styles=menu.addMenu('时钟样式')
         for title,style in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.option('style')==style)
@@ -330,8 +331,9 @@ class DesktopClock(QWidget):
         if getattr(self,'flip_progress',None) is not None:
             face=self._flip_to if self.flip_progress>=.5 else self._flip_from
             painter.translate(self.width()/2,0);painter.scale(max(.015,abs(math.cos(math.pi*self.flip_progress))),1);painter.translate(-self.width()/2,0)
+        day, choice = getattr(self, '_art_for_day', (None,0))
         self.paint_face(painter,'almanac' if face else self.option('style'),_header_controls=self.kind=='clock',
-                        _almanac_controls='clock',_almanac_prefer_term=getattr(self,'_term_for_day',None)==datetime.date.today())
+                        _almanac_controls='clock',_almanac_art=choice if face and day==datetime.date.today() else 0)
 
     def paint_resize_targets(self,painter):
         if self.can_drag():paint_edge_targets(painter,self.rect())

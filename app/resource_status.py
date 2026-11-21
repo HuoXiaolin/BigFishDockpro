@@ -99,4 +99,4 @@ def metric_ink(service,key,light,fallback):
 
 
 def default_limit(key):
-    return 100 if key in ('cpu','gpu','memory','gpu_memory') or key.endswith('_temp') else 0
+    return 100 if key in ('cpu','gpu','memory','gpu_memory','disk_activity') or key.endswith('_temp') else 0

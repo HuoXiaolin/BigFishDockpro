@@ -1,4 +1,4 @@
-"""Deliver real Windows session messages to both packaged portable launchers in isolation."""
+"""Deliver real Windows session messages to packaged portable launchers in isolation."""
 import ctypes
 from ctypes import wintypes as W
 import json
@@ -194,7 +194,11 @@ def main(output):
         desktop = assert_isolated()
         win = Windows(desktop)
         run = output / uuid4().hex
-        for name, bundled in [('BigFishDockpro.exe', False), ('BigFishDockpro-Portable-dotNET-x64.exe', True)]:
+        packages = [('BigFishDockpro.exe', False)]
+        if os.environ.get('FISHDOCK_BUNDLE_DOTNET') == '1':
+            from portable_dotnet import BASENAME
+            packages.append((BASENAME, True))
+        for name, bundled in packages:
             checks.append(verify(win, ROOT / 'release' / name, run / Path(name).stem, bundled))
         result = {'passed': True, 'scope': 'packaged-window-session-messages', 'checks': checks}
     except Exception:

@@ -1,5 +1,6 @@
 # Build a directory bundle, then let the installer compress it once with LZMA2.
 from pathlib import Path
+import json
 import os
 import ssl
 import sys
@@ -15,6 +16,13 @@ pawnio_setup = pawnio_dir / 'PawnIO_setup.exe'
 # directory. Keep that file beside the frozen module as well.
 tls_policy = Path(ssl.__file__).with_name('codex-rejected-cas.pem')
 tls_data = [(str(tls_policy), '.')] if tls_policy.is_file() else []
+cursor_data = []
+if os.environ.get('FISHDOCK_LOCAL_CURSOR_STYLES') == '1':
+    cursor_payload = root / 'artifacts/local-cursor-styles'
+    cursor_index = cursor_payload / 'index.json'
+    cursor_files = [filename for _, filename in json.loads(cursor_index.read_text(encoding='utf-8'))]
+    cursor_data = [(str(cursor_payload / name), 'assets/cursor-styles/local')
+                   for name in (cursor_index.name, *cursor_files)]
 taskbar_data = []
 if single_file:
     payload = root / 'artifacts/taskbar-payload'
@@ -28,12 +36,13 @@ a = Analysis([str(root / 'app/dock.py')], pathex=[str(root/name) for name in ('a
                         (str(root / 'docs/2.4G外设适配.md'), 'docs'),
                         (str(root / 'docs/系统面板外观.md'), 'docs'),
                         (str(root / 'assets/ai-providers'), 'assets/ai-providers'),
+                        (str(root / 'assets/cursor-styles/*.tar.xz'), 'assets/cursor-styles'),
                         (str(root / 'assets/almanac'), 'assets/almanac'),
                         (str(root / 'assets/runner/*.png'), 'assets/runner'),
                         (str(root / 'assets/reminder-sounds'), 'assets/reminder-sounds'),
                         (str(root / 'artifacts/deck-bridge/BigFishDeckBridge.exe'), 'deck-bridge'),
                         (str(root / 'artifacts/generated/version.json'), '.'),
-                        (str(root / 'assets/default_settings.json'), 'assets')] + tls_data + taskbar_data,
+                        (str(root / 'assets/default_settings.json'), 'assets')] + tls_data + taskbar_data + cursor_data,
     hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
     excludes=['PyQt5.QtNetwork', 'PyQt5.QtQml', 'PyQt5.QtQuick', 'PyQt5.QtWebEngine',
               'PyQt5.QtWebEngineCore', 'PyQt5.QtWebEngineWidgets', 'PyQt5.QtSql',
@@ -77,10 +86,10 @@ class PortableEXE(EXE):
 exe_type = PortableEXE if single_file else EXE
 exe = exe_type(pyz, a.scripts, *( [a.binaries, a.datas] if single_file else [[]] ),
           exclude_binaries=not single_file, name='BigFishDockpro', **windows_options)
-if single_file:
+if single_file and os.environ.get('FISHDOCK_BUNDLE_DOTNET') == '1':
     sys.path.insert(0, str(root/'tools'))
     from portable_dotnet import BASENAME, runtime_entries
     bundled = PortableEXE(pyz, a.scripts, a.binaries, a.datas, runtime_entries(),
                   name=Path(BASENAME).stem, **windows_options)
-else:
+if not single_file:
     coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='BigFishDockpro')

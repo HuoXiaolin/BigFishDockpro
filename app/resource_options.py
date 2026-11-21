@@ -14,8 +14,25 @@ LEGACY_RUNNER_SPEEDS = {
 RUNNER_METRICS = {'cpu': 'CPU', 'gpu': 'GPU', 'memory': '内存', 'disk_activity': '磁盘', 'network_utilization': '网络'}
 RUNNER_SLOT = 26
 
+DEVICE_SOURCES = {
+    'gpu': ('gpu', 'GPU', '自动 · 最忙 GPU'),
+    'disk_activity': ('disk', '磁盘', '自动 · 最忙磁盘'),
+    'network_utilization': ('net', '网卡', '自动 · 最忙网卡'),
+    'display': ('display', '显示器', '自动 · 内屏亮度优先 / 前台屏桌面帧率'),
+}
+MONITOR_DEVICES = {'gpu': 'resource_gpu_device', 'network': 'resource_network_device',
+                   'disk_activity': 'resource_disk_device', 'display': 'resource_display_device'}
+DEVICE_SAMPLE_KEYS = {'gpu': 'gpu_devices', 'disk_activity': 'disk_devices',
+                      'network_utilization': 'network_devices', 'network': 'network_devices'}
+
+
+def valid_device(value, metric):
+    source = DEVICE_SOURCES.get(metric)
+    return bool(isinstance(value, str) and source and re.fullmatch(source[0] + r':[0-9a-f]{32}', value))
+
+
 METRICS={'cpu':'CPU','memory':'内存','network':'网速','gpu':'GPU','rank':'高占用进程','bluetooth':'外设电量','system_status':'电脑状态','fps':'帧率 FPS','cpu_temp':'CPU 温度',
-         'gpu_temp':'GPU 温度','cpu_power':'CPU 功率','gpu_power':'GPU 功率','traffic':'流量统计'}
+         'gpu_temp':'GPU 温度','cpu_power':'CPU 功率','gpu_power':'GPU 功率','traffic':'流量统计','disk_activity':'磁盘活动'}
 METRICS.update(cpu_frequency='CPU 频率',cpu_voltage='CPU 电压',cpu_fan='CPU 风扇',cpu_pump='CPU 水泵',
                gpu_frequency='GPU 频率',gpu_fan='GPU 风扇',gpu_memory='显存占用',disk_temp='磁盘温度',
                board_temp='主板温度',case_temp='机箱温度',board_fan='主板风扇')
@@ -24,7 +41,7 @@ SENSOR_UNITS={key:unit for unit,keys in [('°C',('cpu_temp','gpu_temp','disk_tem
                                       ('MHz',('cpu_frequency','gpu_frequency')),('V',('cpu_voltage',)),('RPM',(*FAN_METRICS,'cpu_pump')),('%',('gpu_memory',))] for key in keys}
 TASK_METRICS=('cpu_temp','gpu_temp','memory','network','cpu_power','gpu_power','fps','cpu','gpu','traffic')
 TASK_DEFAULT=list(TASK_METRICS[:7])
-TASK_METRICS+=tuple(k for k in SENSOR_UNITS if k not in TASK_METRICS)
+TASK_METRICS+=tuple(k for k in SENSOR_UNITS if k not in TASK_METRICS)+('disk_activity',)
 TASK_COLUMN_NAMES = {
     'cpu_temp': 'CPU 温度 / 功耗', 'gpu_temp': 'GPU 温度 / 功耗',
     'memory': '内存 / 帧率', 'network': '上下行网速',
@@ -93,6 +110,7 @@ DEFAULTS.update(resource_agenda=True,resource_agenda_events=[],resource_alert_ag
                 resource_alert_water=True,resource_alert_battery=False,resource_alert_almanac=True,resource_reminder_sound=True)
 DEFAULTS.update(resource_runner_enabled=False, resource_runner_animal='cat', resource_runner_speed='adaptive', resource_runner_metric='cpu',
                 resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='adaptive', resource_tray_runner_metric='cpu')
+DEFAULTS.update(dict.fromkeys((*MONITOR_DEVICES.values(), 'resource_runner_device', 'resource_tray_runner_device'), ''))
 DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
@@ -263,9 +281,15 @@ def normalize(cfg,strict=False):
     for prefix in ('resource_runner_', 'resource_tray_runner_'):
         cfg.setdefault(prefix + 'animal', 'cat')
         cfg.setdefault(prefix + 'metric', 'cpu')
+        device = cfg.get(prefix + 'device', '')
+        metric = cfg[prefix + 'metric']
+        cfg[prefix + 'device'] = device if isinstance(metric, str) and valid_device(device, metric) else ''
         speed = cfg.setdefault(prefix + 'speed', 'adaptive')
         if isinstance(speed, str):
             cfg[prefix + 'speed'] = LEGACY_RUNNER_SPEEDS.get(speed, speed)
+    for metric, key in MONITOR_DEVICES.items():
+        device = cfg.get(key, '')
+        cfg[key] = device if valid_device(device, 'network_utilization' if metric == 'network' else metric) else ''
     options={'resource_background':('global','app','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),

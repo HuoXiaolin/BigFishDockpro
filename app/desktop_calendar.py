@@ -9,7 +9,7 @@ from ui_style import button,AlignedMenu
 class DesktopCalendar(DesktopClock):
     def __init__(self,runtime):
         now=datetime.date.today();self.view_year=now.year;self.view_month=now.month;self.follow_today=True
-        self.view_day=now;self.prefer_term=False
+        self.view_day=now;self.art_choice=0
         super().__init__(runtime,'calendar')
         self.previous=button('‹',lambda:self.navigate(-1));self.previous.setParent(self)
         self.today=button('今天',self.go_today);self.today.setParent(self)
@@ -37,8 +37,8 @@ class DesktopCalendar(DesktopClock):
             from calendar_almanac import almanac,FIRST_DAY,LAST_DAY
             model=almanac(self.view_day)
             self.previous.setEnabled(self.view_day>FIRST_DAY);self.next.setEnabled(self.view_day<LAST_DAY)
-            if model and model.festival and model.term_today:
-                self.other_art.setText('看'+(model.festival if self.prefer_term else model.term)+' ›')
+            if model and len(model.events)>1:
+                self.other_art.setText('看'+model.card(self.art_choice+1).name+' ›')
                 self.other_art.adjustSize();self.other_art.move(self.width()-self.other_art.width()-12,self.height()-64)
                 self.other_art.show();return
         else:
@@ -46,7 +46,7 @@ class DesktopCalendar(DesktopClock):
         self.other_art.hide()
 
     def switch_art(self):
-        self.prefer_term=not self.prefer_term
+        self.art_choice+=1
         self.place_controls();self.update()
 
     def navigate(self,direction):
@@ -55,7 +55,7 @@ class DesktopCalendar(DesktopClock):
         day=self.view_day+datetime.timedelta(days=direction)
         if not FIRST_DAY<=day<=LAST_DAY:return False
         self.view_day=day;self.view_year,self.view_month=day.year,day.month
-        self.follow_today=False;self.prefer_term=False;self.place_controls();self.update();return True
+        self.follow_today=False;self.art_choice=0;self.place_controls();self.update();return True
 
     def sync(self):
         if self.option('style')=='almanac':
@@ -67,18 +67,18 @@ class DesktopCalendar(DesktopClock):
         index=self.view_year*12+self.view_month-1+direction;year,month=divmod(index,12)
         if not 1<=year<=9999:return False
         self.view_year,self.view_month=year,month+1;self.view_day=datetime.date(year,month+1,1)
-        self.follow_today=False;self.prefer_term=False;self.update();return True
+        self.follow_today=False;self.art_choice=0;self.update();return True
 
     def go_today(self):
         now=datetime.date.today();self.view_day=now;self.view_year,self.view_month=now.year,now.month
-        self.follow_today=True;self.prefer_term=False;self.place_controls();self.update()
+        self.follow_today=True;self.art_choice=0;self.place_controls();self.update()
 
     def update_time(self):
         if not self.isVisible() or self.closed:return
         now=datetime.datetime.now()
         if self.follow_today and self.view_day!=now.date():
             self.view_day=now.date();self.view_year,self.view_month=now.year,now.month
-            self.prefer_term=False;self.place_controls()
+            self.art_choice=0;self.place_controls()
         if self.option('style')=='almanac':
             from calendar_almanac import until_rotation
             self.update();self.tick.start(until_rotation(now));return
@@ -90,7 +90,7 @@ class DesktopCalendar(DesktopClock):
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         self.paint_resize_targets(painter)
         if self.option('style')=='almanac':
-            self.paint_face(painter,'almanac',_almanac_date=self.view_day,_almanac_prefer_term=self.prefer_term,_almanac_controls='calendar')
+            self.paint_face(painter,'almanac',_almanac_date=self.view_day,_almanac_art=self.art_choice,_almanac_controls='calendar')
             return
         self.paint_face(painter,'calendar_card',_calendar_year=self.view_year,_calendar_month=self.view_month,
                         _calendar_events=self.runtime.resources.calendar_entries(),

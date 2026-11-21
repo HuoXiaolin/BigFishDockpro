@@ -13,6 +13,14 @@ class RuntimeController:
         from face_roles import RoleLibrary
         return RoleLibrary(self.api.CONFIG_DIR)
 
+    @cached_property
+    def cursor_styles(self):
+        import os
+        from cursor_styles import CursorStyles
+        from cursor_windows import CursorSystem
+        system = CursorSystem(enabled=not (self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP')))
+        return CursorStyles(self.api.CONFIG_DIR, system)
+
     def refresh_face_roles(self, role_id):
         if self.resources.window is not None and self.dock.cfg['resource_face_role']==role_id:
             self.resources.window.update()
