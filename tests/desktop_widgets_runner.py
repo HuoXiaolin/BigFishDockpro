@@ -154,7 +154,7 @@ def run(output,checks):
             assert manager.save([])
             checks.append('Native cards import Explorer paths and escaped JSON without altering text line breaks, preserve values on invalid input, and support local/HTTPS bindings and native tools.')
 
-            from feature_config import SPECTRUM_STYLES
+            from feature_config import SPECTRUM_FIXED_PALETTES, SPECTRUM_STYLES
             from ui_test_events import Events
             assert runtime.set_spectrum_options(spectrum_enabled=True,theme_color='#54b2de')
             assert cfg['spectrum_color_mode']=='colorful'
@@ -167,7 +167,8 @@ def run(output,checks):
             assert len(spectrum.levels)==120
             collage=QImage(680,390,QImage.Format_RGB32);collage.fill(QColor('#142636'))
             painter=QPainter(collage)
-            for i,(title,style) in enumerate(SPECTRUM_STYLES):
+            legacy_styles=[item for item in SPECTRUM_STYLES if item[1] not in SPECTRUM_FIXED_PALETTES]
+            for i,(title,style) in enumerate(legacy_styles):
                 assert runtime.set_spectrum_options(spectrum_style=style)
                 pump()
                 screen=QApplication.screenAt(spectrum.geometry().center()) or QApplication.primaryScreen()

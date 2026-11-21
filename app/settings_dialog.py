@@ -13,6 +13,7 @@ from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
+from feature_config import SPECTRUM_FIXED_PALETTES
 from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, CURSORS, DATA, PAGE_GROUPS,
                               PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
                               WIDGETS, START_MENU, NOTIFICATIONS, field_catalog)
@@ -313,7 +314,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             self.sync_tray_runner_fields(changes.get('resource_tray_runner_device'))
         if 'watermark_mode' in changes and 'watermark_mode' in self.fields:
             self.sync_watermark_fields()
-        if any(key.endswith('_appearance_source') for key in changes):
+        if 'spectrum_style' in changes or any(key.endswith('_appearance_source') for key in changes):
             self.sync_appearance_sources()
         from settings_design import NumericControl
         for control in self.findChildren(NumericControl):
@@ -342,6 +343,11 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
             if source not in self.fields:
                 continue
             custom = self.fields[source].currentData() == 'custom'
+            if source == 'spectrum_appearance_source':
+                fixed_palette = self.fields['spectrum_style'].currentData() in SPECTRUM_FIXED_PALETTES
+                self.fields[source].setEnabled(not fixed_palette)
+                self.fields[source].setToolTip('当前样式使用彩色频谱' if fixed_palette else '')
+                custom = custom and not fixed_palette
             for key in keys:
                 field = self.fields.get(key)
                 if field is not None:
@@ -590,8 +596,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
         self.add_field(panel, 'note_appearance_source')
         self.add_field(panel, 'note_style')
-        for source in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source'):
-            self.fields[source].currentIndexChanged.connect(self.sync_appearance_sources)
+        for key in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source', 'spectrum_style'):
+            self.fields[key].currentIndexChanged.connect(self.sync_appearance_sources)
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
         self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
 

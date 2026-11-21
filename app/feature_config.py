@@ -3,8 +3,13 @@ import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
 
+_SPECTRUM_COLOR_EFFECTS = (
+    ('立体彩环', 'crown'), ('渐变彩柱', 'peak_bars'), ('彩色粒子球', 'particle_sphere'),
+)
+SPECTRUM_FIXED_PALETTES = frozenset(style for _, style in _SPECTRUM_COLOR_EFFECTS)
 SPECTRUM_STYLES = (
     ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
+    *_SPECTRUM_COLOR_EFFECTS,
 )
 RING_HEIGHT_MAX = 140
 STARTUP_ANIMATION_STYLES = (('流动描边', 'outline'), ('滚动文字', 'rolling'))

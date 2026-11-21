@@ -1,7 +1,8 @@
 """Independent desktop month calendar with event-driven navigation and daily ticks."""
 import datetime
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPainter,QIcon
+from PyQt5.QtGui import QPainter,QIcon,QFontMetrics
+from calendar_almanac_face import almanac_padding, calendar_controls
 from desktop_clock import DesktopClock
 from ui_style import button,AlignedMenu
 
@@ -28,10 +29,11 @@ class DesktopCalendar(DesktopClock):
             style='QPushButton {background:transparent;border:0;border-radius:6px;padding:0;color:'+ink+';font-size:13px;font-weight:600;} QPushButton:hover {background:rgba(110,150,180,35);}'
             for control in (*self.controls,self.other_art):control.setStyleSheet(style)
             self._controls_key=key
-        x=self.width()-119
-        for control,width in zip(self.controls,(23,38,23,23)):
-            control.show();control.setFixedSize(width,24);control.move(x,11);x+=width+2
         seasonal=self.option('style')=='almanac'
+        widths=calendar_controls(self.width()-2) if seasonal else (23,38,23,23)
+        x=self.width()-sum(widths)-12
+        for control,width in zip(self.controls,widths):
+            control.show();control.setFixedSize(width,24);control.move(x,11);x+=width+2
         self.previous.setToolTip('前一天' if seasonal else '上个月');self.next.setToolTip('后一天' if seasonal else '下个月')
         if seasonal:
             from calendar_almanac import almanac,FIRST_DAY,LAST_DAY
@@ -39,7 +41,10 @@ class DesktopCalendar(DesktopClock):
             self.previous.setEnabled(self.view_day>FIRST_DAY);self.next.setEnabled(self.view_day<LAST_DAY)
             if model and len(model.events)>1:
                 self.other_art.setText('看'+model.card(self.art_choice+1).name+' ›')
-                self.other_art.adjustSize();self.other_art.move(self.width()-self.other_art.width()-12,self.height()-64)
+                pad=round(almanac_padding(self.width()-2,self.height()-2))+1
+                width=QFontMetrics(self.other_art.font()).horizontalAdvance(self.other_art.text())+10
+                self.other_art.setFixedSize(width,22)
+                self.other_art.move(self.width()-pad-width,self.height()-pad-22)
                 self.other_art.show();return
         else:
             self.previous.setEnabled(True);self.next.setEnabled(True)
@@ -90,7 +95,9 @@ class DesktopCalendar(DesktopClock):
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         self.paint_resize_targets(painter)
         if self.option('style')=='almanac':
-            self.paint_face(painter,'almanac',_almanac_date=self.view_day,_almanac_art=self.art_choice,_almanac_controls='calendar')
+            switch_width=0 if self.other_art.isHidden() else self.other_art.width()+6
+            self.paint_face(painter,'almanac',_almanac_date=self.view_day,_almanac_art=self.art_choice,
+                            _almanac_controls='calendar',_almanac_switch_width=switch_width)
             return
         self.paint_face(painter,'calendar_card',_calendar_year=self.view_year,_calendar_month=self.view_month,
                         _calendar_events=self.runtime.resources.calendar_entries(),

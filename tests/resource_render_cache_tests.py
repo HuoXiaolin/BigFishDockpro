@@ -44,6 +44,111 @@ def check_mirror_damage(runtime):
             spectrum.deleteLater()
 
 
+def check_colorful_spectrum(runtime):
+    from math import sin, tau
+    from PyQt5.QtWidgets import QMenu
+    from desktop_spectrum import (BANDS, SPECTRUM_DEFAULT_SIZES, DesktopSpectrum,
+                                  add_menu_actions, draw_spectrum)
+    from feature_config import SPECTRUM_FIXED_PALETTES, normalize
+
+    def frame(style, size, levels, peaks=None, dpr=1, **options):
+        width, height = size
+        image = QImage(width*dpr, height*dpr, QImage.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(dpr)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            draw_spectrum(painter, QRectF(0, 0, width, height), levels, style, QColor('white'), False, peaks, **options)
+        finally:
+            painter.end()
+        return image
+
+    active = [.21 + .73 * abs(sin(i * .14) * cos_level) for i, cos_level in
+              enumerate(sin(i * .41 + .53) for i in range(BANDS))]
+    with patch.dict(runtime.dock.cfg, spectrum_style='peak_bars', spectrum_color_mode='mono'):
+        for style in SPECTRUM_FIXED_PALETTES:
+            runtime.dock.cfg['spectrum_style'] = style
+            assert normalize(runtime.dock.cfg)['spectrum_style'] == style
+            menu = QMenu()
+            add_menu_actions(menu, runtime)
+            styles = next(action.menu() for action in menu.actions() if action.text() == '频谱样式')
+            assert len(styles.actions()) == 8 and sum(action.isChecked() for action in styles.actions()) == 1
+            assert not next(action for action in menu.actions() if action.text() == '频谱配色').isEnabled()
+            for size in ((96,40), SPECTRUM_DEFAULT_SIZES[style]):
+                quiet, loud = (frame(style, size, levels) for levels in ([0.] * BANDS, active))
+                assert quiet != loud and not loud.pixelColor(0, 0).alpha(), (style, size)
+            width, height = SPECTRUM_DEFAULT_SIZES[style]
+            pixels = (loud.pixelColor(x, y) for x in range(0, width, 2) for y in range(0, height, 2))
+            assert any(c.alpha() > 140 and c.saturation() > 75 for c in pixels), style
+            if style == 'particle_sphere':
+                assert quiet.copy(0, 0, width, 22) == loud.copy(0, 0, width, 22)
+                turned = frame(style, (width, height), active, sphere_angle=.91)
+                assert loud != turned and loud.copy(0, 0, width, 22) == turned.copy(0, 0, width, 22)
+
+        width, height = SPECTRUM_DEFAULT_SIZES['crown']
+        crown = frame('crown', (width, height), [.12] * BANDS)
+        scan = [crown.pixelColor(x, round(height*.78)).alpha() for x in range(width//5, width*4//5)]
+        assert sum(alpha >= 85 for alpha in scan) > .70 * len(scan)
+        assert 85 < crown.pixelColor(width//2, round(height*.78)).alpha() < 235
+        assert frame('crown', (width, height), [.12] * BANDS, crown_angle=.56) != crown
+        assert frame('crown', (width, height), [.12] * BANDS, crown_angle=tau) == crown
+        loud_crown = frame('crown', (width, height), [1.] * BANDS)
+        # The strongest bands reach well above the quiet crown without moving its foot.
+        upper = QRectF(width*.34, height*.205, width*.32, height*.035).toAlignedRect()
+        assert all(crown.pixelColor(x, y).alpha() < 85
+                   for x in range(upper.left(), upper.right()+1) for y in range(upper.top(), upper.bottom()+1))
+        assert any(loud_crown.pixelColor(x, y).alpha() > 130
+                   for x in range(upper.left(), upper.right()+1) for y in range(upper.top(), upper.bottom()+1))
+
+        width, height = SPECTRUM_DEFAULT_SIZES['peak_bars']
+        peaks = [0.] * BANDS
+        band = 31
+        peaks[band] = .78
+        cap = frame('peak_bars', (width, height), [0.] * BANDS, peaks, dpr=2)
+        center = round(2 * (9 + (width-18)*(band+.5)/BANDS))
+        pixels = [(x, y) for x in range(center-12, center+13) for y in range(0, height)
+                  if cap.pixelColor(x, y).alpha() > 146]
+        assert pixels
+        columns, rows = zip(*pixels)
+        assert max(columns)-min(columns)+1 >= 3*(max(rows)-min(rows)+1)
+
+        runtime.dock.cfg['spectrum_style'] = 'peak_bars'
+        widget = DesktopSpectrum(runtime)
+        try:
+            with patch('desktop_spectrum.monotonic', side_effect=(1., 100., 100.5, 100.55, 100.65, 103.)):
+                widget.set_levels([.8] * BANDS)
+                widget.set_levels([.2] * BANDS)
+                assert widget.animation_timer.isActive() and widget.peaks[0] == .8
+                widget.advance_bar_peaks()
+                assert .56 < widget.peaks[0] < .59
+                widget.set_levels([.96] * BANDS)
+                assert not widget.animation_timer.isActive() and widget.peaks[0] == .96
+                widget.set_levels([0.] * BANDS)
+                widget.advance_bar_peaks()
+                assert not widget.animation_timer.isActive() and not any(widget.peaks)
+
+            runtime.dock.cfg['spectrum_style'] = 'particle_sphere'
+            with patch('desktop_spectrum.monotonic', side_effect=(1. + i*.1 for i in range(25))):
+                widget.set_levels([.17] * BANDS)
+                assert widget.animation_timer.isActive()
+                widget.advance_animation()
+                angle, strength = widget.sphere_angle, widget.sphere_strength
+                assert angle > 0 and strength > 0
+                widget.set_levels([.85] * BANDS)
+                widget.advance_animation()
+                assert widget.sphere_angle > angle and widget.sphere_strength > strength
+                widget.set_levels([])
+                for _ in range(15):
+                    if not widget.animation_timer.isActive():
+                        break
+                    widget.advance_animation()
+                assert not widget.sphere_strength and not widget.animation_timer.isActive()
+        finally:
+            widget.close()
+            widget.deleteLater()
+
+
 def run(api, runtime, app, output, checks):
     import resource_compact as compact
     from resource_options import DEFAULTS
@@ -54,6 +159,8 @@ def run(api, runtime, app, output, checks):
     reminders.start()
     try:
         check_mirror_damage(runtime)
+        check_colorful_spectrum(runtime)
+        checks.append('The translucent crown rotates with its columns and spans a larger audio-driven height range. Thin peak caps fall between bridge updates, and the particle sphere scales with audio inside its fixed outer ring.')
         cfg.update(copy.deepcopy(DEFAULTS))
         cfg.update(resource_enabled=True, resource_collapsed=True, resource_auto_hide=False,
                    resource_compact_auto_width=False, resource_compact_width=500,

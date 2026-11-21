@@ -1,23 +1,29 @@
 """A transparent desktop window that paints only the live spectrum."""
-from math import ceil, cos, hypot, pi, sin
+from math import ceil, cos, exp, hypot, pi, sin, tau
+from time import monotonic
 
-from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, Qt
+from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, QTimer, Qt
 from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import QApplication, QColorDialog, QWidget
 
-from feature_config import RING_HEIGHT_MAX, SPECTRUM_STYLES
+from feature_config import RING_HEIGHT_MAX, SPECTRUM_FIXED_PALETTES, SPECTRUM_STYLES
 from screen_layout import capture, project, screen_records
+from spectrum_effects import COLOR_EFFECTS, SPECTRUM_COLORS, sphere_power
 from window_edges import BOTTOM, LEFT, RIGHT, TOP, edges_at, paint_edge_targets, resize_cursor, resized_rect
 
 
 BANDS=120
 SILENCE = (0.0,) * BANDS
 MIN_WIDTH,MIN_HEIGHT=96,40
-SPECTRUM_COLORS=('#4cdddf','#639ffb','#aa83fd','#f38eba','#ffd086')
+SPECTRUM_DEFAULT_SIZES = {
+    'ring': (264, 264), 'crown': (440, 230), 'peak_bars': (576, 168), 'particle_sphere': (290, 290),
+}
 RING_PADDING=9
 GUIDE_RADIUS=.51
 BAND_INNER=.61
 RING_TRAVEL=.35
+BAR_PEAK_FALL_RATE = .45
+CROWN_ROTATION_SECONDS = 12
 
 
 def spectrum_area(rect, style):
@@ -74,6 +80,7 @@ def add_menu_actions(menu, runtime):
         action.setChecked(cfg['spectrum_color_mode']==value)
         action.triggered.connect(lambda _,key=value:runtime.set_spectrum_options(spectrum_color_mode=key))
     color.addAction('选择单色…',lambda:choose_mono_color(runtime))
+    color.setEnabled(cfg['spectrum_style'] not in SPECTRUM_FIXED_PALETTES)
     size=menu.addAction('恢复默认大小',lambda:runtime.set_spectrum_options(spectrum_manual_size=False))
     size.setEnabled(cfg['spectrum_manual_size'] and not cfg['spectrum_locked'])
     lock = menu.addAction('锁定位置')
@@ -96,6 +103,13 @@ class DesktopSpectrum(QWidget):
         self.runtime = runtime
         self.levels = SILENCE
         self.peaks = SILENCE
+        self.bar_peak_time = None
+        self.crown_started = None
+        self.sphere_time = None
+        self.sphere_angle = self.sphere_strength = 0.
+        self.animation_timer = QTimer(self)
+        self.animation_timer.setInterval(34)
+        self.animation_timer.timeout.connect(self.advance_animation)
         self.drag = None
         self.ring_height_preview = None
         self.placement = None
@@ -112,6 +126,16 @@ class DesktopSpectrum(QWidget):
     def sync(self):
         placement = (self.cfg['spectrum_style'], self.cfg['spectrum_layout'], self.cfg['card_scale'],self.cfg['spectrum_manual_size'])
         if placement != self.placement:
+            if self.placement is None or placement[0] != self.placement[0]:
+                self.animation_timer.stop()
+                self.bar_peak_time = None
+                self.crown_started = None
+                self.sphere_time = None
+                self.sphere_strength = 0.
+                if placement[0] == 'peak_bars':
+                    self.peaks = self.levels
+                elif placement[0] == 'particle_sphere':
+                    self.set_levels(self.levels)
             self.placement = placement
             self.drag = self.ring_height_preview = None
             self.reposition()
@@ -122,13 +146,16 @@ class DesktopSpectrum(QWidget):
         self.setCursor(Qt.ArrowCursor if self.cfg['spectrum_locked'] else Qt.SizeAllCursor)
         if not self.isVisible():
             self.show()
+        if placement[0] == 'crown' and self.crown_started is None and self.isVisible():
+            self.crown_started = monotonic()
+            self.animation_timer.start()
         self.update()
 
     def reposition(self):
         screens = screen_records()
         if not screens:
             return
-        width, height = (264, 264) if self.cfg['spectrum_style'] == 'ring' else (576, 152)
+        width, height = SPECTRUM_DEFAULT_SIZES.get(self.cfg['spectrum_style'], (576, 152))
         scale = self.cfg['card_scale'] / 70
         width, height = round(width * scale), round(height * scale)
         saved = self.cfg['spectrum_layout']
@@ -159,9 +186,28 @@ class DesktopSpectrum(QWidget):
         return bounds
 
     def set_levels(self, values):
-        levels=tuple(values[:BANDS]) or SILENCE
-        previous=self.peaks if len(self.peaks)==len(levels) else levels
+        samples=tuple(values[:BANDS])
+        levels=samples or SILENCE
         style=self.cfg['spectrum_style']
+        if style == 'peak_bars' and samples:
+            self.advance_bar_peaks(samples)
+            return
+        if style == 'particle_sphere':
+            self.levels = levels
+            if not self.animation_timer.isActive() and sphere_power(self.levels):
+                self.sphere_time = monotonic()
+                self.animation_timer.start()
+            return
+        if style == 'crown':
+            changed = levels != self.levels
+            self.levels = self.peaks = levels
+            if changed and not self.animation_timer.isActive():
+                self.update()
+            return
+        if self.animation_timer.isActive():
+            self.animation_timer.stop()
+        self.bar_peak_time = None
+        previous=self.peaks if len(self.peaks)==len(levels) else levels
         release=.14 if style=='ring' else .055
         peaks=tuple(max(level,peak-release) for level,peak in zip(levels,previous)) if any(levels) else levels
         if self.levels==levels and self.peaks==peaks:return
@@ -176,10 +222,60 @@ class DesktopSpectrum(QWidget):
         else:
             self.update()
 
+    def advance_bar_peaks(self, levels=None):
+        if levels is None:
+            levels = self.levels
+        now = monotonic()
+        # The bridge only sends changed samples. Continue falling between frames
+        # and stop the timer as soon as the peaks have caught up to the bars.
+        elapsed = now - self.bar_peak_time if self.bar_peak_time is not None and self.animation_timer.isActive() else 0
+        self.bar_peak_time = now
+        previous = self.peaks if len(self.peaks) == len(levels) else levels
+        peaks = tuple(max(level, peak - elapsed * BAR_PEAK_FALL_RATE) for level, peak in zip(levels, previous))
+        if (levels, peaks) != (self.levels, self.peaks):
+            self.levels, self.peaks = levels, peaks
+            self.update()
+        if peaks == levels:
+            self.animation_timer.stop()
+        elif not self.animation_timer.isActive():
+            self.animation_timer.start()
+
+    def advance_animation(self):
+        if self.cfg['spectrum_style'] == 'peak_bars':
+            self.advance_bar_peaks()
+        elif self.cfg['spectrum_style'] == 'particle_sphere':
+            self.advance_sphere()
+        elif self.crown_started is not None:
+            self.update()
+        else:
+            self.animation_timer.stop()
+
+    def advance_sphere(self):
+        now = monotonic()
+        elapsed = 0 if self.sphere_time is None else min(.12, now - self.sphere_time)
+        self.sphere_time = now
+        target = sphere_power(self.levels)
+        # A quick attack follows a beat, while the slower release lets the sphere settle.
+        smoothing = .07 if target > self.sphere_strength else .21
+        self.sphere_strength += (target - self.sphere_strength) * (1 - exp(-elapsed / smoothing))
+        speed = (.65 + 1.55 * self.sphere_strength) * min(1., self.sphere_strength / .16)
+        self.sphere_angle = (self.sphere_angle + elapsed * speed) % tau
+        if not target and self.sphere_strength < .005:
+            self.sphere_strength = 0.
+            self.sphere_time = None
+            self.animation_timer.stop()
+        self.update()
+
     def showEvent(self, event):
         from window_layers import BOTTOM, restack
         super().showEvent(event)
         restack(int(self.winId()), BOTTOM)
+
+    def hideEvent(self, event):
+        if self.crown_started is not None:
+            self.animation_timer.stop()
+            self.crown_started = None
+        super().hideEvent(event)
 
     def resize_target(self, pos):
         if self.cfg['spectrum_style']!='ring':return edges_at(self.rect(),pos)
@@ -282,17 +378,37 @@ class DesktopSpectrum(QWidget):
             accent = QColor('#297bc9' if self.runtime.dock.is_light() else '#78c9ff')
         preview=self.ring_height_preview
         height=self.cfg['spectrum_ring_height'] if preview is None else preview
+        crown_angle = 0.
+        if style == 'crown' and self.crown_started is not None:
+            crown_angle = (monotonic() - self.crown_started) % CROWN_ROTATION_SECONDS * tau / CROWN_ROTATION_SECONDS
         draw_spectrum(painter,QRectF(self.rect()),self.levels,style,accent,
-                      not following and self.cfg['spectrum_color_mode']=='colorful',self.peaks,ring_height=height,show_limit=preview is not None)
+                      not following and self.cfg['spectrum_color_mode']=='colorful',self.peaks,ring_height=height,
+                      show_limit=preview is not None,crown_angle=crown_angle,
+                      sphere_angle=self.sphere_angle,sphere_strength=self.sphere_strength)
         painter.end()
 
 
-def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_height=100,show_limit=False):
+def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_height=100,show_limit=False,
+                  crown_angle=0.,sphere_angle=0.,sphere_strength=None):
     """Paint bounded strokes only. Peaks advance with the existing audio frames."""
     area=spectrum_area(rect,style)
     if area.isEmpty() or not levels:return
-    shades=tuple(map(QColor,SPECTRUM_COLORS)) if colorful else (QColor(accent),)*2
     peaks=levels if peaks is None else peaks
+    effect = COLOR_EFFECTS.get(style)
+    if effect is not None:
+        painter.save()
+        try:
+            painter.setClipRect(area, Qt.IntersectClip)
+            if style == 'particle_sphere':
+                effect(painter, area, levels, peaks, rotation=sphere_angle, power=sphere_strength)
+            elif style == 'crown':
+                effect(painter, area, levels, peaks, rotation=crown_angle)
+            else:
+                effect(painter, area, levels, peaks)
+        finally:
+            painter.restore()
+        return
+    shades=tuple(map(QColor,SPECTRUM_COLORS)) if colorful else (QColor(accent),)*2
     span=min(area.width(),area.height())*1.85 if style=='ring' else area.width()
     count=max(3,min(len(levels),int(span/(5 if style=='dots' else 2.3))))
     if count<len(levels):

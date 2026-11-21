@@ -46,6 +46,7 @@ def dates_and_assets():
 
 
 def render(dock, cfg, output):
+    from calendar_almanac import almanac
     from PyQt5.QtCore import Qt, QRectF
     from PyQt5.QtGui import QImage, QPainter
     from desktop_clock import draw_clock
@@ -55,16 +56,23 @@ def render(dock, cfg, output):
             ('moon',date(2026,9,25),(360,235),0,False),('moon-print',date(2026,9,25),(360,235),10,False),
             ('national-day',date(2026,10,1),(360,235),0,False),('national-day-print',date(2026,10,1),(360,235),10,False),
             ('overlap-festival',date(2026,3,20),(260,230),0,False),('overlap-term',date(2026,3,20),(260,230),0,True),
-            ('clock-min',date(2026,11,19),(160,100),10,False),('portrait',date(2026,6,19),(260,360),0,False)]:
+            ('clock-min',date(2026,11,19),(160,100),10,False),('portrait',date(2026,6,19),(260,360),0,False),
+            ('portrait-narrow',date(2026,11,21),(216,254),10,False)]:
         image=QImage(*size,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
         painter=QPainter(image)
         try:
             from calendar_almanac_face import _line
             with patch('calendar_almanac_face._line',wraps=_line) as line:
                 draw_clock(painter,QRectF(0,0,*size),dock,dict(cfg, _now=datetime(2026,1,1,8,minute),
-                           _almanac_date=day,_almanac_art=term,_almanac_controls='clock' if name=='clock-min' else ''),'almanac')
-                civil = next(call for call in line.call_args_list if call.args[2].startswith('公历'))
-                assert civil.args[1].height()>=10 and civil.args[1].bottom() < line.call_args.args[1].top()
+                           _almanac_date=day,_almanac_art=term,_almanac_controls='clock' if name=='clock-min' else 'calendar',
+                           _almanac_switch_width=74 if name.startswith('overlap-') else 0),'almanac')
+                labels = {call.args[2]: call.args[1] for call in line.call_args_list}
+                civil = labels[almanac(day).civil_countdown()]
+                assert not any(value.startswith('公历') for value in labels)
+                assert civil.height()>=10 and civil.bottom() < line.call_args.args[1].top()
+                boxes = [call.args[1] for call in line.call_args_list]
+                assert all(QRectF(0,0,*size).contains(box) for box in boxes)
+                assert all(before.bottom() <= after.top()+.001 for before, after in zip(boxes, boxes[1:]))
         finally:painter.end()
         assert image.save(str(folder/f'almanac-{name}.png'))
 

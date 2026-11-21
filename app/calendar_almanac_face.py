@@ -29,6 +29,48 @@ def _line(painter, box, value, family, size, color, weight=QFont.Normal):
     painter.drawText(box, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextSingleLine, value)
 
 
+def calendar_controls(width):
+    return (18, 30, 18, 20) if width < 238 else (23, 38, 23, 23)
+
+
+def almanac_padding(width, height):
+    return max(7, min(22, width * .055, height * .062))
+
+
+def _paper_wash(painter, box, gradient, paper, stops):
+    for stop, alpha in stops:
+        tint = QColor(paper)
+        tint.setAlpha(alpha)
+        gradient.setColorAt(stop, tint)
+    painter.fillRect(box, gradient)
+
+
+def _painting(painter, body, picture, paper, light, header_bottom, verse_y):
+    w, h = body.width(), body.height()
+    painter.fillRect(body, paper)
+    if picture.isNull():
+        return
+    sx, sy = w / picture.width(), h / picture.height()
+    # Keep the right-hand subject in frame when a portrait card crops the paper.
+    scale = min(max(sx, sy), 1.7 * sx, 1.35 * sy)
+    pw, ph = picture.width() * scale, picture.height() * scale
+    scene = QRectF(w - pw, (h - ph) * .48, pw, ph)
+    painter.setOpacity(1 if light else .77)
+    painter.drawPixmap(scene, picture, QRectF(picture.rect()))
+    painter.setOpacity(1)
+    if ph < h - 2:
+        _paper_wash(painter, scene, QLinearGradient(0, scene.top(), 0, scene.bottom()), paper,
+                    ((0, 255), (.14, 0), (.86, 0), (1, 255)))
+    _paper_wash(painter, body, QLinearGradient(0, 0, w, 0), paper,
+                ((0, 242), (.32, 205), (.61, 55 if light else 104), (1, 0 if light else 23)))
+    _paper_wash(painter, QRectF(0, 0, w, header_bottom), QLinearGradient(0, 0, 0, header_bottom), paper,
+                ((0, 182 if light else 213), (.58, 124 if light else 168), (1, 0)))
+    footer_top = verse_y - 9
+    _paper_wash(painter, QRectF(0, footer_top, w, h-footer_top),
+                QLinearGradient(0, footer_top, 0, h), paper,
+                ((0, 0), (.42, 169 if light else 202), (1, 232)))
+
+
 def draw_almanac(painter, rect, dock, options):
     now = options.get('_now') or datetime.now()
     day = options.get('_almanac_date') or now.date()
@@ -61,66 +103,48 @@ def draw_almanac(painter, rect, dock, options):
         shape.addRoundedRect(body,radius,radius)
         painter.setRenderHints(QPainter.Antialiasing|QPainter.SmoothPixmapTransform|QPainter.TextAntialiasing)
         painter.setClipPath(shape,Qt.IntersectClip)
-        painter.fillRect(body,paper)
-        picture = illustration(art.key, version)
-        if not picture.isNull():
-            # Trim the blank left margin first. On extreme aspect ratios,
-            # feather the edge into the paper to keep the subject in view.
-            sx,sy = w/picture.width(),h/picture.height()
-            scale = min(max(sx,sy),1.55*sx,1.35*sy)
-            pw,ph = picture.width()*scale,picture.height()*scale
-            image_box = QRectF(w-pw,(h-ph)*.48,pw,ph)
-            painter.setOpacity(1 if light else .72)
-            painter.drawPixmap(image_box,picture,QRectF(picture.rect()))
-            painter.setOpacity(1)
-            if ph<h-2:
-                fade = QLinearGradient(0,image_box.top(),0,image_box.bottom())
-                transparent=QColor(paper);transparent.setAlpha(0)
-                for stop,tint in ((0,paper),(.13,transparent),(.87,transparent),(1,paper)):
-                    fade.setColorAt(stop,tint)
-                painter.fillRect(image_box,fade)
-        wash = QLinearGradient(0,0,w,0)
-        for stop,alpha in ((0,246),(.34,207),(.64,24 if light else 79),(1,0 if light else 25)):
-            tint = QColor(paper); tint.setAlpha(alpha); wash.setColorAt(stop,tint)
-        painter.fillRect(body,wash)
-        pad = max(9,min(24,w*.055,h*.078))
-        usable = w-2*pad
-        tight = h < 145
+        pad = almanac_padding(w, h)
+        usable = w - 2*pad
+        tight = h < 142
         size_factor = options['date_scale']/100
         family = options['date_font']
-        def line(y, height, value, size, color=ink, weight=QFont.Normal, width=usable, face=family):
-            _line(painter,QRectF(pad,y,width,height),value,face,size*size_factor,color,weight)
+        def line(box, value, size, color=ink, weight=QFont.Normal, face=family):
+            _line(painter, box, value, face, size*size_factor, color, weight)
 
         controls = options.get('_almanac_controls','')
-        reserve = 116 if controls=='calendar' else 27 if controls=='clock' else 0
-        stamp = f'{day.month}月{day.day}日  周{"一二三四五六日"[day.weekday()]}'
-        line(5 if tight else 8,19 if tight else 26,stamp,11 if tight else 13,detail,width=max(35,usable-reserve))
+        reserve = sum(calendar_controls(w)) + 10 if controls=='calendar' else 22 if controls=='clock' else 0
+        weekday = '周'+'一二三四五六日'[day.weekday()]
+        stamp = f'{day.month}月{day.day}日  {weekday}' if usable-reserve>=90 else f'{day.month}/{day.day}  {weekday}'
+        header = QRectF(pad, 5 if tight else 9, usable-reserve, 14 if tight else 24)
         main = art.name if events else model.lunar
         secondary = ' · '.join((model.lunar, *(name for name in events if name != art.name))) if events else f'{model.term}时节'
-        verse_size = min(18,max(10,w*.038))
-        verse_h = max(19,min(44,h*.17))
-        quote_y = h-verse_h
-        # Keep the daily verse readable over detailed festival paintings.
-        foot = QLinearGradient(0,quote_y-5,0,h)
-        for stop,alpha in ((0,0),(.35,192),(1,241)):
-            tint = QColor(paper); tint.setAlpha(alpha); foot.setColorAt(stop,tint)
-        painter.fillRect(QRectF(0,quote_y-5,w,verse_h+5),foot)
-        title_y = 22 if tight else max(34,h*.20)
-        title_h = min(h*.205,64) if not tight else max(18,h*.19)
-        line(title_y,title_h,main,min(45,max(16,w*.093)),ink,QFont.DemiBold,
-             width=usable*.78,face='Microsoft YaHei UI' if version else 'SimSun')
-        label_y = title_y+title_h
-        rows = [(secondary, 11 if tight else 14, detail, QFont.Normal),
-                (f'距{model.next_term} {model.days_left} 天', 12 if tight else 16, accent, QFont.DemiBold)]
+        rows = [(secondary, 11 if tight else 13, detail, QFont.Normal),
+                (f'距{model.next_term} {model.days_left} 天', 11 if tight else 16, accent, QFont.DemiBold)]
         if not tight:
             upcoming, distance = next_festival(day)
-            if upcoming:rows.append((f'距{upcoming} {distance} 天', 12, detail, QFont.Normal))
-        rows.append((f'公历 · {model.civil_countdown()}', 11 if tight else 13, accent, QFont.DemiBold))
-        row_height = min(24, (quote_y-label_y-2)/len(rows))
-        width = usable * .72 if controls=='calendar' and len(events)>1 else usable
-        for index, (value,size,color,weight) in enumerate(rows):
-            line(label_y+index*row_height,row_height,value,size,color,weight,width=width)
-        line(quote_y,verse_h,art.verses[verse_index(now)],verse_size,ink,width=usable,face='SimSun')
+            if upcoming:
+                rows.append((f'距{upcoming} {distance} 天', 13, detail, QFont.Normal))
+        rows.append((model.civil_countdown(), 11 if tight else 13, detail, QFont.Normal))
+
+        verse_h = 16 if tight else max(20, min(29, h * .105))
+        verse_y = h - pad * .58 - verse_h
+        content_top = header.bottom() + (2 if tight else 5)
+        content_height = verse_y - content_top - (4 if tight else 10)
+        title_h = min(60, h * .185)
+        row_h = min(13 if tight else 24, (content_height-title_h)/len(rows))
+        content_y = content_top + (content_height-title_h-len(rows)*row_h) * .35
+        title_width = usable * (.82 if w < 250 else .67)
+        rows_width = usable * (.80 if w < 250 else .58)
+        _painting(painter, body, illustration(art.key, version), paper, light, header.bottom()+11, verse_y)
+
+        line(header, stamp, 11 if tight else 13, detail)
+        face = 'Microsoft YaHei UI' if version else 'SimSun'
+        line(QRectF(pad, content_y, title_width, title_h), main, min(44, title_h*.88), ink, QFont.DemiBold, face)
+        for index, (value, size, color, weight) in enumerate(rows):
+            line(QRectF(pad, content_y+title_h+index*row_h, rows_width, row_h), value, size, color, weight)
+        quote_width = usable - options.get('_almanac_switch_width', 0)
+        verse = QRectF(pad, verse_y, quote_width, verse_h)
+        line(verse, art.verses[verse_index(now)], 11 if tight else min(17, 13+w/180), face='SimSun')
     finally:
         painter.restore()
     return ink.name()
