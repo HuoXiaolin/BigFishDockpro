@@ -268,6 +268,9 @@ internal static class HardwareSensors {
             });}catch(Exception){}
         try{HardwareExtended.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));}catch(Exception){}
         HardwareFans.Collect(wanted,(key,value,source,label)=>Put(data,key,value,source,label));
+        var missingFans=new HashSet<string>(wanted.Where(key=>HardwareFans.Labels.ContainsKey(key) && !data.ContainsKey(key)));
+        try {HardwareFans.ReadMissing(missingFans,(key,value,source,label)=>Put(data,key,value,source,label));}
+        catch (Exception) { }
         if(wanted.Contains("brightness"))try{Brightness(data,display,instance);}catch(Exception){}
         return data;
     }

@@ -15,10 +15,11 @@ def run(api,runtime,app,output,checks):
     shell=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowDoesNotAcceptFocus)
     user=native()
     user.WindowFromPoint.argtypes=[W.POINT];user.WindowFromPoint.restype=W.HWND
-    def hit(hwnd):
+    def center(hwnd):
         rect=W.RECT()
         assert user.GetWindowRect(hwnd,C.byref(rect))
-        return user.WindowFromPoint(W.POINT((rect.left+rect.right)//2,(rect.top+rect.bottom)//2))
+        return W.POINT((rect.left+rect.right)//2,(rect.top+rect.bottom)//2)
+    def hit(hwnd):return user.WindowFromPoint(center(hwnd))
     def show(window,rect):
         window.setAttribute(Qt.WA_ShowWithoutActivating)
         window.setStyleSheet('background:#182e44')
@@ -78,6 +79,32 @@ def run(api,runtime,app,output,checks):
             service.sync();app.processEvents()
             assert int(strip.winId())==strip_id and hit(strip_id)==strip_id and hit(capsule_id)==capsule_id
 
+            # Keep the fixture on the private desktop. Only its process identity
+            # is substituted, so HWND stacking and the pointer target stay native.
+            owner_pid=user.GetWindowThreadProcessId
+            def other_app(hwnd,pid):
+                thread=owner_pid(hwnd,pid)
+                if hwnd==cover_id:pid._obj.value+=1
+                return thread
+            with patch.dict(cfg,component_passthrough={'resource':'apps'}):
+                policy=runtime.click_policy
+                point=center(capsule_id)
+                policy.apply(w,point)
+                assert hit(capsule_id)==capsule_id
+                with patch.object(user,'GetWindowThreadProcessId',side_effect=other_app):
+                    policy.apply(w,point)
+                    assert hit(capsule_id)==cover_id and hit(strip_id)==strip_id
+                    cover.hide();policy.apply(w,point)
+                    assert hit(capsule_id)==capsule_id
+                    cover.show();assert restack(cover_id,1)
+                    assert desktop_layer(capsule_id,False,shell_id)
+                    policy.apply(w,point)
+                    assert not w.testAttribute(Qt.WA_TransparentForMouseEvents)
+                    assert not policy.pointer_timer.isActive()
+                    assert desktop_layer(capsule_id,True)
+                policy.apply(w,point)
+            runtime.click_policy.apply(w)
+
             cfg['resource_taskbar_layer']='bottom';service.sync()
             assert not strip.isVisible() and placement.slot==slot
             bars.return_value=[bar];shell.show();cover.hide()
@@ -99,6 +126,7 @@ def run(api,runtime,app,output,checks):
             note.set_option('pinned',False);assert not is_topmost(int(note.winId()))
         checks.append('Native full screen: both topmost readouts recover above a fullscreen HWND without stealing focus; readout keeps its verified slot and CPU sampler while Explorer is hidden. Bottom hides and returns. Two pass-through switches change real hit targets and restore input on the same HWND.')
         checks.append('Native window audit: Dock, pinned note and flash handle retain topmost status above the fullscreen HWND; unpinning the note returns it to the desktop layer.')
+        checks.append('Conditional pointer mode: native hit testing reaches the application only where it is under the topmost capsule. The taskbar readout keeps its own mode and desktop interaction returns when the cover disappears.')
 
         from resource_settings import ResourceOptions
         dialog=ResourceOptions(service)
@@ -107,14 +135,17 @@ def run(api,runtime,app,output,checks):
             page=dialog.fields['resource_open_page']
             assert page.accessibleName()=='展开后默认页面'
             page.setCurrentIndex(page.findData('weather'))
-            dialog.fields['resource_click_through'].setChecked(True)
+            pointer=dialog.fields['resource_click_through']
+            pointer.setCurrentIndex(pointer.findData('apps'))
             assert dialog.grab().save(str(output/'readme-open-page.png'))
             dialog.tabs.setCurrentIndex(1);app.processEvents()
-            dialog.fields['resource_taskbar_click_through'].setChecked(True)
+            pointer=dialog.fields['resource_taskbar_click_through']
+            pointer.setCurrentIndex(pointer.findData(True))
             assert dialog.grab().save(str(output/'readme-taskbar-layer.png'))
             assert dialog.commit()
             saved=api.load_config()
-            assert saved['resource_open_page']=='weather' and saved['resource_click_through'] and saved['resource_taskbar_click_through']
+            assert saved['resource_open_page']=='weather' and not saved['resource_click_through']
+            assert saved['component_passthrough']['resource']=='apps' and saved['resource_taskbar_click_through']
         finally:
             dialog.close();dialog.deleteLater()
         checks.append('Resource preferences: the first page exposes the default expanded page and desktop pass-through, and the taskbar page saves its separate pass-through choice.')

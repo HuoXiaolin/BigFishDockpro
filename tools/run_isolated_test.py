@@ -122,14 +122,23 @@ def main():
         startup.lpDesktop = name
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0
-        env = dict(os.environ, FISHDOCK_TEST_DESKTOP=name, PYTHONIOENCODING='utf-8')
+        env = dict(os.environ, FISHDOCK_TEST_DESKTOP=name, PYTHONIOENCODING='utf-8', PYTHONFAULTHANDLER='1')
         if station_name:env['FISHDOCK_TEST_STATION']=station_name
         result_path = output/'result.json'
         if result_path.exists():
             result_path.unlink()
         with (output/'process.log').open('w', encoding='utf-8') as log:
-            process = subprocess.Popen(command, cwd=target.parent, env=env, startupinfo=startup,
-                creationflags=subprocess.CREATE_NO_WINDOW, stdout=log, stderr=subprocess.STDOUT)
+            kernel32 = ctypes.WinDLL('kernel32')
+            kernel32.GetErrorMode.restype = wintypes.UINT
+            kernel32.SetErrorMode.argtypes = [wintypes.UINT]
+            old_mode = kernel32.GetErrorMode()
+            # The test child inherits this mode and reports failures through its log and exit status.
+            kernel32.SetErrorMode(old_mode | 0x0003)  # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
+            try:
+                process = subprocess.Popen(command, cwd=target.parent, env=env, startupinfo=startup,
+                    creationflags=subprocess.CREATE_NO_WINDOW, stdout=log, stderr=subprocess.STDOUT)
+            finally:
+                kernel32.SetErrorMode(old_mode)
             try:
                 code = process.wait(timeout=max(5,min(300,args.timeout)))
             except subprocess.TimeoutExpired:

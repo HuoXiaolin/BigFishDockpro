@@ -1,6 +1,7 @@
 """Compact weather cards with a local forecast and source notes."""
 import time
 from datetime import datetime,timedelta
+from math import floor,log10
 from PyQt5.QtCore import Qt,QPointF,QRectF,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton
@@ -9,12 +10,37 @@ from resource_compact import text
 from resource_charts import sync_note_controls
 from resource_options import content_columns
 from resource_status import band_ink
-from resource_weather import moon_phase,weather_time
+from resource_weather import (RAIN_NOTICES,active_weather_notice,condition,forecast_rain_end,
+                              measurement,moon_phase,notice_label,weather_time)
 from resource_weather_style import (AIR_HUES,AIR_SURFACES,FORECAST_TONES,air_quality_style,
                                     paint_card,paint_weather,paint_weather_icon,solar_tone,weather_accent)
 
 
 def degrees(value):return '—' if value is None else f'{value:.0f}°'
+
+
+TREND_METRICS={
+    '雨':('rainfall','逐时雨量（mm）',61,1),
+    '雪':('snowfall','逐时雪量（cm）',71,1),
+    '雾':('visibility','逐时能见度（km）',45,1000),
+}
+LOCATION_MESSAGES={
+    'permission':'Windows 定位未授权，授权后刷新',
+    'timeout':'定位超时，点击刷新可重试',
+    'unavailable':'系统暂未返回位置，点击刷新可重试',
+}
+
+
+def trend_tick(peak):
+    rough=max(.01,(peak or 1)/3)
+    scale=10**floor(log10(rough))
+    return next(step*scale for step in (1,2,2.5,5,10) if step*scale>=rough)
+
+
+def forecast_value(value):
+    if value is None:return '—'
+    if 0<value<.01:return '<0.01'
+    return f'{value:.2f}'.rstrip('0').rstrip('.')
 
 
 def weather_days(row,count,today):
@@ -32,6 +58,8 @@ def weather_days(row,count,today):
 class WeatherCards(QWidget):
     gap=6
     card_height=112
+    notice_height=55
+    trend_height=112
 
     def __init__(self,owner):
         super().__init__()
@@ -41,10 +69,11 @@ class WeatherCards(QWidget):
         self.layout_cards()
         self.sun_clock=QTimer(self)
         self.sun_clock.setInterval(60_000)
-        self.sun_clock.timeout.connect(self.update)
+        self.sun_clock.timeout.connect(self.refresh_clock)
 
     def showEvent(self,event):
         super().showEvent(event)
+        self.refresh_clock()
         self.sun_clock.start()
 
     def hideEvent(self,event):
@@ -53,30 +82,62 @@ class WeatherCards(QWidget):
 
     def refresh(self):
         service=self.owner.service;extra=service.extras;by_name={r['name']:r for r in extra.weather} if extra else {}
-        self.rows=[by_name.get(name,dict(name=name)) for name in service.cfg['resource_weather_cities']]
-        self.layout_cards();self.update()
+        names=extra.city_names() if extra else service.cfg['resource_weather_cities']
+        self.rows=[by_name.get(name,dict(name=name)) for name in names]
+        self.refresh_clock()
+
+    def selected_row(self):
+        return self.rows[min(self.city_index,len(self.rows)-1)] if self.rows else {}
+
+    def refresh_clock(self):
+        self.layout_cards()
+        self.update()
 
     def layout_cards(self):
         self.columns=content_columns(self.owner.width())
         count=4//self.columns
         height=count*self.card_height+(count-1)*self.gap
+        row=self.selected_row()
+        now=time.time()
+        self.notice=active_weather_notice(row,now)
+        self.trend=[slot for slot in row.get('forecast_hours',[]) if slot['at']>now]
+        kinds=[kind for slot in self.trend if (kind:=notice_label(slot['code']))]
+        if self.notice:kinds.insert(0,self.notice['label'])
+        self.trend_kind='雨' if any(kind in RAIN_NOTICES for kind in kinds) else (kinds[0] if kinds else None)
+        self.rain_end=forecast_rain_end(self.trend,self.notice) if self.trend_kind=='雨' else None
+        if self.trend_kind is None:self.trend=[]
+        self.weather_height=(self.notice_height if self.notice else 0)+(self.trend_height if self.trend else 0)
+        if self.weather_height:height+=self.weather_height+self.gap
         if self.height()!=height:self.setFixedHeight(height)
 
     def resizeEvent(self,event):self.layout_cards();super().resizeEvent(event)
 
     def set_city(self,index):
         self.city_index=max(0,index)
-        self.update()
+        self.refresh_clock()
 
     def paintEvent(self,event):
         p=QPainter(self)
         p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         colors=self.owner.colors
         if not self.rows:
-            text(p,QRectF(self.rect()),'请在天气设置中添加城市',colors['muted'],12,False,Qt.AlignHCenter)
+            service=self.owner.service
+            message='在天气设置中添加城市'
+            if service.cfg['resource_weather_location']:
+                extra=service.extras
+                if extra and extra.weather_job:message='正在获取当前位置…'
+                else:message=LOCATION_MESSAGES.get(getattr(extra,'location_status',''),LOCATION_MESSAGES['unavailable'])
+            text(p,QRectF(self.rect()),message,colors['muted'],12,False,Qt.AlignHCenter)
             return
-        row=self.rows[min(self.city_index,len(self.rows)-1)]
+        row=self.selected_row()
         now=weather_time(row)
+        origin=0
+        if self.weather_height:
+            surface,_=FORECAST_TONES[0 if colors['light'] else 1]
+            paint_card(p,QRectF(0,0,self.width(),self.weather_height),surface,colors['card_alpha'])
+            if self.notice:self.draw_notice(p,row,now,colors)
+            if self.trend:self.draw_trend(p,self.notice_height if self.notice else 0,now,colors)
+            origin=self.weather_height+self.gap
         days=weather_days(row,self.owner.service.cfg['resource_weather_days'],now.date())
         today=next((day for day in row.get('days',[]) if day['date']==now.date().isoformat()),{})
         panels=((self.draw_current,row),(self.draw_days,days),(self.draw_air,row),
@@ -84,11 +145,90 @@ class WeatherCards(QWidget):
         span=(self.width()-(self.columns-1)*self.gap)/self.columns
         for i,(draw,data) in enumerate(panels):
             x=i%self.columns*(span+self.gap)
-            y=i//self.columns*(self.card_height+self.gap)
+            y=origin+i//self.columns*(self.card_height+self.gap)
             p.save()
             p.translate(x,y)
             draw(p,span,data,colors,colors['card_alpha'])
             p.restore()
+
+    def draw_notice(self,p,row,now,c):
+        width=self.width()
+        paint_weather_icon(p,QRectF(10,15,24,24),row,c['light'])
+        label=self.notice['label']+' · 预计持续时间'
+        text(p,QRectF(43,3,width-52,17),label,c['ink'],11,True)
+        until=self.notice['until']
+        if until is None or until<=now.timestamp():
+            text(p,QRectF(43,22,width-52,25),'结束时间待更新',c['muted'],11)
+            return
+        seconds=until-now.timestamp()
+        duration='1 小时内' if seconds<3600 else f'约 {round(seconds/1800)/2:g} 小时'
+        end=datetime.fromtimestamp(until,now.tzinfo)
+        stamp=end.strftime('%H:%M' if end.date()==now.date() else '%m/%d %H:%M')
+        text(p,QRectF(43,19,width-52,19),duration,weather_accent(row,c['light']),14,True)
+        caption=f'预计 {stamp} 停雨' if self.notice['label'] in RAIN_NOTICES else '预计至 '+stamp
+        text(p,QRectF(43,38,width-52,14),caption,c['muted'],10)
+
+    def draw_trend(self,p,top,now,c):
+        width=self.width()
+        metric,title,code,divisor=TREND_METRICS[self.trend_kind]
+        values=[measurement(slot.get(metric)) for slot in self.trend]
+        values=[value/divisor if value is not None else None for value in values]
+        peak=max((value for value in values if value is not None),default=0)
+        tick=trend_tick(peak)
+        accent=weather_accent({'code':code},c['light'])
+        subtle=QColor(accent);subtle.setAlpha(134)
+        if top:
+            rule=QColor(c['muted']);rule.setAlpha(42);p.setPen(QPen(rule,1))
+            p.drawLine(QPointF(10,top),QPointF(width-10,top))
+        text(p,QRectF(10,top+2,width-20,16),title,c['ink'],11,True)
+        if self.trend_kind=='雨':
+            caption=''
+            if self.rain_end and not (self.notice and self.notice['label'] in RAIN_NOTICES):
+                end=datetime.fromtimestamp(self.rain_end,now.tzinfo)
+                caption=f'预计 {end:%H:%M} 停雨'
+            elif peak>0:
+                caption='最大 '+self.trend[values.index(peak)]['time']
+            text(p,QRectF(width/2,top+2,width/2-10,16),caption,accent,10,True,Qt.AlignRight)
+
+        left,right=31,width-9
+        plot_height=48
+        baseline=top+79
+        for index in range(4):
+            y=baseline-index*plot_height/3
+            grid=QColor(c['muted']);grid.setAlpha(70 if index==0 else 34)
+            p.setPen(QPen(grid,1));p.drawLine(QPointF(left,y),QPointF(right,y))
+            text(p,QRectF(2,y-6,left-7,12),f'{index*tick:g}',c['muted'],9,False,Qt.AlignRight)
+        step=(right-left)/len(self.trend)
+        is_visibility=self.trend_kind=='雾'
+        path=QPainterPath();previous=False;markers=[]
+        bar_width=min(31,step*.52)
+        for index,(slot,value) in enumerate(zip(self.trend,values)):
+            x=left+index*step
+            center=x+step/2
+            kind=notice_label(slot['code'])
+            caption=kind or condition(slot['code'])
+            stops=slot['at']==self.rain_end
+            if stops:
+                p.setPen(QPen(subtle,1,Qt.DashLine))
+                p.drawLine(QPointF(center,baseline-plot_height),QPointF(center,baseline))
+            height=(value or 0)/(3*tick)*plot_height
+            y=baseline-height
+            highest=peak>0 and value==peak and not is_visibility
+            if is_visibility and value is not None:
+                if previous:path.lineTo(center,y)
+                else:path.moveTo(center,y)
+                markers.append(QPointF(center,y))
+            elif height>0:
+                p.fillRect(QRectF(center-bar_width/2,y,bar_width,height),accent if highest else subtle)
+            previous=value is not None
+            ink=accent if highest else c['muted'] if value is None else c['ink']
+            text(p,QRectF(x,y-15,step,13),forecast_value(value),ink,10,highest,Qt.AlignHCenter)
+            text(p,QRectF(x,baseline+3,step,13),slot['time'],accent if stops else c['muted'],10,stops,Qt.AlignHCenter)
+            text(p,QRectF(x,baseline+17,step,13),caption,c['ink'],10,False,Qt.AlignHCenter)
+        if is_visibility:
+            p.setPen(QPen(accent,1.4));p.setBrush(Qt.NoBrush);p.drawPath(path)
+            p.setPen(Qt.NoPen);p.setBrush(accent)
+            for point in markers:p.drawEllipse(point,2,2)
 
     def draw_current(self,p,width,row,c,opacity):
         paint_weather(p,QRectF(0,0,width,self.card_height),row,c['light'],c['hover'],opacity)
@@ -277,22 +417,31 @@ class WeatherView(QWidget):
     def set_range(self,on):
         if not self.owner.service.set_options(resource_weather_days=7 if on else 3):self.week.setChecked(not on)
     def refresh_weather(self):
-        if self.owner.service.extras:self.owner.service.extras.refresh_weather();self.refresh()
+        if self.owner.service.extras:
+            self.owner.service.extras.refresh_weather(retry_location=True)
+            self.refresh()
+    def select_city(self,name):
+        index=self.city.findText(name)
+        if index>=0:self.city.setCurrentIndex(index)
     def refresh(self):
         service=self.owner.service;extra=service.extras
         self.setVisible(service.cfg['resource_weather'])
         self.refresh_button.setEnabled(not extra or extra.weather_job is None)
-        names=tuple(service.cfg['resource_weather_cities'])
+        names=extra.city_names() if extra else tuple(service.cfg['resource_weather_cities'])
+        self.city.setEnabled(bool(names))
         if names!=getattr(self,'names',None):
             old=self.city.currentText()
             self.city.clear();self.city.addItems(list(names))
             if old in names:self.city.setCurrentIndex(names.index(old))
             self.names=names
+        located=extra.located_city() if extra else None
+        if located and located!=getattr(self,'located_city',None):self.select_city(located)
+        self.located_city=located
         self.week.setChecked(service.cfg['resource_weather_days']==7)
         self.cards.refresh()
         stamp=max((r.get('updated',0) for r in extra.weather),default=0) if extra else 0
         sync_note_controls(self.remarks_button, self.notes, self.owner.colors)
-        self.notes.setText('查看所选城市的天气、空气质量、日出日落和月相。天气来自 <a href="https://open-meteo.com/">Open-Meteo</a>，每 15 分钟刷新。'
-                           '空气质量卡标注来源和 AQI 口径，日出日落使用城市当地时间。'
+        self.notes.setText('查看所选城市的天气、空气质量、日出日落和月相。天气来自 <a href="https://open-meteo.com/">Open-Meteo</a>，每 15 分钟刷新。天气持续时间由逐时预报估算。'
+                           '逐时天气使用城市当地时间，雨雪量为截至该时的前一小时累计值。空气质量卡标注来源和 AQI 口径。'
                            +('更新于 '+time.strftime('%H:%M',time.localtime(stamp))+'。' if stamp else ''))
         self.notes.setVisible(self.remarks_button.isChecked())

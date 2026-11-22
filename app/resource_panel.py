@@ -7,7 +7,6 @@ from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics,QCu
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
     QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy,QToolTip)
 from ui_style import AlignedMenu
-from component_passthrough import enabled as passthrough_enabled
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
 from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,MONITOR_DEVICES,OPEN_PAGES,RUNNER_SLOT,SENSOR_UNITS,
@@ -684,7 +683,7 @@ class ResourceWindow(ResourceContentHost):
         if self.service.compact:
             from resource_compact import compact_badges
             badges,_=compact_badges(self.service)
-            key=tuple((kind,len(value) if kind=='mail_code' else value if kind in ('agenda','water','almanac') else '') for kind,value in badges)
+            key=tuple((kind,len(value) if kind=='mail_code' else value if kind in ('agenda','water','almanac','weather_notice') else '') for kind,value in badges)
             self._compact_cache=None
             if key!=self._reminder_key:
                 self._reminder_key=key;self.reposition()
@@ -872,7 +871,7 @@ class ResourceWindow(ResourceContentHost):
         if compact or not cfg['resource_rank']:
             self.rank_icons.clear();self.rank_frame=self.rank_style=None
             for mark,*_ in self.rank_labels:mark.clear()
-        if cfg['resource_expand_mode']!='hover' or passthrough_enabled(cfg,'resource'):self.enter_timer.stop()
+        if cfg['resource_expand_mode']!='hover' or self.testAttribute(Qt.WA_TransparentForMouseEvents):self.enter_timer.stop()
         self.sync_taskbar();self.reposition();self.refresh();self.sync_animation()
         if (palette_changed or previous!=self.background) and not compact and self.page_key in DESKTOP_COMPONENTS:
             self.service.runtime.sync_hosted_component(self.page_key)
@@ -909,8 +908,7 @@ class ResourceWindow(ResourceContentHost):
         rect=self.taskbar_rect(slot) if slot is not None else self.floating_rect(compact)
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
-        from window_layers import click_through
-        click_through(self,passthrough_enabled(cfg,'resource'))
+        self.service.runtime.click_policy.apply(self)
 
     def floating_rect(self,compact):
         cfg=self.service.cfg
@@ -1030,7 +1028,7 @@ class ResourceWindow(ResourceContentHost):
         else:
             from platform_services import fullscreen_window
             restore_input_layer(hwnd,bar,cover=fullscreen_window() if cover is None else cover,
-                                transparent=passthrough_enabled(self.service.cfg,'resource'))
+                                transparent=self.testAttribute(Qt.WA_TransparentForMouseEvents))
 
     def refresh(self):
         self._compact_cache=None
@@ -1049,7 +1047,7 @@ class ResourceWindow(ResourceContentHost):
             for key,name in [('day','今日'),('month','本月'),('year','本年')]:
                 if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
         reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注','almanac':'农历',
-                         'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停'}
+                         'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停','weather_notice':'天气提醒'}
         tips.extend('邮箱验证码，点击复制' if kind=='mail_code' else reminder_labels[kind]+' '+value
                     for kind,value in self.service.reminders())
         if self.service.compact:
@@ -1168,11 +1166,11 @@ class ResourceWindow(ResourceContentHost):
         else:event.ignore()
     def enterEvent(self,event):
         self.outside_since = None
-        if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.service.compact:self.enter_timer.start()
+        if self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and self.service.compact:self.enter_timer.start()
         super().enterEvent(event)
     def expand_hover(self):
         cursor=QCursor.pos()
-        if self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource') and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
+        if self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
             self.expand_from(self.mapFromGlobal(cursor),automatic=True)
 
     def runner_at(self,point):
@@ -1219,15 +1217,19 @@ class ResourceWindow(ResourceContentHost):
                 QToolTip.showText(self.mapToGlobal(point),'验证码已复制',self,self.rect(),1200)
             return
         if kind:
-            target={'agenda':'agenda','battery':'resources','almanac':None}.get(kind,'pomodoro')
+            target={'agenda':'agenda','battery':'resources','almanac':None,'weather_notice':'weather'}.get(kind,'pomodoro')
         else:
             row=next((key for key,rect in zip(getattr(self,'compact_shown',()),getattr(self,'compact_bounds',()))
                       if rect.contains(QPointF(point))),None) if not icon_only else None
             if row is None and not icon_only:
                 row=next((key for key,rect in self.status_bounds.items() if rect.contains(QPointF(point))),None)
             target=COMPACT_PAGES.get(row)
-        if target and self.service.detached(target):
-            if not automatic:self.service.open_component(target)
+        weather=self.service.weather_alert() if kind=='weather_notice' else None
+        card=self.service.detached(target) if target else None
+        if card:
+            if not automatic:
+                self.service.open_component(target)
+                if weather:card.content.content.select_city(weather[0])
             return
         was_compact = self.service.compact
         if self.service.fold(False,automatic=automatic) and not self.service.compact:
@@ -1236,6 +1238,7 @@ class ResourceWindow(ResourceContentHost):
                 record(self.service.runtime, 'resource_open')
             if target and self.page_enabled(target):
                 self.select_page(target)
+                if weather:self.weather_view.select_city(weather[0])
     def leaveEvent(self,event):
         self.runner_hovered=False
         self.enter_timer.stop()
@@ -1267,7 +1270,7 @@ class ResourceWindow(ResourceContentHost):
                 if runner:
                     self.enter_timer.stop()
                     runner.show_reading(event.globalPos())
-                elif self.service.compact and self.service.cfg['resource_expand_mode']=='hover' and not passthrough_enabled(self.service.cfg,'resource'):
+                elif self.service.compact and self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents):
                     self.enter_timer.start()
             return
         delta=event.globalPos()-self.press
@@ -1316,8 +1319,8 @@ class ResourceWindow(ResourceContentHost):
         for name,layer in [('置顶显示','top'),('置于底层','bottom')]:
             item=menu.addAction(name);item.setCheckable(True);item.setChecked(cfg['resource_layer']==layer)
             item.triggered.connect(lambda checked,layer=layer:self.service.set_options(resource_layer=layer))
-        passing=menu.addAction('鼠标穿透');passing.setCheckable(True);passing.setChecked(cfg['resource_click_through'])
-        passing.triggered.connect(lambda on:self.service.set_options(resource_click_through=on))
+        from component_passthrough import component_actions
+        component_actions(menu.addMenu('鼠标穿透'),self.service.runtime,'resource')
         pin=menu.addAction('固定胶囊到任务栏');pin.setCheckable(True);pin.setChecked(cfg['resource_capsule_taskbar'])
         pin.triggered.connect(lambda on:self.service.set_options(resource_capsule_taskbar=on,
                                                                resource_collapsed=on or cfg['resource_collapsed']))

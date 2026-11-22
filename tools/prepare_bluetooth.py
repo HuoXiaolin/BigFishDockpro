@@ -13,6 +13,7 @@ SENSORS=ROOT/'tools'/'HardwareSensors.cs'
 CPU=ROOT/'tools'/'CpuSensors.cs'
 EXTENDED=ROOT/'tools'/'HardwareExtended.cs'
 FANS=ROOT/'tools'/'HardwareFans.cs'
+LOCATION=ROOT/'tools'/'WeatherLocation.cs'
 MODULES=[ROOT/'assets'/'pawnio'/(name+'.bin') for name in ('AMDFamily17','IntelMSR')]
 TASKBAR=ROOT/'tools'/'TaskbarSpace.cs'
 APP_TRAFFIC=ROOT/'tools'/'AppTraffic.cs'
@@ -21,8 +22,12 @@ SHARED_DOTNET=Path(r'D:\Agant\toolchain\dotnet\dotnet.exe')
 
 
 def prepare(dotnet: Path = SHARED_DOTNET):
-    sources=(SOURCE,PERIPHERALS,CUSTOM_PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC)
-    if TARGET.is_file() and TARGET.stat().st_mtime_ns>=max(p.stat().st_mtime_ns for p in (*sources,*MODULES,Path(__file__))):return TARGET
+    import prepare_fan_monitor
+    libraries=prepare_fan_monitor.prepare()
+    fan_monitor=next(p for p in libraries if p.name=='LibreHardwareMonitorLib.dll')
+    sources=(SOURCE,PERIPHERALS,CUSTOM_PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC,LOCATION)
+    inputs=(*sources,*MODULES,*libraries,Path(__file__),Path(prepare_fan_monitor.__file__))
+    if TARGET.is_file() and TARGET.stat().st_mtime_ns>=max(p.stat().st_mtime_ns for p in inputs):return TARGET
     dotnet=dotnet.resolve()
     env=dict(os.environ,DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_NOLOGO='1',
              DOTNET_CLI_HOME=str(ROOT/'artifacts/dotnet-home'))
@@ -35,15 +40,17 @@ def prepare(dotnet: Path = SHARED_DOTNET):
     fx=win/'Microsoft.NET'/'Framework64'/'v4.0.30319'
     metadata=win/'System32'/'WinMetadata'
     refs=[fx/(n+'.dll') for n in ('mscorlib','System','System.Core','System.Runtime','System.Runtime.InteropServices.WindowsRuntime',
-          'System.Runtime.WindowsRuntime','System.Threading.Tasks','System.Collections','System.ObjectModel','System.Web.Extensions','System.Management')]
+          'System.Runtime.WindowsRuntime','System.Threading.Tasks','System.Collections','System.ObjectModel','System.Web.Extensions','System.Management','System.Device')]
     refs += [fx/'WPF'/(n+'.dll') for n in ('WindowsBase','UIAutomationClient','UIAutomationTypes')]
-    refs += [metadata/(n+'.winmd') for n in ('Windows.Devices','Windows.Foundation','Windows.Storage','Windows.System')]
+    refs += [metadata/(n+'.winmd') for n in ('Windows.Devices','Windows.Foundation','Windows.Security','Windows.Storage','Windows.System')]
+    refs.append(fan_monitor)
     TARGET.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(dir=TARGET.parent) as folder:
         output=Path(folder)/TARGET.name
         args=[str(dotnet),str(compiler),'/nologo','/noconfig','/nostdlib+','/optimize+',
               '/target:exe','/platform:x64','/out:'+str(output)]
         args+=['/resource:'+str(module)+','+module.name for module in MODULES]
+        args+=['/resource:'+str(library)+',FanMonitor.'+library.name for library in libraries]
         result=subprocess.run(args+['/reference:'+str(p) for p in refs]+[str(p) for p in sources],
                               env=env,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                               creationflags=subprocess.CREATE_NO_WINDOW,timeout=60)

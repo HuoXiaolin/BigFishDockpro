@@ -103,7 +103,7 @@ def compact_badges(service):
     cfg=service.cfg
     active=service.reminders()
     badges=list(active)
-    seen={kind if kind in ('battery','water','agenda','almanac','mail_code') else 'pomodoro' for kind,_ in active}
+    seen={kind if kind in ('battery','water','agenda','almanac','mail_code','weather_notice') else 'pomodoro' for kind,_ in active}
     selected=cfg['resource_compact_metrics']
     routine={}
     model=service.pomodoro
@@ -635,8 +635,8 @@ def paint_ball_reminder(window,p,rect):
     ink=QColor(reminder_ink(kind,window.colors['light'],level))
     p.setBrush(Qt.NoBrush);p.setPen(QPen(ink,2,Qt.SolidLine,Qt.RoundCap))
     p.drawArc(rect.adjusted(3.5,3.5,-3.5,-3.5),-9*16,77*16)
-    if rect.width()>=36 or kind=='mail_code':
-        if kind=='mail_code':
+    if rect.width()>=36 or kind in ('mail_code','weather_notice'):
+        if kind in ('mail_code','weather_notice'):
             size=min(13,max(8,rect.width()*.36))
             mark=QRectF(rect.right()-size-3,rect.top()+3,size,size)
         else:

@@ -1,11 +1,12 @@
 """Preferences shared by the desktop monitor and the independent taskbar readout."""
 from weakref import proxy
-from PyQt5.QtCore import Qt, QSignalBlocker
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt, QSignalBlocker, QUrl
+from PyQt5.QtGui import QColor, QDesktopServices
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
                              QAbstractItemView)
 from appearance_presets import COLOR_MODES,material_choices
+from component_passthrough import CHOICES,LEGACY,individual,selection_changes
 from content_sources import MAX_NEWS_FEEDS, NEWS_FEED_PRESETS, clean_feeds, web_url
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,AI_PROVIDER_NAMES,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
 from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BADGE_HEIGHT_RANGE,COMPACT_CLOCK_FORMATS,COMPACT_CONTENT,COMPACT_ITEMS,COMPACT_ROUTINES,COMPACT_STATUS,
@@ -80,14 +81,14 @@ class ResourceOptions(QDialog):
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
-           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon'},
+           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
-        {'resource_weather','resource_weather_days','resource_air_source','resource_news'},set(),
+        {'resource_weather','resource_weather_days','resource_air_source','resource_weather_location','resource_weather_alert_sound','resource_news'},set(),
         {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound',
          'resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval'}]
 
@@ -259,6 +260,7 @@ class ResourceOptions(QDialog):
             form=QFormLayout();desktop.addLayout(form)
             combo(form,'resource_open_page','展开后默认页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
             combo(form,'resource_layer','桌面层级',[('置顶','top'),('置底','bottom')],cfg['resource_layer'],self.fields)
+            combo(form,'resource_click_through','鼠标穿透',CHOICES,individual(cfg,'resource'),self.fields)
             combo(form,'resource_fold','收起形态',[('胶囊','pill'),('圆球','ball'),('方条','bar')],cfg['resource_fold'],self.fields)
             taskbar=section(layout,'任务栏固定')
             pinned=check('收起时固定到任务栏',cfg['resource_capsule_taskbar'])
@@ -273,8 +275,8 @@ class ResourceOptions(QDialog):
             form=QFormLayout();behavior.addLayout(form)
             combo(form,'resource_expand_mode','展开方式',[('鼠标移入展开','hover'),('仅点击展开','click')],cfg['resource_expand_mode'],self.fields)
             spin(form,'resource_delay','收起延迟（秒）',1,30,cfg['resource_delay'],self.fields)
-            for key,title in [('resource_auto_hide','鼠标离开后收起'),('resource_click_through','鼠标穿透（可从托盘关闭）')]:
-                self.fields[key]=check(title,cfg[key]);behavior.addWidget(self.fields[key])
+            self.fields['resource_auto_hide']=check('鼠标离开后收起',cfg['resource_auto_hide'])
+            behavior.addWidget(self.fields['resource_auto_hide'])
             layout.addStretch()
 
         def build_1():
@@ -285,7 +287,7 @@ class ResourceOptions(QDialog):
             combo(placement_form,'resource_taskbar_position','任务栏位置',[('靠左','left'),('居中','center'),('靠右','right')],cfg['resource_taskbar_position'],self.fields)
             from resource_options import TASKBAR_LAYERS
             combo(placement_form,'resource_taskbar_layer','显示层级',[(title,key) for key,title in TASKBAR_LAYERS.items()],cfg['resource_taskbar_layer'],self.fields)
-            self.fields['resource_taskbar_click_through']=check('鼠标穿透（可从托盘设置关闭）',cfg['resource_taskbar_click_through']);bar.addWidget(self.fields['resource_taskbar_click_through'])
+            combo(placement_form,'resource_taskbar_click_through','鼠标穿透',CHOICES,individual(cfg,'taskbar'),self.fields)
             self.fields['resource_task_threshold']=check('文字阈值变色（关闭时跟随系统字体颜色）',cfg['resource_task_threshold']);bar.addWidget(self.fields['resource_task_threshold'])
             spin(placement_form,'resource_task_font','字体大小（像素）',2,24,cfg['resource_task_font'],self.fields)
             bar=section(layout,'音乐组件')
@@ -356,8 +358,8 @@ class ResourceOptions(QDialog):
             metric.currentIndexChanged.connect(self.sync_runner_fields)
             self.sync_runner_fields()
             compact=section(layout,'收起时自动提醒')
-            key='resource_alert_battery'
-            self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
+            for key in ('resource_alert_battery','resource_alert_weather'):
+                self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
             layout.addStretch()
 
         def build_3():
@@ -536,6 +538,12 @@ class ResourceOptions(QDialog):
             daily=section(layout,'天气与空气质量')
             self.fields['resource_weather']=check('显示天气',cfg['resource_weather'])
             daily.addWidget(self.fields['resource_weather'])
+            self.fields['resource_weather_location']=check('自动定位当前城市',cfg['resource_weather_location'])
+            self.fields['resource_weather_location'].setToolTip('启动及跨日后在后台获取位置。')
+            daily.addWidget(self.fields['resource_weather_location'])
+            daily.addWidget(button('Windows 位置设置',lambda:QDesktopServices.openUrl(QUrl('ms-settings:privacy-location'))))
+            self.fields['resource_weather_alert_sound']=check('异常天气提示音',cfg['resource_weather_alert_sound'])
+            daily.addWidget(self.fields['resource_weather_alert_sound'])
             daily.addWidget(QLabel('天气城市（最多 6 个，以逗号分隔）'))
             self.weather_cities=QLineEdit('，'.join(cfg['resource_weather_cities']));self.weather_cities.setAccessibleName('天气城市');daily.addWidget(self.weather_cities)
             weather_form=QFormLayout();daily.addLayout(weather_form)
@@ -910,7 +918,13 @@ class ResourceOptions(QDialog):
                 try:changes['resource_appearance']=clean_background(custom,True)
                 except ValueError:
                     self.status.setText('请输入 #RRGGBB 颜色值，或点击「默认」。');return False
+        pointer_modes={}
+        for component,field in LEGACY.items():
+            if field in changes:
+                mode=changes.pop(field)
+                if mode!=individual(self.baseline,component):pointer_modes[component]=mode
         changes={k:v for k,v in changes.items() if v!=self.baseline.get(k)}
+        if pointer_modes:changes.update(selection_changes(self.service.cfg,pointer_modes))
         if changes.get('resource_capsule_taskbar'):changes['resource_collapsed']=True
         ok=self.service.set_options(**changes) if changes else True
         if ok:

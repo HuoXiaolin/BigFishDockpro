@@ -26,11 +26,13 @@ def audio_regressions(api,service,checks):
             assert 350<=duration<=700<CUE_SPACING_MS
             assert (sound.getnchannels(),sound.getsampwidth(),sound.getcomptype())==(1,2,'NONE')
             waveforms.add(sound.readframes(sound.getnframes()))
-    assert len(waveforms)==len(SOUND_KINDS)==6
+    assert len(waveforms)==len(SOUND_KINDS)==7
 
     settings=ResourceOptions(service)
     switch=settings.fields['resource_reminder_sound']
+    weather=settings.fields['resource_weather_alert_sound']
     assert switch.isChecked()
+    assert not weather.isChecked()
     flags=winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
     with patch.object(winsound,'PlaySound') as playback:
         try:
@@ -59,10 +61,20 @@ def audio_regressions(api,service,checks):
             with patch.object(service.runtime.dock,'preview',False):
                 service.play_reminder_sound('quota')
             assert playback.call_args.args==(str(SOUND_DIR / 'quota.wav'),flags) and playback.call_count==4
+            with patch.object(service.runtime.dock,'preview',False):
+                service.play_reminder_sound('weather')
+            assert 'weather' not in player.pending
+            weather.setChecked(True)
+            assert settings.commit() and api.load_config()['resource_weather_alert_sound'] is True
+            with patch.object(service.runtime.dock,'preview',False):
+                service.play_reminder_sound('weather')
+            assert 'weather' in player.pending
+            weather.setChecked(False)
+            assert settings.commit() and 'weather' not in player.pending and player.current=='quota'
         finally:
             if service.reminder_audio:service.reminder_audio.stop()
             settings.reject();settings.deleteLater()
-    checks.append('Six distinct bundled nature WAV clips fit the queue spacing. Playback queues different kinds and coalesces duplicates. The saved sound switch stops playback and clears the queue. Preview and pause stay silent.')
+    checks.append('Seven distinct bundled WAV clips fit the queue spacing. The weather switch removes its queued cue without stopping other reminders. The master switch stops playback and clears the queue. Preview and pause stay silent.')
 
 
 def assert_single_caption(dialog):

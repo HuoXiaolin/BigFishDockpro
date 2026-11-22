@@ -2,8 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using LibreHardwareMonitor.Hardware;
 using Microsoft.Win32;
 
 internal static class HardwareFans {
@@ -116,6 +120,55 @@ internal static class HardwareFans {
                     put(metric, rpm, "AIDA64 · " + id, Labels[metric]);
             }
         }
+    }
+
+    static Assembly ResolveFanAssembly(object sender, ResolveEventArgs args) {
+        string resource = "FanMonitor." + new AssemblyName(args.Name).Name + ".dll";
+        using (var stream = typeof(HardwareFans).Assembly.GetManifestResourceStream(resource)) {
+            if (stream == null)
+                return null;
+            using (var bytes = new MemoryStream()) {
+                stream.CopyTo(bytes);
+                return Assembly.Load(bytes.ToArray());
+            }
+        }
+    }
+
+    internal static void ReadMissing(HashSet<string> wanted, Action<string,double,string,string> put) {
+        if (wanted.Count == 0)
+            return;
+        AppDomain.CurrentDomain.AssemblyResolve += ResolveFanAssembly;
+        try { ReadHardware(wanted, put); }
+        finally { AppDomain.CurrentDomain.AssemblyResolve -= ResolveFanAssembly; }
+    }
+
+    // Install the embedded-assembly resolver before JIT compilation touches the library.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static void ReadHardware(HashSet<string> wanted, Action<string,double,string,string> put) {
+        var computer = new Computer {
+            IsMotherboardEnabled = wanted.Contains("cpu_fan") || wanted.Contains("board_fan") || wanted.Contains("cpu_pump"),
+            IsGpuEnabled = wanted.Contains("gpu_fan")
+        };
+        try {
+            computer.Open();
+            foreach (var hardware in computer.Hardware)
+                ReadFanSensors(hardware, wanted, put);
+        } finally {
+            computer.Close();
+        }
+    }
+
+    static void ReadFanSensors(IHardware hardware, HashSet<string> wanted, Action<string,double,string,string> put) {
+        hardware.Update();
+        foreach (ISensor sensor in hardware.Sensors) {
+            if (sensor.SensorType != SensorType.Fan || !sensor.Value.HasValue)
+                continue;
+            string metric = MonitorMetric(sensor.Identifier.ToString(), sensor.Name);
+            if (metric != null && wanted.Contains(metric))
+                put(metric, sensor.Value.Value, "LibreHardwareMonitor · " + sensor.Name, Labels[metric]);
+        }
+        foreach (IHardware child in hardware.SubHardware)
+            ReadFanSensors(child, wanted, put);
     }
 
     internal static void Collect(HashSet<string> wanted, Action<string,double,string,string> put) {

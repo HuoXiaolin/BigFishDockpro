@@ -1,4 +1,4 @@
-"""Small Open-Meteo forecasts; no location permission, key, or large cache."""
+"""Open-Meteo forecasts and weather notices for configured cities."""
 import json
 import math
 import time
@@ -7,18 +7,20 @@ from urllib.parse import urlencode
 from PyQt5.QtCore import pyqtSignal
 from background_worker import BackgroundWorker
 
-DEFAULT_CITIES=['天津','乌鲁木齐','沈阳']
 KNOWN={'天津':(39.14222,117.17667),'乌鲁木齐':(43.80096,87.60046),'沈阳':(41.79222,123.43278)}
 AIR_FIELDS=('us_aqi','pm2_5','pm10','ozone')
 WEATHER_ERRORS=(OSError,ValueError,TypeError,KeyError,AttributeError,IndexError)
 SHANGHAI_OFFSET=8*3600
+NOTICE_MAX_AGE=30*60
+HOURLY_FIELDS=('temperature_2m','weather_code','precipitation','rain','showers','snowfall','visibility')
+RAIN_NOTICES=('雨','冻雨','雷雨')
 
 
 def clean_cities(value,strict=False):
     valid=isinstance(value,list) and len(value)<=6 and all(isinstance(n,str) and 0<len(n.strip())<=40 and not any(ord(c)<32 for c in n) for n in value)
     if not valid:
         if strict:raise ValueError('天气城市最多 6 个，每个城市名称不超过 40 字。')
-        return list(DEFAULT_CITIES)
+        return []
     return list(dict.fromkeys(n.strip() for n in value))
 
 
@@ -47,8 +49,103 @@ def condition(code):
     if code in (51,53,55,56,57):return '毛毛雨'
     if code in (61,63,65,66,67,80,81,82):return '雨'
     if code in (71,73,75,77,85,86):return '雪'
-    if code in (95,96,99):return '雷雨'
+    if code in (95,96,97,99):return '雷雨'
     return '—'
+
+
+def notice_label(code):
+    if code in (56,57,66,67):
+        return '冻雨'
+    label=condition(code)
+    if label=='毛毛雨':
+        return '雨'
+    return label if label in ('雨','雪','雾','雷雨') else None
+
+
+def notice_period(label):
+    return '雨' if label in RAIN_NOTICES else label
+
+
+def weather_notice(sampled,code,hourly,offset):
+    label=notice_label(code)
+    if not label:
+        return None
+    zone=timezone(timedelta(seconds=offset))
+    try:
+        start=datetime.fromisoformat(sampled).replace(tzinfo=zone)
+    except (TypeError,ValueError):
+        return None
+    notice=dict(label=label,sampled_at=start.timestamp(),until=None)
+    period=notice_period(label)
+    previous=start
+    for stamp,hour_code in zip(hourly.get('time') or [],hourly.get('weather_code') or []):
+        try:
+            at=datetime.fromisoformat(stamp).replace(tzinfo=zone)
+        except (TypeError,ValueError):
+            continue
+        if at<=previous:
+            continue
+        if at-previous>timedelta(hours=1) or condition(hour_code)=='—':
+            break
+        if notice_period(notice_label(hour_code))!=period:
+            notice['until']=at.timestamp()
+            break
+        previous=at
+    return notice
+
+
+def active_weather_notice(row,now=None):
+    notice=row.get('notice')
+    if not notice or row.get('error'):
+        return None
+    age=(time.time() if now is None else now)-notice['sampled_at']
+    return notice if -15*60<=age<NOTICE_MAX_AGE else None
+
+
+def forecast_rain_end(slots,notice=None):
+    if notice and notice['label'] in RAIN_NOTICES:
+        return notice['until']
+    for wet,dry in zip(slots,slots[1:]):
+        if (notice_label(wet['code']) in RAIN_NOTICES and condition(dry['code'])!='—'
+                and notice_label(dry['code']) not in RAIN_NOTICES and 0<dry['at']-wet['at']<=3600):
+            return dry['at']
+    return None
+
+
+def hourly_rainfall(row):
+    rain,showers=(measurement(row.get(key)) for key in ('rain','showers'))
+    if rain is not None and showers is not None:
+        return rain+showers
+    total=measurement(row.get('precipitation'))
+    snow=measurement(row.get('snowfall'))
+    if total==0 or snow==0 or (snow is None and notice_label(row['code']) in RAIN_NOTICES):
+        return total
+    return None
+
+
+def forecast_hours(sampled,hourly,offset):
+    zone=timezone(timedelta(seconds=offset))
+    try:
+        start=datetime.fromisoformat(sampled).replace(tzinfo=zone)
+    except (TypeError,ValueError):
+        return []
+    last=start+timedelta(hours=6)
+    columns={key:hourly.get(key) or [] for key in HOURLY_FIELDS}
+    slots=[]
+    for index,stamp in enumerate(hourly.get('time') or []):
+        if not isinstance(stamp,str) or stamp[:16]<=sampled[:16]:
+            continue
+        try:
+            at=datetime.fromisoformat(stamp).replace(tzinfo=zone)
+        except ValueError:
+            continue
+        if at>last or len(slots)==6:
+            break
+        row={key:number(values[index]) if index<len(values) else None for key,values in columns.items()}
+        row['code']=row.pop('weather_code')
+        row['rainfall']=hourly_rainfall(row)
+        slots.append(dict(row,time=at.strftime('%H:%M'),at=at.timestamp()))
+    return slots
 
 
 def number(value):
@@ -70,7 +167,7 @@ def forecast(name,lookup=fetch_json,coordinates=None):
     lat,lon=coordinates
     raw=lookup('https://api.open-meteo.com/v1/forecast?'+urlencode(dict(latitude=lat,longitude=lon,
         current='temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,apparent_temperature',
-        hourly='temperature_2m',
+        hourly=','.join(HOURLY_FIELDS),
         daily='temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset,daylight_duration',
         timezone='auto',forecast_days=7,past_days=1)))
     if not isinstance(raw,dict):raise ValueError('天气暂无读数')
@@ -86,17 +183,17 @@ def forecast(name,lookup=fetch_json,coordinates=None):
                          sunrise=at('sunrise',str),sunset=at('sunset',str),daylight=at('daylight_duration')))
     temp=number(current.get('temperature_2m'))
     if temp is None:raise ValueError('天气暂无读数')
-    hourly=raw.get('hourly') or {};hours=[]
-    if sampled:
-        for stamp,value in zip(hourly.get('time') or [],hourly.get('temperature_2m') or []):
-            if isinstance(stamp,str) and stamp>sampled[:16]:
-                hours.append((stamp[11:16],number(value)))
-                if len(hours)>=6:break
+    hourly=raw.get('hourly') or {}
     offset=raw.get('utc_offset_seconds')
     if type(offset) is not int or abs(offset)>=86400:offset=SHANGHAI_OFFSET
-    return dict(name=name,temperature=temp,code=current.get('weather_code'),condition=condition(current.get('weather_code')),days=days,
+    code=current.get('weather_code')
+    slots=forecast_hours(sampled,hourly,offset)
+    hours=[(slot['time'],slot['temperature_2m']) for slot in slots]
+    return dict(name=name,temperature=temp,code=code,condition=condition(code),days=days,
                 humidity=number(current.get('relative_humidity_2m')),wind=number(current.get('wind_speed_10m')),
                 feels=number(current.get('apparent_temperature')),hours=hours,sampled=sampled,
+                forecast_hours=slots,
+                notice=weather_notice(sampled,code,hourly,offset),
                 utc_offset_seconds=offset,updated=time.time())
 
 
@@ -177,8 +274,13 @@ def moon_phase(stamp):
 
 class WeatherJob(BackgroundWorker):
     ready=pyqtSignal(object)
-    def __init__(self,cities,source='auto',connection=('', '')):
+    def __init__(self,cities,source='auto',connection=('', ''),location_dir=None,*,location_session=None,retry_location=False):
         super().__init__();self.cities=list(cities);self.source=source;self.connection=connection
+        self.location_dir=location_dir;self.retry_location=retry_location;self.location_status='disabled'
+        if location_dir and location_session is None:
+            from weather_location import WeatherLocation
+            location_session=WeatherLocation()
+        self.location_session=location_session
 
     def read_air(self,locations):
         if self.source=='qweather':
@@ -203,13 +305,20 @@ class WeatherJob(BackgroundWorker):
 
     def run(self):
         rows=[];locations={}
-        for city in self.cities:
+        located=None
+        if self.location_dir:
+            located,self.location_status=self.location_session.resolve(self.location_dir,fetch_json,self.cancelled.is_set,
+                                                                       retry=self.retry_location)
+        cities={located[0]:located[1]} if located else {}
+        for name in self.cities:cities.setdefault(name,None)
+        for city,coordinates in cities.items():
             if self.cancelled.is_set():return
             try:
-                coordinates=locate(city,fetch_json)
+                coordinates=coordinates or locate(city,fetch_json)
                 locations[city]=coordinates
                 row=forecast(city,coordinates=coordinates)
             except WEATHER_ERRORS:row=dict(name=city,error='暂时无法更新')
+            if located and city==located[0]:row['located']=True
             rows.append(row)
         if self.cancelled.is_set():return
         air,error=self.read_air(locations)

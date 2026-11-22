@@ -142,6 +142,8 @@ class ResourceCapsule(QObject):
         self.runner_totals = {}
         self.monitor_sources = {}
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
+        from weather_location import WeatherLocation
+        self.weather_location=WeatherLocation()
         self.reminder_audio=None
         self.mail=None
         self.calendar_sync=None;self.calendar_checked=False
@@ -380,7 +382,9 @@ class ResourceCapsule(QObject):
             if card and card.isVisible():card.refresh()
 
     def play_reminder_sound(self,kind):
-        if self.closed or self.runtime.session_ending or not self.cfg['resource_reminder_sound'] or self.runtime.dock.preview or self.runtime.game_active:return
+        if (self.closed or self.runtime.session_ending or not self.cfg['resource_reminder_sound']
+                or self.runtime.dock.preview or self.runtime.game_active):return
+        if kind=='weather' and not self.cfg['resource_weather_alert_sound']:return
         if self.reminder_audio is None:
             from resource_reminder_audio import ReminderAudio
             self.reminder_audio=ReminderAudio(self)
@@ -398,12 +402,20 @@ class ResourceCapsule(QObject):
         level=self.low_battery()
         if level is not None:badges.append(('battery',f'{level}%'))
         if self.pomodoro:badges.extend(self.pomodoro.badges())
+        if self.compact and (weather:=self.weather_alert()):
+            city,label=weather
+            badges.append(('weather_notice',f'{label} · {city}'))
         if self.cfg['resource_alert_almanac']:
             from datetime import date
             from calendar_almanac import almanac
             day=almanac(date.today())
             if day and (day.term_today or day.festival):badges.append(('almanac',day.badge()))
         return tuple(badges)
+
+    def weather_alert(self):
+        if self.extras and self.cfg['resource_weather'] and self.cfg['resource_alert_weather']:
+            return self.extras.weather_alert()
+        return None
 
     def low_battery(self):
         if self.cfg['resource_alert_battery'] and self.cfg['resource_enabled']:
@@ -587,6 +599,8 @@ class ResourceCapsule(QObject):
         if self.mail or self.cfg['resource_mail']:self.get_mail().sync()
         if self.reminder_audio and (self.runtime.game_active or not self.cfg['resource_reminder_sound']):
             self.reminder_audio.stop()
+        elif self.reminder_audio and not (self.cfg['resource_weather'] and self.cfg['resource_weather_alert_sound']):
+            self.reminder_audio.discard('weather')
         visible=self.cfg['resource_enabled'] and not self.runtime.game_active
         if not visible:self.auto_compact=None
         if visible:

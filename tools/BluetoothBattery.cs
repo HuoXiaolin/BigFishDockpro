@@ -14,7 +14,7 @@ using Windows.Storage.Streams;
 internal static class BluetoothBattery {
     // The inbox .NET compiler references split OS WinMD files. Await their native
     // completion callback directly, without depending on a separately installed SDK.
-    static System.Runtime.CompilerServices.TaskAwaiter<T> GetAwaiter<T>(this Windows.Foundation.IAsyncOperation<T> op) {
+    internal static System.Runtime.CompilerServices.TaskAwaiter<T> GetAwaiter<T>(this Windows.Foundation.IAsyncOperation<T> op) {
         var completion=new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         op.Completed=(sender,status) => {
             try { completion.TrySetResult(sender.GetResults()); }
@@ -141,6 +141,7 @@ internal static class BluetoothBattery {
             if(args.Length==1 && args[0]=="--app-traffic") return AppTraffic.Run();
             object result;
             if(args.Length==2 && args[0]=="--taskbar") result=TaskbarSpace.Read(Int64.Parse(args[1]));
+            else if(args.Length==1 && args[0]=="--weather-location") result=WeatherLocation.Read();
             else if(args.Length==2 && args[0]=="--sensors") result=HardwareSensors.Read(args[1]);
             else if(args.Length==6 && args[0]=="--sensors") result=HardwareSensors.Read(args[1],
                 args[2]=="-" ? (ulong?)null : UInt64.Parse(args[2]), args[3]=="-" ? (uint?)null : UInt32.Parse(args[3]),

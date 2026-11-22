@@ -513,6 +513,8 @@ class NoteWindow(QWidget):
         top=self.row()['pinned']
         owner=0 if top or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP') else shell_owner()
         desktop_layer(int(self.winId()),top,owner)
+        if self.dock.cfg['component_passthrough'].get(self.property('clickThroughKey'))=='apps':
+            self.manager.runtime.click_policy.apply(self)
     def showEvent(self,event):
         super().showEvent(event)
         if not self.embedded:

@@ -926,11 +926,9 @@
   "resource_face_auto_switch": false,
   "resource_face_switch_minutes": 10,
   "resource_weather": true,
-  "resource_weather_cities": [
-    "天津",
-    "乌鲁木齐",
-    "沈阳"
-  ],
+  "resource_weather_location": true,
+  "resource_weather_alert_sound": false,
+  "resource_weather_cities": [],
   "resource_weather_compact": true,
   "resource_weather_days": 3,
   "resource_weather_thresholds": [0, 16, 26, 30],

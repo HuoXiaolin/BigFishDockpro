@@ -1,6 +1,7 @@
 """Win32 stacking for app windows. Never activate a window to change its layer."""
 import ctypes as C
 from ctypes import wintypes as W
+import os
 
 
 TOPMOST = -1
@@ -25,6 +26,14 @@ def native():
         user.GetWindowRect.argtypes = [W.HWND, C.POINTER(W.RECT)]
         user.GetWindowRect.restype = W.BOOL
         user.GetForegroundWindow.restype = W.HWND
+        user.GetCursorPos.argtypes = [C.POINTER(W.POINT)]
+        user.GetCursorPos.restype = W.BOOL
+        user.GetClassNameW.argtypes = [W.HWND, W.LPWSTR, C.c_int]
+        user.GetClassNameW.restype = C.c_int
+        user.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
+        user.GetWindowThreadProcessId.restype = W.DWORD
+        for check in (user.IsWindowVisible,user.IsIconic):
+            check.argtypes=[W.HWND];check.restype=W.BOOL
         _user = user
     return _user
 
@@ -60,13 +69,73 @@ def click_through(window, enabled):
     # These widgets are already layered (Qt translucent backgrounds). The
     # Win32 style passes input to other processes; the Qt flag covers children.
     from PyQt5.QtCore import Qt
-    window.setAttribute(Qt.WA_TransparentForMouseEvents, enabled)
+    if window.testAttribute(Qt.WA_TransparentForMouseEvents)!=enabled:
+        window.setAttribute(Qt.WA_TransparentForMouseEvents, enabled)
     hwnd = int(window.winId())
     user = native()
     old = user.GetWindowLongW(hwnd, -20)
     new = old | 0x20 if enabled else old & ~0x20
     if old != new:
         user.SetWindowLongPtrW(hwnd, -20, new)
+
+
+DESKTOP_WINDOW_CLASSES=frozenset({'Progman','WorkerW','SHELLDLL_DefView','Shell_TrayWnd','Shell_SecondaryTrayWnd'})
+
+
+def cursor_position():
+    point=W.POINT()
+    return point if native().GetCursorPos(C.byref(point)) else None
+
+
+def application_under(hwnd,point):
+    """Check the native stacking order at the pointer instead of the foreground focus."""
+    if point is None:
+        return False
+    user=native()
+    rect=W.RECT()
+    def contains(target):
+        return (user.GetWindowRect(target,C.byref(rect)) and
+                rect.left<=point.x<rect.right and rect.top<=point.y<rect.bottom)
+
+    if not contains(hwnd):
+        return False
+    pid=W.DWORD()
+    cloaked=W.DWORD()
+    window_attribute=_dwm_window_attribute()
+    name=C.create_unicode_buffer(128)
+    current=hwnd
+    own_pid=os.getpid()
+    for _ in range(4096):
+        current=user.GetWindow(current,2)  # GW_HWNDNEXT
+        if not current:break
+        if not user.IsWindowVisible(current) or user.IsIconic(current) or not contains(current):
+            continue
+        flags=user.GetWindowLongW(current,-20)
+        if (flags & 0x80020)==0x80020:  # WS_EX_LAYERED | WS_EX_TRANSPARENT
+            continue
+        if not user.GetClassNameW(current,name,len(name)):
+            continue
+        if window_attribute(current,14,C.byref(cloaked),C.sizeof(cloaked))==0 and cloaked.value:
+            continue
+        if name.value in DESKTOP_WINDOW_CLASSES:
+            return False
+        if not user.GetWindowThreadProcessId(current,C.byref(pid)) or pid.value==own_pid:
+            continue
+        return True
+    return False
+
+
+_window_attribute=None
+
+
+def _dwm_window_attribute():
+    global _window_attribute
+    if _window_attribute is None:
+        function=C.WinDLL('dwmapi').DwmGetWindowAttribute
+        function.argtypes=[W.HWND,W.DWORD,C.c_void_p,W.DWORD]
+        function.restype=C.c_long
+        _window_attribute=function
+    return _window_attribute
 
 
 def covers_above(cover, hwnd):

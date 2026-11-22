@@ -191,7 +191,7 @@ def run(api,runtime,app,output,checks):
     from feature_config import normalize
     from resource_liquid import attached
     from resource_settings import ResourceOptions
-    from resource_weather import forecast,clean_cities,DEFAULT_CITIES
+    from resource_weather import forecast,clean_cities
     from card_snap import snap_target,touching_edge
     from resource_face import PetFace
     from screen_layout import capture,screen_records
@@ -209,8 +209,13 @@ def run(api,runtime,app,output,checks):
         action.trigger()
     try:
         assert 'resource_live_glass' not in normalize({'resource_live_glass':True})
+        cities=['天津','乌鲁木齐','沈阳']
+        assert not DEFAULTS['resource_weather_cities'] and not api.initial_defaults()['resource_weather_cities']
+        assert migrate_docked({'resource_weather_cities':cities})['resource_weather_cities']==[]
+        assert migrate_docked({'resource_weather_cities':['天津','上海']})['resource_weather_cities']==['天津','上海']
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,card_snap=True,card_snap_distance=12,
             resource_face=True,resource_expand_mode='click',resource_weather=True,motion_enabled=True,
+            resource_weather_cities=cities,
             resource_background='custom',resource_appearance=dict(material='liquid',theme='light',color='',opacity=48,blur=8,highlight=45))
         service.sync();w=service.window;extra=service.extras;app.processEvents()
         assert extra and extra.weather_job is None
@@ -315,7 +320,7 @@ def run(api,runtime,app,output,checks):
             queries.append(url)
             return dict(current=dict(temperature_2m=16,weather_code=2,relative_humidity_2m=40,wind_speed_10m=8,time='2026-11-07T14:00'),
                 daily=dict(time=['2026-11-07','2026-11-08','2026-11-09'],temperature_2m_min=[6,7,8],temperature_2m_max=[17,18,19],weather_code=[2,0,61]))
-        extra.weather=[forecast(name,lookup) for name in DEFAULT_CITIES]
+        extra.weather=[forecast(name,lookup) for name in cities]
         assert len(queries)==3 and all('timezone=auto' in q for q in queries) and extra.weather[1]['name']=='乌鲁木齐'
         assert all('forecast_days=7' in q and 'past_days=1' in q for q in queries)
         def weekly(url):
@@ -329,6 +334,147 @@ def run(api,runtime,app,output,checks):
         service.fold(True);w.offset=0;seen=set()
         for page in range(12):w.offset=page;w.grab();seen.update(w.compact_shown)
         assert 'weather' in seen
+        from datetime import datetime,timedelta,timezone
+        from resource_weather import active_weather_notice,forecast_rain_end,hourly_rainfall
+        from resource_weather_style import weather_accent
+        from resource_compact import compact_badges
+        zone=timezone(timedelta(hours=8))
+        now=datetime.now(zone).replace(second=0,microsecond=0)
+        first_hour=now.replace(minute=0)+timedelta(hours=1)
+        end=first_hour+timedelta(hours=3)
+        times=[(first_hour+timedelta(hours=i)).strftime('%Y-%m-%dT%H:%M') for i in range(6)]
+        def notice_forecast(url):
+            query=url.split('hourly=',1)[1].split('&',1)[0]
+            assert all(key in query for key in ('weather_code','rain','showers','precipitation','snowfall','visibility'))
+            return dict(utc_offset_seconds=8*3600,current=dict(temperature_2m=7,weather_code=61,
+                         time=now.strftime('%Y-%m-%dT%H:%M')),
+                         hourly=dict(time=times,weather_code=[53,95,66,3,2,None],temperature_2m=[6,6,7,8,8,8],
+                                     rain=[.2,.6,.5,0,0,None],showers=[0,.8,0,0,0,None],
+                                     precipitation=[.2,1.7,.5,0,0,None],snowfall=[0,2.1,0,0,0,None],
+                                     visibility=[None,420,2600,3500,4500,None]))
+        alert_row=forecast('乌鲁木齐',notice_forecast)
+        notice=active_weather_notice(alert_row)
+        assert notice and notice['label']=='雨' and notice['until']==end.timestamp()
+        slots=alert_row['forecast_hours']
+        assert [hour['time'] for hour in slots]==[stamp[11:16] for stamp in times]
+        assert [hour['rainfall'] for hour in slots]==[.2,1.4,.5,0,0,None]
+        assert slots[1]['snowfall']==2.1 and slots[1]['visibility']==420
+        assert hourly_rainfall(dict(code=61,precipitation=2,snowfall=0))==2
+        assert hourly_rainfall(dict(code=71,precipitation=2,snowfall=1.4)) is None
+        assert forecast_rain_end(slots)==end.timestamp() and forecast_rain_end([slots[1],slots[3]]) is None
+        assert not active_weather_notice(alert_row,now.timestamp()+31*60)
+        assert not active_weather_notice(dict(alert_row,error='暂时无法更新'))
+        extra.weather[1]=alert_row
+        with patch.dict(cfg,resource_alert_weather=True):
+            service.display();w.grab()
+            assert ('weather_notice','雨 · 乌鲁木齐') in compact_badges(service)[0]
+            index=w.reminder_kinds.index('weather_notice')
+            point=w.reminder_bounds[index].center().toPoint()
+            event(w,QEvent.MouseButtonPress,point,w.mapToGlobal(point))
+            event(w,QEvent.MouseButtonRelease,point,w.mapToGlobal(point))
+            assert not service.compact and w.page_key=='weather'
+            assert w.weather_view.city.currentText()=='乌鲁木齐' and w.weather_view.cards.notice==notice
+            cards=w.weather_view.cards
+            assert cards.trend==slots and cards.trend_kind=='雨' and cards.rain_end==end.timestamp()
+            plotted=cards.grab();image=plotted.toImage();ratio=plotted.devicePixelRatio()
+            step=(cards.width()-40)/len(slots)
+            y=round((cards.notice_height+79-23)*ratio)
+            peak_pixel=image.pixelColor(round((31+1.5*step)*ratio),y)
+            low_pixel=image.pixelColor(round((31+.5*step)*ratio),y)
+            assert peak_pixel==weather_accent({'code':61},cards.owner.colors['light']) and low_pixel!=peak_pixel
+            w.grab().save(str(output/'liquid-weather-notice.png'))
+            extra.weather[1]=dict(alert_row,code=2,condition='多云',notice=None)
+            w.weather_view.refresh()
+            assert not cards.notice and cards.trend==slots and cards.rain_end==end.timestamp()
+            w.weather_view.select_city('天津')
+            assert w.weather_view.cards.notice is None and not w.weather_view.cards.trend
+            service.fold(True)
+            with patch.dict(cfg,resource_alert_weather=False):
+                assert not any(kind=='weather_notice' for kind,value in compact_badges(service)[0])
+        extra.weather[1]=forecast('乌鲁木齐',lookup)
+        manual_rows=list(extra.weather)
+        with patch.object(service,'play_reminder_sound') as cue:
+            extra.receive_weather([alert_row])
+            cue.assert_not_called()
+            extra.weather=manual_rows
+            with patch.dict(cfg,resource_weather_alert_sound=True):
+                extra.receive_weather([alert_row])
+                extra.receive_weather([alert_row])
+                extra.receive_weather([dict(name='乌鲁木齐',error='暂时无法更新')])
+                extra.receive_weather([alert_row])
+                cue.assert_called_once_with('weather')
+                extra.receive_weather(manual_rows)
+                extra.receive_weather([alert_row])
+                assert cue.call_count==2
+        extra.weather=manual_rows
+        from tempfile import TemporaryDirectory
+        from resource_options import DEFAULTS
+        from weather_location import WeatherLocation
+        assert DEFAULTS['resource_weather_location'] is True
+        with TemporaryDirectory(dir=output) as directory:
+            import json
+            from pathlib import Path
+            cache=Path(directory)/'weather-location.json'
+            cache.write_text(json.dumps(dict(day=now.date().isoformat(),name='旧位置',latitude=39,longitude=116)),encoding='utf-8')
+            with patch('weather_location.date') as local_date:
+                local_date.today.return_value=now.date()
+                fixes=dict(latitude=31.226,longitude=121.476)
+                queries=[]
+                def city_from_position(url):
+                    assert 'latitude=31.23' in url and 'longitude=121.48' in url
+                    queries.append(url)
+                    return {'city':'上海'}
+                from unittest.mock import Mock
+                position=Mock(side_effect=[fixes,fixes,dict(status='timeout'),fixes])
+                def requested(location,retry=False):
+                    return location.resolve(directory,city_from_position,lambda:False,read=position,retry=retry)
+                expected=(('上海',(31.23,121.48)),'ready')
+                first=WeatherLocation()
+                assert requested(first)==requested(first,retry=True)==expected
+                position.assert_called_once_with()
+                restarted=WeatherLocation()
+                assert requested(restarted)==requested(restarted)==expected
+                assert position.call_count==2 and len(queries)==1
+                local_date.today.return_value=now.date()+timedelta(days=1)
+                assert requested(restarted)==requested(restarted)==(None,'timeout')
+                assert position.call_count==3
+                assert requested(restarted,retry=True)==requested(restarted)==expected
+                assert position.call_count==4
+
+                def crossing_midnight():
+                    local_date.today.return_value=now.date()+timedelta(days=2)
+                    return fixes
+                midnight=WeatherLocation()
+                location=midnight.resolve(directory,city_from_position,lambda:False,read=crossing_midnight)
+                assert location==requested(midnight)==expected and position.call_count==4
+        with patch.object(runtime.dock,'preview',False),patch('resource_weather.WeatherJob') as jobs:
+            extra.cancel();extra.weather_timer.stop()
+            extra.sync()
+            jobs.assert_called_once()
+            assert jobs.call_args.kwargs['location_session'] is service.weather_location
+            jobs.return_value.start.assert_called_once()
+            assert service.compact and extra.weather_timer.isActive()
+            extra.cancel();extra.weather_timer.timeout.emit()
+            assert jobs.call_count==2 and jobs.call_args.kwargs['location_session'] is service.weather_location
+            extra.cancel()
+        with patch.object(extra,'refresh_weather') as refresh:
+            w.weather_view.refresh_weather()
+            refresh.assert_called_once_with(retry_location=True)
+        local_row=dict(forecast('上海',lookup,coordinates=(31.23,121.48)),located=True)
+        with patch.dict(cfg,resource_weather_cities=[]):
+            extra.weather=[local_row]
+            w.weather_view.refresh()
+            assert w.weather_view.city.count()==1 and w.weather_view.city.currentText()=='上海'
+        extra.weather=[local_row,*manual_rows]
+        w.weather_view.refresh()
+        assert w.weather_view.city.itemText(0)==w.weather_view.city.currentText()=='上海'
+        w.weather_view.select_city('天津');w.weather_view.refresh()
+        assert w.weather_view.city.currentText()=='天津'
+        extra.weather.pop(0)
+        w.weather_view.refresh()
+        checks.append('Weather notice and location: the rain block opens its city, the hourly chart paints the liquid-rain peak, and the first dry hour is marked.')
+        checks.append('Weather location starts in the folded capsule, requests once per launch and local date change, merges a request spanning midnight, reuses a successful fix, and lets Refresh retry a failure.')
+        checks.append('Weather defaults and audio: the located city appears first, manual cities stay selectable, and the opt-in cue plays once for a new condition.')
         # A real PNG exercises the wallpaper crop and material cache even with motion off.
         import wallpaper_source as wallpaper
         screen=QApplication.screenAt(w.geometry().center()) or QApplication.primaryScreen()
@@ -409,6 +555,6 @@ def run(api,runtime,app,output,checks):
         service.set_options(resource_enabled=False);assert service.extras is None and not w.liquid.watch.isActive()
         checks.append('Liquid capsule: four-edge snap and fold anchoring, finite tether/drip, failed-save restore, seven vector moods in both themes, click expansion, transparent margins at half-resolution, and timers stop on hide/disable.')
         checks.append('Capsule wallpaper: legacy capture preference discarded; compact and expanded cache ignores a changing foreground window and refreshes from a second wallpaper file with motion disabled. Private desktop with fixture wallpapers.')
-        checks.append('Weather: Tianjin/Urumqi/Shenyang, Beijing time and three-day parsing, city validation, compact paging, pause when hidden and stop when disabled.')
+        checks.append('Weather: city forecasts and compact paging, fresh weather reminder opens the matching city, hourly end estimate and stale suppression, hide and disable lifecycle.')
     finally:
         cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

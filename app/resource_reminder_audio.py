@@ -8,8 +8,8 @@ from PyQt5.QtCore import QObject, QTimer
 
 
 SOUND_DIR = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets/reminder-sounds'
-SOUND_KINDS = ('agenda', 'focus_done', 'rest_done', 'water', 'battery', 'quota')
-# Leave a short gap after the longest nature clip and its fade.
+SOUND_KINDS = ('agenda', 'focus_done', 'rest_done', 'water', 'battery', 'quota', 'weather')
+# Leave a short gap after the longest clip and its fade.
 CUE_SPACING_MS = 760
 
 
@@ -39,6 +39,10 @@ class ReminderAudio(QObject):
         except RuntimeError:
             pass
         self.timer.start(CUE_SPACING_MS)
+
+    def discard(self, kind):
+        if kind in self.pending:
+            self.pending.remove(kind)
 
     def stop(self):
         self.timer.stop()

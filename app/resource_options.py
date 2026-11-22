@@ -87,6 +87,7 @@ REMINDER_OPTIONS={
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
     'resource_alert_almanac':'农历节气与节日',
     'resource_alert_mail_code':'收起时显示邮箱验证码',
+    'resource_alert_weather':'雨、雪、雾和雷雨',
 }
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
 MAIL_INTERVAL_RANGE=(10,900)
@@ -115,7 +116,8 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
                 resource_face_auto_switch=False,resource_face_switch_minutes=FACE_SWITCH_DEFAULT,
-                resource_weather=False,resource_weather_cities=['天津','乌鲁木齐','沈阳'],resource_weather_compact=True,resource_weather_days=3,
+                resource_weather=False,resource_alert_weather=True,resource_weather_location=True,resource_weather_alert_sound=False,
+                resource_weather_cities=[],resource_weather_compact=True,resource_weather_days=3,
                 resource_weather_thresholds=list(WEATHER_THRESHOLDS),
                  resource_news=False,resource_news_feeds=[url for _,url in NEWS_FEED_PRESETS],resource_news_disabled_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
@@ -171,6 +173,8 @@ def migrate_runner_placement(cfg):
 
 
 def migrate_docked(data):
+    if 'resource_weather_location' not in data and data.get('resource_weather_cities')==['天津','乌鲁木齐','沈阳']:
+        data=dict(data,resource_weather_cities=[])
     if 'resource_runner_placement' in data:
         data = dict(data)
         migrate_runner_placement(data)
@@ -312,7 +316,8 @@ def normalize(cfg,strict=False):
     for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
                 'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',
-                'resource_mail','resource_mail_notifications','resource_mail_icon',*REMINDER_OPTIONS):
+                'resource_mail','resource_mail_notifications','resource_mail_icon','resource_weather_location',
+                'resource_weather_alert_sound',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('资源胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]

@@ -201,7 +201,7 @@ def normalize(cfg):
     result['daily_picture_interval']=max(5,min(3600,interval)) if type(interval) is int else 30
     if result['passthrough_mode'] not in ('all','none','custom'):result['passthrough_mode']='custom'
     selection=result['component_passthrough']
-    result['component_passthrough']={k:True for k,v in selection.items() if isinstance(k,str) and 0<len(k)<=104 and v is True} if isinstance(selection,dict) else {}
+    result['component_passthrough']={k:v for k,v in selection.items() if isinstance(k,str) and 0<len(k)<=104 and (v is True or v=='apps')} if isinstance(selection,dict) else {}
     if result['spectrum_style'] not in tuple(value for _, value in SPECTRUM_STYLES):
         result['spectrum_style'] = 'bars'
     if result['spectrum_color_mode'] not in ('colorful','mono'):

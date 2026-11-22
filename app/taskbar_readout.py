@@ -6,7 +6,6 @@ from PyQt5.QtWidgets import QWidget,QApplication
 from resource_taskbar import Placement
 from ui_style import AlignedMenu
 from resource_options import FAN_METRICS,SENSOR_UNITS,METRICS,MONITOR_DEVICES,TASK_COLUMN_NAMES,TASKBAR_LAYERS
-from component_passthrough import enabled as passthrough_enabled
 from taskbar_text import foreground_ink, system_mode
 
 
@@ -89,9 +88,10 @@ class TaskbarReadout(QWidget):
         if self.geometry()!=slot:self.setGeometry(slot)
         was_visible = self.isVisible()
         self.show()
-        from window_layers import click_through
-        click_through(self,passthrough_enabled(self.service.cfg,'taskbar'))
-        if self.service.runtime.dock.preview:return
+        policy=self.service.runtime.click_policy
+        if self.service.runtime.dock.preview:
+            policy.apply(self)
+            return
         hwnd=self.placement.target['hwnd']
         win = int(self.winId())
         layer = self.service.cfg['resource_taskbar_layer']
@@ -103,6 +103,7 @@ class TaskbarReadout(QWidget):
                 self.native_layer = state
         else:
             self.restore_input_layer()
+        policy.apply(self)
 
     def restore_input_layer(self, cover=None):
         if (not self.isVisible() or self.placement.slot_bar != self.placement.target
@@ -115,7 +116,7 @@ class TaskbarReadout(QWidget):
         else:
             from platform_services import fullscreen_window
             restore_input_layer(win, hwnd, cover=fullscreen_window() if cover is None else cover,
-                                transparent=passthrough_enabled(self.service.cfg,'taskbar'))
+                                transparent=self.testAttribute(Qt.WA_TransparentForMouseEvents))
 
     def placement_changed(self):
         self.reposition();self.service.sync()
@@ -237,7 +238,7 @@ class TaskbarReadout(QWidget):
         if event_type in (b'windows_generic_MSG',b'windows_dispatcher_MSG'):
             msg=wintypes.MSG.from_address(int(message))
             if msg.message==0x0021:return True,3  # MA_NOACTIVATE: preserve the first click.
-            if msg.message==0x0084:return True,-1 if passthrough_enabled(self.service.cfg,'taskbar') else 1
+            if msg.message==0x0084:return True,-1 if self.testAttribute(Qt.WA_TransparentForMouseEvents) else 1
             if msg.message in (0x001a,0x031a,0x0320):self.sync_style()
         return super().nativeEvent(event_type,message)
 
@@ -278,8 +279,8 @@ class TaskbarReadout(QWidget):
         for key,title in TASKBAR_LAYERS.items():
             action=layers.addAction(title);action.setCheckable(True);action.setChecked(self.service.cfg['resource_taskbar_layer']==key)
             action.triggered.connect(lambda checked,key=key:self.service.set_options(resource_taskbar_layer=key))
-        passing=menu.addAction('鼠标穿透');passing.setCheckable(True);passing.setChecked(self.service.cfg['resource_taskbar_click_through'])
-        passing.triggered.connect(lambda on:self.service.set_options(resource_taskbar_click_through=on))
+        from component_passthrough import component_actions
+        component_actions(menu.addMenu('鼠标穿透'),self.service.runtime,'taskbar')
         colors=menu.addAction('文字阈值变色');colors.setCheckable(True);colors.setChecked(self.service.cfg.get('resource_task_threshold',False))
         colors.triggered.connect(lambda on:self.service.set_options(resource_task_threshold=on))
         music=menu.addAction('显示任务栏音乐');music.setCheckable(True);music.setChecked(self.service.cfg['resource_task_music'])

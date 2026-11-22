@@ -1463,6 +1463,8 @@ class Dock(QWidget):
         try:
             from window_layers import BOTTOM, TOPMOST, restack
             restack(int(self.winId()), TOPMOST if self.cfg.get('layer')=='top' else BOTTOM)
+            runtime=getattr(self.tray,'runtime',None)
+            if runtime and self.cfg['component_passthrough'].get('dock')=='apps':runtime.click_policy.apply(self)
         except Exception:
             log("apply_layer 失败: " + traceback.format_exc())
 

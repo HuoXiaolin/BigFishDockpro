@@ -285,7 +285,7 @@ class RuntimeController:
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
             elif 'game_mode' in changed:self.apply_visibility()
             if 'startup_priority' in changed:set_priority(self.dock.cfg['startup_priority'])
-            if policy_changed:self.click_policy.refresh()
+            if policy_changed or 'apps' in cfg['component_passthrough'].values():self.click_policy.refresh()
             return
         self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
         self.sync_tray_visibility()
@@ -302,8 +302,8 @@ class RuntimeController:
         set_priority(self.dock.cfg['startup_priority'])
 
     def sync_tray_visibility(self):
-        from component_passthrough import enabled
-        self.tray.setVisible(not self.dock.cfg['hide_tray'] or enabled(self.dock.cfg,'dock'))
+        from component_passthrough import pointer_mode
+        self.tray.setVisible(not self.dock.cfg['hide_tray'] or bool(pointer_mode(self.dock.cfg,'dock')))
 
     def sync_spectrum(self):
         if self.dock.cfg['spectrum_enabled'] and not self.game_active:
