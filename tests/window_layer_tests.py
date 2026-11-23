@@ -4,6 +4,7 @@ import ctypes as C
 from ctypes import wintypes as W
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QRect
+from PyQt5.QtGui import QColor,QPixmap
 from PyQt5.QtWidgets import QWidget
 from window_layers import TOPMOST, covers_above, desktop_layer, is_topmost, native, owner_of, restack
 
@@ -20,6 +21,29 @@ def run(api,runtime,app,output,checks):
         assert user.GetWindowRect(hwnd,C.byref(rect))
         return W.POINT((rect.left+rect.right)//2,(rect.top+rect.bottom)//2)
     def hit(hwnd):return user.WindowFromPoint(center(hwnd))
+    def assert_transparent_corners(window):
+        image=window.grab().toImage()
+        for x,y in ((0,0),(0,image.height()-1),(image.width()-1,0),(image.width()-1,image.height()-1)):
+            assert image.pixelColor(x,y).alpha()==0, (window.windowTitle(),x,y)
+
+    def wallpaper_sample(window, screen=None):
+        geometry=window.frameGeometry()
+        dpr=window.devicePixelRatioF()
+        image=QPixmap(round(geometry.width()*dpr),round(geometry.height()*dpr))
+        image.setDevicePixelRatio(dpr)
+        image.fill(QColor('#e9a767'))
+        return image
+
+    def assert_no_window_accent(window):
+        from taskbar_appearance import AccentPolicy,CompositionData
+        read=getattr(user,'GetWindowCompositionAttribute',None)
+        if read is None:return
+        read.argtypes=[W.HWND,C.POINTER(CompositionData)]
+        read.restype=W.BOOL
+        policy=AccentPolicy()
+        attribute=CompositionData(19,C.addressof(policy),C.sizeof(policy))
+        if read(int(window.winId()),C.byref(attribute)):
+            assert policy.state==0, (window.windowTitle(),policy.state)
     def show(window,rect):
         window.setAttribute(Qt.WA_ShowWithoutActivating)
         window.setStyleSheet('background:#182e44')
@@ -124,9 +148,96 @@ def run(api,runtime,app,output,checks):
             runtime.refresh_layers()
             assert all(is_topmost(hwnd) and not covers_above(cover_id,hwnd) for hwnd in handles)
             note.set_option('pinned',False);assert not is_topmost(int(note.winId()))
+
+            from feature_config import normalize
+            assert normalize({})['panel_backdrop_mode']==normalize({})['resource_backdrop_mode']=='dynamic'
+            style=dict(material='liquid',theme='light',color='',opacity=18,blur=12,highlight=0)
+            cfg.update(panel_layer='top',panel_backdrop_mode='dynamic',panel_appearance_source='custom',
+                       panel_material='liquid',panel_blur=12,panel_opacity=18,
+                       resource_backdrop_mode='dynamic',resource_background='custom',resource_appearance=style)
+            panel=next(window for window in runtime.panels.windows.values() if window.isVisible())
+            panel.attach_desktop(owner=0);panel_id=int(panel.winId())
+            with patch('glass_capture.capture_behind',side_effect=AssertionError('dynamic card reading wallpaper')), \
+                 patch('capsule_glass.capture',side_effect=AssertionError('dynamic capsule reading wallpaper')):
+                panel.refresh_wallpaper_later(0);w.sync_window()
+                assert is_topmost(panel_id) and owner_of(panel_id)==0 and not panel.refresh_timer.isActive()
+                for window in (panel,w):
+                    assert_transparent_corners(window)
+                    assert_no_window_accent(window)
+                    assert window.mask().isEmpty()
+                assert not w.glass.uses_wallpaper and not w.wallpaper_timer.isActive()
+                # Use the real stacking and hit test with a synthetic other-app PID.
+                panel_key=panel.property('clickThroughKey')
+                assert restack(panel_id,TOPMOST)
+                with patch.dict(cfg,component_passthrough={panel_key:'apps'}):
+                    with patch.object(user,'GetWindowThreadProcessId',side_effect=other_app):
+                        policy.apply(panel,center(panel_id));assert hit(panel_id)==cover_id
+                        cover.hide();policy.apply(panel,center(panel_id));assert hit(panel_id)==panel_id
+                        cover.show();assert restack(panel_id,TOPMOST)
+                    cfg['component_passthrough']={panel_key:True};policy.apply(panel)
+                    assert user.GetWindowLongW(panel_id,-20)&0x20
+                    cfg['component_passthrough']={};policy.apply(panel)
+                    assert hit(panel_id)==panel_id
+            cfg.update(panel_layer='bottom',resource_layer='bottom')
+            with patch('capsule_glass.capture',side_effect=wallpaper_sample) as wallpaper, \
+                 patch('glass_capture.capture_behind',side_effect=lambda window,*_:wallpaper_sample(window)) as card_wallpaper:
+                w.sync_window();assert_transparent_corners(w)
+                panel.attach_desktop(owner=shell_id);panel.capture_backdrop()
+                assert_transparent_corners(panel)
+                assert wallpaper.called and card_wallpaper.called
+            assert panel.backdrop is not None and w.glass.uses_wallpaper and w.wallpaper_timer.isActive()
+            assert cfg['panel_backdrop_mode']==cfg['resource_backdrop_mode']=='dynamic'
+            assert owner_of(panel_id)==shell_id and not is_topmost(panel_id)
+            assert not is_topmost(int(w.winId()))
+
+            cfg.update(flash_backdrop_mode='dynamic',flash_edge_hide=False,flash_auto_hide=False,
+                       spectrum_enabled=True,spectrum_layer='top',spectrum_backdrop_mode='dynamic',
+                       spectrum_style='particle_sphere',spectrum_locked=True,
+                       dock_material='liquid',blur_px=12,glass=True,clear_background=False,transparency=82)
+            runtime.flash.sync();runtime.sync_spectrum();app.processEvents()
+            edge,flash,spectrum=runtime.flash.edge,runtime.flash.panel,runtime.spectrum
+            edge.reveal(immediate=True)
+            flash.input_region();mask=flash.mask()
+            spectrum.resize(590,248)
+            def spectrum_pixels():
+                image=spectrum.grab().toImage()
+                for x in (image.width()//8,image.width()*7//8):
+                    for y in range(0,image.height(),9):
+                        assert image.pixelColor(x,y).alpha()==0, (x,y)
+                return image
+            with patch('capsule_glass.capture',side_effect=AssertionError('dynamic widgets reading wallpaper')):
+                for window in (edge,flash):
+                    window.grab()
+                    assert not window.material.uses_wallpaper
+                    assert_no_window_accent(window)
+                dynamic=spectrum_pixels()
+                assert_no_window_accent(spectrum)
+            assert mask==flash.mask() and not mask.isEmpty()
+            assert is_topmost(int(spectrum.winId()))
+            for window in (edge,spectrum):
+                with patch.dict(cfg,component_passthrough={window.property('clickThroughKey'):True}):
+                    policy.apply(window)
+                    assert window.testAttribute(Qt.WA_TransparentForMouseEvents)
+                policy.apply(window)
+            cfg.update(flash_backdrop_mode='wallpaper',spectrum_layer='bottom')
+            spectrum.apply_layer()
+            with patch('capsule_glass.capture',side_effect=wallpaper_sample) as wallpaper:
+                for window in (edge,flash):
+                    window.grab()
+                    assert window.material.uses_wallpaper
+                    assert_no_window_accent(window)
+                assert spectrum_pixels()!=dynamic and spectrum.material.uses_wallpaper
+                assert wallpaper.call_count==3
+            assert mask==flash.mask() and not is_topmost(int(spectrum.winId()))
+            assert cfg['spectrum_backdrop_mode']=='dynamic'
+            cfg['spectrum_layer']='top';spectrum.apply_layer()
+            with patch('capsule_glass.capture',side_effect=AssertionError('topmost spectrum reading wallpaper')):
+                assert spectrum_pixels()==dynamic
         checks.append('Native full screen: both topmost readouts recover above a fullscreen HWND without stealing focus; readout keeps its verified slot and CPU sampler while Explorer is hidden. Bottom hides and returns. Two pass-through switches change real hit targets and restore input on the same HWND.')
         checks.append('Native window audit: Dock, pinned note and flash handle retain topmost status above the fullscreen HWND; unpinning the note returns it to the desktop layer.')
         checks.append('Conditional pointer mode: native hit testing reaches the application only where it is under the topmost capsule. The taskbar readout keeps its own mode and desktop interaction returns when the cover disappears.')
+        checks.append('Topmost cards and resource capsules reveal the live background through their rounded alpha with no window-wide accent. Bottom mode uses wallpaper and keeps the saved selection and pointer policy.')
+        checks.append('Flash and spectrum switch between live transparency and wallpaper. Flash keeps its shaped input region. A wide sphere leaves the space outside its artwork transparent in both modes and restores live transparency when pinned on top.')
 
         from resource_settings import ResourceOptions
         dialog=ResourceOptions(service)
@@ -142,13 +253,32 @@ def run(api,runtime,app,output,checks):
             pointer=dialog.fields['resource_taskbar_click_through']
             pointer.setCurrentIndex(pointer.findData(True))
             assert dialog.grab().save(str(output/'readme-taskbar-layer.png'))
+            backdrop=dialog.fields['resource_backdrop_mode']
+            backdrop.setCurrentIndex(backdrop.findData('dynamic'))
             assert dialog.commit()
             saved=api.load_config()
             assert saved['resource_open_page']=='weather' and not saved['resource_click_through']
             assert saved['component_passthrough']['resource']=='apps' and saved['resource_taskbar_click_through']
+            assert saved['resource_backdrop_mode']=='dynamic'
         finally:
             dialog.close();dialog.deleteLater()
         checks.append('Resource preferences: the first page exposes the default expanded page and desktop pass-through, and the taskbar page saves its separate pass-through choice.')
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from taskbar_appearance import BACKEND_VERSION, upgrade_installed_backend
+        with TemporaryDirectory(dir=output) as directory:
+            root=Path(directory);legacy=root/'2026.2';legacy.mkdir()
+            (legacy/'TranslucentTB.exe').write_bytes(b'installed worker')
+            payload=root/'payload';backend=payload/'backend';backend.mkdir(parents=True)
+            (backend/'TranslucentTB.exe').write_bytes(b'packaged worker')
+            (backend/'ExplorerTAP.dll').write_bytes(b'patched helper')
+            upgraded=root/BACKEND_VERSION
+            upgrade_installed_backend(payload,upgraded)
+            upgrade_installed_backend(payload,upgraded)
+            assert (legacy/'TranslucentTB.exe').read_bytes()==b'installed worker'
+            assert (upgraded/'ExplorerTAP.dll').read_bytes()==b'patched helper'
+            assert list(root.glob('taskbar-update-*'))==[]
+        checks.append('Taskbar backend upgrade stages the compatible helper alongside an existing worker without overwriting its files.')
     finally:
         runtime.auto_game,runtime.game_active,runtime.manual_game=old_auto,old_game,old_manual
         cover.close();shell.close();cover.deleteLater();shell.deleteLater()
@@ -159,6 +289,8 @@ def run(api,runtime,app,output,checks):
             assert job.wait(4000), 'The layer fixture left its sampler running'
             app.processEvents()
         cfg.clear();cfg.update(before);service.sync();runtime.notes.sync();runtime.flash.sync()
+        runtime.panels.apply_settings()
+        runtime.sync_spectrum()
         dock.setVisible(dock_visible);api.save_config(cfg)
 
 

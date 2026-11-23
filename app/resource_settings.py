@@ -5,7 +5,8 @@ from PyQt5.QtGui import QColor, QDesktopServices
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
                              QAbstractItemView)
-from appearance_presets import COLOR_MODES,material_choices
+from appearance_presets import BACKDROP_MODES,COLOR_MODES,material_choices
+from window_backdrop import BACKDROP_HINT
 from component_passthrough import CHOICES,LEGACY,individual,selection_changes
 from content_sources import MAX_NEWS_FEEDS, NEWS_FEED_PRESETS, clean_feeds, web_url
 from resource_options import METRICS,TINTS,TASK_METRICS,PINNABLE,AI_PROVIDERS,AI_PROVIDER_NAMES,SENSOR_UNITS,TASK_MEDIA_PARTS,TASK_COLUMN_NAMES,OPEN_PAGES,background,clean_background
@@ -84,7 +85,7 @@ class ResourceOptions(QDialog):
            'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
-        {'resource_halo','resource_halo_speed','resource_background','resource_palette','resource_card_transparency'},
+        {'resource_halo','resource_halo_speed','resource_background','resource_backdrop_mode','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
         {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
@@ -414,6 +415,8 @@ class ResourceOptions(QDialog):
             style_form=QFormLayout();style.addLayout(style_form)
             from appearance_presets import APPEARANCE_SOURCES
             source=combo(style_form,'resource_background','外观来源',[*APPEARANCE_SOURCES, ('跟随桌面收纳','global')],cfg['resource_background'],self.fields)
+            backdrop=combo(style_form,'resource_backdrop_mode','玻璃背景',BACKDROP_MODES,cfg['resource_backdrop_mode'],self.fields)
+            backdrop.setToolTip(BACKDROP_HINT)
             transparency=ModernSpinBox();transparency.setRange(0,100);transparency.setSuffix('%')
             transparency.setValue(cfg['resource_card_transparency']);transparency.setAccessibleName('卡底透底')
             control=NumericControl(transparency)

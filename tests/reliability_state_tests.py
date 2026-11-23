@@ -282,7 +282,10 @@ def check_taskbar_effect_status(runtime, checks):
     from dock_extras import DockQuickSettings
 
     dock = runtime.dock
-    original = {k:dock.cfg[k] for k in ('taskbar_mode','taskbar_color','taskbar_opacity','taskbar_blur')}
+    original = {k:dock.cfg[k] for k in ('taskbar_mode','taskbar_color','taskbar_opacity','taskbar_blur',
+                'shell_notifications_enabled','shell_notifications_tray_overflow','shell_notifications_source',
+                'shell_notifications_material','shell_notifications_theme','shell_notifications_color',
+                'shell_notifications_opacity','shell_notifications_blur')}
     saved_component = runtime.taskbar
     component = TaskbarAppearance(dock, Mock())  # The private desktop disables native effects.
     runtime.taskbar = component
@@ -366,7 +369,29 @@ def check_taskbar_effect_status(runtime, checks):
                 component.sync()
                 finish()
                 assert popup.tiles['taskbar'].value == '跟随系统' and not component.error
+                with patch('shell_appearance.system_appearance',return_value=(True,True)):
+                    dock.cfg.update(shell_notifications_enabled=True,shell_notifications_tray_overflow=True,
+                                    shell_notifications_source='custom',shell_notifications_material='liquid',
+                                    shell_notifications_theme='light',shell_notifications_color='#4d92bf',
+                                    shell_notifications_opacity=33,shell_notifications_blur=16)
+                    started = starts.call_count
+                    component.sync()
+                    path = Path(directory) / 'tray-overflow.ini'
+                    assert starts.call_count == started + 1 and state == QProcess.Running
+                    assert 'Brush=3\nTint=544d92bf\nAmount=1600\n' in path.read_text(encoding='ascii')
+                    from json import loads
+                    data = loads((Path(directory) / 'settings.json').read_text(encoding='utf-8'))
+                    assert data['desktop_appearance']['accent']=='normal' and data['desktop_appearance']['show_line']
+                    assert not data['copy_dlls']
+                    dock.cfg['shell_notifications_opacity']=51
+                    component.sync()
+                    assert 'Tint=824d92bf' in path.read_text(encoding='ascii') and starts.call_count==started+1
+                    dock.cfg['shell_notifications_tray_overflow']=False
+                    component.sync()
+                    finish()
+                    assert path.read_text(encoding='ascii')=='[Appearance]\nBrush=0\n'
             checks.append('Taskbar: live config reload reuses one simulated process; channel errors, stale notifications, rapid reversal and verified same-path handoff keep the mode label. Disk mismatch, foreign instance, start failure and crash remain visible; Quick Settings reopens and recovers from stale failure. No desktop taskbar modified.')
+            checks.append('Tray overflow takes the notification tint and blur. It starts the shared worker with the taskbar in system mode, reloads opacity without a second worker, and restores the overflow settings when disabled.')
         finally:
             state = QProcess.NotRunning
             popup.close()

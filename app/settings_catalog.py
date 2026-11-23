@@ -16,7 +16,7 @@ PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@cap
 
 
 def field_catalog(api, cfg):
-    from appearance_presets import APPEARANCE_SOURCES, COLOR_MODES, MATERIALS, material_choices
+    from appearance_presets import APPEARANCE_SOURCES, BACKDROP_MODES, COLOR_MODES, MATERIALS, material_choices
     from card_design import DESIGNS
     from flash_data import COLORS, PALETTES
     from settings_layout import MODES as SIZE_MODES
@@ -68,12 +68,14 @@ def field_catalog(api, cfg):
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
         'card_design': (1, '装饰样式', 'combo', DESIGNS),
         'panel_appearance_source': (1, '外观来源', 'combo', APPEARANCE_SOURCES),
+        'panel_backdrop_mode': (1, '玻璃背景', 'combo', BACKDROP_MODES),
         'panel_material': (1, '材质', 'combo', material_choices(cfg['panel_material'])),
         'panel_theme': (1, '明暗模式', 'combo', COLOR_MODES),
         'panel_color': (1, '主题色', 'color', None),
         'panel_highlight': (1, '高光（%）', 'number', (0, 100)),
         'panel_opacity': (1, '不透明度（%）', 'number', (0, 100)),
         'panel_blur': (1, '模糊强度', 'number', (0, 30)),
+        'panel_layer': (1, '桌面卡片层级', 'combo', [('置底','bottom'),('置顶','top')]),
         'panel_locked': (1, '锁定卡片位置与大小', 'check', None),
         'card_snap': (1, '卡片吸附（屏幕边缘与相邻卡片）', 'check', None),
         'card_snap_distance': (1, '吸附距离（像素）', 'number', (2, 64)),
@@ -105,6 +107,8 @@ def field_catalog(api, cfg):
         'spectrum_enabled': (WIDGETS, '桌面音乐频谱', 'check', None),
         'spectrum_style': (WIDGETS, '频谱样式', 'combo', SPECTRUM_STYLES),
         'spectrum_appearance_source': (WIDGETS, '频谱外观来源', 'combo', APPEARANCE_SOURCES),
+        'spectrum_backdrop_mode': (WIDGETS, '频谱玻璃背景', 'combo', BACKDROP_MODES),
+        'spectrum_layer': (WIDGETS, '频谱桌面层级', 'combo', [('置底','bottom'),('置顶','top')]),
         'spectrum_color_mode': (WIDGETS, '频谱配色', 'combo', [('炫彩','colorful'),('单色','mono')]),
         'spectrum_mono_color': (WIDGETS, '频谱单色', 'color', None),
         'daily_picture_enabled': (WIDGETS, '桌面每日图片', 'check', None),
@@ -118,6 +122,7 @@ def field_catalog(api, cfg):
         'note_style': (WIDGETS, '新便签装饰样式', 'combo', STYLES),
         'flash_enabled': (CAPSULES, '显示贴边胶囊', 'check', None),
         'flash_appearance_source': (CAPSULES, '闪念外观来源', 'combo', APPEARANCE_SOURCES),
+        'flash_backdrop_mode': (CAPSULES, '闪念玻璃背景', 'combo', BACKDROP_MODES),
         'flash_palette': (CAPSULES, '胶囊配色', 'combo', PALETTES),
         'flash_color': (CAPSULES, '新闪念颜色', 'combo', [(name, key) for key, (name, _) in COLORS.items()]),
         'flash_side': (CAPSULES, '停靠边缘', 'combo', [('右侧', 'right'), ('左侧', 'left')]),

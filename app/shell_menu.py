@@ -11,7 +11,7 @@ def open_settings(runtime, page):
 def add_menu(menu, runtime, kind):
     from settings_catalog import START_MENU, NOTIFICATIONS
     from settings_effects import save_changes
-    from shell_appearance_model import START_STYLES, SOURCES
+    from shell_appearance_model import NOTIFICATION_PARTS, START_STYLES, SOURCES
     cfg = runtime.dock.cfg
     supported = runtime.shell_appearance.supported
     prefix = 'shell_' + kind + '_'
@@ -40,7 +40,7 @@ def add_menu(menu, runtime, kind):
     else:
         toggle(menu, '启用' + title + '美化', prefix + 'enabled')
         parts = menu.addMenu('美化范围')
-        for part, name in (('quick','快速设置'),('media','媒体控制'),('toast','通知弹窗'),('calendar','日历')):
+        for part, name in NOTIFICATION_PARTS:
             toggle(parts, name, prefix + part)
     source = menu.addMenu('外观来源')
     source.setEnabled(supported)

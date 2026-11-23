@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / 'artifacts/taskbar-downloads'
 PAYLOAD = ROOT / 'artifacts/taskbar-payload'
 UPSTREAM = 'https://github.com/TranslucentTB/TranslucentTB'
+COMPAT_TAP = ROOT / 'assets/taskbar-compat/ExplorerTAP.dll'
+COMPAT_TAP_SHA256 = 'de9c4d6f23f3ed45ffe146aaae4c71a311e7501918dc36882d96481c32f62158'
 
 
 def fetch(name, url, sha256):
@@ -37,6 +39,10 @@ def main():
                  '79207b10fe243eb1a8dcdc29beceba2f472f145ed31f147f7ae3f43b0659c9f7')
     with ZipFile(portable) as archive:
         archive.extractall(backend)
+    patched = COMPAT_TAP.read_bytes()
+    if hashlib.sha256(patched).hexdigest() != COMPAT_TAP_SHA256:
+        raise ValueError('Unexpected taskbar compatibility DLL hash')
+    (backend / 'ExplorerTAP.dll').write_bytes(patched)
     with ZipFile(vc) as archive:
         package = archive.read('x64/Microsoft.VCLibs.140.00_14.0.33519.0_x64.appx')
         (PAYLOAD / 'VCLibs-x64.appx').write_bytes(package)
@@ -45,8 +51,11 @@ def main():
             archive.read('tools/AppX/x64/Release/Microsoft.UI.Xaml.2.8.appx'))
         (backend / 'Microsoft-WinUI-LICENSE.txt').write_bytes(archive.read('license.txt'))
     (backend / 'THIRD-PARTY-NOTICES.txt').write_text(
-        'TranslucentTB 2026.2 (unmodified), GPL version 3.\n'
+        'TranslucentTB 2026.2, GPL version 3. ExplorerTAP rebuilt locally with XAML root fix b8716c1 and tray overflow styling.\n'
         f'Corresponding source and build files: {UPSTREAM}/tree/2026.2\n'
+        f'Compatibility patch: {UPSTREAM}/commit/b8716c1207037013515a289c365918cb4aea109e\n'
+        'Local source preparation and build: tools/build_taskbar_compat.py in BigFishDockpro source delivery.\n'
+        'Tray overflow source: tools/taskbar_overflow.hpp in BigFishDockpro source delivery.\n'
         f'Release and source archives: {UPSTREAM}/releases/tag/2026.2\n',
         encoding='utf-8')
     (backend / 'TranslucentTB-LICENSE.txt').write_bytes(

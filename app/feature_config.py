@@ -22,7 +22,8 @@ WATERMARK_RANGES = {'watermark_size': (8, 160), 'watermark_angle': (-180, 180),
 WATERMARK_TEXT_LIMIT = 256
 
 DEFAULTS = {
-    'flash_enabled':False, 'flash_appearance_source':'custom', 'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
+    'flash_enabled':False, 'flash_appearance_source':'custom', 'flash_backdrop_mode':'dynamic',
+    'flash_palette':'theme', 'flash_side':'right', 'flash_color':'blue',
     'flash_auto_hide':True, 'flash_edge_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
     'taskbar_text_mode':'system', 'taskbar_text_auto':False, 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
@@ -38,6 +39,7 @@ DEFAULTS = {
     'watermark_mode':'single', 'watermark_position':'center', 'watermark_layer':'bottom',
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
     'spectrum_enabled': False, 'spectrum_style': 'bars', 'spectrum_appearance_source': 'custom', 'spectrum_color_mode': 'colorful', 'spectrum_mono_color': '',
+    'spectrum_backdrop_mode':'dynamic', 'spectrum_layer':'bottom',
     'spectrum_locked': False, 'spectrum_layout': {}, 'spectrum_manual_size': False,
     'spectrum_ring_height': 100,
     'daily_picture_enabled': False, 'daily_picture_locked': False, 'daily_picture_layout': {}, 'daily_picture_manual_size': False,
@@ -53,6 +55,7 @@ DEFAULTS = {
     'desktop_middle_toggle': True, 'desktop_icons_override': False,
     'desktop_icon_mode': 'hide_all', 'panel_enabled': True, 'panel_opacity': 38, 'panel_blur': 8,
     'panel_highlight': 45, 'panel_material': 'liquid', 'panel_appearance_source': 'custom', 'panel_locked': False,
+    'panel_backdrop_mode': 'dynamic', 'panel_layer': 'bottom',
     'panel_auto_hide': True, 'panel_geometry': [], 'panel_page_size': 24,
     'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random', 'panel_face_role':'',
     'panel_face_scale':100, 'panel_expand_mode':'hover',
@@ -132,12 +135,17 @@ def normalize(cfg):
     face_minutes = result['panel_face_switch_minutes']
     if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
         result['panel_face_switch_minutes'] = FACE_SWITCH_DEFAULT
-    from appearance_presets import MATERIALS
+    from appearance_presets import BACKDROP_MODES, MATERIALS
     for key in ('panel_appearance_source', 'note_appearance_source', 'daily_picture_appearance_source',
                 'flash_appearance_source', 'spectrum_appearance_source'):
         if result[key] not in ('app', 'custom'):
             result[key] = DEFAULTS[key]
     for key, allowed in [('panel_material', tuple(value for _,value in MATERIALS)),
+                         ('panel_backdrop_mode',tuple(value for _,value in BACKDROP_MODES)),
+                         ('panel_layer', ('top','bottom')),
+                         ('flash_backdrop_mode',tuple(value for _,value in BACKDROP_MODES)),
+                         ('spectrum_backdrop_mode',tuple(value for _,value in BACKDROP_MODES)),
+                         ('spectrum_layer',('top','bottom')),
                          ('watermark_mode',tuple(value for _,value in WATERMARK_MODES)),
                          ('watermark_position',tuple(value for _,value in WATERMARK_POSITIONS)),
                          ('watermark_layer',tuple(value for _,value in WATERMARK_LAYERS)),

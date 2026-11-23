@@ -1,15 +1,18 @@
-"""A transparent desktop window that paints only the live spectrum."""
+"""A live desktop spectrum with independent backdrop and placement options."""
 from math import ceil, cos, exp, hypot, pi, sin, tau
 from time import monotonic
 
 from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, QTimer, Qt
-from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import QApplication, QColorDialog, QWidget
 
 from feature_config import RING_HEIGHT_MAX, SPECTRUM_FIXED_PALETTES, SPECTRUM_STYLES
+from appearance_presets import dock_appearance
+from capsule_glass import CapsuleGlass
 from screen_layout import capture, project, screen_records
 from spectrum_effects import COLOR_EFFECTS, SPECTRUM_COLORS, sphere_power
 from window_edges import BOTTOM, LEFT, RIGHT, TOP, edges_at, paint_edge_targets, resize_cursor, resized_rect
+from window_backdrop import component_backdrop, uses_wallpaper
 
 
 BANDS=120
@@ -83,6 +86,10 @@ def add_menu_actions(menu, runtime):
     color.setEnabled(cfg['spectrum_style'] not in SPECTRUM_FIXED_PALETTES)
     size=menu.addAction('恢复默认大小',lambda:runtime.set_spectrum_options(spectrum_manual_size=False))
     size.setEnabled(cfg['spectrum_manual_size'] and not cfg['spectrum_locked'])
+    top=menu.addAction('置顶');top.setCheckable(True);top.setChecked(cfg['spectrum_layer']=='top')
+    top.triggered.connect(lambda on:runtime.set_spectrum_options(spectrum_layer='top' if on else 'bottom'))
+    from component_passthrough import component_actions
+    component_actions(menu.addMenu('鼠标穿透'),runtime,'spectrum')
     lock = menu.addAction('锁定位置')
     lock.setCheckable(True)
     lock.setChecked(cfg['spectrum_locked'])
@@ -101,6 +108,7 @@ class DesktopSpectrum(QWidget):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
         self.setProperty('clickThroughKey','spectrum')
         self.runtime = runtime
+        self.material = CapsuleGlass()
         self.levels = SILENCE
         self.peaks = SILENCE
         self.bar_peak_time = None
@@ -146,6 +154,8 @@ class DesktopSpectrum(QWidget):
         self.setCursor(Qt.ArrowCursor if self.cfg['spectrum_locked'] else Qt.SizeAllCursor)
         if not self.isVisible():
             self.show()
+        else:
+            self.apply_layer()
         if placement[0] == 'crown' and self.crown_started is None and self.isVisible():
             self.crown_started = monotonic()
             self.animation_timer.start()
@@ -267,11 +277,16 @@ class DesktopSpectrum(QWidget):
         self.update()
 
     def showEvent(self, event):
-        from window_layers import BOTTOM, restack
         super().showEvent(event)
-        restack(int(self.winId()), BOTTOM)
+        self.apply_layer()
+
+    def apply_layer(self):
+        from window_layers import desktop_layer
+        desktop_layer(int(self.winId()), self.cfg['spectrum_layer']=='top')
+        self.runtime.click_policy.apply(self)
 
     def hideEvent(self, event):
+        self.material.clear()
         if self.crown_started is not None:
             self.animation_timer.stop()
             self.crown_started = None
@@ -367,10 +382,39 @@ class DesktopSpectrum(QWidget):
         painter.setCompositionMode(QPainter.CompositionMode_Source)
         painter.fillRect(self.rect(), Qt.transparent)
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-        style=self.cfg['spectrum_style']
+        style = self.cfg['spectrum_style']
+        appearance = dock_appearance(self.cfg)
+        mode = component_backdrop(self.cfg, 'spectrum')
+        if uses_wallpaper(mode, appearance):
+            self.paint_wallpaper_spectrum(painter, style, appearance)
+        else:
+            if self.material.uses_wallpaper:
+                self.material.clear()
+                self.material.uses_wallpaper = False
+            self.paint_spectrum(painter, style)
         if not self.cfg['spectrum_locked']:
             if style=='ring':paint_ring_targets(painter,spectrum_area(self.rect(),style))
             else:paint_edge_targets(painter,self.rect())
+        painter.end()
+
+    def paint_wallpaper_spectrum(self, painter, style, appearance):
+        dpr = self.devicePixelRatioF()
+        ink = QPixmap(round(self.width() * dpr), round(self.height() * dpr))
+        ink.setDevicePixelRatio(dpr)
+        ink.fill(Qt.transparent)
+        frame = QPainter(ink)
+        self.paint_spectrum(frame, style)
+        frame.end()
+
+        # Show wallpaper only through the frequency graphics' existing alpha.
+        # Transparent space around the sphere, ring and bars stays transparent.
+        self.material.paint(painter, self, self.runtime.dock, 0, self.drag is not None, appearance)
+        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        painter.drawPixmap(QRectF(self.rect()), ink, QRectF(ink.rect()))
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        painter.drawPixmap(QRectF(self.rect()), ink, QRectF(ink.rect()))
+
+    def paint_spectrum(self, painter, style):
         painter.setRenderHint(QPainter.Antialiasing)
         following=self.cfg.get('spectrum_appearance_source')=='app'
         accent = QColor(self.cfg['theme_color'] if following else self.cfg['spectrum_mono_color'] or self.cfg['theme_color'])
@@ -385,7 +429,6 @@ class DesktopSpectrum(QWidget):
                       not following and self.cfg['spectrum_color_mode']=='colorful',self.peaks,ring_height=height,
                       show_limit=preview is not None,crown_angle=crown_angle,
                       sphere_angle=self.sphere_angle,sphere_strength=self.sphere_strength)
-        painter.end()
 
 
 def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_height=100,show_limit=False,

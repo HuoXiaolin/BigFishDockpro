@@ -316,7 +316,7 @@ class CustomCard(QWidget):
             paint_capsule_card(p,QRectF(self.rect()),dict(host.colors,ink=ink),'lavender',host.background,
                                radius=12,base=custom.get('surface'))
         elif following:
-            self.glass.paint(p,self,self,12,moving=self.drag is not None,appearance=background)
+            self.glass.paint(p,self,self.service.runtime.dock,12,moving=self.drag is not None,appearance=background)
         elif not clear:
             path=QPainterPath();path.addRoundedRect(rect,12,12)
             surface=QColor(custom.get('surface') or ('#f5fafc' if colors['light'] else '#1e2b34'))

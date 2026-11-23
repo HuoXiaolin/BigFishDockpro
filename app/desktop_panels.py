@@ -483,7 +483,7 @@ class DesktopPanels(QObject):
     def model(self, identity):
         return next(model for model in self.cfg['desktop_panels'] if model['id'] == identity)
 
-    def update_panel(self, identity, _layout=None, _font_size=None, **values):
+    def update_panel(self, identity, _layout=None, _font_size=None, _pointer_mode=None, **values):
         panels = copy.deepcopy(self.cfg['desktop_panels'])
         from panel_preferences import KEYS,without_overrides
         shared={key:value for key,value in values.items() if key in KEYS}
@@ -492,6 +492,11 @@ class DesktopPanels(QObject):
         panels=without_overrides(panels)
         next(model for model in panels if model['id']==identity).update(local)
         changes={'desktop_panels':panels,**{'panel_'+key:value for key,value in shared.items()}}
+        if _pointer_mode is not None:
+            from component_passthrough import individual, selection_changes
+            key='panel:'+identity
+            if individual(self.cfg,key)!=_pointer_mode:
+                changes.update(selection_changes(self.cfg,{key:_pointer_mode}))
         if _font_size is not None:
             from card_metrics import normalize_profile
             sizing=normalize_profile(self.cfg.get('card_sizing'))
@@ -518,6 +523,7 @@ class DesktopPanels(QObject):
                     for note in self.runtime.notes.windows.values():note.apply_style()
                 self.shared_settings_changed.emit()
             elif identity in self.windows:self.windows[identity].apply_options()
+            if 'component_passthrough' in changes:self.runtime.click_policy.refresh()
             return True
         return False
 

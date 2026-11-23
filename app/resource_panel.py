@@ -16,6 +16,7 @@ from flash_view import palette_for,icon
 
 from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
+from window_backdrop import component_backdrop, uses_wallpaper
 
 
 COMPACT_PAGES={**dict.fromkeys(COMPACT_STATUS,'resources'),'weather':'weather','music':'music','ai':'ai','mail':'mail'}
@@ -207,6 +208,10 @@ class ResourceContentHost(QWidget):
             layout.addWidget(self.scroll)
         self.glass=CapsuleGlass()
         self.init_style()
+
+    def hideEvent(self,event):
+        self.glass.clear()
+        super().hideEvent(event)
 
     def sync_palette(self):
         previous=getattr(self,'background',None)
@@ -823,7 +828,8 @@ class ResourceWindow(ResourceContentHost):
             self.outside_since = None
 
     def sync_wallpaper(self):
-        if not self.isVisible() or self.service.runtime.dock.preview or self.background['material'] in ('clear','solid'):
+        if (not self.isVisible() or self.service.runtime.dock.preview
+                or not uses_wallpaper(component_backdrop(self.service.cfg,'resource'),self.background)):
             self.wallpaper_timer.stop()
         elif not self.wallpaper_timer.isActive():
             self.refresh_wallpaper()
@@ -1104,8 +1110,8 @@ class ResourceWindow(ResourceContentHost):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         cfg=self.service.cfg;c=self.colors;compact=self.service.compact;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         radius=min(17,rect.height()/2) if not compact else min(12,rect.height()/2) if cfg['resource_fold']=='bar' else rect.height()/2
-        self.glass.paint(p,self,self,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
-                         self.liquid.radii(radius))
+        self.glass.paint(p,self,self.service.runtime.dock,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
+                         self.liquid.radii(radius),backdrop_mode=component_backdrop(cfg,'resource'))
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
         paint_halo(self,p,event.region())
         if compact and (self.width()<70 or (cfg['resource_fold']=='ball')):

@@ -89,7 +89,7 @@ class ResourceDesktopCard(ResourceContentHost):
     def paintEvent(self,event):
         if not self.colors:return
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
-        self.glass.paint(painter,self,self,14,self.drag is not None,self.background)
+        self.glass.paint(painter,self,self.runtime.dock,14,self.drag is not None,self.background)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)

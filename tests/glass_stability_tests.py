@@ -28,4 +28,4 @@ def run(runtime,output,checks):
         assert pixels.pixelColor(100,100).alpha()>0
         image.save(str(Path(output)/('stable-glass-'+material+'.png')))
     assert before=={id(w) for w in QApplication.topLevelWidgets()}
-    checks.append('live glass removed: enabled legacy field discarded, no compositor module or auxiliary GlassSurface windows; original liquid/gloss/acrylic glass stays within rounded segment paths and leaves animation margins/gaps transparent')
+    checks.append('Legacy glass flags are ignored. The liquid/gloss/acrylic renderer stays inside rounded paths without auxiliary windows or filled animation margins.')

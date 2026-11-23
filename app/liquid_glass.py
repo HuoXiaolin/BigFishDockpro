@@ -252,7 +252,11 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
             p.fillRect(path_rect, col)
     else:
         col = QColor(c["tint"])
-        col.setAlpha(min(255, tint_a + (10 if surface.cfg.get('dock_material')=='crystal' else 20)))
+        if surface.cfg.get('live_backdrop'):
+            # A nonzero alpha keeps the body clickable on Qt's layered HWND.
+            col.setAlpha(max(2, tint_a))
+        else:
+            col.setAlpha(min(255, tint_a + (10 if surface.cfg.get('dock_material')=='crystal' else 20)))
         p.fillRect(path_rect, col)
 
     material = surface.cfg.get('dock_material',c.get('material','liquid'))

@@ -5,6 +5,8 @@ from appearance_presets import APPEARANCE_SOURCES, DEFAULT_PANEL_STYLE, dock_app
 from background_contrast import foreground
 
 KINDS = ('start', 'notifications')
+NOTIFICATION_PARTS = (('quick', '快速设置'), ('media', '媒体控制'), ('toast', '通知弹窗'),
+                      ('calendar', '日历'), ('tray_overflow', '托盘收纳'))
 SOURCES = [APPEARANCE_SOURCES[0], ('跟随系统', 'system'), APPEARANCE_SOURCES[1]]
 TEXT_MODES = [('自动调整', 'auto'), ('跟随系统', 'system'), ('自定义 · 白色', 'white'), ('自定义 · 黑色', 'black')]
 START_STYLES = [('系统默认', False), ('Windows 11 · 玻璃网格', True)]
@@ -19,7 +21,7 @@ for _kind in KINDS:
         enabled=False, source='app', material='crystal', theme='auto', color='#deedf9',
         opacity=DEFAULT_PANEL_STYLE['opacity'], blur=DEFAULT_PANEL_STYLE['blur'],
         highlight=DEFAULT_PANEL_STYLE['highlight'], text_mode='auto').items()})
-for _part in ('quick', 'media', 'toast', 'calendar'):
+for _part, _ in NOTIFICATION_PARTS:
     DEFAULTS['shell_notifications_' + _part] = True
 
 
@@ -57,7 +59,7 @@ def catalog(start_page, notification_page):
             ('color', '背景色', 'color', None),
             ('opacity', '底色不透明度（%）', 'number', (0, 100)), ('blur', '模糊强度', 'number', (0, 50)),
             ('highlight', '高光（%）', 'number', (0, 100)))})
-    for part, title in (('quick', '快速设置'), ('media', '媒体控制'), ('toast', '通知弹窗'), ('calendar', '日历')):
+    for part, title in NOTIFICATION_PARTS:
         fields['shell_notifications_' + part] = (notification_page, title, 'check', None)
     return fields
 
@@ -112,19 +114,27 @@ def appearance(cfg, kind, system_light=True, transparent=True):
     return values
 
 
-def background(values):
+def brush_spec(values):
     material, color = values['material'], values['color']
-    opacity = max(0, min(100, values['opacity'])) / 100
-    alpha = values.get('tint_alpha', round(opacity*255))
+    opacity = max(0, min(100, values['opacity']))
+    alpha = values.get('tint_alpha', round(opacity / 100 * 255))
     tint = f'#{alpha:02x}' + color[1:]
     if alpha == 255 or material in ('clear', 'solid', 'mica') or not values['blur_enabled'] or not values['blur']:
-        return f'<SolidColorBrush Color="{tint}"/>'
+        return 'solid', tint, 0
     # Dock composites its tint over the background. Native Acrylic's luminosity
     # blend produces a different colour even when fed the same RGB and opacity.
     if 'tint_alpha' not in values and material in ('acrylic', 'paper_glass'):
-        return (f'<AcrylicBrush BackgroundSource="Backdrop" TintColor="{color}" TintOpacity="{opacity:.2f}" '
+        return 'acrylic', tint, opacity
+    return 'blur', tint, max(0, min(50, values.get('brush_blur', values['blur'])))
+
+
+def background(values):
+    kind, tint, amount = brush_spec(values)
+    if kind == 'solid':
+        return f'<SolidColorBrush Color="{tint}"/>'
+    if kind == 'acrylic':
+        return (f'<AcrylicBrush BackgroundSource="Backdrop" TintColor="#{tint[3:]}" TintOpacity="{amount / 100:.2f}" '
                 f'TintLuminosityOpacity="0" FallbackColor="{tint}"/>')
-    amount = max(0, min(50, values.get('brush_blur', values['blur'])))
     return f'<WindhawkBlur BlurAmount="{amount}" TintColor="{tint}" FallbackColor="{tint}"/>'
 
 

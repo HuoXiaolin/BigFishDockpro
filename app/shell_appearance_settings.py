@@ -6,7 +6,7 @@ from ui_style import label, button
 from settings_design import section_marker
 from background_contrast import blend
 from shell_appearance import system_appearance
-from shell_appearance_model import appearance, panel_ink
+from shell_appearance_model import NOTIFICATION_PARTS, appearance, panel_ink
 
 
 class ShellPreview(QWidget):
@@ -78,8 +78,9 @@ def build_page(dialog, form, kind):
     section_marker(form, '系统入口与样式' if kind == 'start' else '系统面板')
     dialog.add_field(form, prefix + 'enabled')
     if kind == 'notifications':
-        for part in ('quick', 'media', 'toast', 'calendar'):
+        for part, _ in NOTIFICATION_PARTS:
             dialog.add_field(form, prefix + part)
+        dialog.fields[prefix + 'tray_overflow'].setToolTip('任务栏上箭头打开的隐藏图标面板使用此页外观。需要任务栏效果组件。')
     text = ('点击系统开始按钮或按 Win 键打开。玻璃网格左侧显示应用列表，右侧显示固定应用。'
             if kind == 'start' else 'Win+A 打开快速设置与媒体控制，Win+N 打开通知与日历；通知弹窗保留系统位置。')
     form.addRow(label(text, 'muted'))
@@ -104,7 +105,13 @@ def build_page(dialog, form, kind):
         status = label(backend.status, 'muted')
         form.addRow(status)
         backend.changed.connect(status.setText)
-        dialog.action_row(form, '当前配置', button('重试接入', backend.retry))
+        def retry():
+            backend.retry()
+            if kind == 'notifications':
+                from taskbar_xaml import overflow_requested
+                if overflow_requested(runtime.dock.cfg):
+                    runtime.taskbar.retry()
+        dialog.action_row(form, '当前配置', button('重试接入', retry))
     def restore():
         dialog.set_draft_values({prefix + 'enabled': False})
         dialog.status.setText('已关闭此页美化选项，保存设置后恢复系统外观。')

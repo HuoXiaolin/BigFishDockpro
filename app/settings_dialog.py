@@ -13,6 +13,7 @@ from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
+from window_backdrop import BACKDROP_HINT
 from feature_config import SPECTRUM_FIXED_PALETTES
 from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, CURSORS, DATA, PAGE_GROUPS,
                               PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
@@ -517,6 +518,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(panel,'卡片材质与配色')
         from appearance_presets import PANEL_PRESETS
         self.add_field(panel, 'panel_appearance_source')
+        self.add_field(panel, 'panel_backdrop_mode')
+        self.fields['panel_backdrop_mode'].setToolTip(BACKDROP_HINT)
         self.panel_preset=ModernComboBox();self.panel_preset.addItem('自定义')
         self.panel_preset.addItems([name for name,_ in PANEL_PRESETS])
         panel.addRow(self.field_label('主题预设'),self.panel_preset)
@@ -529,6 +532,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'panel_opacity')
         self.add_field(panel, 'panel_blur')
         section_marker(panel,'收起与桌面交互')
+        self.add_field(panel, 'panel_layer')
         self.add_field(panel, 'panel_locked')
         self.add_field(panel, 'card_snap')
         self.add_field(panel, 'card_snap_distance')
@@ -577,6 +581,9 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'spectrum_enabled')
         self.add_field(panel, 'spectrum_style')
         self.add_field(panel, 'spectrum_appearance_source')
+        self.add_field(panel, 'spectrum_backdrop_mode')
+        self.fields['spectrum_backdrop_mode'].setToolTip(BACKDROP_HINT)
+        self.add_field(panel, 'spectrum_layer')
         self.add_field(panel, 'spectrum_color_mode')
         self.add_field(panel, 'spectrum_mono_color')
         section_marker(panel,'每日图片')
@@ -612,6 +619,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         section_marker(panel,'闪念胶囊')
         self.component_row(panel,'flash_enabled','显示贴边胶囊',button('记一条',lambda:self.tray.runtime.flash.open(compose=True)),button('查看闪念',lambda:self.tray.runtime.flash.open()))
         self.add_field(panel, 'flash_appearance_source')
+        self.add_field(panel, 'flash_backdrop_mode')
+        self.fields['flash_backdrop_mode'].setToolTip('动态透明实时透出后方的窗口与桌面。仅壁纸使用所在屏幕的壁纸。')
         self.add_field(panel, 'flash_palette')
         self.fields['flash_appearance_source'].currentIndexChanged.connect(self.sync_appearance_sources)
         self.add_field(panel, 'flash_color')

@@ -141,7 +141,8 @@ def daily_picture_wallpaper_checks(runtime,app,output,wallpapers,checks):
     try:
         with patch.object(runtime,'daily_picture',card), patch.dict(runtime.resources.desktop_cards,{'traffic':detached}), \
              patch.object(content,'refresh'), patch.object(dock,'start_backdrop'), \
-             patch.dict(dock.cfg,{'daily_picture_material':'liquid','panel_opacity':48,'resource_background':'global','panel_material':'liquid'}):
+             patch.dict(dock.cfg,{'daily_picture_material':'liquid','panel_opacity':48,'resource_background':'global',
+                                  'resource_backdrop_mode':'wallpaper','panel_material':'liquid'}):
             card.sync();detached.sync_window();app.processEvents()
             screen=QApplication.screenAt(card.geometry().center()) or QApplication.primaryScreen()
             monitor=screen.geometry()
@@ -214,7 +215,7 @@ def run(api,runtime,app,output,checks):
         assert migrate_docked({'resource_weather_cities':cities})['resource_weather_cities']==[]
         assert migrate_docked({'resource_weather_cities':['天津','上海']})['resource_weather_cities']==['天津','上海']
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_auto_hide=False,resource_collapsed=True,card_snap=True,card_snap_distance=12,
-            resource_face=True,resource_expand_mode='click',resource_weather=True,motion_enabled=True,
+            resource_face=True,resource_expand_mode='click',resource_weather=True,motion_enabled=True,resource_backdrop_mode='wallpaper',
             resource_weather_cities=cities,
             resource_background='custom',resource_appearance=dict(material='liquid',theme='light',color='',opacity=48,blur=8,highlight=45))
         service.sync();w=service.window;extra=service.extras;app.processEvents()

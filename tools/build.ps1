@@ -91,6 +91,8 @@ try {
     $taskVersion = & $taskPython tools/release_tools.py prepare
     if ($LASTEXITCODE -ne 0) { throw 'Version preparation failed' }
     if ($taskExtended) { Invoke-TaskCheck 'dock.py' 'artifacts/source-test' 'source-runtime' $taskScopeArgs }
+    & $taskPython tools/prepare_taskbar_payload.py
+    if ($LASTEXITCODE -ne 0) { throw 'Taskbar payload preparation failed' }
     & $taskPython -m PyInstaller @taskCompilerArgs --workpath artifacts/pyinstaller-directory tools/BigFishDockpro.spec
     if ($LASTEXITCODE -ne 0) { throw 'Directory build failed' }
     if ($taskExtended) {
@@ -101,8 +103,6 @@ try {
     } elseif (-not $taskSkip) {
         Invoke-TaskCheck 'dist/BigFishDockpro/BigFishDockpro.exe' 'artifacts/quick-bundle-startup' 'directory-fresh-startup' @('--startup','--fresh-profile')
     }
-    & $taskPython tools/prepare_taskbar_payload.py
-    if ($LASTEXITCODE -ne 0) { throw 'Taskbar payload preparation failed' }
     & $Iscc "/DAppVersion=$taskVersion" tools/installer.iss
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
     if ($SingleFile) {

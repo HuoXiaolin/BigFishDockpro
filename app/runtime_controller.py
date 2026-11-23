@@ -217,6 +217,10 @@ class RuntimeController:
                  capsule if cfg['resource_layer']=='top' and capsule and capsule.taskbar_slot() is None else None,
                  self.flash.edge,self.flash.panel,self.flash.toast]
         windows.extend(note for note in self.notes.windows.values() if note.row()['pinned'])
+        if cfg['panel_layer']=='top':
+            windows.extend(self.panels.windows.values())
+        if cfg['spectrum_layer']=='top':
+            windows.append(self.spectrum)
         if cfg['watermark_layer']=='top':
             windows.extend(self.watermarks.windows.values())
         visible=[w for w in windows if w is not None and w.isWindow() and w.isVisible()]
@@ -260,7 +264,9 @@ class RuntimeController:
             self.resources.sync()
         if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
             self.flash.sync()
-        if changed is None or any(key.startswith('taskbar_') for key in changed):
+        from taskbar_xaml import overflow_requested
+        if (changed is None or any(key.startswith(('taskbar_', 'shell_notifications_')) for key in changed)
+                or (dock_appearance_changed and overflow_requested(self.dock.cfg))):
             self.taskbar.sync()
             if self.resources.ai_tray:
                 self.resources.ai_tray.sync_taskbar_text()
@@ -344,15 +350,20 @@ class RuntimeController:
         else:getattr(self,key).sync()
 
     def wallpaper_targets(self):
+        from window_backdrop import component_backdrop
         native_cards=self.custom_cards.windows.values() if self.custom_cards else ()
-        glass_windows=(self.resources.window,self.daily_picture,*self.resources.desktop_cards.values(),*native_cards)
+        cfg=self.dock.cfg
+        resource=self.resources.window if component_backdrop(cfg,'resource')=='wallpaper' else None
+        glass_windows=(self.daily_picture,resource,*self.resources.desktop_cards.values(),*native_cards)
         glass=[(window,window.glass) for window in glass_windows
                if window is not None and window.isWindow() and window.isVisible()]
-        panel=self.flash.panel
-        if panel is not None:
-            glass.extend((bar,bar.material) for bar in (panel.toolbar,panel.filters_bar,panel.launch_shell,panel.composer)
-                         if bar.isVisible())
-        windows=(self.clock,self.calendar,*self.panels.windows.values(),*self.notes.windows.values())
+        if component_backdrop(cfg,'flash')=='wallpaper':
+            glass.extend((window,window.material) for window in (self.flash.edge,self.flash.panel,self.flash.toast)
+                         if window is not None and window.isVisible())
+        if component_backdrop(cfg,'spectrum')=='wallpaper' and self.spectrum is not None and self.spectrum.isVisible():
+            glass.append((self.spectrum,self.spectrum.material))
+        panels=self.panels.windows.values() if component_backdrop(cfg,'panel')=='wallpaper' else ()
+        windows=(self.clock,self.calendar,*panels,*self.notes.windows.values())
         captures=[window for window in windows if window.isWindow() and window.isVisible()]
         return glass,captures
 

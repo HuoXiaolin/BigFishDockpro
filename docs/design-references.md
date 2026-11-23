@@ -18,7 +18,7 @@ OpenQuota 仅作为设计参考，不引入其 Tauri 运行时、账号连接或
 
 ## 液态交互与表情
 
-贴边表面张力、拖动液桥、断开水滴和七种鼠标互动表情参考 Wisland 的设计，对应矢量与弹簧代码适配到 PyQt5。资源胶囊沿用本应用的壁纸材质、明暗主题和彩色光环。[AsamiAkito/wisland](https://github.com/AsamiAkito/wisland)
+贴边表面张力、拖动液桥、断开水滴和七种鼠标互动表情参考 Wisland 的设计，对应矢量与弹簧代码适配到 PyQt5。资源胶囊支持动态透明、壁纸取样、明暗主题和彩色光环。[AsamiAkito/wisland](https://github.com/AsamiAkito/wisland)
 
 固定提交见 [Wisland-PIN.json](../references/Wisland-PIN.json)，原始版权及 MIT 许可见 [Wisland-MIT.txt](../licenses/Wisland-MIT.txt)。天气改用 Open-Meteo，消息只读取系统通知元数据和任务栏提醒事件，不读取消息正文。
 

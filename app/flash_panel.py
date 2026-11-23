@@ -5,10 +5,12 @@ from PyQt5.QtGui import QColor, QPainter, QPen, QCursor, QKeySequence, QFont, QR
 from PyQt5.QtWidgets import (QWidget,QFrame,QDialog,QLabel,QLineEdit,QPushButton,QVBoxLayout,QHBoxLayout,
     QListWidgetItem,QPlainTextEdit,QShortcut,QMessageBox,QApplication,QToolButton,QDateTimeEdit,QSizePolicy)
 from flash_data import COLORS, filtered, MAX_TEXT
-from flash_view import (palette_for, text_ink, icon, tool, Swatch, IdeaEditor, CapsuleDelegate,
+from flash_view import (flash_appearance, glass_fill, palette_for, text_ink, icon, tool, Swatch, IdeaEditor, CapsuleDelegate,
                         CapsuleList, plain_drop, copy_drop, color_icon, ToolGlass)
 from screen_layout import screen_records, choose_screen, capture, project
 from ui_style import ModernComboBox, AlignedMenu
+from capsule_glass import CapsuleGlass
+from window_backdrop import component_backdrop
 
 
 TOOL_FLAGS=Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.NoDropShadowWindowHint
@@ -42,6 +44,7 @@ class EdgeHandle(QWidget):
     def __init__(self,service):
         super().__init__(None,TOOL_FLAGS|Qt.WindowDoesNotAcceptFocus)
         self.setProperty('clickThroughKey','flash')
+        self.material=CapsuleGlass()
         self.service=service;self.press=None;self.moving=False;self.dragging_text=False;self.notice=''
         self.drag_side=None;self.reveal_level=0. if service.cfg['flash_edge_hide'] else 1.
         self.setObjectName('FlashEdge');self.setWindowTitle('闪念胶囊');self.setAccessibleName('闪念胶囊贴边入口')
@@ -130,10 +133,16 @@ class EdgeHandle(QWidget):
         colors=palette_for(self.service)
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         if self.width()<12:
+            self.material.clear()
             p.setPen(Qt.NoPen);p.setBrush(QColor(colors['muted']));p.drawRoundedRect(QRectF(1,10,max(2,self.width()-2),48),2,2);return
         rect=QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5)
-        p.setBrush(QColor(colors['surface']));p.setPen(QPen(QColor(colors['line']),1))
-        p.drawRoundedRect(rect,rect.width()/2,rect.width()/2)
+        cfg=self.service.cfg
+        style=flash_appearance(cfg)
+        self.material.paint(p,self,self.service.runtime.dock,rect.width()/2,appearance=style,
+                            backdrop_mode=component_backdrop(cfg,'flash'))
+        if style['material']=='clear':
+            target=QColor(colors['surface']);target.setAlpha(2)
+            p.setPen(Qt.NoPen);p.setBrush(target);p.drawRoundedRect(rect,rect.width()/2,rect.width()/2)
         fg=QColor(colors['ink']);p.setPen(fg)
         font=QFont(self.font());font.setPixelSize(12);font.setWeight(QFont.DemiBold);p.setFont(font)
         if self.width()<24:return
@@ -144,6 +153,10 @@ class EdgeHandle(QWidget):
         else:
             p.drawText(rect.adjusted(0,18,0,-22),Qt.AlignCenter,'闪')
             p.drawText(rect.adjusted(0,36,0,-4),Qt.AlignCenter,'念')
+
+    def hideEvent(self,event):
+        self.material.clear()
+        super().hideEvent(event)
 
     def open_on_hover(self):
         if self.press is None and not self.dragging_text and self.rect().contains(self.mapFromGlobal(QCursor.pos())):
@@ -200,6 +213,8 @@ class EdgeHandle(QWidget):
         menu.addAction('记一条闪念',lambda:self.service.open(compose=True))
         menu.addAction('查看闪念',lambda:self.service.open())
         hide=menu.addAction('贴边隐藏入口');hide.setCheckable(True);hide.setChecked(self.service.cfg['flash_edge_hide']);hide.toggled.connect(self.toggle_edge_hide)
+        from component_passthrough import component_actions
+        component_actions(menu.addMenu('鼠标穿透'),self.service.runtime,'flash')
         menu.addSeparator();menu.addAction('隐藏贴边胶囊',lambda:self.service.set_enabled(False))
         try:menu.exec_(event.globalPos())
         finally:menu.deleteLater();self.arm_hide()
@@ -211,6 +226,7 @@ class FlashPanel(QWidget):
     def __init__(self,service):
         super().__init__(None,TOOL_FLAGS)
         self.setProperty('clickThroughKey','flash')
+        self.material=CapsuleGlass()
         self.service=service;self.expanded='';self.color_filter='';self.editing=False;self.edit_id=''
         self.edit_color=service.cfg['flash_color'];self.rows={};self.icons={};self.hold=False
         rounded_window(self);self.setAcceptDrops(True);self.setWindowTitle('闪念胶囊 · 大肥鱼Dock')
@@ -344,6 +360,19 @@ class FlashPanel(QWidget):
         box(self.list.verticalScrollBar(),3)
         if region.isEmpty():region=QRegion(0,0,1,1)
         self.setMask(region)
+        self.update()
+
+    def paintEvent(self,event):
+        clip=self.mask()
+        if clip.isEmpty():return
+        painter=QPainter(self);painter.setClipRegion(clip)
+        cfg=self.service.cfg
+        self.material.paint(painter,self,self.service.runtime.dock,0,appearance=flash_appearance(cfg),
+                            backdrop_mode=component_backdrop(cfg,'flash'))
+
+    def hideEvent(self,event):
+        self.material.clear()
+        super().hideEvent(event)
 
     def showEvent(self,event):
         super().showEvent(event);self.input_region_later()
@@ -471,6 +500,8 @@ class FlashPanel(QWidget):
 
     def detail(self,row):
         identity=row['id'];fill=self.colors['fills'][row['color']];ink=text_ink(fill)
+        color=glass_fill(fill,flash_appearance(self.service.cfg))
+        fill='rgba(%d,%d,%d,%d)'%color.getRgb()
         frame=QFrame();frame.setObjectName('FlashDetail')
         frame.setStyleSheet('QFrame#FlashDetail{background:%s;border:0;border-radius:13px;} QLabel,QToolButton,QPlainTextEdit{color:%s;background:transparent;border:0;} QToolButton{padding:2px 4px;min-height:21px;} QToolButton:hover{background:rgba(127,127,127,38);}'%(fill,ink))
         box=QVBoxLayout(frame);box.setContentsMargins(11,7,10,6);box.setSpacing(3)
@@ -630,10 +661,11 @@ class ReminderToast(QFrame):
     def __init__(self,service,row,count):
         super().__init__(None,TOOL_FLAGS|Qt.WindowDoesNotAcceptFocus)
         self.setProperty('clickThroughKey','flash');self.setAttribute(Qt.WA_TranslucentBackground)
+        self.material=CapsuleGlass()
         self.service=service;self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle('闪念提醒');self.setObjectName('FlashReminder')
         c=palette_for(service)
-        self.setStyleSheet('QFrame#FlashReminder{background:%s;border:1px solid %s;} QLabel{color:%s;background:transparent;}'%(c['surface'],c['line'],c['ink']))
+        self.setStyleSheet('QFrame#FlashReminder{background:transparent;border:0;} QLabel{color:%s;background:transparent;}'%c['ink'])
         layout=QVBoxLayout(self);layout.setContentsMargins(14,10,14,10)
         layout.addWidget(QLabel('闪念提醒' if count==1 else f'{count} 条闪念到期'))
         snippet=QLabel(' '.join(row['text'].split())[:90]);snippet.setTextFormat(Qt.PlainText);snippet.setWordWrap(True);layout.addWidget(snippet)
@@ -647,3 +679,13 @@ class ReminderToast(QFrame):
         self.timeout.stop()
         if self.service.toast is self:self.service.toast=None
         super().closeEvent(event)
+
+    def paintEvent(self,event):
+        painter=QPainter(self)
+        cfg=self.service.cfg
+        self.material.paint(painter,self,self.service.runtime.dock,12,appearance=flash_appearance(cfg),
+                            backdrop_mode=component_backdrop(cfg,'flash'))
+
+    def hideEvent(self,event):
+        self.material.clear()
+        super().hideEvent(event)

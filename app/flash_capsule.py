@@ -126,11 +126,13 @@ class FlashCapsule(QObject):
             self.reposition()
             self.edge.show()
             self.edge.sync_visibility()
+            self.edge.update()
             if self.panel is None and not self.cfg['flash_auto_hide']:self.open(activate=False)
             if self.panel is not None:
                 if reload: self.panel.load_saved_draft()
                 self.panel.apply_style()
                 self.panel.render()
+            if self.toast is not None:self.toast.update()
         else:
             if self.panel is not None:
                 if reload: self.panel.load_saved_draft()

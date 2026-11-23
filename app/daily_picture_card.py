@@ -275,5 +275,5 @@ class DailyPictureCard(QWidget):
         rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         if not self.cfg['daily_picture_locked']:
             paint_edge_targets(p,self.rect())
-        self.glass.paint(p,self,self,12,self.drag is not None,self.appearance)
+        self.glass.paint(p,self,self.service.runtime.dock,12,self.drag is not None,self.appearance)
         paint_design(p,rect,self.border,clear=self.appearance['material']=='clear',corner_radius=12,header_separator=False)

@@ -8,6 +8,12 @@ telemetry or remote style downloads are used. See the original source headers
 and `references/ShellStyler/PIN.json` for authors, source URLs and content hashes.
 MinHook 1.3.4 is retained with its BSD-2-Clause notices in `references/MinHook`.
 
+The system tray overflow uses the same notification background parameters. It
+is hosted by Explorer and uses the existing taskbar component's XAML observer.
+The observer applies the brush to `OverflowFlyoutBackgroundBorder` and restores
+the saved native property when the style is disabled or its owner exits.
+[Native taskbar background targets](https://github.com/ramensoftware/windows-11-taskbar-styling-guide#tray-overflow-background)
+
 ## Shared toolchain
 
 Use `D:\Agant\toolchain\shell_styler` (or the build `-Toolchain` root):

@@ -24,6 +24,13 @@ def flash_appearance(cfg):
     return dock_appearance(cfg) if cfg.get('flash_appearance_source')=='app' else panel_appearance(cfg)
 
 
+def glass_fill(value,style):
+    color=QColor(value)
+    if style['material']!='solid':
+        color.setAlpha(180+round(75*style['opacity']/100))
+    return color
+
+
 def palette_for(service,background=None):
     cfg=service.cfg
     style=flash_appearance(cfg) if background is None else background
@@ -220,7 +227,8 @@ class CapsuleDelegate(QStyledItemDelegate):
         pulse=self.panel.pulse_level if identity==self.panel.recent else 0
         outline.setAlphaF(max(pulse,1 if focus else 0))
         painter.setPen(QPen(outline,1.3+pulse) if focus or pulse else Qt.NoPen)
-        painter.setBrush(QColor(fill));painter.drawRoundedRect(rect,rect.height()/2,rect.height()/2)
+        painter.setBrush(glass_fill(fill,flash_appearance(self.panel.service.cfg)))
+        painter.drawRoundedRect(rect,rect.height()/2,rect.height()/2)
         check=QRectF(rect.left()+11,rect.center().y()-6,12,12)
         painter.setPen(QPen(ink,1.3));painter.setBrush(Qt.NoBrush);painter.drawRoundedRect(check,3,3)
         if row['done']:
@@ -277,7 +285,7 @@ class ToolGlass(QFrame):
         radius=max(0,self.height()/2-.8)
         if self.corner is not None:radius=min(radius,self.corner)
         style=flash_appearance(self.panel.service.cfg)
-        self.material.paint(painter,self,self.panel,radius,appearance=style)
+        self.material.paint(painter,self,self.panel.service.runtime.dock,radius,appearance=style,backdrop_mode='dynamic')
         if self.corner is not None:
             # A light edit surface preserves contrast on patterned wallpaper. Even clear
             # material needs a nonzero alpha for clicks in a Windows layered text field.

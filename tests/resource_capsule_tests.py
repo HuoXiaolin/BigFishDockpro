@@ -348,7 +348,8 @@ def run(api,runtime,root,app,output,checks):
             image=QImage(card.size(),QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
             painter=QPainter(image);card.render(painter,QPoint(),QRegion(),QWidget.DrawChildren);painter.end()
             return image.pixelColor(5,round(card.height()*.26)),image.pixelColor(card.width()-6,round(card.height()*.79))
-        old_style={key:cfg[key] for key in ('panel_theme','panel_material','panel_color','panel_opacity')}
+        old_style={key:cfg[key] for key in ('panel_theme','panel_material','panel_color','panel_opacity','resource_backdrop_mode')}
+        cfg['resource_backdrop_mode']='wallpaper'
         for mode,base,end,tint in [('light','#d2ebe9','#cad9f4','#739fbd'),('dark','#22314d','#31364c','#4b6178')]:
             cfg.update(panel_theme=mode,panel_material='liquid',panel_color=tint,panel_opacity=42)
             window.sync_window();app.processEvents();window.glass.clear()

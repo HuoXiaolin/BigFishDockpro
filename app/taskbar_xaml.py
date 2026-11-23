@@ -74,7 +74,9 @@ def configuration(cfg):
     tint = '#00000000' if mode in ('system', 'clear') else color.name() + f'{alpha:02x}'
     result = {'desktop_appearance': {'accent': modes.get(mode, 'normal'), 'color': tint,
               'blur_radius': max(0, min(50, int(cfg.get('taskbar_blur', 12)))),
-              'show_line': mode == 'system'}, 'hide_tray': True, 'disable_saving': True}
+              'show_line': mode == 'system'}, 'hide_tray': True, 'disable_saving': True,
+              # The DLL and overflow preferences share the versioned LocalAppData directory.
+              'copy_dlls': False}
     for state in ('visible_window', 'maximized_window', 'start_opened', 'search_opened',
                   'task_view_opened', 'battery_saver'):
         result[state + '_appearance'] = {'enabled': False}
@@ -82,10 +84,39 @@ def configuration(cfg):
 
 
 EFFECT_KEYS = ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur')
+OVERFLOW_STYLE = 'tray_overflow_style'
 
 
 def effect_key(cfg):
-    return tuple(cfg.get(key) for key in EFFECT_KEYS)
+    return tuple(cfg.get(key) for key in (*EFFECT_KEYS, OVERFLOW_STYLE))
+
+
+def overflow_requested(cfg):
+    return cfg.get('shell_notifications_enabled', False) and cfg.get('shell_notifications_tray_overflow', True)
+
+
+def effect_settings(cfg):
+    settings = {key: cfg[key] for key in EFFECT_KEYS}
+    if overflow_requested(cfg):
+        import dock as api
+        from shell_appearance import system_appearance
+        from shell_appearance_model import appearance, brush_spec
+        settings[OVERFLOW_STYLE] = brush_spec(appearance(cfg, 'notifications', *system_appearance(api)))
+    return settings
+
+
+def worker_needed(cfg):
+    return cfg['taskbar_mode'] != 'system' or bool(cfg.get(OVERFLOW_STYLE))
+
+
+def overflow_configuration(style):
+    if style is None:
+        return '[Appearance]\nBrush=0\n'
+    from shell_appearance import owner_start_time
+    mode, tint, amount = style
+    index = {'solid': 1, 'acrylic': 2, 'blur': 3}[mode]
+    return (f'[Appearance]\nBrush={index}\nTint={tint[1:]}\nAmount={round(amount * 100)}\n'
+            f'OwnerPid={os.getpid()}\nOwnerStarted={owner_start_time()}\n')
 
 
 def program_path(pid):
@@ -189,6 +220,12 @@ class XamlTaskbar:
     def shell_changed(self):
         if self.closed or self.desired is None or not allowed():
             return
+        if self.desired.get(OVERFLOW_STYLE):
+            # Reuse shell recovery to follow Windows theme/transparency changes.
+            settings = effect_settings(self.dock.cfg)
+            if settings != self.desired:
+                self.sync(settings=settings)
+                return
         self.observe_shell(shell_snapshot())
         self.queue_apply()
 
@@ -255,8 +292,18 @@ class XamlTaskbar:
     def write(self, cfg):
         path = self.directory / 'settings.json'
         temporary = path.with_suffix('.pending')
-        temporary.write_text(json.dumps(configuration(cfg), ensure_ascii=False, indent=2), encoding='utf-8')
-        os.replace(temporary, path)
+        overflow = self.directory / 'tray-overflow.ini'
+        staged_overflow = overflow.with_suffix('.pending')
+        try:
+            temporary.write_text(json.dumps(configuration(cfg), ensure_ascii=False, indent=2), encoding='utf-8')
+            if cfg.get(OVERFLOW_STYLE) or overflow.exists():
+                staged_overflow.write_text(overflow_configuration(cfg.get(OVERFLOW_STYLE)), encoding='ascii')
+                os.replace(staged_overflow, overflow)
+            # The existing taskbar worker sees this replacement and refreshes both surfaces.
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+            staged_overflow.unlink(missing_ok=True)
 
     def configuration_matches(self, cfg):
         try:
@@ -268,22 +315,31 @@ class XamlTaskbar:
         except (OSError, ValueError, RecursionError):
             return False
         expected = configuration(cfg)
-        return isinstance(actual, dict) and all(actual.get(key) == value for key, value in expected.items())
+        if not isinstance(actual, dict) or any(actual.get(key) != value for key, value in expected.items()):
+            return False
+        style = cfg.get(OVERFLOW_STYLE)
+        overflow = self.directory / 'tray-overflow.ini'
+        try:
+            return overflow.read_text(encoding='ascii') == overflow_configuration(style)
+        except FileNotFoundError:
+            return style is None
+        except (OSError, ValueError):
+            return False
 
     def owns_configuration(self, cfg):
-        return (cfg['taskbar_mode'] != 'system'
+        return (worker_needed(cfg)
                 and resident_program() == self.program and self.configuration_matches(cfg))
 
     def confirmed(self, cfg):
         return self.pending is None and not self.rebind and self.owns_configuration(cfg)
 
-    def sync(self, force=False):
+    def sync(self, force=False, settings=None):
         if self.closed or not allowed():
             return
-        cfg = {key:self.dock.cfg[key] for key in EFFECT_KEYS}
+        cfg = effect_settings(self.dock.cfg) if settings is None else settings
         self.apply_timer.stop()
         self.retries=0
-        self.desired=None if cfg['taskbar_mode']=='system' else cfg
+        self.desired=cfg if worker_needed(cfg) else None
         if self.monitor_shell:
             if self.desired is None:
                 self.suspend_session()
@@ -298,7 +354,7 @@ class XamlTaskbar:
             # The owned process is stopping. Only the most recent request should run next.
             self.pending = cfg
             return
-        if cfg['taskbar_mode'] == 'system' and self.process.state() != QProcess.NotRunning:
+        if not worker_needed(cfg) and self.process.state() != QProcess.NotRunning:
             self.pending = cfg
             self.stop_timer.start(2000)
             self.process.terminate()
@@ -306,7 +362,7 @@ class XamlTaskbar:
         self.apply_when_ready(cfg)
 
     def apply_when_ready(self, cfg):
-        if self.monitor_shell and cfg['taskbar_mode'] != 'system':
+        if self.monitor_shell and worker_needed(cfg):
             if self.waiting_for_shell or self.process.state() == QProcess.NotRunning:
                 self.waiting_for_shell = True
                 self.shell_changed()
@@ -324,7 +380,7 @@ class XamlTaskbar:
                 self.schedule_recovery()
             return
         state = self.process.state()
-        if cfg['taskbar_mode'] == 'system':
+        if not worker_needed(cfg):
             self.active = self.starting = None
             self.shared = False
             self.report(cfg, True, '任务栏外观已恢复跟随系统。')
@@ -423,7 +479,7 @@ class XamlTaskbar:
         if getattr(self, 'shared', False) and self.active and self.owns_configuration(self.active):
             # Restore only our last configuration. The other process owns its lifecycle.
             try:
-                self.write(dict(self.active, taskbar_mode='system'))
+                self.write(dict(self.active, taskbar_mode='system', tray_overflow_style=None))
             except OSError as error:
                 self.log('未能恢复共享任务栏组件配置：'+str(error))
         self.pending = None

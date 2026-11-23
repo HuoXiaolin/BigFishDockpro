@@ -103,7 +103,7 @@ DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_thro
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
               resource_capsule_taskbar=False,resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={},
               resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_layer='bottom',
-              resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
+              resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_backdrop_mode='dynamic',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
 DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank',*FAN_METRICS) for key in METRICS})
 DEFAULTS.update(resource_system_status=True,resource_peripheral_profiles=[],resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
                 resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
@@ -294,7 +294,9 @@ def normalize(cfg,strict=False):
     for metric, key in MONITOR_DEVICES.items():
         device = cfg.get(key, '')
         cfg[key] = device if valid_device(device, 'network_utilization' if metric == 'network' else metric) else ''
-    options={'resource_background':('global','app','custom'),'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
+    from appearance_presets import BACKDROP_MODES
+    options={'resource_background':('global','app','custom'),'resource_backdrop_mode':tuple(value for _,value in BACKDROP_MODES),
+             'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
              'resource_ai_tray_mode':('auto','fixed'),

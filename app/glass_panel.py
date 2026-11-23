@@ -1,8 +1,6 @@
 from ui_style import compact_dialog
 """Floating desktop collection windows using the original Dock liquid glass."""
-import ctypes
 import os
-from ctypes import wintypes
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer, QSize, QRectF, QMimeData, QUrl, QItemSelectionModel
 from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence
@@ -12,10 +10,11 @@ from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEd
 from ui_style import AlignedMenu as QMenu
 from app_catalog import path_key
 from liquid_glass import paint_liquid_glass, tint_palette
-from appearance_presets import PANEL_PRESETS
+from appearance_presets import BACKDROP_MODES, PANEL_PRESETS
 from ui_style import label, button, ModernComboBox, ModernSpinBox, ModernCheckBox
 from dpi_support import metric, minimum, panel_css
 from window_edges import edges_at, paint_edge_targets, resize_cursor, resized_rect
+from window_backdrop import BACKDROP_HINT, component_backdrop, uses_wallpaper
 
 
 CATEGORY_COLORS={
@@ -214,6 +213,7 @@ class DesktopPanel(QDialog):
         self.edge_drag = None
         self.dragged = False
         self.backdrop = None
+        self.desktop_stack = None
         self.spec_x, self.spec_alpha = 0, 0
         self.setObjectName('DesktopPanel')
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -492,7 +492,8 @@ class DesktopPanel(QDialog):
         self.face_tracker.sync_face()
         from fold_options import header
         header(self,self.collapsed)
-        self.refresh_timer.start(100)
+        if self.isVisible():self.attach_desktop()
+        self.refresh_wallpaper_later(100)
         self.update()
 
     def update_identity_header(self):
@@ -784,6 +785,12 @@ class DesktopPanel(QDialog):
         menu.addAction('新建面板…').triggered.connect(lambda: self.manager.new_panel())
         menu.addAction('重命名…').triggered.connect(self.rename)
         menu.addAction('外观与收起…').triggered.connect(self.edit_options)
+        top = menu.addAction('桌面卡片置顶')
+        top.setCheckable(True)
+        top.setChecked(self.option('layer')=='top')
+        top.triggered.connect(lambda on:self.manager.update_panel(self.identity,layer='top' if on else 'bottom'))
+        from component_passthrough import component_actions
+        component_actions(menu.addMenu('鼠标穿透'),self.runtime,self.property('clickThroughKey'))
         self.add_view_menu(menu)
         sort = menu.addMenu('排序方式')
         for key, title in [('name_asc','文件名：升序'), ('name_desc','文件名：降序'),
@@ -978,7 +985,7 @@ class DesktopPanel(QDialog):
             if self.size() != original.size():
                 self.manual_resize = True
             self.store_geometry()
-            self.refresh_timer.start(150)
+            self.refresh_wallpaper_later(150)
             edges = self.resize_edges(self.mapFromGlobal(event.globalPos()))
             self.setCursor(resize_cursor(edges) if edges else Qt.ArrowCursor)
             event.accept()
@@ -1015,7 +1022,7 @@ class DesktopPanel(QDialog):
                 return
             if not self.collapsed and event.oldSize().isValid(): self.manual_resize = True
             self.resize_timer.start(250)
-            self.refresh_timer.start(200)
+            self.refresh_wallpaper_later(200)
 
     def store_geometry(self,persist=True):
         if self.restoring or self.disposed: return
@@ -1055,6 +1062,7 @@ class DesktopPanel(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self.face_tracker.sync_face()
+        self.desktop_stack = None
         self.attach_desktop()
         if getattr(self,'_idle_state',None) is not None:self.render(prepare=True)
         self.fit_timer.stop()
@@ -1064,17 +1072,15 @@ class DesktopPanel(QDialog):
         if self.option('auto_hide'): self.collapse_timer.start()
 
     def attach_desktop(self, owner=None):
-        # Desktop-owned tool window: no taskbar entry and no always-on-top flag.
-        # Ownership changes only our HWND, never taskbar/desktop styles or files.
-        if owner is not None or (not self.dock.preview and not os.environ.get('FISHDOCK_TEST_DESKTOP')):
-            user = ctypes.windll.user32
-            user.GetShellWindow.restype = wintypes.HWND
-            owner = owner if owner is not None else user.GetShellWindow()
-            if owner:
-                user.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
-                user.SetWindowLongPtrW(int(self.winId()), -8, int(owner))
-                user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
-                user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
+        if owner is None and self.dock.preview:return
+        from window_layers import desktop_layer, is_topmost, owner_of, shell_owner
+        hwnd = int(self.winId())
+        top = self.option('layer')=='top'
+        owner = 0 if top else shell_owner() if owner is None else owner
+        state = (hwnd, top, owner)
+        if self.desktop_stack!=state or is_topmost(hwnd)!=top or owner_of(hwnd)!=owner:
+            if desktop_layer(hwnd,top,owner):self.desktop_stack=state
+            self.runtime.click_policy.apply(self)
 
     def hideEvent(self, event):
         if self.edge_drag is not None:
@@ -1088,22 +1094,30 @@ class DesktopPanel(QDialog):
         super().hideEvent(event)
         self.release_hidden_resources()
 
+    def refresh_wallpaper_later(self, delay):
+        if component_backdrop(self.dock.cfg,'panel')=='wallpaper' and self.isVisible():
+            self.refresh_timer.start(delay)
+        else:
+            self.refresh_timer.stop()
+            self.backdrop = None
+
     def capture_backdrop(self):
         if self.dock.preview or not self.isVisible() or self.runtime.game_active: return
         from appearance_presets import panel_appearance
         style = panel_appearance(self.dock.cfg)
-        if style['material'] in ('solid', 'clear') or not style.get('blur_enabled', True):
+        if not uses_wallpaper(component_backdrop(self.dock.cfg,'panel'),style):
             self.backdrop = None
             self.update()
             return
         from glass_capture import capture_behind,surface_windows,backdrop_key
-        key=backdrop_key(self,style['blur'],style['material'])
+        from liquid_glass import material_blur
+        from glass_capture import smooth_backdrop
+        blur=material_blur(style['blur'],style['material']) if style.get('blur_enabled',True) else 0
+        key=backdrop_key(self,blur,style['material'])
         if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         image=capture_behind(self,surface_windows(self.dock))
         if image is not None:
-            from liquid_glass import material_blur
-            from glass_capture import smooth_backdrop
-            self.backdrop=smooth_backdrop(image,material_blur(style['blur'],style['material']))
+            self.backdrop=smooth_backdrop(image,blur)
             self._backdrop_key=key
         self.update()
 
@@ -1119,6 +1133,8 @@ class DesktopPanel(QDialog):
             paint_edge_targets(painter, self.rect())
         from appearance_presets import material_design, panel_appearance
         style = panel_appearance(self.dock.cfg)
+        mode = component_backdrop(self.dock.cfg,'panel')
+        wallpaper = uses_wallpaper(mode,style)
         colors = self.colors(style)
         highlight = style['highlight']/45
         colors['border'].setAlpha(min(255, round(colors['border'].alpha()*highlight)))
@@ -1130,7 +1146,8 @@ class DesktopPanel(QDialog):
         if material == 'mica': alpha = max(alpha, 210)
         if material == 'solid': alpha = 255
         clear = self.is_clear(style)
-        surface = SimpleNamespace(cfg={'glass': style.get('blur_enabled', True) and material not in ('clear','solid'), 'clear_background': clear, 'dock_material': material}, backdrop=self.backdrop,
+        surface = SimpleNamespace(cfg={'glass': wallpaper, 'clear_background': clear,
+                                       'dock_material': material, 'live_backdrop': mode=='dynamic'}, backdrop=self.backdrop if wallpaper else None,
                                   spec_x=self.spec_x, spec_alpha=self.spec_alpha)
         paint_liquid_glass(surface, painter, shape, rect, rect, colors, int(alpha), stops)
         from card_design import paint_design
@@ -1223,12 +1240,20 @@ class PanelOptions(QDialog):
         def number(key,title,low,high):
             field=ModernSpinBox();field.setRange(low,high);self.fields[key]=field;form.addRow(title,field)
         choice('appearance_source','外观来源',APPEARANCE_SOURCES)
+        choice('backdrop_mode','玻璃背景',BACKDROP_MODES)
+        self.fields['backdrop_mode'].setToolTip(BACKDROP_HINT)
         self.preset=ModernComboBox();self.preset.addItem('自定义');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('主题预设',self.preset)
         choice('material','材质',material_choices(panel.option('material')));choice('theme','明暗模式',COLOR_MODES)
         self.color=QLineEdit();self.color.setPlaceholderText('默认色 / #RRGGBB');self.color_box=QWidget();colors=QVBoxLayout(self.color_box);colors.setContentsMargins(0,0,0,0);row=QHBoxLayout();row.addWidget(self.color,1);row.addWidget(button('选择',self.choose_color));colors.addLayout(row)
         from ui_style import ThemeSwatches
         colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',self.color_box)
         number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',0,30)
+        choice('layer','桌面卡片层级',[('置底','bottom'),('置顶','top')])
+        from component_passthrough import CHOICES
+        self.passthrough=ModernComboBox()
+        for title,value in CHOICES:self.passthrough.addItem(title,value)
+        self.passthrough.setAccessibleName('当前卡片的鼠标穿透')
+        form.addRow('当前卡片的鼠标穿透',self.passthrough)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
         choice('expand_mode','展开方式',[('鼠标移入','hover'),('点击展开','click')])
@@ -1248,7 +1273,8 @@ class PanelOptions(QDialog):
         actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
         self.refresh_shared()
         self.preset.currentIndexChanged.connect(self.apply_preset)
-        for field in self.fields.values():
+        for key,field in self.fields.items():
+            if key in ('layer','backdrop_mode'):continue
             signal=field.currentIndexChanged if isinstance(field,QComboBox) else field.valueChanged
             signal.connect(self.customized)
         self.color.textChanged.connect(self.customized);self.fields['material'].currentIndexChanged.connect(self.material_changed)
@@ -1263,6 +1289,9 @@ class PanelOptions(QDialog):
         self.applying_preset=True
         from card_metrics import normalize_profile
         self.text_size.setValue(normalize_profile(self.panel.dock.cfg.get('card_sizing'))['font_size'])
+        from component_passthrough import individual
+        pointer=individual(self.panel.dock.cfg,self.panel.property('clickThroughKey'))
+        self.passthrough.setCurrentIndex(self.passthrough.findData(pointer))
         for key,field in self.fields.items():
             value=self.panel.option(key)
             if key=='material':
@@ -1321,5 +1350,7 @@ class PanelOptions(QDialog):
         values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked(),face=self.face.isChecked(),face_interactive=self.face_interactive.isChecked())
         values['face_auto_switch'] = self.face_auto_switch.isChecked()
         values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio')}
-        if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),**values):self.status.setText('已保存：外观共用，收起样式仅用于当前卡片或合并组。');return True
+        if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),
+                                           _pointer_mode=self.passthrough.currentData(),**values):
+            self.status.setText('已保存。外观和层级应用到所有桌面卡片。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

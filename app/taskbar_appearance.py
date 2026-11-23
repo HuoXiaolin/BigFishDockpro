@@ -3,12 +3,15 @@ import ctypes
 import os
 import sys
 from pathlib import Path
+from shutil import copytree
+from tempfile import TemporaryDirectory
 from ctypes import wintypes
 from PyQt5.QtCore import QObject, pyqtSignal
-from taskbar_xaml import effect_key
+from taskbar_xaml import effect_key, effect_settings, overflow_requested
 
 MODES = [('跟随系统', 'system'), ('全透明', 'clear'), ('自定义颜色', 'color'),
          ('亚克力模糊', 'acrylic'), ('玻璃模糊', 'glass')]
+BACKEND_VERSION = '2026.2-tray'
 
 
 class AccentPolicy(ctypes.Structure):
@@ -38,6 +41,23 @@ def accent_policy(mode, color, opacity):
     if mode == 'glass':
         return AccentPolicy(3, 0, abgr, 0)
     return AccentPolicy(0, 0, 0, 0)
+
+
+def upgrade_installed_backend(payload, directory):
+    # Existing installations already have the Windows UI prerequisites.
+    if directory.exists() or not any((directory.with_name(old) / 'TranslucentTB.exe').is_file()
+                                     for old in ('2026.2-xamlroot', '2026.2')):
+        return
+    source = payload / 'backend'
+    if not (source / 'ExplorerTAP.dll').is_file():
+        return
+    with TemporaryDirectory(prefix='taskbar-update-',dir=directory.parent) as stage:
+        copy = Path(stage) / 'backend'
+        copytree(source,copy)
+        try:
+            copy.rename(directory)
+        except FileExistsError:
+            pass  # Another Dock instance finished staging first.
 
 
 class _TaskbarEvents(QObject):
@@ -75,11 +95,15 @@ class TaskbarAppearance:
         if dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'):
             self.status = '隔离预览中不修改系统任务栏。'
         elif sys.platform == 'win32' and sys.getwindowsversion().build >= 22000:
-            self.directory = Path(os.environ['LOCALAPPDATA']) / 'BigFishDock/TaskbarBackend/2026.2'
+            self.directory = Path(os.environ['LOCALAPPDATA']) / 'BigFishDock' / 'TaskbarBackend' / BACKEND_VERSION
             payload = Path(getattr(sys, '_MEIPASS', '')) / 'taskbar-payload'
             native_arch = os.environ.get('PROCESSOR_ARCHITEW6432') or os.environ.get('PROCESSOR_ARCHITECTURE')
             if native_arch == 'AMD64' and getattr(sys, 'frozen', False) and (payload / 'backend/TranslucentTB.exe').is_file():
                 self.payload = payload
+                try:
+                    upgrade_installed_backend(payload,self.directory)
+                except OSError as error:
+                    self.log('任务栏兼容组件暂未更新：'+str(error))
             if not self.load_xaml():
                 self.status = ('尚未安装任务栏组件，可从本程序离线安装。' if self.payload else
                                '尚未安装任务栏组件。请使用完整安装包，勾选任务栏效果组件。')
@@ -174,7 +198,7 @@ class TaskbarAppearance:
             signal.emit(message)
 
     def xaml_completed(self, effect, success, message):
-        if effect != effect_key(self.dock.cfg):
+        if effect != effect_key(effect_settings(self.dock.cfg)):
             return
         self._pending_effect = None
         self._effect = effect if success else None
@@ -184,7 +208,7 @@ class TaskbarAppearance:
         if (self.closed or self.xaml is None or self._pending_effect is not None
                 or self.xaml.rebind or not (self.error or self.xaml.shared)):
             return
-        cfg = self.dock.cfg
+        cfg = effect_settings(self.dock.cfg)
         if self.xaml.confirmed(cfg):
             if self.error:
                 self.xaml_completed(effect_key(cfg), True, '任务栏组件正在使用当前效果配置。')
@@ -200,7 +224,8 @@ class TaskbarAppearance:
         if getattr(self, 'closed', False):
             return False
         self.sync_text()
-        effect = effect_key(self.dock.cfg)
+        settings = effect_settings(self.dock.cfg) if self.xaml is not None else self.dock.cfg
+        effect = effect_key(settings)
         pending = getattr(self, '_pending_effect', None)
         if not force and (pending == effect or (pending is None and getattr(self, '_effect', None) == effect)):
             return not bool(getattr(self, 'error', ''))
@@ -208,7 +233,7 @@ class TaskbarAppearance:
             self._effect = None
             self._pending_effect = effect
             self.set_status('正在应用任务栏效果…')
-            self.xaml.sync(force=force)
+            self.xaml.sync(force=force, settings=settings)
             return not bool(getattr(self, 'error', ''))
         if self.backend is None:
             return False
@@ -287,7 +312,7 @@ class TaskbarAppearance:
 
     def resume_session(self):
         self.sync_text()
-        if self.xaml is not None and self.dock.cfg['taskbar_mode'] != 'system':
+        if self.xaml is not None and (self.dock.cfg['taskbar_mode'] != 'system' or overflow_requested(self.dock.cfg)):
             self.retry()
 
     def close(self,shutdown=False):
