@@ -6,8 +6,8 @@ using Windows.Devices.Geolocation;
 using Windows.Security.Authorization.AppCapabilityAccess;
 
 internal static class WeatherLocation {
-    internal static object Read() {
-        try { return ReadWindowsRuntime(); }
+    internal static object Read(bool refresh = false) {
+        try { return ReadWindowsRuntime(refresh); }
         catch (TypeLoadException) { return ReadLegacy(); }
         catch (COMException error) when ((uint)error.HResult == 0x80040154) { return ReadLegacy(); }
         catch (UnauthorizedAccessException) { return new { status = "permission" }; }
@@ -18,12 +18,13 @@ internal static class WeatherLocation {
 
     // Check existing desktop consent before requesting a position from the Windows provider.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    static object ReadWindowsRuntime() {
+    static object ReadWindowsRuntime(bool refresh) {
         var access = AppCapability.Create("location").CheckAccess();
         if (access != AppCapabilityAccessStatus.Allowed)
             return new { status = "permission" };
-        var locator = new Geolocator { DesiredAccuracy = PositionAccuracy.Default };
-        var result = locator.GetGeopositionAsync(TimeSpan.FromMinutes(30), TimeSpan.FromSeconds(12)).GetAwaiter().GetResult();
+        var locator = new Geolocator { DesiredAccuracyInMeters = 200 };
+        var maximumAge = refresh ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(30);
+        var result = locator.GetGeopositionAsync(maximumAge, TimeSpan.FromSeconds(12)).GetAwaiter().GetResult();
         var position = result.Coordinate.Point.Position;
         return RoundedPosition(position.Latitude, position.Longitude);
     }
@@ -43,6 +44,6 @@ internal static class WeatherLocation {
     }
 
     static object RoundedPosition(double latitude, double longitude) {
-        return new { status = "ready", latitude = Math.Round(latitude, 2), longitude = Math.Round(longitude, 2) };
+        return new { status = "ready", latitude = Math.Round(latitude, 3), longitude = Math.Round(longitude, 3) };
     }
 }

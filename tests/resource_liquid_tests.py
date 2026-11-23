@@ -409,44 +409,83 @@ def run(api,runtime,app,output,checks):
         extra.weather=manual_rows
         from tempfile import TemporaryDirectory
         from resource_options import DEFAULTS
-        from weather_location import WeatherLocation
+        from weather_location import WeatherLocation,address_name
+        from resource_weather import WeatherJob
+        from unittest.mock import Mock
         assert DEFAULTS['resource_weather_location'] is True
+        district_coords=(31.226,121.476)
+        district_name='上海市 · 徐汇区'
+        district_address=dict(countryCode='CN',city='上海市',locality='斜土路街道',localityInfo={'administrative':[
+            dict(name='上海市',chinaAdminCode='310000',adminLevel=4),
+            dict(name='市辖区',chinaAdminCode='310100'),
+            dict(name='徐汇区',chinaAdminCode='310104'),
+            dict(name='斜土路街道',chinaAdminCode='310104009',adminLevel=8),
+        ]})
+        county_address=dict(countryCode='CN',city='昆山市',locality='花桥镇',localityInfo={'administrative':[
+            dict(name='苏州市',adminLevel=5),dict(name='昆山市',adminLevel=6),dict(name='花桥镇',adminLevel=8),
+        ]})
+        assert address_name(district_address)==district_name
+        assert address_name(county_address)=='苏州市 · 昆山市'
+        assert address_name(dict(district_address,localityInfo={'administrative':[None,{'adminLevel':8,'name':'斜土路街道'}]}))=='上海市'
+        assert address_name(dict(district_address,lookupSource='ip-geolocation'))=='当前位置'
         with TemporaryDirectory(dir=output) as directory:
             import json
             from pathlib import Path
             cache=Path(directory)/'weather-location.json'
-            cache.write_text(json.dumps(dict(day=now.date().isoformat(),name='旧位置',latitude=39,longitude=116)),encoding='utf-8')
+            cache.write_text(json.dumps(dict(day=now.date().isoformat(),name='上海市',latitude=31.226,longitude=121.476)),encoding='utf-8')
             with patch('weather_location.date') as local_date:
                 local_date.today.return_value=now.date()
-                fixes=dict(latitude=31.226,longitude=121.476)
+                fixes=dict(latitude=31.2264,longitude=121.4764)
+                moved=dict(latitude=31.301,longitude=121.094)
                 queries=[]
                 def city_from_position(url):
-                    assert 'latitude=31.23' in url and 'longitude=121.48' in url
                     queries.append(url)
-                    return {'city':'上海'}
-                from unittest.mock import Mock
-                position=Mock(side_effect=[fixes,fixes,dict(status='timeout'),fixes])
-                def requested(location,retry=False):
-                    return location.resolve(directory,city_from_position,lambda:False,read=position,retry=retry)
-                expected=(('上海',(31.23,121.48)),'ready')
+                    if 'latitude=31.301&longitude=121.094' in url:
+                        return county_address
+                    assert 'latitude=31.226&longitude=121.476' in url
+                    return district_address
+                position=Mock(side_effect=[fixes,fixes,dict(status='timeout'),fixes,moved,
+                                            dict(status='timeout'),dict(status='permission')])
+                def requested(location,refresh=False):
+                    return location.resolve(directory,city_from_position,lambda:False,read=position,refresh=refresh)
+                expected=((district_name,district_coords),'ready')
                 first=WeatherLocation()
-                assert requested(first)==requested(first,retry=True)==expected
-                position.assert_called_once_with()
+                assert requested(first)==requested(first)==expected
+                position.assert_called_once_with(refresh=False)
                 restarted=WeatherLocation()
                 assert requested(restarted)==requested(restarted)==expected
                 assert position.call_count==2 and len(queries)==1
                 local_date.today.return_value=now.date()+timedelta(days=1)
                 assert requested(restarted)==requested(restarted)==(None,'timeout')
                 assert position.call_count==3
-                assert requested(restarted,retry=True)==requested(restarted)==expected
-                assert position.call_count==4
+                assert requested(restarted,refresh=True)==requested(restarted)==expected
+                assert position.call_count==4 and len(queries)==2
+                after_move=('苏州市 · 昆山市',(31.301,121.094))
+                assert requested(restarted,refresh=True)==requested(restarted)==(after_move,'ready')
+                assert position.call_count==5 and len(queries)==3
+                assert requested(restarted,refresh=True)==(after_move,'timeout')
+                assert requested(restarted,refresh=True)==(None,'permission')
+                assert position.call_count==7 and len(queries)==3
 
-                def crossing_midnight():
+                def crossing_midnight(*,refresh):
+                    assert not refresh
                     local_date.today.return_value=now.date()+timedelta(days=2)
                     return fixes
                 midnight=WeatherLocation()
                 location=midnight.resolve(directory,city_from_position,lambda:False,read=crossing_midnight)
-                assert location==requested(midnight)==expected and position.call_count==4
+                assert location==requested(midnight)==expected and position.call_count==7
+        with TemporaryDirectory(dir=output) as directory, \
+                patch('weather_location.windows_position',return_value=fixes) as refreshed_position, \
+                patch('resource_weather.fetch_json',return_value=district_address), \
+                patch('resource_weather.forecast',side_effect=lambda name,coordinates:forecast(name,lookup,coordinates=coordinates)) as weather_forecast, \
+                patch.object(WeatherJob,'read_air',return_value=({},'')):
+            job=WeatherJob([],location_dir=directory,refresh_location=True)
+            located_rows=[]
+            job.ready.connect(located_rows.extend)
+            job.run()
+            refreshed_position.assert_called_once_with(refresh=True)
+            weather_forecast.assert_called_once_with(district_name,coordinates=district_coords)
+            assert len(located_rows)==1 and located_rows[0]['located'] and located_rows[0]['temperature']==16
         with patch.object(runtime.dock,'preview',False),patch('resource_weather.WeatherJob') as jobs:
             extra.cancel();extra.weather_timer.stop()
             extra.sync()
@@ -458,22 +497,24 @@ def run(api,runtime,app,output,checks):
             assert jobs.call_count==2 and jobs.call_args.kwargs['location_session'] is service.weather_location
             extra.cancel()
         with patch.object(extra,'refresh_weather') as refresh:
-            w.weather_view.refresh_weather()
-            refresh.assert_called_once_with(retry_location=True)
-        local_row=dict(forecast('上海',lookup,coordinates=(31.23,121.48)),located=True)
+            w.weather_view.refresh_button.click()
+            refresh.assert_called_once_with(refresh_location=True)
+        local_row=located_rows[0]
         with patch.dict(cfg,resource_weather_cities=[]):
             extra.weather=[local_row]
             w.weather_view.refresh()
-            assert w.weather_view.city.count()==1 and w.weather_view.city.currentText()=='上海'
+            assert w.weather_view.city.count()==1 and w.weather_view.city.currentText()==district_name
+            assert w.weather_view.city.toolTip()==district_name
         extra.weather=[local_row,*manual_rows]
         w.weather_view.refresh()
-        assert w.weather_view.city.itemText(0)==w.weather_view.city.currentText()=='上海'
+        assert w.weather_view.city.itemText(0)==w.weather_view.city.currentText()==district_name
         w.weather_view.select_city('天津');w.weather_view.refresh()
         assert w.weather_view.city.currentText()=='天津'
         extra.weather.pop(0)
         w.weather_view.refresh()
         checks.append('Weather notice and location: the rain block opens its city, the hourly chart paints the liquid-rain peak, and the first dry hour is marked.')
-        checks.append('Weather location starts in the folded capsule, requests once per launch and local date change, merges a request spanning midnight, reuses a successful fix, and lets Refresh retry a failure.')
+        checks.append('Weather location starts in the folded capsule, requests once per launch and local date change, merges a request spanning midnight, and refreshes the position and forecast on every Refresh click.')
+        checks.append('Weather district location: the reported county boundary outranks street names, legacy cached labels are upgraded, and the district forecast uses the rounded device coordinates.')
         checks.append('Weather defaults and audio: the located city appears first, manual cities stay selectable, and the opt-in cue plays once for a new condition.')
         # A real PNG exercises the wallpaper crop and material cache even with motion off.
         import wallpaper_source as wallpaper

@@ -400,7 +400,8 @@ class WeatherView(QWidget):
         box.setAlignment(Qt.AlignTop)
         self.weather_head=QWidget();head=QHBoxLayout(self.weather_head);head.setContentsMargins(0,0,0,0);head.setSpacing(5)
         self.city=ModernComboBox();self.city.setAccessibleName('天气城市');self.city.setProperty('glassField',True)
-        self.city.setMinimumWidth(94);self.city.setMaximumWidth(144);self.city.setFixedHeight(22)
+        self.city.setMinimumWidth(94);self.city.setMaximumWidth(178);self.city.setFixedHeight(22)
+        self.city.currentTextChanged.connect(self.city.setToolTip)
         self.city.setStyleSheet('QComboBox{min-height:0;padding:1px 23px 1px 7px;border:0;background:transparent;font-size:11px}')
         head.addWidget(self.city);head.addStretch(1)
         self.week=WeatherAction();self.week.setText('七天');self.week.setCheckable(True)
@@ -418,7 +419,7 @@ class WeatherView(QWidget):
         if not self.owner.service.set_options(resource_weather_days=7 if on else 3):self.week.setChecked(not on)
     def refresh_weather(self):
         if self.owner.service.extras:
-            self.owner.service.extras.refresh_weather(retry_location=True)
+            self.owner.service.extras.refresh_weather(refresh_location=True)
             self.refresh()
     def select_city(self,name):
         index=self.city.findText(name)

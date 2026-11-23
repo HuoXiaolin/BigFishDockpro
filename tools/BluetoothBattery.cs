@@ -142,6 +142,7 @@ internal static class BluetoothBattery {
             object result;
             if(args.Length==2 && args[0]=="--taskbar") result=TaskbarSpace.Read(Int64.Parse(args[1]));
             else if(args.Length==1 && args[0]=="--weather-location") result=WeatherLocation.Read();
+            else if(args.Length==1 && args[0]=="--weather-location-refresh") result=WeatherLocation.Read(refresh:true);
             else if(args.Length==2 && args[0]=="--sensors") result=HardwareSensors.Read(args[1]);
             else if(args.Length==6 && args[0]=="--sensors") result=HardwareSensors.Read(args[1],
                 args[2]=="-" ? (ulong?)null : UInt64.Parse(args[2]), args[3]=="-" ? (uint?)null : UInt32.Parse(args[3]),

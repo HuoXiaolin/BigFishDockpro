@@ -39,12 +39,12 @@ class ResourceExtras(QObject):
     def cancel(self):
         job,self.weather_job=self.weather_job,None
         if job:job.requestInterruption();job.deleteLater()
-    def refresh_weather(self,*,retry_location=False):
+    def refresh_weather(self,*,refresh_location=False):
         if self.closed or self.weather_job or not self.service.cfg['resource_weather'] or self.service.runtime.dock.preview:return
         from resource_weather import WeatherJob
         if not self.weather_key:return
         self.weather_job=WeatherJob(*self.weather_key,location_session=self.service.weather_location,
-                                    retry_location=retry_location);job=self.weather_job
+                                    refresh_location=refresh_location);job=self.weather_job
         job.ready.connect(self.receive_weather,Qt.QueuedConnection);job.finished.connect(self.finished,Qt.QueuedConnection);job.start()
     def receive_weather(self,rows):
         if self.closed or self.sender() is not self.weather_job:return
