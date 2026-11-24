@@ -221,15 +221,14 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
         for root in classic_roots:
             add(root, *panel_size, f'RequestedTheme={theme}')
             add(root + ' > Grid#RootContent', *panel_size, f'RequestedTheme={theme}', 'Background=Transparent', 'CornerRadius=18')
-        add('Grid#RootContent > Border#AcrylicBorder, Grid#MainMenu > Border#AcrylicBorder', *panel_size, 'Margin=0')
-        add('Grid#MainMenu', *panel_size, f'RequestedTheme={theme}', 'Background=Transparent', 'CornerRadius=18')
+        add('Grid#RootContent > Border#AcrylicBorder', *panel_size, 'Margin=0')
+        # The redesigned frame is sized after both native columns are found.
+        add('Grid#MainMenu', f'RequestedTheme={theme}', 'Background=Transparent', 'CornerRadius=18')
         # FrameRoot also occurs inside StartInnerFrame. Giving every occurrence
         # the full panel width makes the native pinned column wider than its slot.
         add('Grid#FrameRoot', f'RequestedTheme={theme}', 'Background=Transparent', 'CornerRadius=18')
         for target in ('Grid#AllAppsRoot', 'Grid#UndockedRoot', 'Grid#SideBySidePinnedWrapper'):
             add(target, f'RequestedTheme={theme}')
-        add('Grid#AllListHeading > TextBlock#AllListHeadingText', 'Margin=0,3,6,4')
-        add('Grid#AllListHeading > Microsoft.UI.Xaml.Controls.DropDownButton#ViewSelectionButton', 'Margin=0,0,16,0')
         add('Grid#NavPanePlaceholder', 'Margin=10,0,10,0')
         add('Grid#AllAppsPaneHeader', 'Margin=0', 'Height=36', 'VerticalAlignment=Top')
         add('TextBlock#AllAppsHeading', 'Margin=0,8,0,8', 'HorizontalAlignment=Left')
@@ -242,11 +241,8 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
         add('StartDocked.AllAppsGridListViewItem > Grid#ContentBorder', 'Margin=0', 'Padding=0')
         add('StartDocked.AllAppsGridListViewItem > StackPanel#RootPanel > Button#Header',
             'HorizontalContentAlignment=Left', 'BorderThickness=0')
-        add('GridView#AllAppsGrid > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid > GridViewItem',
+        add('Grid#AllAppsRoot > * > GridView#AllAppsGrid > * > ItemsWrapGrid > GridViewItem',
             'MinWidth=0', 'Width=Auto', 'Margin=0', 'Padding=0', 'HorizontalAlignment=Stretch', 'HorizontalContentAlignment=Stretch')
-        add('TextBlock#PinnedListHeaderText', 'HorizontalAlignment=Left')
-        add('Grid#SideBySidePinnedWrapper > TextBlock#PinnedListHeaderText',
-            f'Width={START_PIN_CELL[0]}', 'TextAlignment=Center')
         add('StartMenu.PinnedList > Grid#Root', 'Padding=0',
             'ColumnDefinitions:=<ColumnDefinitionCollection><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/></ColumnDefinitionCollection>')
         add('StartMenu.PinnedList > Grid#Root > Microsoft.UI.Xaml.Controls.PipsPager#PinnedListPipsPager',
@@ -283,13 +279,9 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
             'CornerRadius=12', f'RequestedTheme={theme}')
         add('Cortana.UI.Views.CortanaRichSearchBox#SearchTextBox', f'Foreground={ink}', f'RequestedTheme={theme}')
         add('Grid#WebViewGrid', 'MinWidth=0', 'Background=Transparent', 'CornerRadius=0,0,18,18')
-        # Theme core chooses the correct Windows 11 visual tree.
-        add('Grid#SideBySidePinnedWrapper', 'ColumnDefinitions:=<ColumnDefinitionCollection><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></ColumnDefinitionCollection>')
         tile_width, tile_height = START_PIN_CELL
         pinned_tiles = (f'MaximumRowsOrColumns={START_PIN_COLUMNS}', f'ItemWidth={tile_width}', f'ItemHeight={tile_height}', 'Margin=0')
         add('GridView#PinnedList > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid', *pinned_tiles)
-        add('Grid#SideBySidePinnedWrapper > ScrollViewer > Border#Root > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid',
-            *pinned_tiles)
         folder = 'StartMenu.ExpandedFolderList'
         for frame in (folder, 'StartMenu.FolderModal'):
             add(frame, f'RequestedTheme={theme}')
@@ -311,7 +303,6 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
         add(folder_tiles, *pinned_tiles)
         # Resize cell/hover geometry only. Native icon and glyph sizes stay intact.
         for base in ('GridView#PinnedList > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid',
-                     'Grid#SideBySidePinnedWrapper > ScrollViewer#SideBySidePinnedScrollViewer > Border#Root > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid',
                      folder_tiles):
             add(base + ' > GridViewItem', 'MinWidth=0', 'MinHeight=0', f'Width={tile_width}', f'Height={tile_height}',
                 f'MaxWidth={tile_width}', f'MaxHeight={tile_height}', 'Margin=0', 'Padding=0',
@@ -325,6 +316,8 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
                 add(owner, 'HorizontalAlignment=Stretch', 'HorizontalContentAlignment=Stretch')
                 add(owner + ' > Grid',
                     'Width=Auto', 'MinWidth=0', 'HorizontalAlignment=Stretch')
+        add('StartMenu.PinnedListTile, StartMenu.PinnedListTile > Grid#Root',
+            'Width=Auto', 'MinWidth=0', 'HorizontalAlignment=Stretch')
     return result
 
 
@@ -398,6 +391,9 @@ def settings(cfg, kind, owner_pid, system_light=True, transparent=True, surface_
         for part, value in enumerate(properties):
             data[f'controlStyles[{index}].styles[{part}]'] = value
     if kind == 'start':
+        data.update(bigfish_start_width=str(START_MENU_SIZE[0]), bigfish_start_height=str(START_MENU_SIZE[1]),
+                    bigfish_pin_columns=str(START_PIN_COLUMNS), bigfish_pin_cell_width=str(START_PIN_CELL[0]),
+                    bigfish_pin_cell_height=str(START_PIN_CELL[1]))
         surface = surface_color if surface_color is not None and shows_backdrop(style) else style['color']
         data['bigfish_footer_surface'] = surface if isinstance(surface,str) else '#%02x%02x%02x'%tuple(round(v) for v in surface)
         for index, (target, properties) in enumerate(search_content_styles(ink, style)):

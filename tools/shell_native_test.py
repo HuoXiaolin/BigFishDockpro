@@ -115,6 +115,17 @@ def main(output):
                     (observed / f'{kind}.{build}.ini').write_bytes(encode_ini(data))
                     check_probe(executable, payload / filename, observed, 'start-layout.json', 15, timeout_retries)
                     checks.append('start-observer-layout: complete layout through real TAP, refresh and production teardown')
+                    for header in ('unnamed', 'named'):
+                        modern = output / f'start-redesigned-{header}-header'
+                        modern.mkdir(parents=True, exist_ok=True)
+                        config = settings(cfg, kind, os.getpid())
+                        for key, value in tuple(config.items()):
+                            if key.endswith('.target'):
+                                config[key] = value.replace('StartMenu.PinnedList >', 'ContentControl#StartMenuPinnedList >')
+                        config['probe_redesigned_start'] = header
+                        (modern / f'{kind}.{build}.ini').write_bytes(encode_ini(config))
+                        check_probe(executable, payload / filename, modern, 'start-redesigned.json', 15, timeout_retries)
+                        checks.append(f'{modern.name}: deferred discovery, full rows, four pins, footer and complete native restore')
         result = {'passed': True, 'scope': 'native-xaml-isolated', 'desktop': desktop, 'checks': checks,
                   'profile': 'layout' if focused else 'full',
                   'limits': ['Synthetic native XAML; no injection into the user shell or live Windows start/notification interaction.']}

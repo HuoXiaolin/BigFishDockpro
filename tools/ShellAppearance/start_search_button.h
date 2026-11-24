@@ -146,7 +146,12 @@ static void BF_PositionStartFooter(BF_StartSearchButton& entry) {
         entry.button.IsTabStop(fits);
         entry.button.Opacity(fits ? 1 : 0);
     }
-    if (bf_search_button_ready.exchange(fits)!=fits && bf_status_event) SetEvent(bf_status_event);
+    if (bf_search_button_ready.exchange(fits)!=fits) {
+        // Opacity and hit-test state do not trigger another layout pass. Give
+        // the redesigned page one so it can release the native search row.
+        pane.InvalidateMeasure();
+        if (bf_status_event) SetEvent(bf_status_event);
+    }
 }
 
 static void BF_AddStartSearchButton(const Controls::Grid& pane) {

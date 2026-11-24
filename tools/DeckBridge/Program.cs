@@ -32,7 +32,7 @@ internal static class Program
     static DeckSettings Settings = new();
     static string Data = "";
     static Pricing? Prices;
-    static bool AllHistory;
+    static bool AllHistory, RefreshPrices;
     static DispatcherTimer Tick = null!;
     const uint AlwaysShowErrorUi = 0x10;
     const uint NoErrorUi = 0x20;
@@ -136,7 +136,13 @@ internal static class Program
                 Media?.SetPresentationActive(Presentation);
                 Changed(); return;
             }
-            if (op == "refresh") { NextAi = DateTimeOffset.MinValue; if (Media is not null) await Media.RefreshAsync(); return; }
+            if (op == "refresh")
+            {
+                RefreshPrices |= Flag(q, "prices");
+                NextAi = DateTimeOffset.MinValue;
+                if (Media is not null) await Media.RefreshAsync();
+                return;
+            }
             if (Media is null) return;
             var requested = q.Get("id").Text();
             var track = string.IsNullOrEmpty(requested) ? Media.Current : Media.Tracks.FirstOrDefault(x => x.Id == requested);
@@ -167,7 +173,9 @@ internal static class Program
             var snapshots = await Task.Run(() => reader.RefreshAsync(Settings, cancellation, AllHistory ? new DateTime(2000, 1, 1) : null), cancellation);
             if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
             Prices ??= new Pricing(Data);
-            try { await Prices.RefreshAsync(cancellation: cancellation); } catch (Exception) { }
+            bool refreshPrices = RefreshPrices;
+            RefreshPrices = false;
+            try { await Prices.RefreshAsync(force: refreshPrices, cancellation: cancellation); } catch (Exception) { }
             if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
             var columns = DashboardUsage.Columns(Settings, snapshots);
             (ResetCreditReading? Credits, string Plan) codexAccount = (null, "");

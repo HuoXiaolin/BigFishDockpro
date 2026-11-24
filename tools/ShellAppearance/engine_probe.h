@@ -3,6 +3,7 @@
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 #ifdef BIGFISH_START_ENGINE
 #include "start_layout_probe.h"
+#include "start_modern_probe.h"
 #include "start_flyout_probe.h"
 #endif
 #include "lifecycle_probe.h"
@@ -53,6 +54,8 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         auto manager=Hosting::WindowsXamlManager::InitializeForCurrentThread();
 #ifdef BIGFISH_START_ENGINE
         if (BF_Setting(L"probe_observer_layout")==L"1") return BF_ProbeStartLayout(directory)?0:95;
+        if (const auto layout=BF_Setting(L"probe_redesigned_start");!layout.empty())
+            return BF_ProbeModernStart(directory,layout==L"named")?0:95;
 #endif
         WNDCLASSW fixtureClass{};
         fixtureClass.hInstance=GetModuleHandleW(nullptr);
@@ -76,6 +79,10 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
 #ifdef BIGFISH_START_ENGINE
         Controls::Grid mainMenu, classicRoot;
         mainMenu.Name(L"MainMenu");classicRoot.Name(L"RootContent");
+        // The panel fixture isolates shared physical bounds from the StartHome
+        // adapter, which sizes a complete redesigned menu in its own probe.
+        mainMenu.Width(std::stod(BF_Setting(L"probe_start_width")));
+        mainMenu.Height(std::stod(BF_Setting(L"probe_start_height")));
         mainMenu.Children().Append(border);
         root.Children().Append(mainMenu);
         Controls::Border classicBorder;
@@ -282,7 +289,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         applied=applied&&undocked.Visibility()==Visibility::Visible&&appsRoot.Visibility()==Visibility::Visible&&
             appsScroll.Visibility()==Visibility::Visible&&pinnedScroll.Visibility()==Visibility::Visible&&
             appsScroll.ActualWidth()>0&&pinnedScroll.ActualWidth()>0&&appsList.Items().Size()==1&&
-            columns.Size()==2&&columns.GetAt(0).Width().Value==2&&columns.GetAt(1).Width().Value==3;
+            columns.Size()==2&&columns.GetAt(0).Width().Value==1&&columns.GetAt(1).Width().Value==1;
         auto foreground=allApps.Foreground().try_as<Media::SolidColorBrush>();
         auto pinnedForeground=pinned.Foreground().try_as<Media::SolidColorBrush>();
         auto clear=overlay.Background().try_as<Media::SolidColorBrush>();

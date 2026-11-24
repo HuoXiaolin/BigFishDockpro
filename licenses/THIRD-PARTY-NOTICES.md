@@ -9,6 +9,9 @@ The original iOS-style-Dock code retains its MIT copyright and permission
 notice in [iOS-style-Dock-MIT.txt](iOS-style-Dock-MIT.txt). The notices below
 apply to their respective third-party components.
 
+See [第三方授权与来源](第三方授权与来源.md) for design references, incorporated
+source code, runtime integrations, and the scope of asset permissions.
+
 - PyQt5 5.15.11: Riverbank Computing Ltd, GPL v3; license texts included here.
   Source: https://pypi.org/project/PyQt5/5.15.11/#files
 - PyQt5-sip 12.20.0: Riverbank Computing Ltd, BSD-2-Clause.
@@ -89,6 +92,34 @@ No GlassDesk or GlassBoard source or proprietary assets are included.
   by Abdulkaiz Khatri. The original CUR and ANI files are stored losslessly.
   The [v2.0.6 source](https://github.com/ful1e5/Bibata_Cursor/tree/v2.0.6) is
   available under GPL-3.0-or-later. See the included GPL v3 license text.
+- Spirit and Tinted Glass by silica-dev build on Bibata and use GPL v3.
+  [Bibata Cursor Translucent source and license](https://github.com/silica-dev/Bibata_Cursor_Translucent)
+- Future by yeyushengfan258 is based on Capitaine and uses GPL v3.
+  [Future source and license](https://github.com/yeyushengfan258/Future-cursors)
+- Layan White by vinceliuice is based on Capitaine and uses GPL v3.
+  [Layan source and license](https://github.com/vinceliuice/Layan-cursors)
+- Phinger Light by Philipp Schaffrath (phisch) remains under CC BY-SA 4.0.
+  [Phinger source artwork and license](https://github.com/phisch/phinger-cursors)
+
+The five Windows cursor archives above retain the supplied CUR and ANI files,
+role mappings, attribution, and license texts. Their Windows role mappings use
+the link pointer for the location and person roles.
+
+The local delivery built with `-LocalCursorStyles` includes the user-supplied
+W11 Cursor Light Free by Jepri Creations, Cool Dog Jake, Luffy, and
+GrokBot-Soft-Pointer. Each scheme preserves its original pointer files and role
+assignments. The GrokBot scheme uses the 17 supplied ANI files assigned to its
+Windows roles. The upstream study reserves rights in the character and extracted
+materials to xAI or the respective rights holders and restricts commercial use
+and redistribution.
+[Original study statement](https://github.com/blessonism/grok-icon-study/blob/b7e6cd48db4eeba13271c653c38e1ad0f48037b4/README.md#免责声明)
+
+## Hardware monitoring reference
+
+LiteMonitor by Diorser is a reference for desktop and taskbar monitoring and
+fan sensor classification. Dock's implementation is in `tools/HardwareFans.cs`.
+LiteMonitor describes its project license as MIT in its
+[upstream README](https://github.com/Diorser/LiteMonitor#readme).
 
 ## Natural reminder sounds
 

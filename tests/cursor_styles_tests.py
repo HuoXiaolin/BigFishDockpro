@@ -44,9 +44,12 @@ def run(api, runtime, app, output, checks):
         root = Path(directory)
         system = MemoryCursorSystem()
         service = CursorStyles(root, system, local=root / 'user-schemes')
-        amber, ice, *local_styles = service.styles()
-        assert [amber.name, ice.name] == [name for name, _ in BUILTINS]
-        for style in local_styles:
+        styles = service.styles()
+        amber, ice, *other_styles = styles
+        assert [style.name for style in styles[:len(BUILTINS)]] == [name for name, _ in BUILTINS]
+        assert {'【玻璃通透】Spirit', '【玻璃通透】Tinted Glass', '【动态个性】Future',
+                '【圆润几何】Layan White', '【圆润几何】Phinger Light'} <= {style.name for style in styles}
+        for style in other_styles:
             name, roles, _ = read_pack(style.source)
             assert name == style.name and 'Arrow' in roles
         _, mapping, files = read_pack(amber.source)
@@ -78,7 +81,7 @@ pin="pin.cur"
         assert parsed == {'Person': 'person.cur', 'Arrow': 'normal.cur', 'Pin': 'pin.cur'}
         for file in incoming.iterdir():
             file.unlink()
-        assert service.styles() == [amber, ice, *local_styles, imported]
+        assert service.styles() == [*styles, imported]
 
         original = system.read()
         system.fail_reload = True
@@ -100,7 +103,7 @@ pin="pin.cur"
                 assert main.tabs.currentIndex() == CURSORS
                 page = main.findChild(CursorStylePanel)
                 assert page.current.text().endswith('Windows 当前方案')
-                assert page.choices.count() == 3 + len(local_styles)
+                assert page.choices.count() == len(styles) + 1
                 assert all(not icon.pixmap().isNull() for preview in page.previews for icon in preview)
                 page.choices.setCurrentIndex(1)
                 page.apply_button.click()
@@ -112,7 +115,7 @@ pin="pin.cur"
                 quick.refresh()
                 tile = quick.tiles['cursor_styles']
                 assert tile.isEnabled() and tile.value == '系统默认'
-                for style in (amber, ice, *local_styles, imported):
+                for style in (amber, ice, *other_styles, imported):
                     tile.click()
                     assert tile.value == style.title
                     assert page.current.text().endswith(style.title)

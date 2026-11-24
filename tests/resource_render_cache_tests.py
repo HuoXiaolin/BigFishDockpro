@@ -4,7 +4,8 @@ import time
 from unittest.mock import patch
 
 from PyQt5.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QRectF, QTimer, Qt
-from PyQt5.QtGui import QColor, QImage, QPainter, QRegion
+from PyQt5.QtGui import QColor, QImage, QMouseEvent, QPainter, QRegion
+from PyQt5.QtWidgets import QApplication
 
 
 def check_mirror_damage(runtime):
@@ -149,6 +150,77 @@ def check_colorful_spectrum(runtime):
             widget.deleteLater()
 
 
+def check_spectrum_pointer(runtime):
+    from ctypes import addressof, wintypes
+    from PyQt5 import sip
+    from desktop_spectrum import DesktopSpectrum, WM_MOUSEMOVE
+    from ui_test_events import Events
+
+    with patch.dict(runtime.dock.cfg, spectrum_style='mirror', spectrum_locked=False,
+                    spectrum_manual_size=False, passthrough_mode='custom', component_passthrough={}):
+        widget = DesktopSpectrum(runtime)
+        area = QApplication.primaryScreen().availableGeometry()
+        widget.setGeometry(area.x()+80, area.y()+80, 280, 140)
+        widget.show()
+        try:
+            start = widget.geometry()
+            point = widget.mapToGlobal(widget.rect().center())
+
+            def mouse(kind, position, button=Qt.NoButton, buttons=Qt.NoButton):
+                event = QMouseEvent(kind, QPointF(widget.mapFromGlobal(position)), QPointF(position),
+                                    button, buttons, Qt.NoModifier)
+                QApplication.sendEvent(widget, event)
+
+            with patch.object(runtime, 'set_spectrum_options', return_value=True) as save, \
+                 patch('card_snap.finish_drag', return_value=False):
+                mouse(QEvent.MouseMove, point)
+                assert widget.geometry()==start and widget.drag is None
+                mouse(QEvent.MouseButtonPress, point, Qt.LeftButton, Qt.LeftButton)
+                assert widget.drag is not None
+                # The release can be delivered elsewhere after native capture is lost.
+                mouse(QEvent.MouseMove, point+QPoint(29,13))
+                assert widget.geometry()==start and widget.drag is None, 'hover continued an abandoned press'
+                mouse(QEvent.MouseMove, point+QPoint(38,21), buttons=Qt.LeftButton)
+                assert widget.geometry()==start and widget.drag is None
+                save.assert_not_called()
+
+                mouse(QEvent.MouseButtonPress, point, Qt.LeftButton, Qt.LeftButton)
+                move = wintypes.MSG()
+                move.message = WM_MOUSEMOVE
+                # Windows can report the release through the flags of a move
+                # which Qt consumes before producing a hover event.
+                widget.nativeEvent(b'windows_generic_MSG', sip.voidptr(addressof(move)))
+                assert widget.geometry()==start and widget.drag is None
+                save.assert_not_called()
+
+                for interruption in ('ungrab', 'hide'):
+                    mouse(QEvent.MouseButtonPress, point, Qt.LeftButton, Qt.LeftButton)
+                    mouse(QEvent.MouseMove, point+QPoint(34,18), buttons=Qt.LeftButton)
+                    assert widget.pos()!=start.topLeft()
+                    if interruption=='ungrab':
+                        QApplication.sendEvent(widget, QEvent(QEvent.UngrabMouse))
+                    else:
+                        widget.hide()
+                        widget.show()
+                    assert widget.geometry()==start and widget.drag is None
+                    save.assert_not_called()
+
+                mouse(QEvent.MouseButtonPress, point, Qt.LeftButton, Qt.LeftButton)
+                mouse(QEvent.MouseMove, point+QPoint(12,8), buttons=Qt.LeftButton)
+                finish = QPoint(41,24)
+                mouse(QEvent.MouseButtonRelease, point+finish, Qt.LeftButton)
+                assert widget.geometry()==start.translated(finish) and widget.drag is None
+                save.assert_called_once()
+
+                before = widget.geometry()
+                Events.drag(widget, QPoint(4, widget.height()//2), QPoint(-17,0))
+                assert widget.width()==before.width()+17 and widget.geometry().right()==before.right()
+                assert save.call_count==2 and save.call_args.kwargs['spectrum_manual_size']
+        finally:
+            widget.close()
+            widget.deleteLater()
+
+
 def run(api, runtime, app, output, checks):
     import resource_compact as compact
     from resource_options import DEFAULTS
@@ -160,6 +232,8 @@ def run(api, runtime, app, output, checks):
     try:
         check_mirror_damage(runtime)
         check_colorful_spectrum(runtime)
+        check_spectrum_pointer(runtime)
+        checks.append('Spectrum hover and a native button-up move cannot continue an abandoned press. Capture loss and hide cancel previews. Held move, final release and edge resize still persist the geometry.')
         checks.append('The translucent crown rotates with its columns and spans a larger audio-driven height range. Thin peak caps fall between bridge updates, and the particle sphere scales with audio inside its fixed outer ring.')
         cfg.update(copy.deepcopy(DEFAULTS))
         cfg.update(resource_enabled=True, resource_collapsed=True, resource_auto_hide=False,

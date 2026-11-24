@@ -20,6 +20,11 @@ ARCHIVES = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) /
 BUILTINS = (
     ('Bibata-Modern-Amber-Regular Cursors', 'bibata-amber-2.0.6.tar.xz'),
     ('Bibata-Modern-Ice-Regular Cursors', 'bibata-ice-2.0.6.tar.xz'),
+    ('【玻璃通透】Spirit', 'bibata-spirit.tar.xz'),
+    ('【玻璃通透】Tinted Glass', 'bibata-tinted-glass.tar.xz'),
+    ('【动态个性】Future', 'future.tar.xz'),
+    ('【圆润几何】Layan White', 'layan-white.tar.xz'),
+    ('【圆润几何】Phinger Light', 'phinger-light.tar.xz'),
 )
 TITLES = {
     BUILTINS[0][0]: 'Bibata 琥珀',

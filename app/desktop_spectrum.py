@@ -1,8 +1,9 @@
 """A live desktop spectrum with independent backdrop and placement options."""
+from ctypes import wintypes
 from math import ceil, cos, exp, hypot, pi, sin, tau
 from time import monotonic
 
-from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, QTimer, Qt
+from PyQt5.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QTimer, Qt
 from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import QApplication, QColorDialog, QWidget
 
@@ -27,6 +28,8 @@ BAND_INNER=.61
 RING_TRAVEL=.35
 BAR_PEAK_FALL_RATE = .45
 CROWN_ROTATION_SECONDS = 12
+WM_MOUSEMOVE = 0x0200
+MK_LBUTTON = 0x0001
 
 
 def spectrum_area(rect, style):
@@ -148,7 +151,7 @@ class DesktopSpectrum(QWidget):
             self.drag = self.ring_height_preview = None
             self.reposition()
         if self.cfg['spectrum_locked']:
-            self.drag = self.ring_height_preview = None
+            self.cancel_drag()
         self.setAccessibleDescription('左右拖动外环调整直径，上下拖动外环调整跳幅，拖动内圈移动'
                                       if self.cfg['spectrum_style']=='ring' else '拖动频谱移动，拖动边缘或四角调整大小')
         self.setCursor(Qt.ArrowCursor if self.cfg['spectrum_locked'] else Qt.SizeAllCursor)
@@ -286,11 +289,25 @@ class DesktopSpectrum(QWidget):
         self.runtime.click_policy.apply(self)
 
     def hideEvent(self, event):
+        self.cancel_drag()
         self.material.clear()
         if self.crown_started is not None:
             self.animation_timer.stop()
             self.crown_started = None
         super().hideEvent(event)
+
+    def event(self, event):
+        if event.type()==QEvent.UngrabMouse:
+            self.cancel_drag()
+        return super().event(event)
+
+    def nativeEvent(self, event_type, message):
+        if self.drag is not None and event_type == b'windows_generic_MSG':
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == WM_MOUSEMOVE and not (msg.wParam & MK_LBUTTON):
+                # Qt can consume this move while releasing an abandoned mouse grab.
+                self.cancel_drag()
+        return super().nativeEvent(event_type, message)
 
     def resize_target(self, pos):
         if self.cfg['spectrum_style']!='ring':return edges_at(self.rect(),pos)
@@ -330,26 +347,40 @@ class DesktopSpectrum(QWidget):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self.drag is not None and not (event.buttons() & Qt.LeftButton):
+            self.cancel_drag()
         if self.drag is None:
             if not self.cfg['spectrum_locked']:
                 self.setCursor(resize_cursor(self.resize_target(event.pos())))
             return
-        start,pointer,edges=self.drag
-        delta=event.globalPos()-pointer
+        self.apply_drag(self.drag, event.globalPos())
+        event.accept()
+
+    def apply_drag(self, drag, position):
+        start,pointer,edges=drag
+        delta=position-pointer
         if edges and self.cfg['spectrum_style']=='ring':
             self.resize_ring(start,pointer,delta,edges)
         elif edges:
             self.setGeometry(resized_rect(start,edges,delta,(MIN_WIDTH,MIN_HEIGHT)))
         else:self.move(start.topLeft()+delta)
-        event.accept()
+
+    def cancel_drag(self):
+        if self.drag is None:
+            return
+        start,_,_=self.drag
+        self.drag = self.ring_height_preview = None
+        self.setGeometry(start)
+        self.update()
 
     def mouseReleaseEvent(self, event):
-        if self.drag is None or event.button() != Qt.LeftButton:
+        drag = self.drag
+        if drag is None or event.button() != Qt.LeftButton:
             super().mouseReleaseEvent(event)
             return
-        self.mouseMoveEvent(event)
-        start,_,edges=self.drag
         self.drag = None
+        self.apply_drag(drag, event.globalPos())
+        start,_,edges=drag
         height=self.ring_height_preview
         self.ring_height_preview=None
         if height is not None:

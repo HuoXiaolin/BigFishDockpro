@@ -1,5 +1,5 @@
 """Opt-in JSON pipe to the BrimDeck-derived read-only provider/media helper."""
-import base64,ctypes,json,sys,time
+import base64,ctypes,json,os,sys,time
 from pathlib import Path
 from PyQt5.QtCore import QObject,QProcess,QProcessEnvironment,QTimer
 from PyQt5.QtGui import QPixmap
@@ -28,7 +28,7 @@ class DeckBridge(QObject):
     def __init__(self,owner):
         super().__init__(owner);self.owner=owner;self.signature=None;self.closed=False;self.buffer=bytearray()
         self.providers=[];self.media={};self.cover=QPixmap();self.levels=[0.]*8;self.status='正在连接…'
-        self.local_providers=[];self.gateway=None;self.idling=False
+        self.local_providers=[];self.gateway=None;self.magpie=None;self.idling=False
         self.ai_revision=0
         self.ai_status='正在读取…';self.alert='';self.alert_until=0.;self.previous_levels={}
         self.history_requested=False
@@ -61,7 +61,11 @@ class DeckBridge(QObject):
         self.publish_ai(check_alerts=True)
 
     def publish_ai(self, *, check_alerts=False):
-        self.providers = [*self.local_providers, *(self.gateway.rows if self.gateway else ())]
+        local = self.local_providers
+        if self.magpie and self.magpie.rows:
+            from resource_magpie_usage import apply_session_history
+            local = [apply_session_history(row, self.magpie.rows.get(row['id'])) for row in local]
+        self.providers = [*local, *(self.gateway.rows if self.gateway else ())]
         if check_alerts:
             self.check_quota_alerts()
         self.notify_ai()
@@ -156,14 +160,23 @@ class DeckBridge(QObject):
         if not self.history_requested:
             self.history_requested=True;self.send(op='history',range='all')
 
-    def refresh(self):
+    def request_usage(self, include_history=False, *, force=False):
+        if self.closed or self.owner.runtime.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'):
+            return
+        if any(row['id'] in ('Codex', 'Dsh') for row in self.local_providers):
+            if self.magpie is None:
+                from resource_magpie_usage import MagpieUsage
+                self.magpie = MagpieUsage(self)
+            self.magpie.refresh(include_history, force=force)
+
+    def refresh(self, *, prices=False):
         if self.closed:return
         if self.gateway:self.gateway.refresh()
         self.memory_blocked=False
         if self.process.state()==QProcess.NotRunning:
             self.restart.stop()
             self.configure()
-        self.send(op='refresh')
+        self.send(op='refresh', prices=prices)
 
     def send(self,**data):
         if not self.closed and self.process.state()!=QProcess.NotRunning:
@@ -244,6 +257,7 @@ class DeckBridge(QObject):
     def close(self):
         self.closed=True;self.restart.stop();self.launch_watch.stop();p=self.process
         if self.gateway:self.gateway.cancel()
+        if self.magpie:self.magpie.close()
         if p.state()!=QProcess.NotRunning:
             p.write(b'{"op":"quit"}\n');p.setParent(QApplication.instance())
             timer=QTimer(p);timer.setSingleShot(True);timer.timeout.connect(p.kill);timer.start(1500)

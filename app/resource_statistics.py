@@ -1,16 +1,17 @@
 """Compact, theme-aware cost distribution and usage history from real aggregates."""
-from PyQt5.QtCore import Qt,QRect,QRectF,QPointF,QSignalBlocker
+from math import ceil
+from PyQt5.QtCore import QEvent,Qt,QRect,QRectF,QPointF,QSignalBlocker
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPen
-from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButton,QLabel,QSizePolicy
+from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButton,QLabel,QSizePolicy,QToolTip
 from ui_style import ModernComboBox
 from resource_compact import text
 from resource_charts import sync_note_controls
 from resource_options import content_columns
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,cost_label,reset_text
-from resource_usage import aggregate
+from resource_usage import HEATMAP_WEEKS,aggregate,heatmap_days
 from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, tray_metric_key, used_percent
 import reset_credits
-from card_design import paint_capsule_card
+from card_design import blend,paint_capsule_card
 
 COLORS=('#13a58b','#428fe2','#b28a49','#897fb6','#d57480','#59a9b5','#8a9d71')
 
@@ -347,6 +348,136 @@ class UsageProviders(QWidget):
                 p.setPen(Qt.NoPen);p.setBrush(QColor(COLORS[i%len(COLORS)]));p.drawRoundedRect(QRectF(22,y+39,(self.width()-32)*s['cost']/total,2),1,1)
 
 
+class UsageHeatmap(QWidget):
+    WEEKDAYS = ('周一', '周二', '周三', '周四', '周五', '周六', '周日')
+    GRID_LEFT = 32
+    GRID_TOP = 46
+
+    def __init__(self, view):
+        super().__init__()
+        self.view = view
+        self.days = []
+        self.data_key = None
+        self.hover = -1
+        self.setAccessibleName('用量热力图')
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setMouseTracking(True)
+        self.setFixedHeight(142)
+
+    def refresh(self, providers, provider, today):
+        key = (id(providers), provider, today)
+        if key != self.data_key:
+            self.days = heatmap_days(providers, provider, today)
+            self.data_key = key
+        self.update()
+
+    def pitch(self):
+        return min(18, max(1, (self.width()-self.GRID_LEFT-10)/HEATMAP_WEEKS))
+
+    def resizeEvent(self, event):
+        self.setFixedHeight(ceil(self.GRID_TOP + 7*self.pitch() + 25))
+        super().resizeEvent(event)
+
+    def hit_rect(self, index):
+        pitch = self.pitch()
+        week, weekday = divmod(index, 7)
+        return QRectF(self.GRID_LEFT+week*pitch, self.GRID_TOP+weekday*pitch, pitch, pitch)
+
+    def cell_at(self, pos):
+        x, y = pos.x()-self.GRID_LEFT, pos.y()-self.GRID_TOP
+        pitch = self.pitch()
+        if 0 <= x < HEATMAP_WEEKS*pitch and 0 <= y < 7*pitch:
+            index = 7*int(x/pitch)+int(y/pitch)
+            if index < len(self.days):
+                return index
+        return -1
+
+    def mouseMoveEvent(self, event):
+        index = self.cell_at(event.pos())
+        if index != self.hover:
+            self.hover = index
+            self.update()
+
+    def leaveEvent(self, event):
+        self.hover = -1
+        self.update()
+        super().leaveEvent(event)
+
+    def day_details(self, index):
+        day, summary = self.days[index]
+        heading = f'{day:%Y-%m-%d}  {self.WEEKDAYS[day.weekday()]}'
+        if summary is None:
+            return heading + '\n暂无当日用量明细'
+        records, tokens = (f'{summary[key]:,}' if summary[key] is not None else '—' for key in ('records','tokens'))
+        price = cost_text(summary)
+        note = cost_note(summary)
+        details = f'{heading}\n调用记录 {records}\nToken {tokens}\n参考费用 {price}'
+        return details + (f'\n{note}' if note else '')
+
+    def event(self, event):
+        if event.type() == QEvent.ToolTip:
+            index = self.cell_at(event.pos())
+            if index >= 0:
+                QToolTip.showText(event.globalPos(), self.day_details(index), self, self.hit_rect(index).toAlignedRect())
+            else:
+                QToolTip.hideText()
+                event.ignore()
+            return True
+        return super().event(event)
+
+    def paintEvent(self, event):
+        c = self.view.owner.colors
+        if not c:
+            return
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        surface(p, QRectF(self.rect()), self.view.owner, 'mint')
+        text(p, QRectF(12, 7, 70, 18), '用量热力图', c['ink'], 10, True)
+
+        neutral = blend(QColor(c['field']), QColor(c['ink']), .12)
+        ramp = [blend(neutral, QColor(COLORS[0]), amount) for amount in (0, .28, .50, .74, 1)]
+        step = 8 if self.width() < 180 else 11
+        legend = self.width()-4*step-47
+        text(p, QRectF(legend, 7, 12, 18), '少', c['muted'], 9)
+        for index, color in enumerate(ramp):
+            p.setPen(Qt.NoPen)
+            p.setBrush(color)
+            p.drawRoundedRect(QRectF(legend+14+index*step, 12, step-2, 8), 2, 2)
+        text(p, QRectF(self.width()-23, 7, 13, 18), '多', c['muted'], 9)
+
+        pitch = self.pitch()
+        for row in ((0, 6) if pitch < 6 else (0, 2, 4, 6)):
+            y = self.GRID_TOP+(row+.5)*pitch
+            text(p, QRectF(10, y-7, 21, 14), self.WEEKDAYS[row], c['muted'], 9)
+        month = None
+        label_right = 0
+        for offset in range(0, len(self.days), 7):
+            day = self.days[min(offset+6, len(self.days)-1)][0]
+            if day.month != month:
+                left = min(self.hit_rect(offset).x(), self.width()-31)
+                label_width = 20 if day.month >= 10 else 16
+                if left >= label_right:
+                    text(p, QRectF(left, 28, label_width, 15), f'{day.month}月', c['muted'], 9)
+                    label_right = left+label_width+2
+                month = day.month
+
+        metric = self.view.metric
+        values = [summary.get(metric) if summary is not None else None for _, summary in self.days]
+        maximum = max((amount or 0 for amount in values), default=0)
+        border = QPen(blend(QColor(c['field']), QColor(c['ink']), .19), .7)
+        hovered = QPen(QColor(c['ink']), 1)
+        gap = min(3, pitch*.22)
+        for index, amount in enumerate(values):
+            rect = self.hit_rect(index).adjusted(gap/2, gap/2, -gap/2, -gap/2)
+            level = min(4, ceil(4*amount/maximum)) if amount is not None and amount > 0 and maximum else 0
+            p.setBrush(Qt.NoBrush if amount is None else ramp[level])
+            p.setPen(hovered if index == self.hover else border if amount is None else Qt.NoPen)
+            p.drawRoundedRect(rect, min(2.5, rect.width()*.26), min(2.5, rect.height()*.26))
+        label = {'tokens': 'Token', 'cost': '费用（USD）', 'records': '调用记录'}[metric]
+        caption = f'近 {HEATMAP_WEEKS} 周 · {label}' if any(value is not None for value in values) else '暂无按日用量记录'
+        text(p, QRectF(12, self.height()-21, self.width()-24, 14), caption, c['muted'], 9)
+
+
 class StatisticsView(QWidget):
     def __init__(self,owner, *, notes_in_content=False):
         super().__init__();self.owner=owner;self.period='today';self.metric='cost';self.signature=None;self.data=aggregate([])
@@ -409,6 +540,7 @@ class StatisticsView(QWidget):
         self.mode_box.addWidget(detail, 0, Qt.AlignRight)
         stack.addLayout(self.mode_box)
         self.charts=UsageCharts(self);stack.addWidget(self.charts);self.providers=UsageProviders(self);stack.addWidget(self.providers)
+        self.heatmap = UsageHeatmap(self);stack.addWidget(self.heatmap)
         self.note=QLabel();self.note.setWordWrap(True);self.note.setObjectName('Subtle');self.note.hide()
         self.notes_button=QToolButton();self.notes_button.setText('备注');self.notes_button.setCheckable(True);self.notes_button.toggled.connect(self.note.setVisible)
         if notes_in_content:
@@ -433,13 +565,22 @@ class StatisticsView(QWidget):
     def resizeEvent(self,event):
         self.layout_controls()
         super().resizeEvent(event)
+    def showEvent(self,event):
+        super().showEvent(event)
+        self.request_usage()
+    def request_usage(self, *, force=False):
+        request=getattr(self.owner.service.deck,'request_usage',None)
+        if request:
+            request(self.period=='all',force=force)
     def set_period(self,key):
         self.period=key
         if key=='all' and self.owner.service.deck:self.owner.service.deck.request_history()
+        if self.isVisible():self.request_usage()
         self.recalculate()
     def set_metric(self,key):self.metric=key;self.recalculate()
     def refresh_request(self):
-        if self.owner.service.deck:self.owner.service.deck.refresh()
+        if self.owner.service.deck:self.owner.service.deck.refresh(prices=True)
+        self.request_usage(force=True)
     def show_details(self,provider=None):
         self.owner.ai_view.show_details(provider if isinstance(provider,str) else self.provider.currentData() or '',self.period)
     def focus_quota(self, focus):
@@ -460,6 +601,7 @@ class StatisticsView(QWidget):
         return visible
 
     def refresh(self):
+        if self.isVisible():self.request_usage()
         bridge=self.owner.service.deck;rows=bridge.providers if bridge else [];signature=tuple((r['id'],r['name']) for r in rows)
         if signature!=self.signature:
             old=self.provider.currentData();self.provider.blockSignals(True);self.provider.clear();self.provider.addItem('全部工具','')
@@ -470,16 +612,19 @@ class StatisticsView(QWidget):
         self.recalculate()
     def recalculate(self):
         from datetime import date
-        bridge=self.owner.service.deck;rows=bridge.providers if bridge else [];key=(id(rows),self.period,self.provider.currentData() or '',date.today())
-        if key!=getattr(self,'data_key',None):self.data=aggregate(rows,self.period,key[2]);self.data_key=key
-        self.quotas.refresh(self.quota_rows(rows, key[2]))
+        bridge=self.owner.service.deck;rows=bridge.providers if bridge else []
+        selected=self.provider.currentData() or '';today=date.today();key=(id(rows),self.period,selected,today)
+        if key!=getattr(self,'data_key',None):self.data=aggregate(rows,self.period,selected,today);self.data_key=key
+        self.quotas.refresh(self.quota_rows(rows, selected))
         for key,b in self.ranges.items():b.setChecked(key==self.period)
         self.period_selector.blockSignals(True)
         self.period_selector.setCurrentIndex(self.period_selector.findData(self.period))
         self.period_selector.blockSignals(False)
         for key,b in self.modes.items():b.setChecked(key==self.metric)
         self.summary.update();self.charts.update();self.providers.refresh()
+        self.heatmap.refresh(rows, selected, today)
         note='按时间和工具查看 Token、调用与参考费用。费用采用来源记录或模型单价估算，模型明细列出各模型的计价情况。'
+        if self.data['magpie']:note+='已同步 Magpie 本地会话与生效价格。'
         if self.period=='all':note+='「全部」汇总各来源当前可读取的历史。'
         sync_note_controls(self.notes_button, self.note, self.owner.colors)
         self.note.setText(note)

@@ -2,6 +2,7 @@
 from datetime import date,timedelta
 
 FIELDS=('tokens','input','output','cacheRead','cacheWrite','records')
+HEATMAP_WEEKS=26
 
 
 def combine(rows):
@@ -19,9 +20,36 @@ def bounds(period,today=None):
     return (None if period=='all' else end-timedelta(days={'week':6,'month':29}.get(period,0))),end
 
 
+def heatmap_days(providers, provider='', today=None):
+    today = today or date.today()
+    first = today - timedelta(days=today.weekday() + 7*(HEATMAP_WEEKS-1))
+    lower, upper = first.isoformat(), today.isoformat()
+    daily = {}
+    covered_since = today + timedelta(days=1)
+    for source in providers:
+        if (provider and source['id'] != provider) or not source.get('usageAvailable'):
+            continue
+        for row in source.get('days', ()):
+            day = row.get('date')
+            if isinstance(day, str) and lower <= day <= upper:
+                daily.setdefault(day, []).append(row['summary'])
+        if source.get('usageComplete') and source.get('historyStart'):
+            try:
+                covered_since = min(covered_since, date.fromisoformat(source['historyStart']))
+            except (TypeError, ValueError):
+                pass
+    empty = combine(())
+    days = []
+    for offset in range((today-first).days+1):
+        day = first + timedelta(days=offset)
+        readings = daily.get(day.isoformat())
+        days.append((day, combine(readings) if readings else empty if day >= covered_since else None))
+    return days
+
+
 def aggregate(providers,period='today',provider='',today=None):
     start,end=bounds(period,today);selected=[p for p in providers if not provider or p['id']==provider]
-    groups=[];daily={};models={};hourly=period in ('today','yesterday')
+    groups=[];daily={};models={};hourly=period in ('today','yesterday');magpie=False
     for p in selected:
         summaries=[]
         for row in p.get('days',[]):
@@ -29,6 +57,7 @@ def aggregate(providers,period='today',provider='',today=None):
             except (KeyError,ValueError):continue
             if day>end or start and day<start:continue
             summary=row['summary'];summaries.append(summary)
+            magpie=magpie or row.get('magpie',False)
             if not hourly:daily.setdefault(row['date'],[]).append(summary)
             models.setdefault((p['name'],row['model']),[]).append(summary)
         if not summaries and (reported:=p.get('periods',{}).get(period)) is not None:
@@ -50,4 +79,4 @@ def aggregate(providers,period='today',provider='',today=None):
     if len(series)>45:
         step=(len(series)+44)//45;series=[(series[i][0],combine(v for _,v in series[i:i+step])) for i in range(0,len(series),step)]
     return dict(total=total,groups=groups,series=series,models=[(key,combine(value)) for key,value in models.items()],available=any(g['available'] for g in groups),
-                complete=all(p.get('usageComplete',True) for p in selected),start=start,end=end)
+                complete=all(p.get('usageComplete',True) for p in selected),start=start,end=end,magpie=magpie)

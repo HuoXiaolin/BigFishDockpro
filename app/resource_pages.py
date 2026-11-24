@@ -354,7 +354,7 @@ def token_text(value):
 
 def cost_text(summary,currency=True):
     cost=summary.get('cost')
-    if cost is None or (cost==0 and summary.get('unpriced')):
+    if cost is None:
         return '未定价'
     prefix='$' if currency else ''
     if 0<cost<.000001:return '<'+prefix+'0.000001'

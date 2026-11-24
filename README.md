@@ -23,7 +23,7 @@
 
 Dock 支持分组、图标倒影、圆形图标、自动隐藏、窗口切换和统一搜索。右键可批量管理应用，也可保存多套布局。
 
-「设置 → 外观与系统 → 鼠标样式」可以预览、导入和应用静态或动态指针。Dock 快捷设置和托盘右键菜单可在已有方案与系统默认之间循环切换。
+「设置 → 外观与系统 → 鼠标样式」可以预览、导入和应用静态或动态指针。本地交付的安装版和单文件便携版内置 11 套方案，包括 Bibata 琥珀、Bibata 冰白、Spirit、Tinted Glass、Future、Layan White、Phinger Light、W11 浅色、酷狗老皮、路飞和 GrokBot-Soft-Pointer。Dock 快捷设置和托盘右键菜单可在指针方案与系统默认之间循环切换。
 
 桌面收纳可按应用、文件夹、文档、图片等分类。卡片可独立摆放、合并切页、搜索或收起为胶囊和圆球。文件仍保存在原位置，整理操作可撤销。
 
@@ -124,7 +124,7 @@ Windows 11 的玻璃网格左侧列出全部应用，右侧展示固定应用。
 
 ## 开源许可与致谢
 
-项目源码采用 [GPL-3.0-only](LICENSE)。原 iOS-style-Dock 的 [MIT 版权与许可声明](licenses/iOS-style-Dock-MIT.txt) 随项目保留。第三方组件各自遵循原许可，完整说明见[第三方声明](licenses/THIRD-PARTY-NOTICES.md)与[设计参考](docs/design-references.md)。
+项目源码采用 [GPL-3.0-only](LICENSE)。原 iOS-style-Dock 的 [MIT 版权与许可声明](licenses/iOS-style-Dock-MIT.txt) 随项目保留。设计参考、源码复用、运行时调用和素材许可见[第三方授权与来源](licenses/第三方授权与来源.md)及[第三方声明](licenses/THIRD-PARTY-NOTICES.md)。
 
 <details>
 <summary>参考项目与素材来源</summary>
@@ -135,13 +135,15 @@ Windows 11 的玻璃网格左侧列出全部应用，右侧展示固定应用。
 | [FullWidget](https://github.com/hmgvibe/FullWidget) | 天气、媒体与可编辑组件的设计参考。 |
 | [BrimDeck](https://github.com/MoFeng2223/BrimDeck) | 复用 AI 与音乐数据连接代码；界面采用本应用的 Qt 实现。源码固定版本见 [PIN](references/BrimDeck-PIN.json)，保留 [Apache-2.0 许可](licenses/BrimDeck-Apache-2.0.txt)与[第三方声明](licenses/BrimDeck-ThirdPartyNotices.txt)。 |
 | [OpenQuota](https://github.com/deviffyy/OpenQuota) | 用量统计与额度托盘的设计参考，[固定版本](references/OpenQuota-PIN.json)及 [MIT 声明](licenses/OpenQuota-MIT.txt)。 |
+| [Magpie](https://github.com/yetone/magpie) | 用量热力图的设计参考，可选调用本机的只读用量导出。 |
 | [LobeHub Icons](https://github.com/lobehub/lobe-icons) | AI 供应商图标，[MIT 与素材来源](licenses/LobeHub-Icons-MIT.txt)。 |
 | [Wisland](https://github.com/AsamiAkito/wisland) | 液态形状、弹簧与表情代码适配，[固定版本](references/Wisland-PIN.json)及 [MIT 声明](licenses/Wisland-MIT.txt)。 |
 | [Uiverse · SelfMadeSystem](https://uiverse.io/SelfMadeSystem/pretty-treefrog-77) | 启动动画的流动描边参考。 |
 | [Freesound](licenses/THIRD-PARTY-NOTICES.md#natural-reminder-sounds) | 自然提醒音录音与 CC0 许可。 |
 | [BlueGauge](https://github.com/iKineticate/BlueGauge) | 蓝牙电量与托盘的功能参考。 |
 | [HaloBattery](https://github.com/HeyOkay/HaloBattery) · [ChargeDock](https://github.com/SgZincanya/ChargeDock) | 2.4G 电量协议及接收器兼容信息参考。 |
-| [LiteMonitor](https://github.com/Diorser/LiteMonitor) | 硬件读数与任务栏监控的功能参考。 |
+| [LiteMonitor](https://github.com/Diorser/LiteMonitor) | 硬件读数、风扇转速分类与任务栏监控参考。[上游许可声明](https://github.com/Diorser/LiteMonitor#readme) |
+| [grok-icon-study](https://github.com/blessonism/grok-icon-study) | GrokBot-Soft-Pointer 成品说明所列的衍生素材来源。[原版学习用途与再分发声明](https://github.com/blessonism/grok-icon-study/blob/b7e6cd48db4eeba13271c653c38e1ad0f48037b4/README.md#免责声明) |
 | [PresentMon](https://github.com/GameTechDev/PresentMon) | 读取实际呈现帧并计算 FPS，[许可](licenses/PresentMon-LICENSE.txt)。 |
 | [PawnIO](https://github.com/namazso/PawnIO) · [PawnIO Modules](https://github.com/namazso/PawnIO.Modules) | 支持的 CPU 温度与功率读取，[许可与说明](licenses/PawnIO-Modules-NOTICE.txt)。 |
 | [TranslucentTB](https://github.com/TranslucentTB/TranslucentTB) | Windows 11 任务栏外观后端，[许可](licenses/TranslucentTB-LICENSE.txt)。 |

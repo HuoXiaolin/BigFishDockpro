@@ -22,7 +22,7 @@ def fixtures():
 
 def aggregation(checks):
     from resource_pages import cost_note,cost_text,cost_label
-    from resource_usage import aggregate,combine
+    from resource_usage import HEATMAP_WEEKS,aggregate,combine,heatmap_days
     rows=fixtures()
     result=aggregate(rows)
     assert result['total']['tokens']==15000 and result['total']['records']==4 and result['total']['cost']==.75
@@ -40,12 +40,80 @@ def aggregation(checks):
     assert cost_label(estimate)=='已计价费用' and cost_label(dict(cost=10,estimated=True))=='参考费用'
     assert cost_label(dict(cost=10,estimated=False))=='费用'
     assert cost_text(dict(cost=None,unpriced=2))=='未定价' and cost_text(dict(cost=0))=='$0.00'
+    assert cost_text(dict(cost=0,unpriced=2))=='$0.00'
     assert cost_text(dict(cost=.000037))=='$0.000037'
     assert cost_text(dict(cost=.000000037))=='<$0.000001'
     old=dict(rows[0]);old.pop('hours');assert len(aggregate([old])['series'])==1
     many=copy.deepcopy(rows[0]);many['days']=[dict(date=(date.today()-timedelta(days=i)).isoformat(),model='历史测试',summary=rows[0]['days'][0]['summary']) for i in range(500)]
     result=aggregate([many],'all');assert len(result['series'])<=45 and sum(s['tokens'] for _,s in result['series'])==2500000
     checks.append('AI statistics: day/yesterday/7-day/30-day/all/provider filters, hourly totals, weighted cache hit rate, unknown pricing and record counts, historical binning without losing totals. No HTTP request count invented.')
+    today=date.today()
+    yesterday=today-timedelta(days=1)
+    since=today-timedelta(days=2)
+    row=lambda day, model, summary: dict(date=day.isoformat(),model=model,summary=summary)
+    summary=rows[0]['days'][0]['summary']
+    first=dict(rows[0],days=[row(today,'one',summary),row(today,'two',summary),
+                            row(today+timedelta(days=1),'future',summary)],historyStart=since.isoformat())
+    second=dict(rows[1],days=[row(today,'one',dict(summary,cost=None,unpriced=2))])
+    days=heatmap_days([first,second],today=today)
+    assert len(days)+6-today.weekday()==HEATMAP_WEEKS*7 and days[0][0].weekday()==0 and days[-1][0]==today
+    assert days[-1][1]['records']==6 and days[-1][1]['unpriced']==2 and days[-1][1]['cost']==.5
+    assert dict(days)[yesterday]['records']==0 and dict(days)[since-timedelta(days=1)] is None
+    assert heatmap_days([first,second],'Claude',today)[-1][1]['cost'] is None
+    assert dict(heatmap_days([dict(first,usageComplete=False)],today=today))[yesterday] is None
+    checks.append('AI heatmap: 26 Monday-aligned week columns, full daily aggregates, provider filtering, distinct zero, unknown and unpriced dates, and no future cells.')
+
+
+def magpie_history(checks):
+    import csv
+    from datetime import timezone
+    from io import StringIO
+    from resource_magpie_usage import apply_session_history, parse_usage
+    from resource_usage import aggregate
+
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    older = today - timedelta(days=4)
+    def stamp(day, hour=0):
+        return datetime(day.year, day.month, day.day, hour, 15).astimezone(timezone.utc).isoformat()
+
+    stream = StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(['time', 'agent', 'model', 'served_model', 'swapped', 'input_tokens',
+                     'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens',
+                     'cost_usd', 'source', 'rejected'])
+    writer.writerows([
+        (stamp(today), 'codex', 'asked', 'served', 'true', 20, 10, 60, 10, 4, '.015', 'log', 'false'),
+        (stamp(today), 'codex', 'new-model', '', 'false', 1, 1, 0, 0, 0, '', 'log', 'false'),
+        (stamp(yesterday), 'codex', 'free-model', '', 'false', 10, 2, 8, 0, 1, '0', 'log', 'false'),
+        (stamp(older), 'codex', 'older', '', 'false', 12, 6, 4, 0, 2, '.02', 'log', 'false'),
+        (stamp(today), 'codex', 'rejected', '', 'false', 50, 20, 0, 0, 0, '1', 'log', 'true'),
+        (stamp(today), 'codex', 'gateway', '', 'false', 50, 20, 0, 0, 0, '1', 'gateway', 'false'),
+        (stamp(today), 'dsh', 'deepseek', '', 'false', 6, 4, 0, 0, 0, '.0005', 'log', 'false'),
+    ])
+    stream.seek(0)
+    imported = parse_usage(stream, older, today)
+    recent = dict(tokens=100, input=20, output=10, cacheRead=60, cacheWrite=10,
+                  records=1, cost=.05, estimated=True, unpriced=0)
+    fuller = dict(recent, records=2)
+    local = dict(id='Codex', name='Codex', usageAvailable=True, quotas=[{'percent': 25}],
+                 days=[dict(date=today.isoformat(), model='asked', summary=recent),
+                       dict(date=yesterday.isoformat(), model='local', summary=fuller)],
+                 hours=[dict(date=today.isoformat()+'T01', summary=recent),
+                        dict(date=yesterday.isoformat()+'T05', summary=fuller)])
+    merged = apply_session_history(local, imported['Codex'])
+    assert merged['quotas'] == local['quotas'] and len(local['days']) == 2
+    assert {row['model'] for row in merged['days']} == {'served', 'new-model', 'older', 'local'}
+    result = aggregate([merged], 'today', today=today)
+    assert result['magpie'] and result['total']['tokens'] == 102 and result['total']['records'] == 2
+    assert result['total']['cost'] == .015 and result['total']['unpriced'] == 1
+    assert sum(row['tokens'] for _, row in result['series']) == 102
+    assert result['series'][0][1]['tokens'] == 102 and result['series'][1][1]['tokens'] == 0
+    assert aggregate([merged], 'yesterday', today=today)['total']['records'] == 2
+    assert aggregate([merged], 'month', today=today)['total']['records'] == 5
+    assert imported['Codex']['hours'][0]['summary']['cost'] == 0
+    assert imported['Dsh']['days'][0]['summary']['cost'] == .0005
+    checks.append('Magpie usage: CSV effective prices, local dates, exact token buckets, zero and missing prices, and historical coverage with no duplicate day totals.')
 
 
 def ai_tray_modes(service, app, output, checks):
@@ -224,9 +292,10 @@ def ai_tray_modes(service, app, output, checks):
 
 
 def run(api,runtime,app,output,checks):
-    from PyQt5.QtCore import QRectF,QTimer
-    from PyQt5.QtGui import QColor,QFontMetrics
+    from PyQt5.QtCore import QEvent,QRectF,QTimer
+    from PyQt5.QtGui import QColor,QFontMetrics,QHelpEvent
     from PyQt5.QtWidgets import QSystemTrayIcon
+    from desktop_panel_tests import wait_for
     from resource_options import DEFAULTS,SENSOR_UNITS
     from resource_compact import plan
     from resource_ai_tray import quota_icon
@@ -237,6 +306,7 @@ def run(api,runtime,app,output,checks):
     import resource_compact
     import resource_statistics
     aggregation(checks)
+    magpie_history(checks)
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);service=runtime.resources
     try:
         cfg.update(copy.deepcopy(DEFAULTS));cfg.update(resource_enabled=True,resource_collapsed=False,resource_auto_hide=False,resource_ai=True,resource_music=True,
@@ -355,10 +425,29 @@ def run(api,runtime,app,output,checks):
         assert service.ai_tray and service.deck and not service.window and not service.strip
         assert not service.signature and not service.job and not service.sensors and not service.fps
         assert service.deck.signature[0] is True and service.deck.signature[2] is False
+        service.deck.accept(dict(type='ai', providers=providers))
         tray=service.ai_tray;tray.tray.activated.emit(QSystemTrayIcon.Trigger);app.processEvents()
         popup=tray.popup;popup.stats_view.set_period('month');popup.grab().save(str(output/'redesign-ai-tray-statistics.png'));geometry=popup.geometry()
         assert (popup.width(),popup.height()) == (360,540), geometry
         assert popup.screen().availableGeometry().contains(geometry), geometry
+        stats=popup.stats_view
+        heatmap=stats.heatmap
+        assert heatmap.y() > stats.providers.geometry().bottom()
+        stats.scroll.ensureWidgetVisible(heatmap,0,0);app.processEvents()
+        assert stats.scroll.verticalScrollBar().value()>0
+        cell=heatmap.hit_rect(len(heatmap.days)-1).center().toPoint()
+        assert heatmap.cell_at(cell)==len(heatmap.days)-1
+        with patch('resource_statistics.QToolTip.showText') as tooltip:
+            app.sendEvent(heatmap,QHelpEvent(QEvent.ToolTip,cell,heatmap.mapToGlobal(cell)))
+            assert 'Token' in tooltip.call_args.args[1] and '调用记录' in tooltip.call_args.args[1]
+        original_days=heatmap.days
+        stats.set_period('week');stats.set_metric('tokens')
+        assert heatmap.days is original_days
+        stats.provider.setCurrentIndex(stats.provider.findData('Codex'))
+        assert heatmap.days[-1][1]['tokens']==5000
+        stats.provider.setCurrentIndex(0);stats.set_period('month');stats.set_metric('cost')
+        popup.grab().save(str(output/'redesign-ai-tray-heatmap.png'))
+        checks.append('AI usage popup: heatmap scrolls into view under providers, uses the selected tool and metric, and opens exact-date details without resetting the calendar on period changes.')
         tray.open('ai');app.processEvents();assert popup.geometry()==geometry
         popup.grab().save(str(output/'redesign-ai-tray-quota.png'))
         # The same popup must preserve every returned period and distinguish a real zero from missing data.
@@ -372,7 +461,11 @@ def run(api,runtime,app,output,checks):
         for width,columns in ((180,1),(360,1),(361,2),(360,1)):
             popup.resize(width,420);app.processEvents()
             assert popup.width() == width, (width, popup.width())
-            assert popup.stats_view.scroll.widget().width() == popup.stats_view.scroll.viewport().width()
+            scroll = popup.stats_view.scroll
+            # A width change also changes the calendar's height. Observe the
+            # scroll area after Qt has processed the resulting layout request.
+            wait_for(app, lambda: scroll.widget().width() == scroll.viewport().width(), seconds=1)
+            assert heatmap.rect().contains(heatmap.hit_rect(len(heatmap.days)-1).center().toPoint())
             painted.clear()
             with patch.object(resource_statistics,'text',record_text):
                 overview.grab().save(str(output/f'quota-periods-{width}.png'))

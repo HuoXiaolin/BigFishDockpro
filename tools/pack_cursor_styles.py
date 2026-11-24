@@ -1,4 +1,4 @@
-"""Prepare and verify local-only cursor archives for a standard Dock build."""
+"""Prepare local cursor archives and verify cursor data in every Dock build."""
 import hashlib
 import io
 import json
@@ -64,9 +64,17 @@ def prepare():
 
 def verify(single_file):
     prefix = Path('assets') / 'cursor-styles'
-    files = {prefix / name: ARCHIVES / name for _, name in BUILTINS}
-    entries = json.loads((PAYLOAD / 'index.json').read_text(encoding='utf-8'))
-    files.update({prefix / 'local' / name: PAYLOAD / name for name in ('index.json', *(name for _, name in entries))})
+    files = {prefix / archive: ARCHIVES / archive for _, archive in BUILTINS}
+    local_enabled = os.environ.get('FISHDOCK_LOCAL_CURSOR_STYLES') == '1'
+    entries = []
+    if local_enabled:
+        entries = json.loads((PAYLOAD / 'index.json').read_text(encoding='utf-8'))
+        local_names = ['index.json', *(name for _, name in entries)]
+        files.update({prefix / 'local' / name: PAYLOAD / name for name in local_names})
+    for scheme, archive in [*BUILTINS, *entries]:
+        source = ARCHIVES / archive if (scheme, archive) in BUILTINS else PAYLOAD / archive
+        if read_pack(source)[0] != scheme:
+            raise ValueError(f'Cursor manifest name differs from catalog: {scheme}')
     directory = ROOT / 'dist' / 'BigFishDockpro' / '_internal'
     names = {'directory bundle'}
     archives = []
@@ -80,6 +88,13 @@ def verify(single_file):
             reader = CArchiveReader(str(ROOT / 'release' / basename))
             archives.append((basename, reader, {Path(name): name for name in reader.toc}))
             names.add(basename)
+    expected_paths = set(files)
+    directory_paths = {path.relative_to(directory) for path in (directory / prefix).rglob('*') if path.is_file()}
+    if directory_paths != expected_paths:
+        raise ValueError('Directory bundle cursor catalog does not match the build configuration.')
+    for basename, _, paths in archives:
+        if {key for key in paths if key.is_relative_to(prefix)} != expected_paths:
+            raise ValueError(f'{basename} cursor catalog does not match the build configuration.')
     for key, source in files.items():
         expected = source.read_bytes()
         if (directory / key).read_bytes() != expected:
@@ -92,7 +107,8 @@ def verify(single_file):
               'compressed_bytes': sum(path.stat().st_size for path in files.values()),
               'local_files': {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                               for path in files.values() if path.parent == PAYLOAD}}
-    (PAYLOAD / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    proof = PAYLOAD / 'result.json' if local_enabled else ROOT / 'artifacts/cursor-builtins-verification.json'
+    proof.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f"Verified cursor payload in {len(names)} bundles")
 
 

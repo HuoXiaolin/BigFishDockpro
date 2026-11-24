@@ -137,13 +137,12 @@ try {
         $runtimeProof = 'artifacts/dotnet-portable-test/result.json'
         $taskValidations.Add([ordered]@{kind='offline-dotnet-portable';path=$runtimeProof;sha256=(Get-FileHash -LiteralPath $runtimeProof -Algorithm SHA256).Hash.ToLowerInvariant();seconds=[math]::Round($runtimeTimer.Elapsed.TotalSeconds,2)})
     }
-    if ($LocalCursorStyles) {
-        [string[]]$cursorOptions = if ($SingleFile) {'--single-file'} else {@()}
-        & $taskPython tools/pack_cursor_styles.py verify @cursorOptions
-        if ($LASTEXITCODE -ne 0) { throw 'Local cursor style payload verification failed' }
-        $cursorProof = 'artifacts/local-cursor-styles/result.json'
-        $taskValidations.Add([ordered]@{kind='local-cursor-payload';path=$cursorProof;sha256=(Get-FileHash -LiteralPath $cursorProof -Algorithm SHA256).Hash.ToLowerInvariant()})
-    }
+    [string[]]$cursorOptions = if ($SingleFile) {'--single-file'} else {@()}
+    & $taskPython tools/pack_cursor_styles.py verify @cursorOptions
+    if ($LASTEXITCODE -ne 0) { throw 'Cursor style payload verification failed' }
+    $cursorKind = if ($LocalCursorStyles) {'local-cursor-payload'} else {'builtin-cursor-payload'}
+    $cursorProof = if ($LocalCursorStyles) {'artifacts/local-cursor-styles/result.json'} else {'artifacts/cursor-builtins-verification.json'}
+    $taskValidations.Add([ordered]@{kind=$cursorKind;path=$cursorProof;sha256=(Get-FileHash -LiteralPath $cursorProof -Algorithm SHA256).Hash.ToLowerInvariant()})
     $taskHash = Get-FileHash -LiteralPath release/BigFishDockpro-Setup-x64.exe -Algorithm SHA256
     ('{0}  BigFishDockpro-Setup-x64.exe' -f $taskHash.Hash.ToLowerInvariant()) | Set-Content release/SHA256SUMS.txt -Encoding utf8
     $taskSingleHash = $null

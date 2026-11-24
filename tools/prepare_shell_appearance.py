@@ -24,17 +24,11 @@ def compact_classic_start(code):
     # The in-place adapter owns these layout properties. Do not leave upstream
     # property watchers enforcing a second Margin/Width/RenderTransform: that
     # produces a layout feedback loop as each side restores its own value.
-    # Both upstream theme variants move or mirror native command anchors.
-    # Leave that part of the Windows template intact when adding our shortcut.
+    # Redesigned Start is selected by its loaded controls, independently of
+    # Windows's rollout flags. Its adapter owns both columns and the frame.
     first = code.index('const Theme g_themeSideBySideMinimal =')
     start = code.index('const Theme g_themeSideBySideMinimal_variant_ClassicStartMenu')
-    modern = code[first:start]
-    for target in ('StartDocked.NavigationPaneView#UserControl > Grid#RootPanel',
-                   'StartDocked.PowerOptionsView#PowerButton', 'ItemsStackPanel > ListViewItem',
-                   'StartDocked.UserTileView'):
-        modern, count = re.subn(r'    ThemeTargetStyles\{L"' + re.escape(target) + r'", \{.*?\}\},\n',
-                                '', modern, flags=re.S)
-        assert count == 1
+    modern = 'const Theme g_themeSideBySideMinimal = {};\n\n'
     code = code[:first] + modern + code[start:]
     start = first + len(modern)
     end = code.index('\n}};', start)
@@ -55,6 +49,14 @@ def compact_classic_start(code):
         assert theme.count(original) == 1
         theme = theme.replace(original, compact)
     return code[:start] + theme + code[end:]
+
+
+def preserve_apps_scroll_binding(code):
+    # Keep the ScrollViewer's template bindings. The redesigned adapter sets
+    # the scroll mode on the owning GridView and restores it there on teardown.
+    start = code.index('    // Apply the same horizontal-no-scroll configuration')
+    end = code.index('    Controls::ScrollViewer newScroll;', start)
+    return code[:start] + code[end:]
 
 
 def adapt_search_content(code, build_id):
@@ -251,7 +253,7 @@ def build(toolchain):
             '#include <rpcndr.h>\n#define boolean bool\n#include <windows.graphics.effects.h>\n#undef boolean')
         code=defer_xaml_initialization(code, kind)
         if kind=='start':
-            code=compact_classic_start(code)
+            code=preserve_apps_scroll_binding(compact_classic_start(code))
             setter = 'winrt::Windows::Foundation::IInspectable SetOrClearValue(\n'
             value = '        value = *inspectable;\n    } else if (auto* blurBrushParams ='
             assert code.count(setter) == 1 and code.count(value) == 1
@@ -262,25 +264,19 @@ def build(toolchain):
             observe = '    HandleSeparatePinnedScroll(element);'
             cleanup = 'void UninitializeSettingsAndTap() {'
             assert all(code.count(marker) == 1 for marker in (apply, observe, cleanup))
-            code=code.replace(apply, '#include "start_layout.h"\n#include "start_frame.h"\n#include "start_search_button.h"\n#include "start_menu_input.h"\n'+apply)
-            code=code.replace(observe, '    BF_ObserveMenuInput(elementId,element);\n    BF_WatchShellPanel(element);\n'+observe+
+            code=code.replace(apply, '#include "start_layout.h"\n#include "start_frame.h"\n#include "start_search_button.h"\n#include "start_modern_layout.h"\n#include "start_menu_input.h"\n'+apply)
+            code=code.replace(observe, '    BF_ObserveMenuInput(elementId,element);\n    BF_WatchShellPanel(element);\n    BF_QueueModernStart(element);'+
                               '\n    BF_QueueStartColumns(element);\n    BF_QueueStartFolder(element);\n    BF_QueueStartSearchButton(element);')
             remove='void CleanupCustomizations(ElementId elementId) {'
             assert code.count(remove)==1
             code=code.replace(remove,remove+'\n    if (bf_traceMenuInput) bf_menuInputWatches.erase(elementId);')
-            code=code.replace(cleanup, cleanup+'\n    bf_menuInputWatches.clear();\n    BF_SuspendStartColumns();\n    BF_ClearSearchStylesStatus();\n    BF_ClearStartFrames();\n    BF_ClearSearchFrames();\n    BF_ClearStartSearchButtons();')
+            code=code.replace(cleanup, cleanup+'\n    bf_menuInputWatches.clear();\n    BF_SuspendStartColumns();\n    BF_SuspendModernStart();\n    BF_ClearSearchStylesStatus();\n    BF_ClearStartFrames();\n    BF_ClearSearchFrames();\n    BF_ClearStartSearchButtons();')
             # Upstream property watchers must be removed before original column
             # values are restored; otherwise they enforce the styled values
             # while the adapter tries to put the native layout back.
             end=code.index('\n}\n',code.index(cleanup))
-            code=code[:end]+'\n    BF_ClearStartColumns();\n    bf_startTextBrush=nullptr;bf_appliedStartInk=-1;'+code[end:]
+            code=code[:end]+'\n    BF_ClearStartColumns();\n    BF_ClearModernStart();\n    bf_startTextBrush=nullptr;bf_appliedStartInk=-1;'+code[end:]
             code=adapt_search_content(code, fingerprint[:16])
-            # Separate existing new-layout columns in-process; never force OS
-            # feature flags or restart the shell to select a legacy layout.
-            code=code.replace('    return disableNewStartMenuLayout;\n}',
-                '    if (disableNewStartMenuLayout == DisableNewStartMenuLayout::windowsDefault && useNewLayoutVariant)\n'
-                '        disableNewStartMenuLayout = DisableNewStartMenuLayout::newLayoutSideBySide;\n'
-                '    return disableNewStartMenuLayout;\n}')
         generated=BUILD/(kind+'.cpp')
         generated.write_text(('#define BIGFISH_START_ENGINE 1\n' if kind=='start' else '')+'#include "engine_adapter.h"\n'+code+'\n#include "engine_probe.h"\n#include "engine_lifecycle.cpp"\n',encoding='utf-8')
         engine_commands.append([compiler,*cxx,'-shared','-static',generated,*objects,'-lcomctl32','-ldwmapi','-lgdi32','-lole32','-loleaut32','-lruntimeobject','-lshlwapi','-lshell32','-ladvapi32','-luuid','-lversion','-Wl,--no-insert-timestamp','-o',PAYLOAD/output])

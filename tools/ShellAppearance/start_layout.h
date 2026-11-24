@@ -109,12 +109,16 @@ static void BF_SuspendStartColumns() {
 // header wrapper uses 63 DIPs, PinnedList's root 32 DIPs and the all-apps items
 // panel 52 DIPs. Moving just AllAppsRoot/UndockedRoot cannot remove those insets.
 // Normalize only the path to each named column part, never its item templates.
+static BF_LocalLayout& BF_StartContentState(std::vector<BF_LocalLayout>& layouts,const FrameworkElement& element) {
+    std::erase_if(layouts,[](auto& entry){return !entry.element.get();});
+    auto found=std::find_if(layouts.begin(),layouts.end(),[&](auto& entry){return entry.element.get()==element;});
+    if (found!=layouts.end()) return *found;
+    layouts.emplace_back();layouts.back().element=winrt::make_weak(element);
+    return layouts.back();
+}
+
 static BF_LocalLayout& BF_StartContentState(BF_StartColumns& state,const FrameworkElement& element) {
-    std::erase_if(state.contents,[](auto& entry){return !entry.element.get();});
-    auto found=std::find_if(state.contents.begin(),state.contents.end(),[&](auto& entry){return entry.element.get()==element;});
-    if (found!=state.contents.end()) return *found;
-    state.contents.emplace_back();state.contents.back().element=winrt::make_weak(element);
-    return state.contents.back();
+    return BF_StartContentState(state.contents,element);
 }
 
 static Controls::ListViewBase BF_FindStartList(const FrameworkElement& root,int depth=32) {
@@ -289,6 +293,8 @@ static void BF_FitPinnedContent(BF_StartColumns& state,const FrameworkElement& i
     if (auto column=state.pinned.element.get()) {
         auto heading=BF_FindLayoutElement(column,L"PinnedListHeaderText").try_as<Controls::TextBlock>();
         if (heading) {
+            if (heading.HorizontalAlignment()!=HorizontalAlignment::Left)
+                BF_StartContentState(state,heading).set(heading,FrameworkElement::HorizontalAlignmentProperty(),winrt::box_value(HorizontalAlignment::Left));
             auto wrapper=Media::VisualTreeHelper::GetParent(heading).try_as<FrameworkElement>();
             wf::Point tile{},title{},parent{};
             if (wrapper && heading.ActualWidth()>0 && BF_StartLayoutOrigin(item,column,tile) &&

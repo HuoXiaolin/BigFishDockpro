@@ -117,6 +117,15 @@ and leaves a 10-DIP paging column beside the four pinned cells. A nested FrameRo
 no longer receives the whole menu's width. The grouped GridView app-list variant
 gets one column sized to the available app-list width. All original inner values
 are restored when disabled.
+
+The redesigned tree is recognized through the loaded `MainMenu`, `AllAppsGrid`
+and `TopLevelHeader` controls. The pinned heading and its expand button are
+resolved by their descendants, including templates with unnamed containers.
+The two columns are applied together after their native parts load. Each owns a
+scroll viewport. The frame and background share the same dimensions, and the
+original search entry stays available until the footer shortcut fits. Teardown
+restores each moved control to its original slot. An incomplete template retains
+its native layout.
 The adapter disables upstream process restarts, feature-layout forcing and
 network telemetry. Windows updates can still change undocumented visual-tree names.
 
@@ -146,6 +155,9 @@ a simulated OS host resize; both its viewport and face must remain coincident.
 Cold-tree registration, unchanged parents/Loaded lifecycle, inherited view-model
 updates and dummy native power/flyout Click handlers are also checked. These
 dummy actions never call shutdown, restart or logoff.
+The redesigned Start probe uses both named and unnamed header containers. It
+checks late loading, app rows, pinned cells, the original expand button and
+native layout restoration through the same observer used at runtime.
 `tests/shell_appearance_tests.py` checks configuration/lifecycle and the Qt pages;
 OS operations in lifecycle scenarios are mocked. These checks run before the
 standard Quick delivery and in the final single-file UI suite respectively.
