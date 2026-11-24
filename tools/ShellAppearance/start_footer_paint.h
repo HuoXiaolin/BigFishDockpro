@@ -3,6 +3,7 @@
 #include <dwmapi.h>
 #include <algorithm>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct BF_FooterGlyph {winrt::hstring text, family;};
@@ -32,6 +33,9 @@ struct BF_NativePopup {
     HMENU roundedMenu=nullptr;
     std::vector<HWND> framedWindows;
     HWND owner=nullptr;
+    HMENU pendingFrame=nullptr;
+    UINT_PTR frameTimer=0;
+    ULONGLONG frameDeadline=0;
     BF_NativePopup()=default;
     BF_NativePopup(const BF_NativePopup&)=delete;
     BF_NativePopup& operator=(const BF_NativePopup&)=delete;
@@ -55,7 +59,8 @@ static void BF_CapturePopupBackdrop(BF_NativePopup& menu,POINT anchor) {
     if (menu.tintOpacity==255) return;
     MONITORINFO monitor{sizeof(monitor)};
     if (!GetMonitorInfoW(MonitorFromPoint(anchor,MONITOR_DEFAULTTONEAREST),&monitor)) return;
-    const LONG wide=MulDiv(440,menu.dpi,96),tall=MulDiv(360,menu.dpi,96);
+    const bool hasSubmenu=std::any_of(menu.rows.begin(),menu.rows.end(),[&](const auto& row){return row.parent!=menu.handle;});
+    const LONG wide=MulDiv(hasSubmenu ? 800 : 440,menu.dpi,96),tall=MulDiv(360,menu.dpi,96);
     const RECT area{anchor.x-wide,anchor.y-tall,anchor.x+wide,anchor.y+tall};
     if (!IntersectRect(&menu.backdropBounds,&area,&monitor.rcMonitor)) return;
     const auto& rect=menu.backdropBounds;
@@ -136,7 +141,7 @@ static bool BF_FillFooterFrame(HWND window,HDC dc,const BF_NativePopup& menu) {
 }
 
 static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR context) {
-    const auto& menu=*reinterpret_cast<const BF_NativePopup*>(context);
+    auto& menu=*reinterpret_cast<BF_NativePopup*>(context);
     if (msg==WM_NCPAINT) {
         if (HDC dc=GetWindowDC(window)) {
             const bool painted=BF_FillFooterFrame(window,dc,menu);
@@ -148,6 +153,8 @@ static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARA
         BF_FillFooterFrame(window,reinterpret_cast<HDC>(wp),menu);
         return result;
     } else if (msg==WM_NCDESTROY) {
+        if (menu.roundedWindow==window) {menu.roundedWindow=nullptr;menu.roundedMenu=nullptr;}
+        std::erase(menu.framedWindows,window);
         RemoveWindowSubclass(window,BF_PaintFooterFrame,id);
     }
     return DefSubclassProc(window,msg,wp,lp);
@@ -155,13 +162,31 @@ static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARA
 
 // Style the native popup before its first completed draw. DWM supplies
 // antialiased outer corners, with the same window handling all menu input.
-static void BF_RoundFooterWindow(BF_NativePopup& menu,HMENU parent,HDC dc) {
-    const HWND window=WindowFromDC(dc);
-    if (!window || (window==menu.roundedWindow && parent==menu.roundedMenu)) return;
+static bool BF_WindowOwnsMenu(HWND window,HMENU handle) {
+    wchar_t name[16]{};
+    if (!window || GetWindowThreadProcessId(window,nullptr)!=GetCurrentThreadId() ||
+        !GetClassNameW(window,name,16) || std::wstring_view(name)!=L"#32768") return false;
     MENUBARINFO bar{sizeof(bar)};
+    if (GetMenuBarInfo(window,OBJID_CLIENT,0,&bar) && bar.hMenu==handle) return true;
+    return reinterpret_cast<HMENU>(SendMessageW(window,MN_GETHMENU,0,0))==handle;
+}
+
+static HWND BF_FindFooterWindow(HMENU handle,HDC dc=nullptr) {
+    const HWND direct=dc ? WindowFromDC(dc) : nullptr;
+    if (BF_WindowOwnsMenu(direct,handle)) return direct;
+    struct Search {HMENU menu;HWND window;}; Search search{handle,nullptr};
+    EnumThreadWindows(GetCurrentThreadId(),[](HWND popup,LPARAM data)->BOOL {
+        auto& found=*reinterpret_cast<Search*>(data);
+        if (!BF_WindowOwnsMenu(popup,found.menu)) return TRUE;
+        found.window=popup;return FALSE;
+    },reinterpret_cast<LPARAM>(&search));
+    return search.window;
+}
+
+static void BF_RoundFooterWindow(BF_NativePopup& menu,HMENU parent,HWND window) {
+    if (!window || (window==menu.roundedWindow && parent==menu.roundedMenu)) return;
     RECT frame{};
-    if (GetWindowThreadProcessId(window,nullptr)!=GetCurrentThreadId() ||
-        !GetMenuBarInfo(window,OBJID_CLIENT,0,&bar) || bar.hMenu!=parent || !GetWindowRect(window,&frame)) return;
+    if (!GetWindowRect(window,&frame)) return;
     const int width=frame.right-frame.left,height=frame.bottom-frame.top;
     if (width<4 || height<4) return;
     menu.roundedWindow=window;
@@ -192,8 +217,30 @@ static void BF_RoundFooterWindow(BF_NativePopup& menu,HMENU parent,HDC dc) {
     }
 }
 
+static void BF_QueueFooterFrame(BF_NativePopup& menu,HMENU handle) {
+    if (menu.pendingFrame==handle) return;
+    menu.pendingFrame=handle;
+    menu.frameDeadline=GetTickCount64()+300;
+    if (!menu.frameTimer) menu.frameTimer=SetTimer(menu.owner,reinterpret_cast<UINT_PTR>(&menu),16,nullptr);
+}
+
 static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR ref) {
     auto& menu=*reinterpret_cast<BF_NativePopup*>(ref);
+    if (msg==WM_TIMER && menu.frameTimer && wp==menu.frameTimer) {
+        const auto handle=menu.pendingFrame;
+        const auto window=handle ? BF_FindFooterWindow(handle) : nullptr;
+        RECT bounds{};
+        const bool shown=window && IsWindowVisible(window) && GetWindowRect(window,&bounds) &&
+            bounds.right-bounds.left>3 && bounds.bottom-bounds.top>3;
+        if (shown || GetTickCount64()>=menu.frameDeadline) {
+            KillTimer(owner,menu.frameTimer);menu.frameTimer=0;menu.pendingFrame=nullptr;
+            if (shown) {
+                BF_RoundFooterWindow(menu,handle,window);
+                RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_FRAME);
+            }
+        }
+        return 0;
+    }
     if ((msg!=WM_DRAWITEM && msg!=WM_MEASUREITEM) || !lp || wp!=0) return DefSubclassProc(owner,msg,wp,lp);
     auto measure=msg==WM_MEASUREITEM ? reinterpret_cast<MEASUREITEMSTRUCT*>(lp) : nullptr;
     auto draw=msg==WM_DRAWITEM ? reinterpret_cast<DRAWITEMSTRUCT*>(lp) : nullptr;
@@ -203,6 +250,7 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
     if (row==menu.rows.end()) return DefSubclassProc(owner,msg,wp,lp);
     auto px=[&menu](int dip){return MulDiv(dip,menu.dpi,96);};
     if (measure) {
+        if (row->parent!=menu.handle) BF_QueueFooterFrame(menu,row->parent);
         if (row->separator) {measure->itemHeight=px(7);measure->itemWidth=0;return TRUE;}
         HDC dc=GetDC(owner);
         if (!dc) return DefSubclassProc(owner,msg,wp,lp);
@@ -214,14 +262,18 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
         return TRUE;
     }
     HDC dc=draw->hDC;
-    BF_RoundFooterWindow(menu,row->parent,dc);
+    const auto window=BF_FindFooterWindow(row->parent,dc);
+    if (window) BF_RoundFooterWindow(menu,row->parent,window);
+    else BF_QueueFooterFrame(menu,row->parent);
     const int saved=SaveDC(dc);
     const auto brush=static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
     SetDCBrushColor(dc,menu.fill);
     FillRect(dc,&draw->rcItem,brush);
     POINT surface{};
-    const auto window=WindowFromDC(dc);
+    RECT screenRow{};
     if (window && ClientToScreen(window,&surface)) BF_DrawPopupBackdrop(menu,dc,draw->rcItem,surface);
+    else if (GetMenuItemRect(nullptr,row->parent,row->position,&screenRow))
+        BF_DrawPopupBackdrop(menu,dc,draw->rcItem,{screenRow.left-draw->rcItem.left,screenRow.top-draw->rcItem.top});
     if (row->separator) {
         RECT line=draw->rcItem;
         line.left+=px(12);line.right-=px(12);
@@ -289,6 +341,7 @@ struct BF_FooterPainting {
         }
     }
     ~BF_FooterPainting() {
+        if (menu.frameTimer) KillTimer(menu.owner,menu.frameTimer);
         for (HWND window:menu.framedWindows)
             RemoveWindowSubclass(window,BF_PaintFooterFrame,reinterpret_cast<UINT_PTR>(&menu));
         if (attached) RemoveWindowSubclass(menu.owner,BF_PaintFooterItem,reinterpret_cast<UINT_PTR>(this));

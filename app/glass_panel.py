@@ -383,9 +383,9 @@ class DesktopPanel(QDialog):
     def model(self): return self.manager.model(self.identity)
 
     def option(self, key):
-        if key in ('collapse_style','capsule_ratio'):
+        if key in ('collapse_style','capsule_ratio','ball_diameter','fold_height'):
             from fold_options import settings
-            return settings(self)['style' if key=='collapse_style' else 'ratio']
+            return settings(self)[{'collapse_style':'style','capsule_ratio':'ratio','ball_diameter':'diameter','fold_height':'height'}[key]]
         return self.dock.cfg['panel_'+key]
 
     def colors(self, style=None):
@@ -857,7 +857,8 @@ class DesktopPanel(QDialog):
         geometry = self.bounds()
         if collapsed:
             from fold_options import geometry as fold_geometry,settings
-            target=fold_geometry(geometry,settings(self),metric(44,self.ui_factor,24))
+            from panel_preferences import CARD_FOLD_SIZE
+            target=fold_geometry(geometry,settings(self),metric(CARD_FOLD_SIZE,self.ui_factor,24),self.ui_factor,CARD_FOLD_SIZE)
             self._fold_target=tuple(target)
             self.setFixedSize(target[2],target[3]);self.move(*target[:2]);self._fold_offset=(target[0]-geometry[0],target[1]-geometry[1])
         else:
@@ -1160,7 +1161,7 @@ class DesktopPanel(QDialog):
             badge=getattr(self,'fold_badge',None)
             compact=badge is not None and badge.isVisible()
             center=QRectF(self.rect() if compact else self.header_icon.geometry()).center()
-            slot=min(self.width()-12,metric(42*self.option('face_scale')/100,self.ui_factor,24)) if compact else self.header_icon.width()
+            slot=min(self.width()-12,self.height()-2,metric(42*self.option('face_scale')/100,self.ui_factor,24)) if compact else self.header_icon.width()
             self.face_tracker.paint_face(painter,center,slot,{'ink':colors['fg'],'light':colors['light']})
         if getattr(self.manager,'drop_preview',None) is self:
             painter.setPen(QPen(self.palette().color(QPalette.Link),2))
@@ -1168,7 +1169,9 @@ class DesktopPanel(QDialog):
             painter.drawPath(shape)
 
     def surface_radius(self):
-        return (22 if self.collapsed and self.option('collapse_style') in ('capsule','ball') else 18)*self.ui_factor
+        if self.collapsed and self.option('collapse_style') in ('capsule','ball'):
+            return min(self.width(), self.height())/2
+        return 18*self.ui_factor
 
     def design_body_top(self):
         # Start the porcelain content surface below the entire live header/tab area.
@@ -1258,6 +1261,10 @@ class PanelOptions(QDialog):
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
         choice('expand_mode','展开方式',[('鼠标移入','hover'),('点击展开','click')])
         choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar'),('圆球','ball')]);number('capsule_ratio','胶囊宽度比例（%）',1,100)
+        from panel_preferences import FOLD_SIZE_RANGE
+        number('ball_diameter','圆球直径（像素）',*FOLD_SIZE_RANGE)
+        number('fold_height','收起栏高度（像素）',*FOLD_SIZE_RANGE)
+        self.fields['collapse_style'].currentIndexChanged.connect(self.sync_fold_fields)
         self.face=ModernCheckBox('显示小表情（展开与收起均保留）');form.addRow(self.face)
         self.face_interactive=ModernCheckBox('表情跟随鼠标与按压互动');form.addRow(self.face_interactive)
         choice('face_mood','表情样式',[('随机变化','random'),('默认','default'),('开心','happy'),('眨眼','wink'),('爱心','love'),('星星眼','star'),('害羞','shy'),('嘟嘴','pout'),('眯眼','squint')])
@@ -1308,6 +1315,13 @@ class PanelOptions(QDialog):
         self.preset.blockSignals(True);self.preset.setCurrentIndex(matching);self.preset.blockSignals(False)
         self.applying_preset=False
         self.sync_source()
+        self.sync_fold_fields()
+
+    def sync_fold_fields(self):
+        shape = self.fields['collapse_style'].currentData()
+        self.fields['ball_diameter'].setEnabled(shape == 'ball')
+        self.fields['fold_height'].setEnabled(shape != 'ball')
+        self.fields['capsule_ratio'].setEnabled(shape == 'capsule')
 
     def open_sizing(self):
         from card_metrics import normalize_profile
@@ -1349,7 +1363,8 @@ class PanelOptions(QDialog):
         values={key:field.currentData() if isinstance(field,QComboBox) else field.value() for key,field in self.fields.items()}
         values.update(color=color.lower(),auto_hide=self.auto.isChecked(),locked=self.locked.isChecked(),face=self.face.isChecked(),face_interactive=self.face_interactive.isChecked())
         values['face_auto_switch'] = self.face_auto_switch.isChecked()
-        values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio')}
+        values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio'),
+                        'diameter':values.pop('ball_diameter'),'height':values.pop('fold_height')}
         if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),
                                            _pointer_mode=self.passthrough.currentData(),**values):
             self.status.setText('已保存。外观和层级应用到所有桌面卡片。');return True

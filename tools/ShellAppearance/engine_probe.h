@@ -223,6 +223,8 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), nullptr);
         BF_BindPanelGeometry(mapping, true);
         BF_PrepareStartFrame(root, border, child);
+        const auto beforeStyle=GetTickCount64()+46;
+        while (GetTickCount64()<beforeStyle) {pump();Sleep(2);}
         const bool heldBeforeLayout = root.Opacity()==0.0;
 #endif
         ApplyCustomizations(static_cast<ElementId>(1),root,L"Windows.UI.Xaml.Controls.Grid");

@@ -331,7 +331,8 @@ def run(output):
         options.fields['collapse_style'].setCurrentIndex(options.fields['collapse_style'].findData('capsule'))
         options.color.setText('#8fc8df');options.auto.setChecked(False);assert options.commit()
         assert cfg['panel_opacity']==78
-        assert __import__('fold_options').settings(panel)=={'style':'capsule','ratio':30}
+        assert __import__('fold_options').settings(panel)==dict(style='capsule',ratio=30,
+            diameter=cfg['panel_ball_diameter'],height=cfg['panel_fold_height'])
         assert main.fields['panel_opacity'].value()==78
         assert main.fields['icon_size'].value()==icon_before+1
         assert all(window.option('opacity')==78 and window.option('collapse_style')=='capsule' for window in runtime.panels.windows.values())

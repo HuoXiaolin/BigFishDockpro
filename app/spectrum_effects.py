@@ -129,7 +129,6 @@ def draw_peak_bars(painter, area, levels, peaks):
     bottom = area.bottom() - 2
     travel = area.height() * .85
     width = max(.8, min(4, step * .56))
-    crest = QPainterPath()
     base = QPainterPath()
     caps = QPainterPath()
     cap_glow = QPainterPath()
@@ -140,27 +139,12 @@ def draw_peak_bars(painter, area, levels, peaks):
         x = area.left() + (index + .5) * step
         length = 1 + level * travel
         top = bottom - length
-        if index:
-            crest.lineTo(x, top)
-        else:
-            crest.moveTo(x, top)
         base.addRect(QRectF(x - width / 2, top, width, length))
         if peak > .025:
             cap = QRectF(x - cap_width / 2, bottom - 3 - cap_height - peak * travel, cap_width, cap_height)
             caps.addRect(cap)
             cap_glow.addRect(cap.adjusted(-.35, -.45, .35, .45))
-    volume = QPainterPath(crest)
-    volume.lineTo(area.right(), bottom)
-    volume.lineTo(area.left(), bottom)
-    volume.closeSubpath()
     brush = _palette(QLinearGradient(area.left(), 0, area.right(), 0), SPECTRUM_COLORS)
-    painter.setOpacity(.28)
-    painter.fillPath(volume, brush)
-    painter.setBrush(Qt.NoBrush)
-    if max(levels) > .025:
-        painter.setPen(QPen(brush, min(4, max(1.5, step * .65)), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.setOpacity(.22)
-        painter.drawPath(crest)
     painter.setOpacity(.96)
     painter.fillPath(base, brush)
     painter.setOpacity(.19)

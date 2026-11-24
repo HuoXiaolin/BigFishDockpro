@@ -1,4 +1,5 @@
 """Settings navigation and searchable field definitions without Qt widgets."""
+from panel_preferences import FOLD_SIZE_RANGE
 
 APPEARANCE, COLLECTION, APPS, RUNNING, UPDATES, USAGE, ABOUT, TASKBAR, WIDGETS, CAPSULES, DATA = range(11)
 START_MENU, NOTIFICATIONS, CURSORS = 11, 12, 13
@@ -89,7 +90,9 @@ def field_catalog(api, cfg):
         'panel_face_scale': (1, '表情大小（%）', 'number', (60, 130)),
         'panel_face_role': (1, '表情角色', 'face_role', None),
         'panel_collapse_style': (1, '收起形状', 'combo', [('胶囊', 'capsule'), ('圆球', 'ball'), ('方条', 'bar')]),
-        'panel_capsule_ratio': (1, '胶囊宽度比例（%）', 'number', (30, 100)),
+    'panel_capsule_ratio': (1, '胶囊宽度比例（%）', 'number', (30, 100)),
+    'panel_ball_diameter': (1, '圆球直径（像素）', 'number', FOLD_SIZE_RANGE),
+    'panel_fold_height': (1, '收起栏高度（像素）', 'number', FOLD_SIZE_RANGE),
         'desktop_icon_mode': (1, '桌面图标显示', 'combo', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')]),
         'desktop_middle_toggle': (1, '鼠标中键切换桌面图标', 'check', None),
         'clock_enabled': (WIDGETS, '桌面时钟', 'check', None),

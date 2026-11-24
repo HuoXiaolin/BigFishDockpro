@@ -49,7 +49,7 @@ def check_colorful_spectrum(runtime):
     from math import sin, tau
     from PyQt5.QtWidgets import QMenu
     from desktop_spectrum import (BANDS, SPECTRUM_DEFAULT_SIZES, DesktopSpectrum,
-                                  add_menu_actions, draw_spectrum)
+                                  add_menu_actions, draw_spectrum, spectrum_area)
     from feature_config import SPECTRUM_FIXED_PALETTES, normalize
 
     def frame(style, size, levels, peaks=None, dpr=1, **options):
@@ -105,6 +105,14 @@ def check_colorful_spectrum(runtime):
         width, height = SPECTRUM_DEFAULT_SIZES['peak_bars']
         peaks = [0.] * BANDS
         band = 31
+        bars = frame('peak_bars', (width, height), [.7] * BANDS, peaks, dpr=2)
+        area = spectrum_area(QRectF(0, 0, width, height), 'peak_bars')
+        step = area.width() / BANDS
+        gap = int(2 * (area.left() + band * step))
+        column = int(2 * (area.left() + (band + .5) * step))
+        assert bars.pixelColor(column, height).alpha() > 200
+        assert all(bars.pixelColor(gap, y).alpha() == 0 for y in range(bars.height()))
+
         peaks[band] = .78
         cap = frame('peak_bars', (width, height), [0.] * BANDS, peaks, dpr=2)
         center = round(2 * (9 + (width-18)*(band+.5)/BANDS))

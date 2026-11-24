@@ -265,7 +265,13 @@ def build(toolchain):
             cleanup = 'void UninitializeSettingsAndTap() {'
             assert all(code.count(marker) == 1 for marker in (apply, observe, cleanup))
             code=code.replace(apply, '#include "start_layout.h"\n#include "start_frame.h"\n#include "start_search_button.h"\n#include "start_modern_layout.h"\n#include "start_menu_input.h"\n'+apply)
-            code=code.replace(observe, '    BF_ObserveMenuInput(elementId,element);\n    BF_WatchShellPanel(element);\n    BF_QueueModernStart(element);'+
+            entry = apply+'\n    if (g_customizationsDeferred)'
+            assert code.count(entry)==1
+            code=code.replace(entry, apply+'\n    if (bf_is_start_menu) BF_WatchShellPanel(element);\n    if (g_customizationsDeferred)')
+            applied = '            elementCustomizationStateForVisualStateGroup);\n    }\n}\n\n// The diagnostics create'
+            assert code.count(applied)==1
+            code=code.replace(applied,applied.replace('    }\n}', '    }\n    BF_MarkStartSurfaceStyled(element);\n}'))
+            code=code.replace(observe, '    BF_ObserveMenuInput(elementId,element);\n    if (!bf_is_start_menu) BF_WatchShellPanel(element);\n    BF_QueueModernStart(element);'+
                               '\n    BF_QueueStartColumns(element);\n    BF_QueueStartFolder(element);\n    BF_QueueStartSearchButton(element);')
             remove='void CleanupCustomizations(ElementId elementId) {'
             assert code.count(remove)==1

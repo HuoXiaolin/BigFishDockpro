@@ -224,6 +224,13 @@ static void check_windowed_context(const fs::path& ini, unsigned long long start
 		require(window && (window == popup || IsChild(popup, window)) && ScreenToClient(window, &target),
 			"windowed row center hits its native window");
 		const auto point = MAKELPARAM(target.x,target.y);
+		const auto oldBrush = items[action].Background();
+		SendMessageW(window, WM_MOUSEMOVE, 0, point);
+		const auto hot = items[action].Background().try_as<wux::Media::SolidColorBrush>();
+		require(hot && hot != oldBrush && hot.Color().A > 0 && hot.Color().A < 255 &&
+			hot.Color().R == GetRValue(tint), "hover contrasts with the popup in both themes");
+		SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(-20,-20));
+		require(items[action].Background() == oldBrush && hits[action] == 0, "leaving a row restores it without clicking");
 		require(PostMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,point) &&
 			PostMessageW(window,WM_LBUTTONUP,0,point), "windowed row mouse messages");
 		while (hits[action] == 0 && GetTickCount64() < deadline) { pump(); Sleep(5); }
@@ -290,13 +297,14 @@ int wmain(int argc, wchar_t** argv)
 		root.Children().Append(ordinary);
 		root.Children().Append(surface);
 		root.Children().Append(icon);
-		require(bigfish::TrayOverflow::Matches(winrt::name_of<wuxc::Border>(), surface.Name()), "native overflow target name");
-		require(!bigfish::TrayOverflow::Matches(winrt::name_of<wuxc::Border>(), ordinary.Name()), "ordinary border excluded");
+		require(style.Observe(101, 100, winrt::name_of<wuxc::Border>(), surface.Name()), "native overflow target name");
+		require(!style.Observe(102, 100, winrt::name_of<wuxc::Border>(), ordinary.Name()), "ordinary border excluded");
 		style.Add(101, surface);
 		style.Add(102, ordinary);
 		source.Content(root);
 		ShowWindow(window, SW_SHOWNOACTIVATE);
-		for (const auto deadline = GetTickCount64() + 4000; GetTickCount64() < deadline && surface.Background() == original;)
+		for (const auto deadline = GetTickCount64() + 4000;
+			GetTickCount64() < deadline && (!surface.IsLoaded() || surface.Background() == original);)
 		{
 			pump();
 			Sleep(5);
@@ -326,6 +334,34 @@ int wmain(int argc, wchar_t** argv)
 		style.Refresh();
 		style.Remove(101);
 		require(surface.Background() == original, "unloaded border restored");
+		const wuxc::Grid overflowRoot;
+		const wuxc::Border alternative;
+		overflowRoot.Name(L"OverflowRootGrid");
+		alternative.Background(original);
+		overflowRoot.Children().Append(alternative);
+		root.Children().Append(overflowRoot);
+		style.Observe(109, 100, winrt::name_of<wuxc::Grid>(), overflowRoot.Name());
+		require(style.Observe(110, 109, winrt::name_of<wuxc::Border>(), L""), "scoped unnamed surface");
+		require(!style.Observe(111, 100, winrt::name_of<wuxc::Border>(), L""), "unrelated unnamed border excluded");
+		style.Add(110, alternative);
+		for (const auto until=GetTickCount64()+1200; alternative.Background()==original && GetTickCount64()<until;) { pump(); Sleep(2); }
+		if (alternative.Background() == original)
+		{
+			const auto parent = wux::Media::VisualTreeHelper::GetParent(alternative).try_as<wuxc::Grid>();
+			throw std::runtime_error("alternative tray template missed first brush: loaded=" +
+				std::to_string(alternative.IsLoaded()) + " parent=" + (parent ? winrt::to_string(parent.Name()) : "<none>") +
+				" first=" + std::to_string(parent && parent.Children().Size() && parent.Children().GetAt(0) == alternative) +
+				" owner_settings=" + std::to_string(bigfish::ReadOverflowStyle(path).has_value()));
+		}
+		const auto accent = wux::Media::SolidColorBrush({255, 31, 32, 33});
+		alternative.Background(accent);
+		for (const auto until=GetTickCount64()+1000; alternative.Background()==accent && GetTickCount64()<until;) { pump(); Sleep(2); }
+		require(alternative.Background() != accent, "Explorer changing the surface reapplies the configured brush");
+		style.Remove(110);
+		style.Remove(109);
+		require(alternative.Background()==accent && !style.Observe(112, 109, winrt::name_of<wuxc::Border>(), L""),
+			"restores the latest native theme and forgets an unloaded template");
+		root.Children().RemoveAtEnd();
 		try { check_context_menu(ini, started, icon); }
 		catch (const std::exception& error) { throw std::runtime_error(std::string("Inline context: ") + error.what()); }
 		try { check_windowed_context(ini, started, icon); }
@@ -333,7 +369,7 @@ int wmain(int argc, wchar_t** argv)
 		source.Close();
 		DestroyWindow(window);
 		std::ofstream(output / "result.json") <<
-			R"({"passed":true,"checks":["tray overflow applies all three brushes and restores native state","inline inaccessible XAML menu replaced by one hit-testable native popup","mouse messages reach both original taskbar command handlers","old presenter is masked before switching and restored after closing","stale settings and unrelated flyouts keep the original menu","automatic and manual ink on light and dark backgrounds","windowed XAML taskbar popup receives native mouse clicks on both rows and keeps its composited glass"]})";
+			R"({"passed":true,"checks":["named and scoped unnamed tray surfaces apply the selected brush","tray refresh restores the latest system brush after a theme change","inline inaccessible XAML menu replaced by one hit-testable native popup","mouse messages reach both original taskbar command handlers","old presenter is masked before switching and restored after closing","stale settings and unrelated flyouts keep the original menu","automatic and manual ink on light and dark backgrounds","windowed popup highlights on hover, restores on leave, and dispatches both clicks with its glass intact"]})";
 		return 0;
 	}
 	catch (const std::exception& error)

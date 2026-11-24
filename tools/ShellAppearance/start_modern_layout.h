@@ -330,3 +330,19 @@ static void BF_QueueModernStart(const FrameworkElement& element) {
     bf_modernStartLayouts.push_back(state);
     BF_UpdateModernStart(state);
 }
+
+static bool BF_StartContentReady(const FrameworkElement& frame) {
+    if (frame.Name()==L"MainMenu") {
+        auto apps=BF_FindLayoutElement(frame,L"AllAppsGrid");
+        if (apps) {
+            return std::any_of(bf_modernStartLayouts.begin(),bf_modernStartLayouts.end(),[&](const auto& state) {
+                return state->apps.get()==apps && state->wrapper.get() && !state->updating;
+            });
+        }
+    } else if (frame.Name()==L"RootContent" && !BF_FindLayoutElement(frame,L"SideBySidePinnedWrapper")) {
+        return std::any_of(bf_startColumns.begin(),bf_startColumns.end(),[&](const auto& state) {
+            return state->root.get()==frame && state->apps.element.get() && state->pinned.element.get() && !state->arranging;
+        });
+    }
+    return true;
+}

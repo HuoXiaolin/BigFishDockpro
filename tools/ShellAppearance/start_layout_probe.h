@@ -348,13 +348,18 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     unsigned powerClicks=0,menuClicks=0;
     auto powerButton=power.as<Controls::Button>();
     auto clicked=powerButton.Click(winrt::auto_revoke,[&](auto&&,auto&&){++powerClicks;});
+    // This part verifies keyboard/accessibility dispatch. The pointer probe
+    // separately supplies actual mouse messages to the modal replacement.
+    powerButton.Focus(FocusState::Keyboard);
     auto powerPeer=BF_PanelPeer::CreatePeerForElement(powerButton);
     powerPeer.GetPattern(winrt::Windows::UI::Xaml::Automation::Peers::PatternInterface::Invoke)
         .as<winrt::Windows::UI::Xaml::Automation::Provider::IInvokeProvider>().Invoke();
     BF_ProbePump();
+    trace("power_command");
     Controls::MenuFlyout flyout;Controls::MenuFlyoutItem command;command.Text(L"测试操作");
     auto commandClicked=command.Click(winrt::auto_revoke,[&](auto&&,auto&&){++menuClicks;});
     flyout.Items().Append(command);flyout.ShowAt(powerButton);BF_ProbePump();root.UpdateLayout();
+    trace("test_menu_opened");
     auto menuPeer=BF_PanelPeer::CreatePeerForElement(command);
     menuPeer.GetPattern(winrt::Windows::UI::Xaml::Automation::Peers::PatternInterface::Invoke)
         .as<winrt::Windows::UI::Xaml::Automation::Provider::IInvokeProvider>().Invoke();

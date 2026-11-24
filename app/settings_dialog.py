@@ -306,6 +306,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                     field.setChecked(bool(value))
             finally:
                 field.blockSignals(blocked)
+        if 'panel_collapse_style' in changes and 'panel_fold_height' in self.fields:
+            self.sync_fold_size()
         if 'panel_face_auto_switch' in changes and 'panel_face_auto_switch' in self.fields:
             self.fields['panel_face_switch_minutes'].setEnabled(self.fields['panel_face_auto_switch'].isChecked())
         if 'taskbar_text_auto' in changes and 'taskbar_text_mode' in self.fields:
@@ -549,12 +551,16 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'panel_face_role')
         self.add_field(panel, 'panel_collapse_style')
         self.add_field(panel, 'panel_capsule_ratio')
+        self.add_field(panel, 'panel_ball_diameter')
+        self.add_field(panel, 'panel_fold_height')
+        self.fields['panel_collapse_style'].currentIndexChanged.connect(self.sync_fold_size)
+        self.sync_fold_size()
         self.add_field(panel, 'desktop_icon_mode')
         self.add_field(panel, 'desktop_middle_toggle')
         self.fields['desktop_middle_toggle'].setToolTip('仅点击 Windows 桌面时触发；滚动滚轮、点击任务栏、卡片或其他软件均不触发。')
         self.fields['desktop_icon_mode'].setToolTip('同时显示时可拖入桌面图标；隐藏全部只影响桌面图标视图，不修改文件属性。')
         self.fields['panel_material'].setToolTip('材质控制质感，颜色模式控制明暗，主题色控制配色；全部桌面卡片同步。')
-        self.fields['panel_capsule_ratio'].setToolTip('相对于展开宽度，最窄180像素；全部桌面卡片同步，方条保持展开宽度。')
+        self.fields['panel_capsule_ratio'].setToolTip('胶囊宽度按卡片展开宽度的百分比计算。')
         section_marker(panel,'分组与尺寸')
         self.action_row(panel,'面板管理',button('新建面板',lambda:self.tray.runtime.panels.new_panel()),button('分组与合并',lambda:self.tray.runtime.panels.manage_groups()))
         panel.addRow(label('支持默认分类、自定义格式与多个合并组，文件只保存引用。','muted'))
@@ -797,6 +803,12 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         form.addRow(label(PAGES[index], 'page-title'))
         scroll.setWidget(page)
         return form
+
+    def sync_fold_size(self):
+        shape = self.fields['panel_collapse_style'].currentData()
+        self.fields['panel_capsule_ratio'].setEnabled(shape == 'capsule')
+        self.fields['panel_ball_diameter'].setEnabled(shape == 'ball')
+        self.fields['panel_fold_height'].setEnabled(shape != 'ball')
 
     def sync_watermark_fields(self):
         tiled = self.fields['watermark_mode'].currentData() == 'tile'

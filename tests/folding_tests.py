@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QApplication
 
 def run(api,runtime,root,output,checks):
     from desktop_panels import DesktopPanels
-    from fold_options import settings
+    from fold_options import FoldOptions, geometry, normalize as normalize_fold, settings
     cfg=runtime.dock.cfg;saved=copy.deepcopy(cfg);app=QApplication.instance();previous=runtime.panels;roots=list(previous.roots);previous.close();manager=None
     try:
         cfg.update(panel_enabled=True,panels_visible=True,desktop_auto_sort=False,panel_auto_hide=False,panel_locked=False,merged_panels=False,merge_initialized=False,merge_groups=[],desktop_entries=[],desktop_excluded=[],disabled_categories=[],display_layout={},desktop_panels=[{'id':'a','name':'独立一','geometry':[100,100,360,280]},{'id':'b','name':'独立二','geometry':[500,100,320,240]}])
@@ -19,25 +19,52 @@ def run(api,runtime,root,output,checks):
         a.grab().save(str(Path(output)/'panel-fold-capsule.png'))
         a.expand();app.processEvents();assert list(a.bounds())==before
         assert manager.update_panel('a',fold={'style':'ball','ratio':1});a.collapse();app.processEvents();assert a.width()==a.height() and a.fold_badge.isVisible() and not a.fold_badge.text()
+        assert settings(a)['diameter'] == cfg['panel_ball_diameter'] == 44
+        dialog = FoldOptions(a)
+        dialog.size_field.setValue(74)
+        dialog.style.setCurrentIndex(dialog.style.findData('capsule'))
+        dialog.size_field.setValue(32)
+        dialog.ratio.setValue(55)
+        dialog.commit()
+        app.processEvents()
+        assert a.height() == round(32 * a.ui_factor) and abs(a.width() - before[2]*.55) <= 1
+        dialog.style.setCurrentIndex(dialog.style.findData('bar'))
+        assert dialog.size_field.value() == 32
+        dialog.commit()
+        assert a.width() == before[2] and a.height() == round(32*a.ui_factor)
+        dialog.style.setCurrentIndex(dialog.style.findData('ball'))
+        assert dialog.size_field.value() == 74
+        dialog.commit()
+        assert a.width() == a.height() == round(74*a.ui_factor) and a.surface_radius() == a.height()/2
+        dialog.size_field.setValue(100)
+        dialog.reject()
+        assert settings(a) == dict(style='ball', ratio=55, diameter=74, height=32)
+        loaded = api.load_config()
+        assert next(row for row in loaded['desktop_panels'] if row['id']=='a')['fold'] == settings(a)
+        from layout_profiles import snapshot
+        assert snapshot(cfg)['panels']['a']['fold'] == settings(a)
+        assert normalize_fold({'diameter': 999, 'height': 3}) == dict(style='capsule',ratio=70,diameter=120,height=24)
+        assert geometry([10,20,360,230],settings(a),44,1.5)==[134,20,111,111]
         a.grab().save(str(Path(output)/'panel-fold-ball.png'));a.move(a.x()+30,a.y()+20);a.store_geometry();a.expand();app.processEvents();assert a.x()==before[0]+30 and a.y()==before[1]+20 and a.width()==before[2]
         assert settings(b)!=settings(a)
-        manager.set_merged('a',True);app.processEvents();assert manager.update_panel('a',fold={'style':'capsule','ratio':20})
+        manager.set_merged('a',True);app.processEvents();group_fold=dict(style='capsule',ratio=20,diameter=64,height=46)
+        assert manager.update_panel('a',fold=group_fold)
         active=manager.windows[manager.active_for('a')]
-        assert settings(active)=={'style':'capsule','ratio':20}
+        assert settings(active)==group_fold
         active.collapse();app.processEvents();manager.select_page('b');app.processEvents()
-        assert settings(manager.windows['b'])=={'style':'capsule','ratio':20}
+        assert settings(manager.windows['b'])==group_fold
         cfg.update(notes_enabled=True,notes_visible=True,note_style='glass');runtime.notes.reload();identity=runtime.notes.new();other=runtime.notes.new()
         assert runtime.notes.select(identity)
         note=runtime.notes.windows[identity];original=note.geometry().getRect()
         assert runtime.notes.update_and_save(identity,fold={'style':'ball','ratio':1});note.set_collapsed(True);app.processEvents()
-        assert note.width()==note.height() and note.fold_badge.isVisible() and not note.fold_badge.text();assert abs(note.geometry().center().x()-(original[0]+original[2]/2))<=2 and note.y()==original[1]
+        assert settings(note)['diameter']==42 and note.width()==note.height() and note.fold_badge.isVisible() and not note.fold_badge.text();assert abs(note.geometry().center().x()-(original[0]+original[2]/2))<=2 and note.y()==original[1]
         note.grab().save(str(Path(output)/'note-fold-ball.png'));note.move(note.x()+25,note.y()+15);note.save_geometry();note.set_collapsed(False);app.processEvents()
         assert note.width()==original[2] and note.height()==original[3] and note.x()==original[0]+25 and note.y()==original[1]+15, (original,note.geometry().getRect(),note._fold_expanded)
         assert runtime.notes.select(other) and settings(runtime.notes.windows[other])['style']=='bar'
         loaded=api.load_config();assert next(row for row in loaded['sticky_notes'] if row['id']==identity)['fold']['style']=='ball'
         from config_transfer import normalize
         assert normalize(copy.deepcopy(cfg),api)['merge_groups']==cfg['merge_groups']
-        checks.append('per-object folding: title-bar centered capsule/ball bounds; card and note expanded dimensions restored after dragging collapsed form; independent styles isolated, merged members share group setting, compact badges render and persisted note/group settings survive reload/import')
+        checks.append('Fold settings resize the ball, capsule and bar in place. Dimensions survive shape changes, reload and layout snapshots. Merged tabs share their sizes and dragging a folded card or note preserves its expanded dimensions.')
     finally:
         if manager:manager.close()
         cfg.clear();cfg.update(saved);api.save_config(cfg);runtime.notes.reload();runtime.panels=DesktopPanels(runtime,roots=roots);runtime.apply_settings();app.processEvents()

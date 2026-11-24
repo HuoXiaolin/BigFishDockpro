@@ -8,6 +8,7 @@ struct BF_FooterPointerProbe {
     size_t submenuRow=SIZE_MAX;
     ULONGLONG start=0;
     bool checked=false,sent=false,expired=false,cancel=false,palette=false,hoverPosted=false,submenuPosted=false;
+    bool submenuReadyBeforeInput=false;
     unsigned attempts=0;
     std::string detail, paintDetail;
 };
@@ -61,7 +62,8 @@ static bool BF_ProbeFooterRow(const BF_FooterMenu& menu,const RECT& row,const st
     HRGN region=CreateRectRgn(0,0,0,0);
     const int regionKind=region ? GetWindowRgn(popup,region) : ERROR;
     DWM_WINDOW_CORNER_PREFERENCE corner=DWMWCP_DEFAULT;
-    const bool compositor=regionKind==ERROR && menu.roundedWindow==popup &&
+    const bool compositor=regionKind==ERROR &&
+        std::find(menu.framedWindows.begin(),menu.framedWindows.end(),popup)!=menu.framedWindows.end() &&
         SUCCEEDED(DwmGetWindowAttribute(popup,DWMWA_WINDOW_CORNER_PREFERENCE,&corner,sizeof(corner))) &&
         corner==DWMWCP_ROUND;
     const bool clipped=regionKind==COMPLEXREGION && PtInRegion(region,w/2,h/2) &&
@@ -101,6 +103,45 @@ static bool BF_ProbeFooterRow(const BF_FooterMenu& menu,const RECT& row,const st
     return complete;
 }
 
+// Exercise the buffered first draw without asking USER to repaint the open window.
+// A two-colour backdrop distinguishes screen-positioned glass from a flat fallback.
+static bool BF_ProbeBufferedSubmenu(BF_FooterMenu& menu,HMENU submenu,HWND popup,RECT row) {
+    MENUITEMINFOW item{sizeof(item)};item.fMask=MIIM_DATA|MIIM_ID;
+    if (!GetMenuItemInfoW(submenu,1,TRUE,&item) || !item.dwItemData) return false;
+    RECT client{};POINT origin{};
+    if (!GetClientRect(popup,&client) || !ClientToScreen(popup,&origin)) return false;
+    OffsetRect(&row,-origin.x,-origin.y);
+    if (row.right-row.left<12 || row.bottom-row.top<8 || row.right>client.right || row.bottom>client.bottom) return false;
+    HDC dc=CreateCompatibleDC(nullptr);
+    if (!dc) return false;
+    auto dib=[dc](int w,int h,void** pixels){
+        BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biPlanes=1;
+        info.bmiHeader.biBitCount=32;info.bmiHeader.biWidth=w;info.bmiHeader.biHeight=-h;
+        return CreateDIBSection(dc,&info,DIB_RGB_COLORS,pixels,nullptr,0);
+    };
+    void *source=nullptr,*dest=nullptr;
+    auto backdrop=dib(client.right,1,&source), output=dib(client.right,client.bottom,&dest);
+    bool passed=false;
+    if (backdrop && output && !WindowFromDC(dc) && BF_FindFooterWindow(submenu,dc)==popup) {
+        auto pixels=static_cast<DWORD*>(source);
+        for (int x=0;x<client.right;++x) pixels[x]=x<client.right/2 ? 0x00d03040 : 0x002050e0;
+        auto prior=SelectObject(dc,output);
+        auto oldBackdrop=menu.backdrop;auto oldBounds=menu.backdropBounds;auto oldSize=menu.backdropSize;
+        menu.backdrop=backdrop;menu.backdropBounds=client;OffsetRect(&menu.backdropBounds,origin.x,origin.y);
+        menu.backdropSize={client.right,1};
+        DRAWITEMSTRUCT draw{};draw.CtlType=ODT_MENU;draw.itemID=item.wID;draw.itemAction=ODA_DRAWENTIRE;
+        draw.itemData=item.dwItemData;draw.hwndItem=reinterpret_cast<HWND>(submenu);draw.hDC=dc;draw.rcItem=row;
+        const bool painted=SendMessageW(menu.owner,WM_DRAWITEM,0,reinterpret_cast<LPARAM>(&draw))==TRUE;
+        menu.backdrop=oldBackdrop;menu.backdropBounds=oldBounds;menu.backdropSize=oldSize;
+        const auto left=GetPixel(dc,row.left+5,row.top+2),right=GetPixel(dc,row.right-6,row.top+2);
+        passed=painted && left==RGB(208,48,64) && right==RGB(32,80,224);
+        SelectObject(dc,prior);
+    }
+    if (output) DeleteObject(output);
+    if (backdrop) DeleteObject(backdrop);
+    DeleteDC(dc);return passed;
+}
+
 static void CALLBACK BF_ProbeMenuPointer(HWND,UINT,UINT_PTR,DWORD) {
     auto probe=bf_pointerProbe;
     if (!probe || !bf_activeFooter) return;
@@ -128,7 +169,7 @@ static void CALLBACK BF_ProbeMenuPointer(HWND,UINT,UINT_PTR,DWORD) {
                 probe->palette=BF_ProbeFooterRow(*bf_activeFooter,rect,probe->labels[rows],true,probe->paintDetail);
         }
         valid=valid && hit && probe->labels[rows]==text &&
-            (rows==probe->submenuRow ? item.hSubMenu!=nullptr : item.wID==rows+1);
+            (rows==probe->submenuRow ? item.hSubMenu!=nullptr : item.wID==rows+1+(rows>probe->submenuRow));
         ++rows;
     }
     ++probe->attempts;
@@ -150,10 +191,22 @@ static void CALLBACK BF_ProbeMenuPointer(HWND,UINT,UINT_PTR,DWORD) {
             probe->submenuPosted=PostMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,pos) && PostMessageW(window,WM_LBUTTONUP,0,pos);
         }
         RECT row{};
-        if (!BF_FooterVisibleRow(submenu,0,row)) return;
+        if (!BF_FooterVisibleRow(submenu,1,row)) return;
         POINT child{(row.left+row.right)/2,(row.top+row.bottom)/2};
         auto popup=WindowFromPoint(child);
         if (GetWindowThreadProcessId(popup,&pid)!=GetCurrentThreadId() || pid!=GetCurrentProcessId()) return;
+        // Inspect the already visible popup. PrintWindow and pointer motion
+        // both trigger paint and could conceal a broken first frame.
+        const auto& frames=bf_activeFooter->framedWindows;
+        if (std::find(frames.begin(),frames.end(),popup)==frames.end()) return;
+        DWM_WINDOW_CORNER_PREFERENCE corner=DWMWCP_DEFAULT;
+        const bool compositor=SUCCEEDED(DwmGetWindowAttribute(popup,DWMWA_WINDOW_CORNER_PREFERENCE,&corner,sizeof(corner))) && corner==DWMWCP_ROUND;
+        HRGN region=CreateRectRgn(0,0,0,0);
+        const bool clipped=region && GetWindowRgn(popup,region)==COMPLEXREGION && !PtInRegion(region,0,0);
+        if (region) DeleteObject(region);
+        if (!compositor && !clipped) return;
+        if (!BF_ProbeBufferedSubmenu(*bf_activeFooter,submenu,popup,row)) return;
+        probe->submenuReadyBeforeInput=true;
         const auto childPosition=MAKELPARAM(child.x,child.y);
         probe->sent=PostMessageW(popup,WM_LBUTTONDOWN,MK_LBUTTON,childPosition) && PostMessageW(popup,WM_LBUTTONUP,0,childPosition);
         return;
@@ -165,6 +218,7 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Framew
         HWND island,std::initializer_list<PCWSTR> labels,void (*pump)(),bool privateMenu=false,bool contextMenu=false) {
     BF_FooterPointerProbe probe;
     std::vector<unsigned> invoked(labels.size());
+    unsigned otherFolderHits=0;
     std::vector<Controls::MenuFlyoutItem::Click_revoker> subscriptions;
     for (auto label:labels) {
         auto index=probe.labels.size();
@@ -185,7 +239,10 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Framew
         if (contextMenu && std::wstring_view(label)==L"更多") {
             probe.submenuRow=index;
             Controls::MenuFlyoutSubItem more;
-            more.Text(label);more.Icon(row.Icon());row.Icon(nullptr);row.Text(L"示例位置");
+            more.Text(label);more.Icon(row.Icon());row.Icon(nullptr);row.Text(L"文件夹");
+            Controls::MenuFlyoutItem other;other.Text(L"文件夹");
+            subscriptions.push_back(other.Click(winrt::auto_revoke,[&](auto&&,auto&&){++otherFolderHits;}));
+            more.Items().Append(other);
             more.Items().Append(row);menu.Items().Append(more);
         } else menu.Items().Append(row);
     }
@@ -204,7 +261,7 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Framew
         const bool cancel=target==probe.labels.size();
         probe.target=cancel ? 0 : target;
         probe.cancel=cancel;
-        probe.checked=probe.sent=probe.expired=probe.palette=probe.hoverPosted=probe.submenuPosted=false;
+        probe.checked=probe.sent=probe.expired=probe.palette=probe.hoverPosted=probe.submenuPosted=probe.submenuReadyBeforeInput=false;
         probe.settings.clear();probe.attempts=0;probe.detail.clear();probe.paintDetail.clear();
         auto before=invoked;
         BF_StopFooterRequest();
@@ -237,10 +294,11 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Framew
         }
         for (auto until=GetTickCount64()+250;expected!=invoked && GetTickCount64()<until;Sleep(2)) pump();
         bool passed=previewHidden && sourceVisual.IsVisible() && probe.palette && probe.checked && probe.sent && !probe.expired && expected==invoked &&
+            !otherFolderHits && (cancel || target!=probe.submenuRow || probe.submenuReadyBeforeInput) &&
             probe.settings==(uri ? uri : L"") && !bf_activeFooter;
         trace<<"row="<<(cancel ? "cancel" : winrt::to_string(winrt::hstring(probe.labels[target])))
              <<" whole_menu_hit="<<probe.checked<<" one_surface="<<(probe.source && !probe.source.IsOpen())
-             <<" button_messages="<<probe.sent<<" timeout="<<probe.expired
+             <<" button_messages="<<probe.sent<<" timeout="<<probe.expired<<" submenu_styled_before_input="<<probe.submenuReadyBeforeInput
              <<" source_hidden="<<previewHidden<<" source_restored="<<sourceVisual.IsVisible()<<" menu_colors="<<probe.palette
              <<" settings="<<winrt::to_string(winrt::hstring(probe.settings))<<" passed="<<passed
              <<" observations="<<probe.attempts<<" placement="<<probe.detail<<probe.paintDetail<<"\n";

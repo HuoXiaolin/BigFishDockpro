@@ -118,6 +118,7 @@ OVERFLOW_STYLE = 'tray_overflow_style'
 MENU_STYLE = 'taskbar_menu_style'
 SURFACE_KEYS = (OVERFLOW_STYLE, MENU_STYLE)
 RELOAD_NOTICE = '任务栏美化设置已保存。重新启动 Windows 资源管理器后加载新版任务栏组件。'
+PENDING_FLYOUTS = '尚未确认 Windows 资源管理器加载了任务栏弹窗组件，可点击重新应用。'
 
 
 def effect_key(cfg):
@@ -323,14 +324,16 @@ class XamlTaskbar:
             self.queue_apply()
             return
         state = self.process.state()
+        problem = ''
         if state == QProcess.Running or self.shared:
             pid = self.process.processId() if state == QProcess.Running else None
             if request_refresh(self.program, pid):
-                self.active, self.starting = cfg, None
-                self.rebind = False
-                message = '任务栏组件已连接，已请求应用当前效果。'
-                self.report(cfg, True, message, log=True)
-                return
+                problem = self.applied_status(cfg, '')
+                if problem != PENDING_FLYOUTS:
+                    self.active, self.starting = cfg, None
+                    self.rebind = False
+                    self.report(cfg, not problem, problem or '任务栏组件已连接，已请求应用当前效果。', log=True)
+                    return
         if state == QProcess.NotRunning and self.shared and resident_program() is None:
             self.shared = False
             self.active = None
@@ -341,7 +344,7 @@ class XamlTaskbar:
         if self.refresh_attempt < len(self.REFRESH_DELAYS):
             self.refresh_timer.start(self.REFRESH_DELAYS[self.refresh_attempt])
         else:
-            self.report(cfg, False, '任务栏组件未能连接到任务栏，可点击重新应用。')
+            self.report(cfg, False, problem or '任务栏组件未能连接到任务栏，可点击重新应用。')
 
     def write(self, cfg):
         path = self.directory / 'settings.json'
@@ -386,7 +389,8 @@ class XamlTaskbar:
                 and resident_program() == self.program and self.configuration_matches(cfg))
 
     def confirmed(self, cfg):
-        return self.pending is None and not self.rebind and self.owns_configuration(cfg)
+        return (self.pending is None and not self.rebind and self.owns_configuration(cfg)
+                and not self.applied_status(cfg, ''))
 
     def sync(self, force=False, settings=None):
         if self.closed or not allowed():
@@ -470,13 +474,19 @@ class XamlTaskbar:
         if not self.monitor_shell or self.shell is None or not any(cfg.get(key) for key in SURFACE_KEYS):
             return message
         loaded = explorer_taskbar_library(self.shell[1])
-        if loaded and loaded.parent.parent == self.directory.parent and loaded.parent != self.directory:
+        if loaded is None:
+            return PENDING_FLYOUTS
+        if loaded == self.directory / 'ExplorerTAP.dll':
+            return message
+        if loaded.parent.parent == self.directory.parent:
             return RELOAD_NOTICE
-        return message
+        return 'Windows 资源管理器当前使用其他任务栏组件，可在退出该组件后重新应用。'
 
     def report(self, cfg, success, message, log=False):
         if success:
-            message = self.applied_status(cfg, message)
+            issue = self.applied_status(cfg, '')
+            if issue:
+                success, message = False, issue
         if log or not success or message == RELOAD_NOTICE:
             self.log(message)
         if self.complete is not None:

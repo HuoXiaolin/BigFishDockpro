@@ -11,7 +11,9 @@ from taskbar_xaml import effect_key, effect_settings, taskbar_surfaces_requested
 
 MODES = [('跟随系统', 'system'), ('全透明', 'clear'), ('自定义颜色', 'color'),
          ('亚克力模糊', 'acrylic'), ('玻璃模糊', 'glass')]
-BACKEND_VERSION = '2026.2-tray-menu-windowed'
+BACKEND_VERSION = '2026.2-flyouts-2'
+BACKEND_FILES = ('TranslucentTB.exe', 'ExplorerTAP.dll', 'ExplorerHooks.dll',
+                 'Xaml.dll', 'ProgramLog.dll', 'resources.pri')
 
 
 class AccentPolicy(ctypes.Structure):
@@ -43,14 +45,22 @@ def accent_policy(mode, color, opacity):
     return AccentPolicy(0, 0, 0, 0)
 
 
+def backend_ready(directory):
+    try:
+        return all((directory / name).is_file() and (directory / name).stat().st_size > 0
+                   for name in BACKEND_FILES)
+    except OSError:
+        return False
+
+
 def upgrade_installed_backend(payload, directory):
     # Existing installations already have the Windows UI prerequisites.
     if directory.exists() or not any((directory.with_name(old) / 'TranslucentTB.exe').is_file()
-                                     for old in ('2026.2-tray-menu-input', '2026.2-tray-menu',
+                                     for old in ('2026.2-tray-menu-windowed', '2026.2-tray-menu-input', '2026.2-tray-menu',
                                                  '2026.2-tray', '2026.2-xamlroot', '2026.2')):
         return
     source = payload / 'backend'
-    if not (source / 'ExplorerTAP.dll').is_file():
+    if not backend_ready(source):
         return
     with TemporaryDirectory(prefix='taskbar-update-',dir=directory.parent) as stage:
         copy = Path(stage) / 'backend'
@@ -88,6 +98,7 @@ class TaskbarAppearance:
         self.xaml = None
         self.payload = None
         self.install_process = None
+        self._auto_install_attempted = False
         self.closed=False
         from taskbar_text import TaskbarText
         import dock as api
@@ -120,7 +131,7 @@ class TaskbarAppearance:
     def load_xaml(self):
         if self.xaml is not None:
             return True
-        if not (self.directory / 'TranslucentTB.exe').is_file():
+        if not backend_ready(self.directory):
             return False
         from taskbar_xaml import XamlTaskbar
         self.xaml = XamlTaskbar(self.dock, self.directory, self.log, self.xaml_completed)
@@ -238,6 +249,18 @@ class TaskbarAppearance:
             self.xaml.sync(force=force, settings=settings)
             return not bool(getattr(self, 'error', ''))
         if self.backend is None:
+            needs_backend = self.dock.cfg.get('taskbar_mode', 'system') != 'system' or taskbar_surfaces_requested(self.dock.cfg)
+            if not needs_backend:
+                self._auto_install_attempted = False
+            elif (getattr(self, 'payload', None) and self.install_process is None
+                  and (force or not self._auto_install_attempted)):
+                self._auto_install_attempted = True
+                self.set_status('正在准备任务栏和托盘的离线组件…')
+                def installed(ok, message):
+                    if not ok:
+                        self.set_status(message, message)
+                        self.log(message)
+                self.install_offline(installed)
             return False
         if self.dock.cfg['taskbar_mode'] == 'system':
             self.restore_native()

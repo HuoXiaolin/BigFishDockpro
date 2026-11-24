@@ -84,7 +84,9 @@ struct BF_StartFrame {
     HWND hostWindow = nullptr;
     UINT_PTR revealTimer = 0;
     UINT_PTR boundsTimer = 0;
-    bool preparing = true;
+    ULONGLONG visibleDeadline = 0;
+    Media::Brush styledBackground{nullptr};
+    bool preparing = false;
 };
 
 static thread_local std::optional<BF_StartFrame> bf_startFrame;
@@ -130,6 +132,7 @@ static void BF_RevealStartFrame() {
 }
 
 static LRESULT CALLBACK BF_StartWindowSubclass(HWND window,UINT message,WPARAM wParam,LPARAM lParam,UINT_PTR id,DWORD_PTR);
+static bool BF_StartContentReady(const FrameworkElement& frame);
 
 static void BF_ClearStartFrames() {
     if (!bf_startFrame) return;
@@ -142,12 +145,53 @@ static void BF_ClearStartFrames() {
     bf_start_width = bf_start_height = 0;
 }
 
-static void CALLBACK BF_RevealPreparedStartFrame(HWND, UINT, UINT_PTR, DWORD) {
+static bool BF_StartSurfaceReady(const BF_StartFrame& state) {
+    auto panel=state.panel.get().try_as<Controls::Border>();
+    auto frame=state.frame.get();
+    return state.styledBackground && panel && frame && panel.ActualWidth()>0 && panel.ActualHeight()>0 &&
+        panel.Background()==state.styledBackground && BF_StartContentReady(frame);
+}
+
+static void BF_MarkStartSurfaceStyled(const FrameworkElement& element) {
+    if (bf_startFrame && bf_startFrame->panel.get()==element)
+        bf_startFrame->styledBackground=element.as<Controls::Border>().Background();
+}
+
+static void CALLBACK BF_RevealPreparedStartFrame(HWND, UINT, UINT_PTR timer, DWORD) {
+    if (!bf_startFrame || bf_startFrame->revealTimer!=timer) return;
     try {
-        BF_PublishStartPanel();
-        BF_RevealStartFrame();
+        auto& state=*bf_startFrame;
+        if (BF_StartSurfaceReady(state)) {
+            BF_PublishStartPanel();
+            BF_RevealStartFrame();
+        } else if (!IsWindowVisible(state.hostWindow)) {
+            KillTimer(nullptr,std::exchange(state.revealTimer,0));
+            state.visibleDeadline=0;
+        } else if (!state.visibleDeadline) {
+            state.visibleDeadline=GetTickCount64()+250;
+        } else if (GetTickCount64()>=state.visibleDeadline) {
+            BF_RevealStartFrame();
+        }
     } catch (const winrt::hresult_error& error) {
+        BF_RevealStartFrame();
         Wh_Log(L"Error %08X: Start panel first frame", error.code());
+    }
+}
+
+static void BF_HoldUnstyledStartFrame() {
+    if (!bf_startFrame) return;
+    auto& state=*bf_startFrame;
+    auto frame=state.frame.get();
+    if (!frame || (!state.preparing && BF_StartSurfaceReady(state))) return;
+    if (!state.preparing) {
+        state.originalOpacity=frame.ReadLocalValue(UIElement::OpacityProperty());
+        frame.Opacity(0);
+        state.preparing=true;
+        state.visibleDeadline=0;
+    }
+    if (!state.revealTimer) {
+        state.revealTimer=SetTimer(nullptr,0,16,BF_RevealPreparedStartFrame);
+        if (!state.revealTimer) BF_RevealStartFrame();
     }
 }
 
@@ -161,6 +205,10 @@ static void CALLBACK BF_RecordVisibleStartBounds(HWND,UINT,UINT_PTR timer,DWORD)
 
 static LRESULT CALLBACK BF_StartWindowSubclass(HWND window,UINT message,WPARAM wParam,LPARAM lParam,UINT_PTR id,DWORD_PTR) {
     if (message==WM_NCDESTROY) RemoveWindowSubclass(window,BF_StartWindowSubclass,id);
+    if ((message==WM_SHOWWINDOW && wParam) || (message==WM_WINDOWPOSCHANGING && lParam &&
+            (reinterpret_cast<const WINDOWPOS*>(lParam)->flags & SWP_SHOWWINDOW))) {
+        try { BF_HoldUnstyledStartFrame(); } catch (...) { BF_RevealStartFrame(); }
+    }
     auto result=DefSubclassProc(window,message,wParam,lParam);
     if (auto& state=bf_startFrame;state && (message==WM_WINDOWPOSCHANGED || message==WM_DPICHANGED || (message==WM_SHOWWINDOW && wParam))) {
         if (state->boundsTimer) KillTimer(nullptr,state->boundsTimer);
@@ -179,11 +227,12 @@ static void BF_PrepareStartFrame(const FrameworkElement& frame, const FrameworkE
     state.window = window;
     state.hostWindow=window ? GetAncestor(window,GA_ROOT) : nullptr;
     if (state.hostWindow) SetWindowSubclass(state.hostWindow,BF_StartWindowSubclass,reinterpret_cast<UINT_PTR>(&bf_startFrame),0);
-    state.layout = panel.LayoutUpdated(winrt::auto_revoke, [](auto&&, auto&&) { BF_PublishStartPanel(); });
-    state.originalOpacity = frame.ReadLocalValue(UIElement::OpacityProperty());
-    frame.Opacity(0);
-    state.revealTimer = SetTimer(nullptr, 0, 24, BF_RevealPreparedStartFrame);
-    if (!state.revealTimer) BF_RevealPreparedStartFrame(nullptr, 0, 0, 0);
+    state.layout = panel.LayoutUpdated(winrt::auto_revoke, [](auto&&, auto&&) {
+        BF_PublishStartPanel();
+        if (bf_startFrame && bf_startFrame->preparing && !bf_startFrame->revealTimer)
+            BF_HoldUnstyledStartFrame();
+    });
+    BF_HoldUnstyledStartFrame();
 }
 
 static FrameworkElement BF_StartPanelParent(const FrameworkElement& element) {

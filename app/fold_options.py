@@ -4,25 +4,49 @@ from PyQt5.QtCore import Qt,QPoint,QRect
 from PyQt5.QtGui import QIcon,QPainter,QPalette
 from PyQt5.QtWidgets import QDialog,QVBoxLayout,QFormLayout,QHBoxLayout,QToolButton,QApplication
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,button,label,compact_dialog
+from panel_preferences import FOLD_SIZE_RANGE, CARD_FOLD_SIZE, NOTE_FOLD_SIZE
 
 
 def normalize(value):
     if not isinstance(value,dict):return {}
     style=value.get('style','capsule');ratio=value.get('ratio',70)
-    return {'style':style if style in ('bar','capsule','ball') else 'capsule','ratio':max(1,min(100,ratio)) if type(ratio) is int else 70}
+    result = {'style':style if style in ('bar','capsule','ball') else 'capsule','ratio':max(1,min(100,ratio)) if type(ratio) is int else 70}
+    lower, upper = FOLD_SIZE_RANGE
+    for key in ('diameter', 'height'):
+        size = value.get(key)
+        if type(size) is int:
+            result[key] = max(lower, min(upper, size))
+    return result
+
+
+def panel_defaults(cfg):
+    return {'style': cfg.get('panel_collapse_style', 'ball'), 'ratio': cfg.get('panel_capsule_ratio', 70),
+            'diameter': cfg.get('panel_ball_diameter', CARD_FOLD_SIZE),
+            'height': cfg.get('panel_fold_height', CARD_FOLD_SIZE)}
+
+
+def note_defaults():
+    return {'style': 'bar', 'ratio': 100, 'diameter': NOTE_FOLD_SIZE, 'height': NOTE_FOLD_SIZE}
 
 
 def settings(window):
     if hasattr(window,'model'):
-        cfg=window.dock.cfg;default={'style':cfg['panel_collapse_style'],'ratio':cfg['panel_capsule_ratio']}
+        cfg=window.dock.cfg;default=panel_defaults(cfg)
         row=next((g for g in cfg['merge_groups'] if g['id']==window.manager.group_id(window.identity)),{}) if window.manager.is_merged(window.identity) else window.model
-    else:default={'style':'bar','ratio':100};row=window.row()
-    return normalize(row.get('fold')) or default
+    else:default=note_defaults();row=window.row()
+    return {**default, **normalize(row.get('fold'))}
 
 
-def geometry(expanded,options,height):
+def geometry(expanded,options,height,scale=1.0,default_size=None):
     x,y,w,h=expanded
-    width=w if options['style']=='bar' else height if options['style']=='ball' else max(height,round(w*options['ratio']/100))
+    key = 'diameter' if options['style'] == 'ball' else 'height'
+    size = options.get(key)
+    if size is not None and size != default_size:
+        height = max(1, round(size * scale))
+    if options['style']=='ball':
+        diameter = min(w, height)
+        return [x+round((w-diameter)/2), y, diameter, diameter]
+    width=w if options['style']=='bar' else max(height,round(w*options['ratio']/100))
     width=min(w,width)
     return [x+round((w-width)/2),y,width,height] if options['style']!='bar' else [x,y,width,height]
 
@@ -96,7 +120,7 @@ def note_geometry(window,collapsed):
     options=settings(window);expanded=getattr(window,'_fold_expanded',list(window.geometry().getRect()))
     window.setMinimumSize(1,1);window.setMaximumSize(16777215,16777215)
     if collapsed:
-        target=geometry(expanded,options,max(30,round(42*window.ui_factor)));window._fold_target=tuple(target);window.setFixedSize(target[2],target[3]);window.move(*target[:2]);window._fold_offset=(target[0]-expanded[0],target[1]-expanded[1])
+        target=geometry(expanded,options,max(30,round(NOTE_FOLD_SIZE*window.ui_factor)),window.ui_factor,NOTE_FOLD_SIZE);window._fold_target=tuple(target);window.setFixedSize(target[2],target[3]);window.move(*target[:2]);window._fold_offset=(target[0]-expanded[0],target[1]-expanded[1])
     elif getattr(window,'_fold_was_collapsed',False):window.setGeometry(*expanded)
     else:window._fold_expanded=list(window.geometry().getRect())
     if not collapsed:window.setMinimumSize(max(160,round(230*min(1,window.ui_factor))),max(96,round(150*min(1,window.ui_factor))))
@@ -112,12 +136,37 @@ class FoldOptions(QDialog):
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'收起样式'));form=QFormLayout();body.addLayout(form)
         self.style=ModernComboBox()
         for title,key in [('方条','bar'),('胶囊','capsule'),('圆球','ball')]:self.style.addItem(title,key)
-        self.ratio=ModernSpinBox();self.ratio.setRange(1,100);form.addRow('收起形状',self.style);form.addRow('胶囊宽度（%）',self.ratio)
-        value=settings(owner);self.style.setCurrentIndex(self.style.findData(value['style']));self.ratio.setValue(value['ratio'])
-        self.status=label('只修改当前独立卡片、合并组或便签。胶囊宽度最低为圆球直径。','muted');self.status.setWordWrap(True);body.addWidget(self.status)
+        value=settings(owner)
+        self.style.setCurrentIndex(self.style.findData(value['style']))
+        form.addRow('收起形状',self.style)
+        self.sizes = {key:value[key] for key in ('diameter','height')}
+        self.size_key = None
+        self.size_field = ModernSpinBox()
+        self.size_field.setRange(*FOLD_SIZE_RANGE)
+        self.size_label = label('圆球直径（像素）')
+        form.addRow(self.size_label,self.size_field)
+        self.ratio=ModernSpinBox()
+        self.ratio.setRange(1,100)
+        self.ratio.setValue(value['ratio'])
+        form.addRow('胶囊宽度（%）',self.ratio)
+        self.status=label('设置应用于当前卡片、合并组或便签。','muted');self.status.setWordWrap(True);body.addWidget(self.status)
         row=QHBoxLayout();row.addStretch();row.addWidget(button('关闭',self.reject));row.addWidget(button('保存',self.commit,'primary'));body.addLayout(row);compact_dialog(self)
+        self.style.currentIndexChanged.connect(self.show_size_field)
+        self.show_size_field()
+
+    def show_size_field(self):
+        shape = self.style.currentData()
+        if self.size_key:
+            self.sizes[self.size_key] = self.size_field.value()
+        self.size_key = 'diameter' if shape == 'ball' else 'height'
+        self.size_label.setText('圆球直径（像素）' if shape == 'ball' else '收起栏高度（像素）')
+        self.size_field.setValue(self.sizes[self.size_key])
+        cell = self.ratio.parentWidget()
+        (cell if cell.objectName() == 'SettingsField' else self.ratio).setVisible(shape=='capsule')
+
     def commit(self):
-        owner=self.owner;value={'style':self.style.currentData(),'ratio':self.ratio.value()}
+        self.sizes[self.size_key] = self.size_field.value()
+        owner=self.owner;value={'style':self.style.currentData(),'ratio':self.ratio.value(),**self.sizes}
         if hasattr(owner,'model'):success=owner.manager.update_panel(owner.identity,fold=value)
         else:success=owner.manager.update_and_save(owner.identity,fold=value)
         if success:

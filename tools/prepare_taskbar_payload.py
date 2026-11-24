@@ -9,7 +9,7 @@ CACHE = ROOT / 'artifacts/taskbar-downloads'
 PAYLOAD = ROOT / 'artifacts/taskbar-payload'
 UPSTREAM = 'https://github.com/TranslucentTB/TranslucentTB'
 COMPAT_TAP = ROOT / 'assets/taskbar-compat/ExplorerTAP.dll'
-COMPAT_TAP_SHA256 = '906fe6e7fe67e8a652ffa880a7078ade2137b6a1833fd95aaa4271cb64f5f22a'
+COMPAT_TAP_SHA256 = '1b7ed49e36d544fe5a9a2f2b6bbe810c9e08ec6f4cf90a8d0fca0726f3939019'
 
 
 def fetch(name, url, sha256):

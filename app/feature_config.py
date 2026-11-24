@@ -2,6 +2,7 @@
 import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
+from panel_preferences import FOLD_SIZE_RANGE, CARD_FOLD_SIZE
 
 _SPECTRUM_COLOR_EFFECTS = (
     ('立体彩环', 'crown'), ('渐变彩柱', 'peak_bars'), ('彩色粒子球', 'particle_sphere'),
@@ -60,7 +61,8 @@ DEFAULTS = {
     'panel_face':True, 'panel_face_interactive':True, 'panel_face_mood':'random', 'panel_face_role':'',
     'panel_face_scale':100, 'panel_expand_mode':'hover',
     'panel_face_auto_switch': False,
-    'panel_collapse_style': 'ball', 'panel_capsule_ratio': 70, 'desktop_auto_sort': True,
+    'panel_collapse_style': 'ball', 'panel_capsule_ratio': 70, 'panel_ball_diameter': CARD_FOLD_SIZE,
+    'panel_fold_height': CARD_FOLD_SIZE, 'desktop_auto_sort': True,
     'panel_theme': 'auto', 'panel_color': '', 'theme_color': '', 'dock_highlight': 45,
     'dock_material': 'liquid',
     'clear_background': False,
@@ -127,7 +129,8 @@ def normalize(cfg):
     if result.get('desktop_icon_mode')=='collected':result['desktop_icon_mode']='both'
     for key, lower, upper in [('corner_radius', 0, 120), ('card_snap_distance', 2, 64), ('panel_opacity', 0, 100),
                               ('panel_blur', 0, 30), ('panel_highlight', 0, 100), ('dock_highlight', 0, 100),
-                              ('panel_face_scale',60,130), ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100), ('startup_delay', 0, 300)]:
+            ('panel_face_scale',60,130), ('panel_page_size', 6, 96), ('panel_capsule_ratio', 30, 100),
+            ('panel_ball_diameter', *FOLD_SIZE_RANGE), ('panel_fold_height', *FOLD_SIZE_RANGE), ('startup_delay', 0, 300)]:
         try:
             result[key] = max(lower, min(upper, int(result[key])))
         except (TypeError, ValueError):

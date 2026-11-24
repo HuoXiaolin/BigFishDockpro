@@ -34,7 +34,8 @@ def add_taskbar_flyouts(tap):
     watcher = tap / 'visualtreewatcher.cpp'
     code = watcher.read_text(encoding='utf-8-sig')
     code = replace_once(code, '\t\telse if (type_view == L"Taskbar.TaskbarFrame")',
-                        '\t\telse if (name && bigfish::TrayOverflow::Matches(type_view, std::wstring_view{name.get(), SysStringLen(name.get())}))\n'
+                        '\t\telse if (m_AppearanceService->TrayOverflow.Observe(element.Handle, relation.Parent, type_view, '
+                        'std::wstring_view{name ? name.get() : L"", SysStringLen(name.get())}))\n'
                         '\t\t{\n\t\t\tm_AppearanceService->TrayOverflow.Add(element.Handle, FromHandle<wuxc::Border>(element.Handle));\n\t\t}\n'
                         '\t\telse if (type_view.ends_with(L"MenuFlyoutPresenter"))\n'
                         '\t\t{\n\t\t\tm_AppearanceService->ContextMenus.Add(element.Handle, FromHandle<wuxc::MenuFlyoutPresenter>(element.Handle));\n\t\t}\n'

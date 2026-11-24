@@ -390,6 +390,8 @@ public:
 
 		const auto color = TaskbarMenuInk(style.ink, TaskbarMenuFill(face, SurfaceTint(style.brush)));
 		const wux::Media::SolidColorBrush ink({255, GetRValue(color), GetGValue(color), GetBValue(color)});
+		m_HoverBrush = wux::Media::SolidColorBrush({static_cast<uint8_t>(GetRValue(color) ? 52 : 32),
+			GetRValue(color), GetGValue(color), GetBValue(color)});
 		const auto corners = winrt::box_value(wux::CornerRadius{12, 12, 12, 12});
 		m_Corners.Set(m_Menu, wuxc::Control::CornerRadiusProperty(), corners);
 		m_Foreground.Set(m_Menu, wuxc::Control::ForegroundProperty(), ink);
@@ -451,8 +453,54 @@ private:
 		return -1;
 	}
 
+	void SetHover(int index)
+	{
+		if (index >= 0 && !m_Rows[index].IsEnabled()) index = -1;
+		if (m_Hovered == index) return;
+		m_HoverSurface.Restore();
+		m_HoverRow.Restore();
+		m_Hovered = index;
+		if (index < 0) return;
+		const auto& row = m_Rows[index];
+		m_HoverRow.Set(row, wuxc::Control::BackgroundProperty(), m_HoverBrush);
+		if (!wux::Media::VisualTreeHelper::GetChildrenCount(row)) return;
+		const auto surface = wux::Media::VisualTreeHelper::GetChild(row, 0);
+		if (const auto panel = surface.try_as<wuxc::Panel>())
+			m_HoverSurface.Set(panel, wuxc::Panel::BackgroundProperty(), m_HoverBrush);
+		else if (const auto border = surface.try_as<wuxc::Border>())
+			m_HoverSurface.Set(border, wuxc::Border::BackgroundProperty(), m_HoverBrush);
+	}
+
 	bool HandleInput(HWND window, UINT message, WPARAM wparam, LPARAM position)
 	{
+		if (message == WM_MOUSEMOVE || message == WM_POINTERUPDATE)
+		{
+			POINT point{GET_X_LPARAM(position), GET_Y_LPARAM(position)};
+			if (message == WM_MOUSEMOVE)
+			{
+				if (!ClientToScreen(window, &point)) return false;
+				if (m_Tracking != window)
+				{
+					TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0};
+					if (TrackMouseEvent(&tracking)) m_Tracking = window;
+				}
+			}
+			SetHover(RowAt(point));
+			return false;
+		}
+		if (message == WM_MOUSELEAVE || message == WM_POINTERLEAVE)
+		{
+			if (message == WM_MOUSELEAVE && window != m_Tracking) return false;
+			m_Tracking = nullptr;
+			POINT point{};
+			if (GetCursorPos(&point))
+			{
+				const HWND next = WindowFromPoint(point);
+				if (next != window && (next == m_Window || IsChild(m_Window, next))) return false;
+			}
+			SetHover(-1);
+			return false;
+		}
 		if (message == WM_CANCELMODE || message == WM_CAPTURECHANGED) { m_Pressed = -1; return false; }
 		const bool down = message == WM_LBUTTONDOWN || message == WM_POINTERDOWN;
 		if (!down && message != WM_LBUTTONUP && message != WM_POINTERUP) return false;
@@ -511,6 +559,10 @@ private:
 	std::array<RECT, 2> m_HitAreas{};
 	std::vector<HWND> m_Attached;
 	int m_Pressed = -1;
+	int m_Hovered = -1;
+	HWND m_Tracking = nullptr;
+	wux::Media::SolidColorBrush m_HoverBrush{nullptr};
+	MenuValue m_HoverSurface, m_HoverRow;
 	MenuValue m_Corners, m_BorderCorners, m_Foreground, m_Background, m_Edge;
 	std::array<MenuValue, 2> m_RowInk, m_IconInk;
 };
@@ -538,7 +590,7 @@ public:
 			(SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
 				(contrast.dwFlags & HCF_HIGHCONTRASTON))) return;
 		if (const auto rows = TaskbarMenuRows(menu); rows[0] && rows[1]) Mask(menu);
-		m_Deadline = GetTickCount64() + 200;
+		m_Deadline = GetTickCount64() + 750;
 		m_Timer = wux::DispatcherTimer();
 		m_Timer.Interval(std::chrono::milliseconds(16));
 		m_Timer.Tick([weak = weak_from_this()](auto&&, auto&&) noexcept
@@ -591,13 +643,17 @@ private:
 	{
 		const auto menu = m_Menu.get();
 		const auto now = GetTickCount64();
-		if (!m_Timer || !menu || !menu.IsLoaded() || m_Session->tracking || now >= m_Deadline)
+		if (!m_Timer || !menu || !menu.IsLoaded() || m_Session->tracking)
 		{
 			Cancel();
 			return;
 		}
 		const auto rows = TaskbarMenuRows(menu);
-		if (!rows[0] || !rows[1]) return;
+		if (!rows[0] || !rows[1])
+		{
+			if (now >= m_Deadline) Cancel();
+			return;
+		}
 		Mask(menu);
 		// Allow the hidden XAML surface to leave the composed frame before sampling its rectangle.
 		if (now < m_MaskedAt + 24) return;
@@ -619,7 +675,11 @@ private:
 			}
 		}
 		const auto popup = TaskbarMenuPopup(menu);
-		if (!popup || IsRectEmpty(&bounds)) return;
+		if (!popup || IsRectEmpty(&bounds))
+		{
+			if (now >= m_Deadline) Cancel();
+			return;
+		}
 		const auto owner = TaskbarMenuOwner(bounds);
 		TaskbarNativeMenu native;
 		if (!owner || !PopulateTaskbarMenu(native, menu))

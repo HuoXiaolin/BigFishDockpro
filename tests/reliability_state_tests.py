@@ -129,6 +129,21 @@ def check_taskbar_retries():
     component.dock = dock
     component.text = Mock()
     component.error = ''
+    component.xaml = component.backend = component.install_process = None
+    component.payload = Path('offline-test-payload')
+    component._auto_install_attempted = False
+    with patch.object(component, 'install_offline') as setup:
+        dock.cfg['taskbar_mode'] = 'system'
+        component.sync()
+        setup.assert_not_called()
+        dock.cfg.update(shell_notifications_enabled=True, shell_notifications_tray_overflow=True,
+                        shell_notifications_taskbar_menu=False)
+        component.sync()
+        component.sync()
+        setup.assert_called_once()
+        component.retry()
+        assert setup.call_count == 2
+        dock.cfg.update(taskbar_mode='clear', shell_notifications_enabled=False)
     backend = XamlTaskbar(dock, Path(tempfile.gettempdir())/'bfp-fake-taskbar', Mock(), component.xaml_completed)
     component.xaml = component.backend = backend
     state = [QProcess.NotRunning]
@@ -278,7 +293,7 @@ def check_taskbar_shell_recovery(checks):
 
 def check_taskbar_effect_status(runtime, checks):
     from taskbar_appearance import TaskbarAppearance
-    from taskbar_xaml import RELOAD_NOTICE, XamlTaskbar, effect_key, effect_settings
+    from taskbar_xaml import PENDING_FLYOUTS, RELOAD_NOTICE, XamlTaskbar, effect_key, effect_settings
     from dock_extras import DockQuickSettings
 
     dock = runtime.dock
@@ -388,6 +403,8 @@ def check_taskbar_effect_status(runtime, checks):
                         loaded.assert_called_once_with(42)
                         loaded.return_value = Path(directory) / 'ExplorerTAP.dll'
                         assert backend.applied_status(style, 'ready') == 'ready'
+                        loaded.return_value = None
+                        assert backend.applied_status(style, 'ready') == PENDING_FLYOUTS
                     content = path.read_text(encoding='ascii')
                     assert content.count('Brush=3\nTint=544d92bf\nAmount=1600\n') == 2
                     assert '[TaskbarMenu]' in content and 'Ink=2\n' in content

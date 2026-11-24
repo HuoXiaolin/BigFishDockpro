@@ -3,8 +3,10 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <xamlOM.h>
 #include "XamlBlurBrush.h"
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
@@ -39,9 +41,10 @@ inline std::optional<OverflowStyle> ReadOverflowStyle(const std::wstring& path, 
 	const auto mode = GetPrivateProfileIntW(section, L"Brush", 0, path.c_str());
 	const auto pid = GetPrivateProfileIntW(section, L"OwnerPid", 0, path.c_str());
 	if (mode < 1 || mode > 3 || !pid) return std::nullopt;
-	const wil::unique_process_handle owner(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid));
+	const wil::unique_process_handle owner(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
 	FILETIME created{}, exit{}, kernel{}, user{};
-	if (!owner || WaitForSingleObject(owner.get(), 0) != WAIT_TIMEOUT ||
+	DWORD exitCode = 0;
+	if (!owner || !GetExitCodeProcess(owner.get(), &exitCode) || exitCode != STILL_ACTIVE ||
 		!GetProcessTimes(owner.get(), &created, &exit, &kernel, &user)) return std::nullopt;
 	wchar_t text[32]{};
 	GetPrivateProfileStringW(section, L"OwnerStarted", L"", text, ARRAYSIZE(text), path.c_str());
@@ -87,7 +90,7 @@ inline wux::Media::Brush MakeSurfaceBrush(const wux::UIElement& target, const Ov
 	return wux::Media::SolidColorBrush(tint);
 }
 
-class OverflowSurface
+class OverflowSurface : public std::enable_shared_from_this<OverflowSurface>
 {
 public:
 	explicit OverflowSurface(const wuxc::Border& border) : m_Border(winrt::make_weak(border)) {}
@@ -96,6 +99,14 @@ public:
 	{
 		const auto border = m_Border.get();
 		if (!border || !border.Dispatcher().HasThreadAccess()) return;
+		if (style && border.Name() != L"OverflowFlyoutBackgroundBorder")
+		{
+			const auto parent = wux::Media::VisualTreeHelper::GetParent(border).try_as<wuxc::Grid>();
+			if (!parent || parent.Name() != L"OverflowRootGrid" || !parent.Children().Size() ||
+				parent.Children().GetAt(0) != border) return;
+		}
+		m_Updating = true;
+		const auto finished = wil::scope_exit([this] { m_Updating = false; });
 		const auto current = border.Background();
 		const auto property = wuxc::Border::BackgroundProperty();
 		const bool owned = m_Applied && current == m_Applied;
@@ -129,11 +140,34 @@ public:
 	catch (...) {}
 
 	winrt::event_token loaded{};
+	std::optional<int64_t> backgroundChanged;
+
+	void ShellBackgroundChanged() noexcept try
+	{
+		const auto border = m_Border.get();
+		if (m_Updating || m_Queued || !m_Style || !border || border.Background() == m_Applied) return;
+		m_Queued = true;
+		border.Dispatcher().RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,
+			[weak = weak_from_this()]() noexcept
+			{
+				if (const auto self = weak.lock())
+				{
+					self->m_Queued = false;
+					const auto style = self->m_Style;
+					if (style) self->Apply(style);
+				}
+			});
+	}
+	catch (...) { m_Queued = false; }
 
 	void Detach() noexcept try
 	{
+		if (const auto border = m_Border.get())
+		{
+			border.Loaded(loaded);
+			if (backgroundChanged) border.UnregisterPropertyChangedCallback(wuxc::Border::BackgroundProperty(), *backgroundChanged);
+		}
 		Apply(std::nullopt);
-		if (const auto border = m_Border.get()) border.Loaded(loaded);
 	}
 	catch (...) {}
 
@@ -142,6 +176,7 @@ private:
 	wf::IInspectable m_Local{nullptr};
 	wux::Media::Brush m_Original{nullptr}, m_Applied{nullptr};
 	std::optional<OverflowStyle> m_Style;
+	bool m_Updating = false, m_Queued = false;
 };
 
 class TrayOverflow
@@ -149,14 +184,17 @@ class TrayOverflow
 public:
 	explicit TrayOverflow(std::wstring path = OverflowSettingsPath()) : m_Path(std::move(path)) {}
 
-	static bool Matches(std::wstring_view type, std::wstring_view name)
+	bool Observe(InstanceHandle handle, InstanceHandle parent, std::wstring_view type, std::wstring_view name)
 	{
-		return type == winrt::name_of<wuxc::Border>() && name == L"OverflowFlyoutBackgroundBorder";
+		if (type == winrt::name_of<wuxc::Grid>() && name == L"OverflowRootGrid")
+			m_Roots.insert(handle);
+		return type == winrt::name_of<wuxc::Border>() && (name == L"OverflowFlyoutBackgroundBorder" ||
+			(m_Roots.contains(parent) && (name.empty() || name == L"BackgroundBorder")));
 	}
 
 	void Add(InstanceHandle handle, const wuxc::Border& border) noexcept try
 	{
-		if (m_Surfaces.contains(handle) || !border || border.Name() != L"OverflowFlyoutBackgroundBorder") return;
+		if (m_Surfaces.contains(handle) || !border) return;
 		auto surface = std::make_shared<OverflowSurface>(border);
 		const auto path = m_Path;
 		surface->loaded = border.Loaded([weak = std::weak_ptr(surface), path](auto&&, auto&&) noexcept
@@ -167,13 +205,21 @@ public:
 			}
 			catch (...) {}
 		});
+		surface->backgroundChanged = border.RegisterPropertyChangedCallback(wuxc::Border::BackgroundProperty(),
+			[weak = std::weak_ptr(surface)](auto&&, auto&&) noexcept
+			{
+				if (const auto current = weak.lock()) current->ShellBackgroundChanged();
+			});
 		m_Surfaces.emplace(handle, surface);
-		if (border.IsLoaded()) surface->Apply(ReadOverflowStyle(path));
+		// Explorer can build and keep the overflow tree hidden until the first open.
+		// Its background can already be set while Loaded is still pending.
+		surface->Apply(ReadOverflowStyle(path));
 	}
 	catch (...) {}
 
 	void Remove(InstanceHandle handle) noexcept
 	{
+		m_Roots.erase(handle);
 		const auto found = m_Surfaces.find(handle);
 		if (found == m_Surfaces.end()) return;
 		auto surface = std::move(found->second);
@@ -201,6 +247,7 @@ public:
 
 private:
 	const std::wstring m_Path;
+	std::unordered_set<InstanceHandle> m_Roots;
 	std::unordered_map<InstanceHandle, std::shared_ptr<OverflowSurface>> m_Surfaces;
 };
 }

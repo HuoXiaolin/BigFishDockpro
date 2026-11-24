@@ -265,18 +265,20 @@ def run(api,runtime,app,output,checks):
         checks.append('Resource preferences: the first page exposes the default expanded page and desktop pass-through, and the taskbar page saves its separate pass-through choice.')
         from pathlib import Path
         from tempfile import TemporaryDirectory
-        from taskbar_appearance import BACKEND_VERSION, upgrade_installed_backend
+        from taskbar_appearance import BACKEND_FILES, BACKEND_VERSION, backend_ready, upgrade_installed_backend
         with TemporaryDirectory(dir=output) as directory:
-            root=Path(directory);legacy=root/'2026.2-tray';legacy.mkdir()
+            root=Path(directory);legacy=root/'2026.2-tray-menu-windowed';legacy.mkdir()
             (legacy/'TranslucentTB.exe').write_bytes(b'installed worker')
             payload=root/'payload';backend=payload/'backend';backend.mkdir(parents=True)
-            (backend/'TranslucentTB.exe').write_bytes(b'packaged worker')
-            (backend/'ExplorerTAP.dll').write_bytes(b'patched helper')
+            for name in BACKEND_FILES:
+                (backend/name).write_bytes(name.encode())
             upgraded=root/BACKEND_VERSION
             upgrade_installed_backend(payload,upgraded)
             upgrade_installed_backend(payload,upgraded)
             assert (legacy/'TranslucentTB.exe').read_bytes()==b'installed worker'
-            assert (upgraded/'ExplorerTAP.dll').read_bytes()==b'patched helper'
+            assert backend_ready(upgraded) and (upgraded/'ExplorerTAP.dll').read_bytes()==b'ExplorerTAP.dll'
+            (upgraded/'Xaml.dll').write_bytes(b'')
+            assert not backend_ready(upgraded)
             assert list(root.glob('taskbar-update-*'))==[]
         checks.append('Taskbar backend upgrade stages the compatible helper alongside an existing worker without overwriting its files.')
     finally:

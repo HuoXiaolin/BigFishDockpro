@@ -687,6 +687,8 @@
   "panel_expand_mode": "hover",
   "panel_collapse_style": "bar",
   "panel_capsule_ratio": 50,
+  "panel_ball_diameter": 44,
+  "panel_fold_height": 44,
   "desktop_auto_sort": true,
   "panel_theme": "light",
   "panel_color": "#d3e4f8",

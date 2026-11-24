@@ -2,7 +2,7 @@
 import copy
 import uuid
 from screen_layout import normalize_layout,valid_record
-from fold_options import normalize as normalize_fold
+from fold_options import normalize as normalize_fold, panel_defaults, note_defaults
 from resource_options import DEFAULTS as RESOURCE_DEFAULTS, normalize as normalize_resources
 TOP=('dock_visible','panels_visible','panel_enabled','notes_enabled','notes_visible','clock_enabled','calendar_enabled','spectrum_enabled','merged_panels',
      'merged_active','merged_geometry','merged_collapsed','merged_compact','position','custom_bottom','bottom_margin','icon_size','dock_page','disabled_categories')
@@ -36,17 +36,17 @@ VALUE_FIELDS=(*TOP,*SWITCHES,*CHOICES,*RESOURCE_FIELDS)
 
 
 def snapshot(cfg):
-    fold={'style':cfg.get('panel_collapse_style','ball'),'ratio':cfg.get('panel_capsule_ratio',70)}
+    fold=panel_defaults(cfg)
     panels={p['id']:dict(enabled=True,merged=True,merge_group='default',collapsed=False,compact=True) for p in cfg.get('desktop_panels',[])}
     for row in cfg.get('desktop_panels',[]):
         panels[row['id']].update({k:copy.deepcopy(row[k]) for k in PANEL if k in row})
-        panels[row['id']]['fold']=normalize_fold(row.get('fold')) or copy.deepcopy(fold)
+        panels[row['id']]['fold']={**fold, **normalize_fold(row.get('fold'))}
     notes={p['id']:dict(visible=True,collapsed=False) for p in cfg.get('sticky_notes',[])}
     for row in cfg.get('sticky_notes',[]):
         notes[row['id']].update({k:copy.deepcopy(row[k]) for k in NOTE if k in row})
-        notes[row['id']]['fold']=normalize_fold(row.get('fold')) or {'style':'bar','ratio':100}
+        notes[row['id']]['fold']={**note_defaults(), **normalize_fold(row.get('fold'))}
     groups=copy.deepcopy(cfg.get('merge_groups',[]))
-    for group in groups:group['fold']=normalize_fold(group.get('fold')) or copy.deepcopy(fold)
+    for group in groups:group['fold']={**fold, **normalize_fold(group.get('fold'))}
     return {'version':2,'values':{k:copy.deepcopy(cfg[k]) for k in VALUE_FIELDS if k in cfg},
             'display_layout':copy.deepcopy(cfg.get('display_layout',{})),
             **{key:copy.deepcopy(cfg[key]) for key in RECORDS if key in cfg},

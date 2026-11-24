@@ -38,10 +38,11 @@ Name: "taskbar"; Description: "安装 Windows 11 任务栏效果组件（离线�
 [Files]
 Source: "..\dist\BigFishDockpro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-Source: "..\artifacts\taskbar-payload\backend\*"; DestDir: "{localappdata}\BigFishDock\TaskbarBackend\2026.2-tray-menu-windowed"; Tasks: taskbar; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\artifacts\taskbar-payload\VCLibs-x64.appx"; Flags: dontcopy
-Source: "..\artifacts\taskbar-payload\WinUI-x64.appx"; Flags: dontcopy
-Source: "install_taskbar_frameworks.ps1"; Flags: dontcopy
+Source: "..\artifacts\taskbar-payload\backend\*"; DestDir: "{localappdata}\BigFishDock\TaskbarBackend\2026.2-flyouts-2"; Tasks: taskbar; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\artifacts\taskbar-payload\backend\*"; DestDir: "{app}\_internal\taskbar-payload\backend"; Check: SupportsTaskbarComponent; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\artifacts\taskbar-payload\VCLibs-x64.appx"; DestDir: "{app}\_internal\taskbar-payload"; Check: SupportsTaskbarComponent; Flags: ignoreversion
+Source: "..\artifacts\taskbar-payload\WinUI-x64.appx"; DestDir: "{app}\_internal\taskbar-payload"; Check: SupportsTaskbarComponent; Flags: ignoreversion
+Source: "install_taskbar_frameworks.ps1"; DestDir: "{app}\_internal\taskbar-payload"; Check: SupportsTaskbarComponent; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\大肥鱼Dock"; Filename: "{app}\BigFishDockpro.exe"
