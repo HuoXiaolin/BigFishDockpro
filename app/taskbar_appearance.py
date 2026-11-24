@@ -11,7 +11,7 @@ from taskbar_xaml import effect_key, effect_settings, taskbar_surfaces_requested
 
 MODES = [('跟随系统', 'system'), ('全透明', 'clear'), ('自定义颜色', 'color'),
          ('亚克力模糊', 'acrylic'), ('玻璃模糊', 'glass')]
-BACKEND_VERSION = '2026.2-tray-menu'
+BACKEND_VERSION = '2026.2-tray-menu-windowed'
 
 
 class AccentPolicy(ctypes.Structure):
@@ -46,7 +46,8 @@ def accent_policy(mode, color, opacity):
 def upgrade_installed_backend(payload, directory):
     # Existing installations already have the Windows UI prerequisites.
     if directory.exists() or not any((directory.with_name(old) / 'TranslucentTB.exe').is_file()
-                                     for old in ('2026.2-tray', '2026.2-xamlroot', '2026.2')):
+                                     for old in ('2026.2-tray-menu-input', '2026.2-tray-menu',
+                                                 '2026.2-tray', '2026.2-xamlroot', '2026.2')):
         return
     source = payload / 'backend'
     if not (source / 'ExplorerTAP.dll').is_file():

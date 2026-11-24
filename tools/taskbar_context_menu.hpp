@@ -2,11 +2,16 @@
 #include "taskbar_overflow.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <shlwapi.h>
+#include <windowsx.h>
+#include "start_footer_paint.h"
 #include "undefgetcurrenttime.h"
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.Xaml.Automation.Peers.h>
+#include <winrt/Windows.UI.Xaml.Automation.Provider.h>
+#include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 #include "redefgetcurrenttime.h"
 
 namespace bigfish
@@ -81,65 +86,199 @@ inline std::array<wuxc::MenuFlyoutItem, 2> TaskbarMenuRows(const wuxc::MenuFlyou
 	return rows;
 }
 
-inline double TaskbarMenuLuminance(winrt::Windows::UI::Color tint, COLORREF backdrop) noexcept
+inline COLORREF TaskbarMenuComposite(winrt::Windows::UI::Color tint, COLORREF background) noexcept
 {
-	const auto linear = [](double value) {
+	const auto channel = [a = unsigned(tint.A)](unsigned color, unsigned behind) {
+		return (color * a + behind * (255 - a) + 127) / 255;
+	};
+	return RGB(channel(tint.R, GetRValue(background)), channel(tint.G, GetGValue(background)),
+		channel(tint.B, GetBValue(background)));
+}
+
+inline double TaskbarMenuLuminance(COLORREF color) noexcept
+{
+	const auto linear = [](unsigned channel) {
+		const double value = channel / 255.0;
 		return value <= .04045 ? value / 12.92 : std::pow((value + .055) / 1.055, 2.4);
 	};
-	const auto channel = [&](unsigned color, unsigned behind) {
-		const double alpha = tint.A / 255.0;
-		return linear((color * alpha + behind * (1 - alpha)) / 255.0);
-	};
-	return .2126 * channel(tint.R, GetRValue(backdrop)) + .7152 * channel(tint.G, GetGValue(backdrop)) +
-		.0722 * channel(tint.B, GetBValue(backdrop));
+	return .2126 * linear(GetRValue(color)) + .7152 * linear(GetGValue(color)) +
+		.0722 * linear(GetBValue(color));
 }
 
-inline bool TaskbarMenuDark(const wuxc::MenuFlyoutPresenter& menu, winrt::Windows::UI::Color tint)
+inline COLORREF TaskbarMenuInk(unsigned mode, COLORREF fill) noexcept
 {
-	const auto luminance = [&]() noexcept {
-		return TaskbarMenuLuminance({255, tint.R, tint.G, tint.B}, 0);
-	};
-	constexpr double threshold = .1791287847; // Equal contrast for black and white.
-	if (tint.A == 255) return luminance() < threshold;
-	const wux::Automation::Peers::FrameworkElementAutomationPeer peer(menu);
-	const auto face = peer.GetBoundingRectangle();
-	if (face.Width < 20 || face.Height < 20) return luminance() < threshold;
-	const RECT bounds{std::lround(face.X), std::lround(face.Y), std::lround(face.X + face.Width),
-		std::lround(face.Y + face.Height)};
-	MONITORINFO monitor{sizeof(monitor)};
-	if (!GetMonitorInfoW(MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL), &monitor))
-		return luminance() < threshold;
-	std::array<double, 12> samples{};
+	// At this luminance white and black have equal contrast.
+	const bool white = mode == 2 || (mode == 0 && TaskbarMenuLuminance(fill) < .1791287847);
+	return white ? RGB(255, 255, 255) : RGB(0, 0, 0);
+}
+
+inline COLORREF TaskbarMenuFill(const RECT& bounds, winrt::Windows::UI::Color tint) noexcept
+{
+	const auto fallback = RGB(tint.R, tint.G, tint.B);
+	if (tint.A == 255) return fallback;
+	MONITORINFO display{sizeof(display)};
+	if (!GetMonitorInfoW(MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL), &display)) return fallback;
+	RECT sample{};
+	if (!IntersectRect(&sample, &bounds, &display.rcMonitor)) return fallback;
+	std::array<std::pair<double, COLORREF>, 25> colors{};
 	size_t count = 0;
-	if (const HDC dc = GetDC(nullptr))
+	if (const auto dc = GetDC(nullptr))
 	{
-		const auto add = [&](LONG x, LONG y) {
-			if (!PtInRect(&monitor.rcWork, {x, y})) return;
-			const auto pixel = GetPixel(dc, x, y);
-			if (pixel != CLR_INVALID) samples[count++] = TaskbarMenuLuminance(tint, pixel);
-		};
-		// Read just outside the flyout so its own foreground and fill are absent.
-		for (LONG fraction = 1; fraction <= 3; ++fraction)
-		{
-			const auto x = bounds.left + (bounds.right - bounds.left) * fraction / 4;
-			const auto y = bounds.top + (bounds.bottom - bounds.top) * fraction / 4;
-			add(x, bounds.top - 4);
-			add(x, bounds.bottom + 4);
-			add(bounds.left - 4, y);
-			add(bounds.right + 4, y);
-		}
+		for (int row = 1; row <= 5; ++row)
+			for (int col = 1; col <= 5; ++col)
+			{
+				const auto x = sample.left + (sample.right - sample.left) * col / 6;
+				const auto y = sample.top + (sample.bottom - sample.top) * row / 6;
+				const auto pixel = GetPixel(dc, x, y);
+				if (pixel == CLR_INVALID) continue;
+				const auto fill = TaskbarMenuComposite(tint, pixel);
+				colors[count++] = {TaskbarMenuLuminance(fill), fill};
+			}
 		ReleaseDC(nullptr, dc);
 	}
-	if (!count) return luminance() < threshold;
-	const auto middle = samples.begin() + count / 2;
-	std::nth_element(samples.begin(), middle, samples.begin() + count);
-	return *middle < threshold;
+	if (!count) return fallback;
+	const auto middle = colors.begin() + count / 2;
+	std::nth_element(colors.begin(), middle, colors.begin() + count);
+	return middle->second;
 }
 
-// Retain native/theme values so disabled styling restores this same popup instance.
+inline HWND TaskbarMenuOwner(const RECT& bounds) noexcept
+{
+	struct Search { HMONITOR monitor; HWND window; };
+	Search search{MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL), nullptr};
+	if (!search.monitor) return nullptr;
+	EnumThreadWindows(GetCurrentThreadId(), [](HWND hwnd, LPARAM data) -> BOOL
+	{
+		auto& search = *reinterpret_cast<Search*>(data);
+		wchar_t name[32]{};
+		if (!IsWindowVisible(hwnd) || MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) != search.monitor ||
+			!GetClassNameW(hwnd, name, ARRAYSIZE(name))) return TRUE;
+		if (std::wstring_view(name) != L"Shell_TrayWnd" && std::wstring_view(name) != L"Shell_SecondaryTrayWnd")
+			return TRUE;
+		search.window = hwnd;
+		return FALSE;
+	}, reinterpret_cast<LPARAM>(&search));
+	return search.window;
+}
+
+inline wuxc::Primitives::Popup TaskbarMenuPopup(const wuxc::MenuFlyoutPresenter& menu)
+{
+	const auto root = menu.XamlRoot();
+	if (!root) return nullptr;
+	for (const auto& popup : wux::Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(root))
+	{
+		const auto content = popup.Child();
+		for (wux::DependencyObject element = menu; element; element = wux::Media::VisualTreeHelper::GetParent(element))
+			if (popup.IsOpen() && element == content) return popup;
+	}
+	return nullptr;
+}
+
+inline RECT TaskbarPresenterBounds(const wuxc::MenuFlyoutPresenter& menu) noexcept try
+{
+	const wux::Automation::Peers::FrameworkElementAutomationPeer peer(menu);
+	const auto face = peer.GetBoundingRectangle();
+	return {std::lround(face.X), std::lround(face.Y), std::lround(face.X + face.Width),
+		std::lround(face.Y + face.Height)};
+}
+catch (...) { return {}; }
+
+inline BF_FooterGlyph TaskbarMenuGlyph(const wuxc::MenuFlyoutItem& row, int command)
+{
+	if (const auto icon = row.Icon())
+	{
+		if (const auto font = icon.try_as<wuxc::FontIcon>(); font && font.FontFamily() && !font.Glyph().empty())
+			return {font.Glyph(), font.FontFamily().Source()};
+		if (const auto symbol = icon.try_as<wuxc::SymbolIcon>())
+			return {winrt::hstring(std::wstring(1, static_cast<wchar_t>(symbol.Symbol()))), L"Segoe MDL2 Assets"};
+	}
+	return {command == 0 ? L"\uE9D9" : L"\uE713", L"Segoe Fluent Icons"};
+}
+
+using TaskbarInvoke = wux::Automation::Provider::IInvokeProvider;
+struct TaskbarNativeMenu : BF_NativePopup
+{
+	std::array<TaskbarInvoke, 2> actions{nullptr, nullptr};
+};
+
+inline bool PopulateTaskbarMenu(TaskbarNativeMenu& native, const wuxc::MenuFlyoutPresenter& source)
+{
+	if (!native.handle) return false;
+	for (const auto& entry : source.Items())
+	{
+		const auto position = static_cast<UINT>(native.rows.size());
+		if (entry.try_as<wuxc::MenuFlyoutSeparator>())
+		{
+			if (!AppendMenuW(native.handle, MF_SEPARATOR, 0, nullptr)) return false;
+			native.rows.push_back({native.handle, position, {}, {}, true});
+			continue;
+		}
+		const auto row = entry.try_as<wuxc::MenuFlyoutItem>();
+		const auto command = row ? TaskbarMenuCommand(row.Text()) : -1;
+		if (command < 0 || row.Visibility() != wux::Visibility::Visible) return false;
+		const bool enabled = row.IsEnabled();
+		if (enabled)
+		{
+			const wux::Automation::Peers::MenuFlyoutItemAutomationPeer peer(row);
+			native.actions[command] = peer.try_as<TaskbarInvoke>();
+			if (!native.actions[command]) return false;
+		}
+		std::wstring label(row.Text());
+		for (size_t i = 0; (i = label.find(L'&', i)) != std::wstring::npos; i += 2) label.insert(i, 1, L'&');
+		if (!AppendMenuW(native.handle, MF_STRING | (enabled ? MF_ENABLED : MF_GRAYED), command + 1, label.c_str()))
+			return false;
+		native.rows.push_back({native.handle, position, std::wstring(row.Text()), TaskbarMenuGlyph(row, command)});
+	}
+	return true;
+}
+
+// Withhold the XAML presenter while keeping it available for layout and command discovery.
+class TaskbarMenuPreview
+{
+public:
+	explicit TaskbarMenuPreview(const wuxc::MenuFlyoutPresenter& menu) :
+		m_Menu(winrt::make_weak(menu)), m_Visual(wuxh::ElementCompositionPreview::GetElementVisual(menu)),
+		m_Local(menu.ReadLocalValue(wux::UIElement::OpacityProperty())), m_Opacity(menu.Opacity()),
+		m_Visible(m_Visual.IsVisible()) {}
+
+	void Mask()
+	{
+		if (const auto menu = m_Menu.get()) menu.Opacity(0);
+		m_Visual.IsVisible(false);
+	}
+
+	~TaskbarMenuPreview()
+	{
+		try
+		{
+			if (const auto menu = m_Menu.get(); menu && menu.Opacity() == 0)
+			{
+				const auto property = wux::UIElement::OpacityProperty();
+				try
+				{
+					if (m_Local == wux::DependencyProperty::UnsetValue()) menu.ClearValue(property);
+					else menu.SetValue(property, m_Local);
+				}
+				catch (const winrt::hresult_error&) { menu.Opacity(m_Opacity); }
+			}
+			m_Visual.IsVisible(m_Visible);
+		}
+		catch (...) {}
+	}
+
+private:
+	winrt::weak_ref<wuxc::MenuFlyoutPresenter> m_Menu;
+	winrt::Windows::UI::Composition::Visual m_Visual;
+	wf::IInspectable m_Local;
+	double m_Opacity;
+	bool m_Visible;
+};
+
 class MenuValue
 {
 public:
+	~MenuValue() { Restore(); }
+
 	void Set(const wux::DependencyObject& target, const wux::DependencyProperty& property, const wf::IInspectable& value)
 	{
 		if (m_Target.get() != target || m_Property != property)
@@ -179,38 +318,85 @@ private:
 	wf::IInspectable m_Local{nullptr}, m_Original{nullptr};
 };
 
-class TaskbarMenuSurface
+// A windowed taskbar flyout can paint in the correct place while its XAML
+// input site ignores clicks. Keep its composited brush and handle clicks at
+// the HWND Windows actually reports for the rendered rows.
+class TaskbarWindowedMenu
 {
 public:
-	explicit TaskbarMenuSurface(const wuxc::MenuFlyoutPresenter& menu) : m_Menu(winrt::make_weak(menu)) {}
-
-	void Apply(const std::optional<TaskbarMenuStyle>& style) noexcept try
+	static HWND Find(const RECT& face) noexcept
 	{
-		const auto menu = m_Menu.get();
-		if (!menu || !menu.Dispatcher().HasThreadAccess() || !menu.IsLoaded()) return;
-		HIGHCONTRASTW contrast{sizeof(contrast)};
-		if (!style || (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
-			(contrast.dwFlags & HCF_HIGHCONTRASTON)))
+		struct Search { RECT face; HWND exact = nullptr, only = nullptr; unsigned count = 0; };
+		Search search{face};
+		EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM data) -> BOOL
 		{
-			Restore();
-			return;
+			auto& search = *reinterpret_cast<Search*>(data);
+			wchar_t name[40]{};
+			RECT rect{};
+			if (!IsWindowVisible(window) || !GetClassNameW(window, name, ARRAYSIZE(name)) ||
+				std::wstring_view(name) != L"Xaml_WindowedPopupClass" || !GetWindowRect(window, &rect) ||
+				rect.right - rect.left < 50 || rect.bottom - rect.top < 30) return TRUE;
+			search.only = window;
+			++search.count;
+			POINT center{(search.face.left + search.face.right) / 2, (search.face.top + search.face.bottom) / 2};
+			if (search.face.right > search.face.left && search.face.bottom > search.face.top && PtInRect(&rect, center))
+			{
+				search.exact = window;
+				return FALSE;
+			}
+			return TRUE;
+		}, reinterpret_cast<LPARAM>(&search));
+		return search.exact ? search.exact : search.count == 1 ? search.only : nullptr;
+	}
+
+	TaskbarWindowedMenu(const wuxc::MenuFlyoutPresenter& menu,
+		const std::array<wuxc::MenuFlyoutItem, 2>& rows, HWND window) :
+		m_Menu(menu), m_Rows(rows), m_Window(window) {}
+
+	bool Attach(const TaskbarMenuStyle& style, RECT face)
+	{
+		RECT window{};
+		if (!GetWindowRect(m_Window, &window)) return false;
+		const double scale = m_Menu.XamlRoot() ? m_Menu.XamlRoot().RasterizationScale() : 1.;
+		const LONG width = std::lround(m_Menu.ActualWidth() * scale);
+		const LONG height = std::lround(m_Menu.ActualHeight() * scale);
+		if (width <= 0 || height <= 0 || width > window.right - window.left + 2 ||
+			height > window.bottom - window.top + 2) return false;
+		if (face.left < window.left - 2 || face.top < window.top - 2 ||
+			face.right > window.right + 2 || face.bottom > window.bottom + 2 || IsRectEmpty(&face))
+		{
+			const LONG x = (window.left + window.right - width) / 2;
+			const LONG y = (window.top + window.bottom - height) / 2;
+			face = {x, y, x + width, y + height};
 		}
-		if (m_Style == style) return;
-		const auto rows = TaskbarMenuRows(menu);
-		if (!rows[0] || !rows[1]) return;
-		if (style->ink == 0 && !m_AutoDark) m_AutoDark = TaskbarMenuDark(menu, SurfaceTint(style->brush));
-		const bool dark = style->ink ? style->ink == 2 : *m_AutoDark;
-		const auto ink = wux::Media::SolidColorBrush(dark ? winrt::Windows::UI::Color{255, 255, 255, 255} :
-			winrt::Windows::UI::Color{255, 0, 0, 0});
+		for (size_t i = 0; i < m_Rows.size(); ++i)
+		{
+			const auto& row = m_Rows[i];
+			const auto origin = row.TransformToVisual(m_Menu).TransformPoint({0, 0});
+			m_HitAreas[i] = {
+				face.left + std::lround(origin.X * scale),
+				face.top + std::lround(origin.Y * scale),
+				face.left + std::lround((origin.X + row.ActualWidth()) * scale),
+				face.top + std::lround((origin.Y + row.ActualHeight()) * scale)};
+			if (IsRectEmpty(&m_HitAreas[i])) return false;
+		}
+		if (!Watch(m_Window)) return false;
+		EnumChildWindows(m_Window, [](HWND child, LPARAM data) -> BOOL
+		{
+			auto& menu = *reinterpret_cast<TaskbarWindowedMenu*>(data);
+			if (GetWindowThreadProcessId(child, nullptr) == GetCurrentThreadId()) menu.Watch(child);
+			return TRUE;
+		}, reinterpret_cast<LPARAM>(this));
+
+		const auto color = TaskbarMenuInk(style.ink, TaskbarMenuFill(face, SurfaceTint(style.brush)));
+		const wux::Media::SolidColorBrush ink({255, GetRValue(color), GetGValue(color), GetBValue(color)});
 		const auto corners = winrt::box_value(wux::CornerRadius{12, 12, 12, 12});
-		m_Theme.Set(menu, wux::FrameworkElement::RequestedThemeProperty(),
-			winrt::box_value(dark ? wux::ElementTheme::Dark : wux::ElementTheme::Light));
-		m_Corners.Set(menu, wuxc::Control::CornerRadiusProperty(), corners);
-		m_Foreground.Set(menu, wuxc::Control::ForegroundProperty(), ink);
-		const auto border = wux::Media::VisualTreeHelper::GetChildrenCount(menu)
-			? wux::Media::VisualTreeHelper::GetChild(menu, 0).try_as<wuxc::Border>() : nullptr;
-		const auto brush = MakeSurfaceBrush(menu, style->brush);
-		const auto edge = MakeEdge(*style);
+		m_Corners.Set(m_Menu, wuxc::Control::CornerRadiusProperty(), corners);
+		m_Foreground.Set(m_Menu, wuxc::Control::ForegroundProperty(), ink);
+		const auto border = wux::Media::VisualTreeHelper::GetChildrenCount(m_Menu)
+			? wux::Media::VisualTreeHelper::GetChild(m_Menu, 0).try_as<wuxc::Border>() : nullptr;
+		const auto brush = MakeSurfaceBrush(m_Menu, style.brush);
+		const auto edge = Edge(style);
 		if (border)
 		{
 			m_BorderCorners.Set(border, wuxc::Border::CornerRadiusProperty(), corners);
@@ -219,51 +405,26 @@ public:
 		}
 		else
 		{
-			m_BorderCorners.Restore();
-			m_Background.Set(menu, wuxc::Control::BackgroundProperty(), brush);
-			m_Edge.Set(menu, wuxc::Control::BorderBrushProperty(), edge);
+			m_Background.Set(m_Menu, wuxc::Control::BackgroundProperty(), brush);
+			m_Edge.Set(m_Menu, wuxc::Control::BorderBrushProperty(), edge);
 		}
-		for (size_t i = 0; i < rows.size(); ++i)
+		for (size_t i = 0; i < m_Rows.size(); ++i)
 		{
-			m_Rows[i].Set(rows[i], wuxc::Control::ForegroundProperty(), ink);
-			if (const auto icon = rows[i].Icon()) m_Icons[i].Set(icon, wuxc::IconElement::ForegroundProperty(), ink);
+			m_RowInk[i].Set(m_Rows[i], wuxc::Control::ForegroundProperty(), ink);
+			if (const auto icon = m_Rows[i].Icon()) m_IconInk[i].Set(icon, wuxc::IconElement::ForegroundProperty(), ink);
 		}
-		m_Style = style;
+		return true;
 	}
-	catch (...) { Restore(); }
 
-	void Restore() noexcept
+	~TaskbarWindowedMenu()
 	{
-		for (auto& icon : m_Icons) icon.Restore();
-		for (auto& row : m_Rows) row.Restore();
-		m_Background.Restore();
-		m_Edge.Restore();
-		m_BorderCorners.Restore();
-		m_Corners.Restore();
-		m_Foreground.Restore();
-		m_Theme.Restore();
-		m_Style.reset();
-		m_AutoDark.reset();
+		for (const auto window : m_Attached) RemoveWindowSubclass(window, WindowInput, reinterpret_cast<UINT_PTR>(this));
 	}
-
-	void Detach() noexcept try
-	{
-		Restore();
-		if (const auto menu = m_Menu.get())
-		{
-			menu.Loaded(loaded);
-			menu.Unloaded(unloaded);
-		}
-	}
-	catch (...) {}
-
-	winrt::event_token loaded{}, unloaded{};
 
 private:
-	static wux::Media::Brush MakeEdge(const TaskbarMenuStyle& style)
+	static wux::Media::Brush Edge(const TaskbarMenuStyle& style)
 	{
-		if (!style.flowing)
-			return wux::Media::SolidColorBrush({static_cast<uint8_t>(style.edgeAlpha), 255, 255, 255});
+		if (!style.flowing) return wux::Media::SolidColorBrush({static_cast<uint8_t>(style.edgeAlpha), 255, 255, 255});
 		const wux::Media::LinearGradientBrush brush;
 		brush.EndPoint({1, 1});
 		const wux::Media::GradientStop start, end;
@@ -275,37 +436,260 @@ private:
 		return brush;
 	}
 
+	bool Watch(HWND window)
+	{
+		if (!SetWindowSubclass(window, WindowInput, reinterpret_cast<UINT_PTR>(this), reinterpret_cast<DWORD_PTR>(this)))
+			return false;
+		m_Attached.push_back(window);
+		return true;
+	}
+
+	int RowAt(POINT position) const noexcept
+	{
+		for (size_t i = 0; i < m_HitAreas.size(); ++i)
+			if (PtInRect(&m_HitAreas[i], position)) return static_cast<int>(i);
+		return -1;
+	}
+
+	bool HandleInput(HWND window, UINT message, WPARAM wparam, LPARAM position)
+	{
+		if (message == WM_CANCELMODE || message == WM_CAPTURECHANGED) { m_Pressed = -1; return false; }
+		const bool down = message == WM_LBUTTONDOWN || message == WM_POINTERDOWN;
+		if (!down && message != WM_LBUTTONUP && message != WM_POINTERUP) return false;
+		if (message == WM_POINTERDOWN || message == WM_POINTERUP)
+		{
+			POINTER_INFO pointer{};
+			if (!GetPointerInfo(GET_POINTERID_WPARAM(wparam), &pointer) ||
+				pointer.ButtonChangeType != (down ? POINTER_CHANGE_FIRSTBUTTON_DOWN : POINTER_CHANGE_FIRSTBUTTON_UP))
+				return false;
+		}
+		POINT point{GET_X_LPARAM(position), GET_Y_LPARAM(position)};
+		if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP) ClientToScreen(window, &point);
+		const auto row = RowAt(point);
+		if (down)
+		{
+			m_Pressed = row;
+			return row >= 0;
+		}
+		const auto pressed = std::exchange(m_Pressed, -1);
+		if (pressed < 0) return false;
+		if (pressed == row)
+		{
+			const auto selected = m_Rows[row];
+			if (selected.IsEnabled())
+				selected.Dispatcher().RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal, [selected]
+				{
+					try
+					{
+						if (!selected.IsLoaded() || !selected.IsEnabled()) return;
+						const wux::Automation::Peers::MenuFlyoutItemAutomationPeer peer(selected);
+						if (const auto action = peer.try_as<TaskbarInvoke>()) action.Invoke();
+					}
+					catch (...) {}
+				});
+		}
+		return true;
+	}
+
+	static LRESULT CALLBACK WindowInput(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR ref)
+	{
+		if (message == WM_NCDESTROY) RemoveWindowSubclass(window, WindowInput, id);
+		else
+		{
+			try
+			{
+				if (reinterpret_cast<TaskbarWindowedMenu*>(ref)->HandleInput(window, message, wparam, lparam)) return 0;
+			}
+			catch (...) {}
+		}
+		return DefSubclassProc(window, message, wparam, lparam);
+	}
+
+	wuxc::MenuFlyoutPresenter m_Menu;
+	std::array<wuxc::MenuFlyoutItem, 2> m_Rows;
+	HWND m_Window;
+	std::array<RECT, 2> m_HitAreas{};
+	std::vector<HWND> m_Attached;
+	int m_Pressed = -1;
+	MenuValue m_Corners, m_BorderCorners, m_Foreground, m_Background, m_Edge;
+	std::array<MenuValue, 2> m_RowInk, m_IconInk;
+};
+
+
+struct TaskbarMenuSession
+{
+	std::wstring path;
+	bool tracking = false;
+	bool cancelled = false;
+};
+
+class TaskbarMenuSurface : public std::enable_shared_from_this<TaskbarMenuSurface>
+{
+public:
+	TaskbarMenuSurface(const wuxc::MenuFlyoutPresenter& menu, std::shared_ptr<TaskbarMenuSession> session) :
+		m_Menu(winrt::make_weak(menu)), m_Session(std::move(session)) {}
+
+	void Queue() noexcept try
+	{
+		const auto menu = m_Menu.get();
+		HIGHCONTRASTW contrast{sizeof(contrast)};
+		if (m_Timer || m_Windowed || !menu || !menu.Dispatcher().HasThreadAccess() || !menu.IsLoaded() || m_Session->tracking ||
+			!ReadTaskbarMenuStyle(m_Session->path) ||
+			(SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+				(contrast.dwFlags & HCF_HIGHCONTRASTON))) return;
+		if (const auto rows = TaskbarMenuRows(menu); rows[0] && rows[1]) Mask(menu);
+		m_Deadline = GetTickCount64() + 200;
+		m_Timer = wux::DispatcherTimer();
+		m_Timer.Interval(std::chrono::milliseconds(16));
+		m_Timer.Tick([weak = weak_from_this()](auto&&, auto&&) noexcept
+		{
+			if (const auto current = weak.lock()) current->Open();
+		});
+		m_Timer.Start();
+	}
+	catch (...) { Cancel(); }
+
+	void Cancel() noexcept
+	{
+		StopWaiting();
+		m_Windowed.reset();
+	}
+
+	void StopWaiting() noexcept
+	{
+		if (auto timer = std::exchange(m_Timer, nullptr))
+		{
+			try { timer.Stop(); }
+			catch (...) {}
+		}
+		m_Preview.reset();
+	}
+
+	void Detach() noexcept try
+	{
+		Cancel();
+		if (const auto menu = m_Menu.get())
+		{
+			menu.Loaded(loaded);
+			menu.Unloaded(unloaded);
+		}
+	}
+	catch (...) {}
+
+	winrt::event_token loaded{}, unloaded{};
+
+private:
+	void Mask(const wuxc::MenuFlyoutPresenter& menu)
+	{
+		if (m_Preview) return;
+		m_Preview = std::make_unique<TaskbarMenuPreview>(menu);
+		m_Preview->Mask();
+		m_MaskedAt = GetTickCount64();
+	}
+
+	void Open() noexcept try
+	{
+		const auto menu = m_Menu.get();
+		const auto now = GetTickCount64();
+		if (!m_Timer || !menu || !menu.IsLoaded() || m_Session->tracking || now >= m_Deadline)
+		{
+			Cancel();
+			return;
+		}
+		const auto rows = TaskbarMenuRows(menu);
+		if (!rows[0] || !rows[1]) return;
+		Mask(menu);
+		// Allow the hidden XAML surface to leave the composed frame before sampling its rectangle.
+		if (now < m_MaskedAt + 24) return;
+		const auto style = ReadTaskbarMenuStyle(m_Session->path);
+		if (!style)
+		{
+			Cancel();
+			return;
+		}
+		const auto bounds = TaskbarPresenterBounds(menu);
+		if (const auto window = TaskbarWindowedMenu::Find(bounds))
+		{
+			auto live = std::make_unique<TaskbarWindowedMenu>(menu, rows, window);
+			if (live->Attach(*style, bounds))
+			{
+				m_Windowed = std::move(live);
+				StopWaiting();
+				return;
+			}
+		}
+		const auto popup = TaskbarMenuPopup(menu);
+		if (!popup || IsRectEmpty(&bounds)) return;
+		const auto owner = TaskbarMenuOwner(bounds);
+		TaskbarNativeMenu native;
+		if (!owner || !PopulateTaskbarMenu(native, menu))
+		{
+			Cancel();
+			return;
+		}
+		native.owner = owner;
+		native.dpi = std::max(96u, GetDpiForWindow(owner));
+		const auto tint = SurfaceTint(style->brush);
+		native.tint = RGB(tint.R, tint.G, tint.B);
+		native.tintOpacity = tint.A;
+		native.blur = style->brush.mode == 3 ? style->brush.amount / 100 : style->brush.mode == 2 ? 12 : 0;
+		native.fill = TaskbarMenuFill(bounds, tint);
+		native.ink = TaskbarMenuInk(style->ink, native.fill);
+		native.background = CreateSolidBrush(native.fill);
+		BF_CapturePopupBackdrop(native, {bounds.left, bounds.top});
+		const BF_FooterPainting paint(native);
+		if (!paint.attached)
+		{
+			Cancel();
+			return;
+		}
+
+		const bool rtl = menu.FlowDirection() == wux::FlowDirection::RightToLeft;
+		const auto preview = std::move(m_Preview);
+		Cancel();
+		const auto session = m_Session;
+		session->tracking = true;
+		session->cancelled = false;
+		struct EndTracking { TaskbarMenuSession& session; ~EndTracking() { session.tracking = false; } } end{*session};
+		popup.IsOpen(false);
+		if (popup.IsOpen() || session->cancelled || !IsWindow(owner)) return;
+		const UINT align = rtl ? TPM_RIGHTALIGN | TPM_LAYOUTRTL : TPM_LEFTALIGN;
+		const UINT command = TrackPopupMenuEx(native.handle,
+			TPM_RETURNCMD | TPM_NONOTIFY | TPM_WORKAREA | TPM_NOANIMATION | TPM_RIGHTBUTTON | align,
+			rtl ? bounds.right : bounds.left, bounds.top, owner, nullptr);
+		if (!session->cancelled && command >= 1 && command <= native.actions.size())
+			if (const auto& invoke = native.actions[command - 1]) invoke.Invoke();
+	}
+	catch (...) { Cancel(); }
+
 	winrt::weak_ref<wuxc::MenuFlyoutPresenter> m_Menu;
-	MenuValue m_Theme, m_Corners, m_BorderCorners, m_Background, m_Edge, m_Foreground;
-	std::array<MenuValue, 2> m_Rows, m_Icons;
-	std::optional<TaskbarMenuStyle> m_Style;
-	std::optional<bool> m_AutoDark;
+	std::shared_ptr<TaskbarMenuSession> m_Session;
+	wux::DispatcherTimer m_Timer{nullptr};
+	std::unique_ptr<TaskbarMenuPreview> m_Preview;
+	std::unique_ptr<TaskbarWindowedMenu> m_Windowed;
+	ULONGLONG m_Deadline{}, m_MaskedAt{};
 };
 
 class TaskbarContextMenus
 {
 public:
-	explicit TaskbarContextMenus(std::wstring path = OverflowSettingsPath()) : m_Path(std::move(path)) {}
+	explicit TaskbarContextMenus(std::wstring path = OverflowSettingsPath()) :
+		m_Session(std::make_shared<TaskbarMenuSession>(TaskbarMenuSession{std::move(path)})) {}
 
 	void Add(InstanceHandle handle, const wuxc::MenuFlyoutPresenter& menu) noexcept try
 	{
 		if (!menu || m_Surfaces.contains(handle)) return;
-		auto surface = std::make_shared<TaskbarMenuSurface>(menu);
-		const auto path = m_Path;
-		surface->loaded = menu.Loaded([weak = std::weak_ptr(surface), path](auto&&, auto&&) noexcept
+		auto surface = std::make_shared<TaskbarMenuSurface>(menu, m_Session);
+		surface->loaded = menu.Loaded([weak = std::weak_ptr(surface)](auto&&, auto&&) noexcept
 		{
-			try
-			{
-				if (const auto current = weak.lock()) current->Apply(ReadTaskbarMenuStyle(path));
-			}
-			catch (...) {}
+			if (const auto current = weak.lock()) current->Queue();
 		});
 		surface->unloaded = menu.Unloaded([weak = std::weak_ptr(surface)](auto&&, auto&&) noexcept
 		{
-			if (const auto current = weak.lock()) current->Restore();
+			if (const auto current = weak.lock()) current->Cancel();
 		});
 		m_Surfaces.emplace(handle, surface);
-		if (menu.IsLoaded()) surface->Apply(ReadTaskbarMenuStyle(path));
+		surface->Queue();
 	}
 	catch (...) {}
 
@@ -318,26 +702,29 @@ public:
 		surface->Detach();
 	}
 
-	void Refresh() noexcept try
+	void Refresh() noexcept
 	{
-		if (m_Surfaces.empty()) return;
-		const auto style = ReadTaskbarMenuStyle(m_Path);
-		for (const auto& [_, surface] : m_Surfaces) surface->Apply(style);
+		for (const auto& [_, surface] : m_Surfaces) surface->Queue();
 	}
-	catch (...) {}
 
 	void Restore() noexcept
 	{
-		for (const auto& [_, surface] : m_Surfaces) surface->Restore();
+		for (const auto& [_, surface] : m_Surfaces) surface->Cancel();
+		if (m_Session->tracking)
+		{
+			m_Session->cancelled = true;
+			EndMenu();
+		}
 	}
 
 	~TaskbarContextMenus()
 	{
+		Restore();
 		while (!m_Surfaces.empty()) Remove(m_Surfaces.begin()->first);
 	}
 
 private:
-	const std::wstring m_Path;
+	const std::shared_ptr<TaskbarMenuSession> m_Session;
 	std::unordered_map<InstanceHandle, std::shared_ptr<TaskbarMenuSurface>> m_Surfaces;
 };
 }

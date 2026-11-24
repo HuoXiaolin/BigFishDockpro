@@ -22,6 +22,7 @@ def replace_once(code, old, new):
 def add_taskbar_flyouts(tap):
     for name in ('taskbar_overflow.hpp', 'taskbar_context_menu.hpp'):
         shutil.copy2(Path(__file__).with_name(name), tap / name)
+    shutil.copy2(Path(__file__).with_name('ShellAppearance') / 'start_footer_paint.h', tap)
     header = tap / 'taskbarappearanceservice.hpp'
     code = replace_once(header.read_text(encoding='utf-8-sig'), '#include "wilx.hpp"',
                         '#include "wilx.hpp"\n#include "taskbar_context_menu.hpp"')
@@ -35,7 +36,7 @@ def add_taskbar_flyouts(tap):
     code = replace_once(code, '\t\telse if (type_view == L"Taskbar.TaskbarFrame")',
                         '\t\telse if (name && bigfish::TrayOverflow::Matches(type_view, std::wstring_view{name.get(), SysStringLen(name.get())}))\n'
                         '\t\t{\n\t\t\tm_AppearanceService->TrayOverflow.Add(element.Handle, FromHandle<wuxc::Border>(element.Handle));\n\t\t}\n'
-                        '\t\telse if (type_view == winrt::name_of<wuxc::MenuFlyoutPresenter>())\n'
+                        '\t\telse if (type_view.ends_with(L"MenuFlyoutPresenter"))\n'
                         '\t\t{\n\t\t\tm_AppearanceService->ContextMenus.Add(element.Handle, FromHandle<wuxc::MenuFlyoutPresenter>(element.Handle));\n\t\t}\n'
                         '\t\telse if (type_view == L"Taskbar.TaskbarFrame")')
     code = replace_once(code, 'case Remove: // only element.Handle is valid\n',
@@ -108,7 +109,8 @@ def build(archive_path, compiler, output, probe=False):
     arguments = [*cl, '/LD', f'/FI{header}', *(str(path) for path in sources), '/link', '/Brepro', '/guard:cf', '/NODEFAULTLIB:OLDNAMES',
                  f'/DEF:{tap / "ExplorerTAP.def"}',
                  f'/OUT:{output / "ExplorerTAP.dll"}', 'dxguid.lib', 'ole32.lib', 'oleaut32.lib', 'rpcrt4.lib',
-                 'runtimeobject.lib', 'user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'uuid.lib']
+                 'runtimeobject.lib', 'user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'uuid.lib',
+                 'comctl32.lib', 'dwmapi.lib']
     subprocess.run(arguments, cwd=output, env=environment, check=True)
     print('ExplorerTAP patch', FIX_COMMIT, hashlib.sha256((output/'ExplorerTAP.dll').read_bytes()).hexdigest())
     if probe:
@@ -118,7 +120,8 @@ def build(archive_path, compiler, output, probe=False):
                         *(str(path) for path in sorted((tap/'effects').glob('*.cpp'))), '/link', '/NODEFAULTLIB:OLDNAMES',
                         '/MANIFEST:EMBED', f'/MANIFESTINPUT:{manifest}',
                         f'/OUT:{output / "TrayOverflowProbe.exe"}', 'ole32.lib', 'oleaut32.lib', 'user32.lib', 'runtimeobject.lib',
-                        'gdi32.lib', 'shlwapi.lib', 'dxguid.lib', 'uuid.lib'], cwd=output, env=environment, check=True)
+                        'gdi32.lib', 'shlwapi.lib', 'dxguid.lib', 'uuid.lib', 'comctl32.lib', 'dwmapi.lib'],
+                       cwd=output, env=environment, check=True)
 
 
 if __name__ == '__main__':

@@ -1,4 +1,48 @@
 #pragma once
+#include <commctrl.h>
+#include <dwmapi.h>
+#include <algorithm>
+#include <string>
+#include <vector>
+
+struct BF_FooterGlyph {winrt::hstring text, family;};
+struct BF_FooterRow {
+    HMENU parent;
+    UINT position;
+    std::wstring label;
+    BF_FooterGlyph glyph;
+    bool separator=false;
+};
+
+struct BF_NativePopup {
+    HMENU handle=CreatePopupMenu();
+    std::vector<HBITMAP> icons;
+    HBRUSH background=nullptr;
+    COLORREF fill=0,ink=0;
+    COLORREF tint=0;
+    BYTE tintOpacity=255;
+    int blur=0;
+    HBITMAP backdrop=nullptr;
+    RECT backdropBounds{};
+    SIZE backdropSize{};
+    UINT dpi=96;
+    HFONT font=nullptr;
+    std::vector<BF_FooterRow> rows;
+    HWND roundedWindow=nullptr;
+    HMENU roundedMenu=nullptr;
+    std::vector<HWND> framedWindows;
+    HWND owner=nullptr;
+    BF_NativePopup()=default;
+    BF_NativePopup(const BF_NativePopup&)=delete;
+    BF_NativePopup& operator=(const BF_NativePopup&)=delete;
+    ~BF_NativePopup() {
+        if (handle) DestroyMenu(handle);
+        if (background) DeleteObject(background);
+        if (font) DeleteObject(font);
+        if (backdrop) DeleteObject(backdrop);
+        for (auto icon:icons) DeleteObject(icon);
+    }
+};
 
 // USER still owns tracking, keyboard navigation, accessibility and dispatch.
 // Only the pixels belonging to this temporary menu are drawn here.
@@ -7,7 +51,75 @@ static COLORREF BF_FooterBlend(COLORREF base,COLORREF ink,int percent) {
     return RGB(channel(GetRValue(base),GetRValue(ink)),channel(GetGValue(base),GetGValue(ink)),channel(GetBValue(base),GetBValue(ink)));
 }
 
-static bool BF_FillFooterFrame(HWND window,HDC dc,COLORREF fill) {
+static void BF_CapturePopupBackdrop(BF_NativePopup& menu,POINT anchor) {
+    if (menu.tintOpacity==255) return;
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromPoint(anchor,MONITOR_DEFAULTTONEAREST),&monitor)) return;
+    const LONG wide=MulDiv(440,menu.dpi,96),tall=MulDiv(360,menu.dpi,96);
+    const RECT area{anchor.x-wide,anchor.y-tall,anchor.x+wide,anchor.y+tall};
+    if (!IntersectRect(&menu.backdropBounds,&area,&monitor.rcMonitor)) return;
+    const auto& rect=menu.backdropBounds;
+    const auto width=rect.right-rect.left,height=rect.bottom-rect.top;
+    const auto step=1+std::clamp(menu.blur,0,50)/3;
+    menu.backdropSize={std::max(1L,(width+step-1)/step),std::max(1L,(height+step-1)/step)};
+    BITMAPINFO info{};
+    info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth=menu.backdropSize.cx;
+    info.bmiHeader.biHeight=-menu.backdropSize.cy;
+    info.bmiHeader.biPlanes=1;
+    info.bmiHeader.biBitCount=32;
+    const HDC desktop=GetDC(nullptr);
+    if (!desktop) return;
+    const HDC image=CreateCompatibleDC(desktop);
+    void* pixels=nullptr;
+    const HBITMAP bitmap=image ? CreateDIBSection(image,&info,DIB_RGB_COLORS,&pixels,nullptr,0) : nullptr;
+    if (bitmap) {
+        const auto previous=SelectObject(image,bitmap);
+        SetStretchBltMode(image,HALFTONE);
+        SetBrushOrgEx(image,0,0,nullptr);
+        if (StretchBlt(image,0,0,menu.backdropSize.cx,menu.backdropSize.cy,desktop,
+                       rect.left,rect.top,width,height,SRCCOPY|CAPTUREBLT)) {
+            GdiFlush();
+            auto colors=static_cast<RGBQUAD*>(pixels);
+            const unsigned alpha=menu.tintOpacity;
+            const auto channel=[alpha](unsigned behind,unsigned tint) {
+                return static_cast<BYTE>((behind*(255-alpha)+tint*alpha+127)/255);
+            };
+            for (LONG i=0;i<menu.backdropSize.cx*menu.backdropSize.cy;++i) {
+                auto& color=colors[i];
+                color.rgbRed=channel(color.rgbRed,GetRValue(menu.tint));
+                color.rgbGreen=channel(color.rgbGreen,GetGValue(menu.tint));
+                color.rgbBlue=channel(color.rgbBlue,GetBValue(menu.tint));
+            }
+            menu.backdrop=bitmap;
+        }
+        SelectObject(image,previous);
+        if (!menu.backdrop) DeleteObject(bitmap);
+    }
+    if (image) DeleteDC(image);
+    ReleaseDC(nullptr,desktop);
+}
+
+static void BF_DrawPopupBackdrop(const BF_NativePopup& menu,HDC dc,const RECT& region,POINT screen) {
+    if (!menu.backdrop) return;
+    const HDC image=CreateCompatibleDC(dc);
+    if (!image) return;
+    const auto previous=SelectObject(image,menu.backdrop);
+    const int saved=SaveDC(dc);
+    if (saved) {
+        IntersectClipRect(dc,region.left,region.top,region.right,region.bottom);
+        SetStretchBltMode(dc,HALFTONE);
+        SetBrushOrgEx(dc,0,0,nullptr);
+        const auto& bounds=menu.backdropBounds;
+        StretchBlt(dc,bounds.left-screen.x,bounds.top-screen.y,bounds.right-bounds.left,bounds.bottom-bounds.top,
+            image,0,0,menu.backdropSize.cx,menu.backdropSize.cy,SRCCOPY);
+        RestoreDC(dc,saved);
+    }
+    SelectObject(image,previous);
+    DeleteDC(image);
+}
+
+static bool BF_FillFooterFrame(HWND window,HDC dc,const BF_NativePopup& menu) {
     RECT frame{},client{};
     if (!dc || !GetWindowRect(window,&frame) || !GetClientRect(window,&client)) return false;
     MapWindowPoints(window,nullptr,reinterpret_cast<POINT*>(&client),2);
@@ -16,23 +128,24 @@ static bool BF_FillFooterFrame(HWND window,HDC dc,COLORREF fill) {
     const int saved=SaveDC(dc);
     if (!saved) return false;
     ExcludeClipRect(dc,client.left,client.top,client.right,client.bottom);
-    SetDCBrushColor(dc,fill);
+    SetDCBrushColor(dc,menu.fill);
     const bool painted=FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)))!=0;
+    BF_DrawPopupBackdrop(menu,dc,bounds,{frame.left,frame.top});
     RestoreDC(dc,saved);
     return painted;
 }
 
-static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR color) {
-    const auto fill=static_cast<COLORREF>(color);
+static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR context) {
+    const auto& menu=*reinterpret_cast<const BF_NativePopup*>(context);
     if (msg==WM_NCPAINT) {
         if (HDC dc=GetWindowDC(window)) {
-            const bool painted=BF_FillFooterFrame(window,dc,fill);
+            const bool painted=BF_FillFooterFrame(window,dc,menu);
             ReleaseDC(window,dc);
             if (painted) return 0;
         }
     } else if (msg==WM_PRINT && (lp&PRF_NONCLIENT)) {
         const auto result=DefSubclassProc(window,msg,wp,lp);
-        BF_FillFooterFrame(window,reinterpret_cast<HDC>(wp),fill);
+        BF_FillFooterFrame(window,reinterpret_cast<HDC>(wp),menu);
         return result;
     } else if (msg==WM_NCDESTROY) {
         RemoveWindowSubclass(window,BF_PaintFooterFrame,id);
@@ -42,7 +155,7 @@ static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARA
 
 // Style the native popup before its first completed draw. DWM supplies
 // antialiased outer corners, with the same window handling all menu input.
-static void BF_RoundFooterWindow(BF_FooterMenu& menu,HMENU parent,HDC dc) {
+static void BF_RoundFooterWindow(BF_NativePopup& menu,HMENU parent,HDC dc) {
     const HWND window=WindowFromDC(dc);
     if (!window || (window==menu.roundedWindow && parent==menu.roundedMenu)) return;
     MENUBARINFO bar{sizeof(bar)};
@@ -54,11 +167,11 @@ static void BF_RoundFooterWindow(BF_FooterMenu& menu,HMENU parent,HDC dc) {
     menu.roundedWindow=window;
     menu.roundedMenu=parent;
     // The USER menu has a non-client outline of its own, separate from DWM.
-    if (SetWindowSubclass(window,BF_PaintFooterFrame,reinterpret_cast<UINT_PTR>(&menu),menu.fill)) {
+    if (SetWindowSubclass(window,BF_PaintFooterFrame,reinterpret_cast<UINT_PTR>(&menu),reinterpret_cast<DWORD_PTR>(&menu))) {
         if (std::find(menu.framedWindows.begin(),menu.framedWindows.end(),window)==menu.framedWindows.end())
             menu.framedWindows.push_back(window);
         if (HDC frameDC=GetWindowDC(window)) {
-            BF_FillFooterFrame(window,frameDC,menu.fill);
+            BF_FillFooterFrame(window,frameDC,menu);
             ReleaseDC(window,frameDC);
         }
     }
@@ -80,7 +193,7 @@ static void BF_RoundFooterWindow(BF_FooterMenu& menu,HMENU parent,HDC dc) {
 }
 
 static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR ref) {
-    auto& menu=*reinterpret_cast<BF_FooterMenu*>(ref);
+    auto& menu=*reinterpret_cast<BF_NativePopup*>(ref);
     if ((msg!=WM_DRAWITEM && msg!=WM_MEASUREITEM) || !lp || wp!=0) return DefSubclassProc(owner,msg,wp,lp);
     auto measure=msg==WM_MEASUREITEM ? reinterpret_cast<MEASUREITEMSTRUCT*>(lp) : nullptr;
     auto draw=msg==WM_DRAWITEM ? reinterpret_cast<DRAWITEMSTRUCT*>(lp) : nullptr;
@@ -106,6 +219,9 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
     const auto brush=static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
     SetDCBrushColor(dc,menu.fill);
     FillRect(dc,&draw->rcItem,brush);
+    POINT surface{};
+    const auto window=WindowFromDC(dc);
+    if (window && ClientToScreen(window,&surface)) BF_DrawPopupBackdrop(menu,dc,draw->rcItem,surface);
     if (row->separator) {
         RECT line=draw->rcItem;
         line.left+=px(12);line.right-=px(12);
@@ -151,9 +267,9 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
 }
 
 struct BF_FooterPainting {
-    BF_FooterMenu& menu;
+    BF_NativePopup& menu;
     bool attached=false;
-    explicit BF_FooterPainting(BF_FooterMenu& value):menu(value) {
+    explicit BF_FooterPainting(BF_NativePopup& value):menu(value) {
         if (!menu.background || menu.rows.empty()) return;
         NONCLIENTMETRICSW metrics{sizeof(metrics)};
         if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,menu.dpi)) return;

@@ -400,6 +400,9 @@ def settings(cfg, kind, owner_pid, system_light=True, transparent=True, surface_
                     bigfish_pin_cell_height=str(START_PIN_CELL[1]))
         surface = surface_color if surface_color is not None and shows_backdrop(style) else style['color']
         data['bigfish_footer_surface'] = surface if isinstance(surface,str) else '#%02x%02x%02x'%tuple(round(v) for v in surface)
+        brush, tint, amount = brush_spec(style)
+        data['bigfish_footer_tint'] = tint
+        data['bigfish_footer_blur'] = str(amount if brush == 'blur' else style['blur'] if brush == 'acrylic' else 0)
         for index, (target, properties) in enumerate(search_content_styles(ink, style)):
             data[f'webContentStyles[{index}].target'] = target
             for part, value in enumerate(properties):

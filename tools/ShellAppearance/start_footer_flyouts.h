@@ -3,6 +3,7 @@
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
+#include "start_footer_paint.h"
 
 // Start uses the original XAML menu when its visible rows receive input.
 using BF_FooterCommandButton = Controls::Primitives::ButtonBase;
@@ -16,37 +17,13 @@ struct BF_FooterCommand {
     BF_FooterProviders::IToggleProvider toggle{nullptr};
 };
 
-struct BF_FooterGlyph {winrt::hstring text, family;};
-struct BF_FooterRow {
-    HMENU parent;
-    UINT position;
-    std::wstring label;
-    BF_FooterGlyph glyph;
-    bool separator=false;
-};
-
-struct BF_FooterMenu {
-    HMENU handle=CreatePopupMenu();
+struct BF_FooterMenu : BF_NativePopup {
     std::vector<BF_FooterCommand> commands;
-    std::vector<HBITMAP> icons;
-    HBRUSH background=nullptr;
-    COLORREF fill=0,ink=0;
-    UINT dpi=96;
-    HFONT font=nullptr;
-    std::vector<BF_FooterRow> rows;
-    HWND roundedWindow=nullptr;
-    HMENU roundedMenu=nullptr;
-    std::vector<HWND> framedWindows;
     winrt::weak_ref<FrameworkElement> anchor;
-    HWND owner=nullptr;
     UINT_PTR measureTimer=0;
     bool cancelled=false;
     ~BF_FooterMenu() {
         if (measureTimer) KillTimer(nullptr,measureTimer);
-        if (handle) DestroyMenu(handle);
-        if (background) DeleteObject(background);
-        if (font) DeleteObject(font);
-        for (auto icon:icons) DeleteObject(icon);
     }
 };
 
@@ -54,8 +31,6 @@ static thread_local BF_FooterMenu* bf_activeFooter=nullptr;
 static thread_local winrt::weak_ref<BF_FooterCommandButton> bf_openingFooter;
 static thread_local DispatcherTimer bf_footerTimer{nullptr};
 static thread_local unsigned bf_footerRequest=0;
-
-#include "start_footer_paint.h"
 
 static void BF_ColorFooterMenu(BF_FooterMenu& menu) {
     HIGHCONTRASTW contrast{sizeof(contrast)};
@@ -71,6 +46,16 @@ static void BF_ColorFooterMenu(BF_FooterMenu& menu) {
     const bool white=live>=0 ? live!=0 : BF_Setting(L"bigfish_theme")==L"Dark";
     menu.ink=white ? RGB(255,255,255) : RGB(0,0,0);
     menu.fill=BF_FooterBlend(surface,white ? RGB(28,30,33) : RGB(250,251,252),48);
+    const auto tint=BF_Setting(L"bigfish_footer_tint");
+    if (tint.size()==9 && tint.front()==L'#') {
+        const auto argb=wcstoul(tint.c_str()+1,&end,16);
+        if (end==tint.c_str()+tint.size()) {
+            menu.tint=RGB((argb>>16)&255,(argb>>8)&255,argb&255);
+            menu.tintOpacity=static_cast<BYTE>(argb>>24);
+            menu.blur=wcstol(BF_Setting(L"bigfish_footer_blur").c_str(),nullptr,10);
+            if (menu.tintOpacity==255) menu.fill=menu.tint;
+        }
+    }
     menu.background=CreateSolidBrush(menu.fill);
 }
 
@@ -429,6 +414,7 @@ static void BF_TrackFooter(BF_FooterMenu& menu,const RECT& anchor,bool rtl,BF_Se
     if (bf_activeFooter) return;
     struct ResetActive {~ResetActive() {bf_activeFooter=nullptr;}} reset;
     bf_activeFooter=&menu;
+    BF_CapturePopupBackdrop(menu,{rtl ? anchor.right : anchor.left,anchor.top});
     BF_FooterPainting painting(menu);
     if (bf_traceMenuInput) {
         ++bf_footerTracked;bf_footerRows=0;bf_footerHits=0;
