@@ -267,7 +267,7 @@ def run(api,runtime,app,output,checks):
         from tempfile import TemporaryDirectory
         from taskbar_appearance import BACKEND_VERSION, upgrade_installed_backend
         with TemporaryDirectory(dir=output) as directory:
-            root=Path(directory);legacy=root/'2026.2';legacy.mkdir()
+            root=Path(directory);legacy=root/'2026.2-tray';legacy.mkdir()
             (legacy/'TranslucentTB.exe').write_bytes(b'installed worker')
             payload=root/'payload';backend=payload/'backend';backend.mkdir(parents=True)
             (backend/'TranslucentTB.exe').write_bytes(b'packaged worker')

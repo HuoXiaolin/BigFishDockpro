@@ -403,6 +403,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         const bool testRows=BF_Setting(L"probe_footer_hit_test")==L"1";
         unsigned popupHitRows=0;
         unsigned privateHitRows=0;
+        unsigned contextHitRows=0;
         if (testRows) {
             // The search positioning checks used a second owned window.
             ShowWindow(searchWindow,SW_HIDE);
@@ -412,6 +413,9 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
             popupHitRows+=BF_ProbeFlyoutRows(powerMenu,power,child,{L"登录选项",L"睡眠",L"关机",L"重启"},pump);
             Controls::MenuFlyout privateMenu;
             privateHitRows=BF_ProbeFlyoutRows(privateMenu,power,child,{L"示例设置"},pump,true);
+            Controls::MenuFlyout appMenu,settingsMenu;
+            contextHitRows=BF_ProbeFlyoutRows(appMenu,user,child,{L"固定到“开始”屏幕",L"更多",L"卸载"},pump,false,true);
+            contextHitRows+=BF_ProbeFlyoutRows(settingsMenu,gear,child,{L"“开始”菜单设置"},pump,false,true);
         }
         const auto searchGlyph=shortcut.Content().as<Controls::FontIcon>();
         bool liveInk=true;
@@ -423,7 +427,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
                     liveInk=liveInk && brush==bf_startTextBrush && brush.as<Media::SolidColorBrush>().Color().R==tone;
             }
         }
-        applied=applied&&liveInk&&nativePolicy&&(!testRows || (popupHitRows==7 && privateHitRows==1));
+        applied=applied&&liveInk&&nativePolicy&&(!testRows || (popupHitRows==7 && privateHitRows==1 && contextHitRows==4));
         applied=applied&&footerAligned&&nativePlacement&&navigation.Children().Size()==4&&shortcut.Visibility()==Visibility::Visible&&
             shortcutBounds.X+shortcutBounds.Width<=gearBounds.X&&
             shortcut.Content().as<Controls::FontIcon>().Foreground().as<Media::SolidColorBrush>().Color().R==expectedInk&&
@@ -492,6 +496,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
               <<",\"footer_xw\":["<<navigation.ActualWidth()<<","<<userBounds.X<<","<<userBounds.Width<<","<<powerBounds.X<<","<<powerBounds.Width
               <<","<<shortcutBounds.X<<","<<shortcutBounds.Width<<","<<gearBounds.X<<","<<gearBounds.Width<<"]"
               <<",\"popup_screen_hit_rows\":"<<popupHitRows<<",\"private_menu_hit_rows\":"<<privateHitRows<<",\"live_start_ink\":"<<liveInk
+              <<",\"context_menu_hit_rows\":"<<contextHitRows
               <<",\"search_position_restored\":"<<positionRestored;
         report<<",\"search_stable\":"<<searchStable<<",\"complete_layout\":"<<fullLayout;
         if (startRect && alignedRect) {

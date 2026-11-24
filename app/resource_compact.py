@@ -399,9 +399,9 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
         elif key=='network':
             net=window.service.latest.get('network')
             from resource_charts import rate
-            for i,arrow in enumerate(('↓','↑')):
-                value=rate(net[i]).replace(' KB/s','K').replace(' MB/s','M').replace(' B/s','B') if net else '—'
-                rect=QRectF(x,network_y+i*row_height,width,row_height) if dense else QRectF(x+i*width/2,mid-10,width/2-3,20)
+            for row,(arrow,direction) in enumerate((('↑',1),('↓',0))):
+                value=rate(net[direction]).replace(' KB/s','K').replace(' MB/s','M').replace(' B/s','B') if net else '—'
+                rect=QRectF(x,network_y+row*row_height,width,row_height) if dense else QRectF(x+row*width/2,mid-10,width/2-3,20)
                 text(p,rect,arrow+' '+value,c['ink'],font_size)
         else:
             text(p,QRectF(x,label_y,width,label_height),label,c['muted'],label_font)

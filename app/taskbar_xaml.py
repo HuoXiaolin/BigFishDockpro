@@ -14,6 +14,36 @@ from probe_lifecycle import allowed
 _ENUM_CHILD = getattr(ctypes, 'WINFUNCTYPE', ctypes.CFUNCTYPE)(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 
+class ModuleEntry(ctypes.Structure):
+    _fields_ = [('size', wintypes.DWORD), ('module_id', wintypes.DWORD), ('process_id', wintypes.DWORD),
+                ('global_count', wintypes.DWORD), ('process_count', wintypes.DWORD), ('base', ctypes.c_void_p),
+                ('base_size', wintypes.DWORD), ('module', wintypes.HMODULE),
+                ('name', wintypes.WCHAR * 256), ('path', wintypes.WCHAR * 260)]
+
+
+def explorer_taskbar_library(pid):
+    """Read the module loaded by the taskbar owner, not the worker executable."""
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.Module32FirstW.argtypes = kernel.Module32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ModuleEntry)]
+    kernel.Module32FirstW.restype = kernel.Module32NextW.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel.CreateToolhelp32Snapshot(0x08, pid)
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+        return None
+    try:
+        module = ModuleEntry(size=ctypes.sizeof(ModuleEntry))
+        available = kernel.Module32FirstW(snapshot, ctypes.byref(module))
+        while available:
+            if module.name.casefold() == 'explorertap.dll' and module.path:
+                return Path(module.path)
+            available = kernel.Module32NextW(snapshot, ctypes.byref(module))
+    finally:
+        kernel.CloseHandle(snapshot)
+    return None
+
+
 @lru_cache(maxsize=1)
 def user32():
     user = ctypes.WinDLL('user32', use_last_error=True)
@@ -85,38 +115,63 @@ def configuration(cfg):
 
 EFFECT_KEYS = ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur')
 OVERFLOW_STYLE = 'tray_overflow_style'
+MENU_STYLE = 'taskbar_menu_style'
+SURFACE_KEYS = (OVERFLOW_STYLE, MENU_STYLE)
+RELOAD_NOTICE = '任务栏美化设置已保存。重新启动 Windows 资源管理器后加载新版任务栏组件。'
 
 
 def effect_key(cfg):
-    return tuple(cfg.get(key) for key in (*EFFECT_KEYS, OVERFLOW_STYLE))
+    return tuple(cfg.get(key) for key in (*EFFECT_KEYS, *SURFACE_KEYS))
 
 
-def overflow_requested(cfg):
-    return cfg.get('shell_notifications_enabled', False) and cfg.get('shell_notifications_tray_overflow', True)
+def taskbar_surfaces_requested(cfg):
+    return cfg.get('shell_notifications_enabled', False) and (
+        cfg.get('shell_notifications_tray_overflow', True) or cfg.get('shell_notifications_taskbar_menu', True))
 
 
 def effect_settings(cfg):
     settings = {key: cfg[key] for key in EFFECT_KEYS}
-    if overflow_requested(cfg):
+    if taskbar_surfaces_requested(cfg):
         import dock as api
         from shell_appearance import system_appearance
-        from shell_appearance_model import appearance, brush_spec
-        settings[OVERFLOW_STYLE] = brush_spec(appearance(cfg, 'notifications', *system_appearance(api)))
+        from shell_appearance_model import appearance, brush_spec, panel_highlight, panel_ink
+        style = appearance(cfg, 'notifications', *system_appearance(api))
+        brush = brush_spec(style)
+        if cfg.get('shell_notifications_tray_overflow', True):
+            settings[OVERFLOW_STYLE] = brush
+        if cfg.get('shell_notifications_taskbar_menu', True):
+            system_text_light = None
+            if style['text_mode'] == 'system':
+                from taskbar_text import system_mode
+                mode = system_mode()
+                system_text_light = None if mode is None else bool(mode)
+            ink = 0 if style['text_mode'] == 'auto' else (
+                1 if panel_ink(style, system_text_light=system_text_light) == '#000000' else 2)
+            settings[MENU_STYLE] = (brush, ink, panel_highlight(style), int(style['material'] == 'flowing'))
     return settings
 
 
 def worker_needed(cfg):
-    return cfg['taskbar_mode'] != 'system' or bool(cfg.get(OVERFLOW_STYLE))
+    return cfg['taskbar_mode'] != 'system' or any(cfg.get(key) for key in SURFACE_KEYS)
 
 
-def overflow_configuration(style):
+def surface_configuration(section, style):
     if style is None:
-        return '[Appearance]\nBrush=0\n'
+        return f'[{section}]\nBrush=0\n'
     from shell_appearance import owner_start_time
     mode, tint, amount = style
     index = {'solid': 1, 'acrylic': 2, 'blur': 3}[mode]
-    return (f'[Appearance]\nBrush={index}\nTint={tint[1:]}\nAmount={round(amount * 100)}\n'
+    return (f'[{section}]\nBrush={index}\nTint={tint[1:]}\nAmount={round(amount * 100)}\n'
             f'OwnerPid={os.getpid()}\nOwnerStarted={owner_start_time()}\n')
+
+
+def overflow_configuration(style, menu=None):
+    result = surface_configuration('Appearance', style)
+    if menu is not None:
+        brush, ink, edge, flowing = menu
+        result += (surface_configuration('TaskbarMenu', brush) +
+                   f'Ink={ink}\nEdgeAlpha={edge}\nFlowing={flowing}\n')
+    return result
 
 
 def program_path(pid):
@@ -220,7 +275,7 @@ class XamlTaskbar:
     def shell_changed(self):
         if self.closed or self.desired is None or not allowed():
             return
-        if self.desired.get(OVERFLOW_STYLE):
+        if any(self.desired.get(key) for key in SURFACE_KEYS):
             # Reuse shell recovery to follow Windows theme/transparency changes.
             settings = effect_settings(self.dock.cfg)
             if settings != self.desired:
@@ -274,8 +329,7 @@ class XamlTaskbar:
                 self.active, self.starting = cfg, None
                 self.rebind = False
                 message = '任务栏组件已连接，已请求应用当前效果。'
-                self.log(message)
-                self.report(cfg, True, message)
+                self.report(cfg, True, message, log=True)
                 return
         if state == QProcess.NotRunning and self.shared and resident_program() is None:
             self.shared = False
@@ -296,10 +350,11 @@ class XamlTaskbar:
         staged_overflow = overflow.with_suffix('.pending')
         try:
             temporary.write_text(json.dumps(configuration(cfg), ensure_ascii=False, indent=2), encoding='utf-8')
-            if cfg.get(OVERFLOW_STYLE) or overflow.exists():
-                staged_overflow.write_text(overflow_configuration(cfg.get(OVERFLOW_STYLE)), encoding='ascii')
+            if any(cfg.get(key) for key in SURFACE_KEYS) or overflow.exists():
+                content = overflow_configuration(cfg.get(OVERFLOW_STYLE), cfg.get(MENU_STYLE))
+                staged_overflow.write_text(content, encoding='ascii')
                 os.replace(staged_overflow, overflow)
-            # The existing taskbar worker sees this replacement and refreshes both surfaces.
+            # The existing taskbar worker sees this replacement and refreshes its surfaces.
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -317,12 +372,12 @@ class XamlTaskbar:
         expected = configuration(cfg)
         if not isinstance(actual, dict) or any(actual.get(key) != value for key, value in expected.items()):
             return False
-        style = cfg.get(OVERFLOW_STYLE)
+        style, menu = (cfg.get(key) for key in SURFACE_KEYS)
         overflow = self.directory / 'tray-overflow.ini'
         try:
-            return overflow.read_text(encoding='ascii') == overflow_configuration(style)
+            return overflow.read_text(encoding='ascii') == overflow_configuration(style, menu)
         except FileNotFoundError:
-            return style is None
+            return style is None and menu is None
         except (OSError, ValueError):
             return False
 
@@ -411,8 +466,18 @@ class XamlTaskbar:
                 self.starting = cfg
                 self.process.start()
 
-    def report(self, cfg, success, message):
-        if not success:
+    def applied_status(self, cfg, message):
+        if not self.monitor_shell or self.shell is None or not any(cfg.get(key) for key in SURFACE_KEYS):
+            return message
+        loaded = explorer_taskbar_library(self.shell[1])
+        if loaded and loaded.parent.parent == self.directory.parent and loaded.parent != self.directory:
+            return RELOAD_NOTICE
+        return message
+
+    def report(self, cfg, success, message, log=False):
+        if success:
+            message = self.applied_status(cfg, message)
+        if log or not success or message == RELOAD_NOTICE:
             self.log(message)
         if self.complete is not None:
             self.complete(effect_key(cfg), success, message)
@@ -479,7 +544,7 @@ class XamlTaskbar:
         if getattr(self, 'shared', False) and self.active and self.owns_configuration(self.active):
             # Restore only our last configuration. The other process owns its lifecycle.
             try:
-                self.write(dict(self.active, taskbar_mode='system', tray_overflow_style=None))
+                self.write(dict(self.active, taskbar_mode='system', **dict.fromkeys(SURFACE_KEYS)))
             except OSError as error:
                 self.log('未能恢复共享任务栏组件配置：'+str(error))
         self.pending = None

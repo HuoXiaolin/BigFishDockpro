@@ -9,7 +9,7 @@ CACHE = ROOT / 'artifacts/taskbar-downloads'
 PAYLOAD = ROOT / 'artifacts/taskbar-payload'
 UPSTREAM = 'https://github.com/TranslucentTB/TranslucentTB'
 COMPAT_TAP = ROOT / 'assets/taskbar-compat/ExplorerTAP.dll'
-COMPAT_TAP_SHA256 = 'de9c4d6f23f3ed45ffe146aaae4c71a311e7501918dc36882d96481c32f62158'
+COMPAT_TAP_SHA256 = 'f29cb345770d7815a5e17ca9a5f3afaf9eb55de32d194d509ef951ba5766d3b3'
 
 
 def fetch(name, url, sha256):
@@ -51,11 +51,11 @@ def main():
             archive.read('tools/AppX/x64/Release/Microsoft.UI.Xaml.2.8.appx'))
         (backend / 'Microsoft-WinUI-LICENSE.txt').write_bytes(archive.read('license.txt'))
     (backend / 'THIRD-PARTY-NOTICES.txt').write_text(
-        'TranslucentTB 2026.2, GPL version 3. ExplorerTAP rebuilt locally with XAML root fix b8716c1 and tray overflow styling.\n'
+        'TranslucentTB 2026.2, GPL version 3. ExplorerTAP rebuilt locally with XAML root fix b8716c1, tray overflow and taskbar context menu styling.\n'
         f'Corresponding source and build files: {UPSTREAM}/tree/2026.2\n'
         f'Compatibility patch: {UPSTREAM}/commit/b8716c1207037013515a289c365918cb4aea109e\n'
         'Local source preparation and build: tools/build_taskbar_compat.py in BigFishDockpro source delivery.\n'
-        'Tray overflow source: tools/taskbar_overflow.hpp in BigFishDockpro source delivery.\n'
+        'Flyout sources: tools/taskbar_overflow.hpp and tools/taskbar_context_menu.hpp in BigFishDockpro source delivery.\n'
         f'Release and source archives: {UPSTREAM}/releases/tag/2026.2\n',
         encoding='utf-8')
     (backend / 'TranslucentTB-LICENSE.txt').write_bytes(

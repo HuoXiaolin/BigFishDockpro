@@ -57,6 +57,8 @@ def daily_picture_recovery_checks(runtime,app,output,checks):
             assert first[:3]==('图片19','说明19','11/19  1/2')
             assert [url.split('/')[2] for url in requested if '/th?' in url]==['www.bing.com','th.bing.com']
             card=view.owner
+            app.processEvents()
+            wait_for(app,lambda:card.height()==card.layout().sizeHint().height())
             automatic_size=card.size()
             with patch.object(runtime,'daily_picture',card):
                 check_edge_resize(card)
@@ -73,7 +75,7 @@ def daily_picture_recovery_checks(runtime,app,output,checks):
                 assert restarted.geometry()==saved_geometry
                 restarted.hide();cards.remove(restarted);restarted.deleteLater()
                 assert runtime.set_daily_picture_options(daily_picture_manual_size=False)
-                assert card.size()==automatic_size
+                wait_for(app,lambda:card.size()==automatic_size)
             checks.append('Daily picture: all edges and corners resize, lock preserves size, manual frame and photograph layout restore after reopening, default size can be restored.')
             cache=view.picture_cache_path();original=cache.read_bytes()
             failure[0]='offline'
@@ -456,17 +458,23 @@ def run(api,runtime,app,output,checks):
                 restarted=WeatherLocation()
                 assert requested(restarted)==requested(restarted)==expected
                 assert position.call_count==2 and len(queries)==1
+                saved=cache.read_bytes()
                 local_date.today.return_value=now.date()+timedelta(days=1)
-                assert requested(restarted)==requested(restarted)==(None,'timeout')
-                assert position.call_count==3
+                assert requested(restarted)==requested(restarted)==(expected[0],'timeout')
+                assert position.call_count==3 and cache.read_bytes()==saved
                 assert requested(restarted,refresh=True)==requested(restarted)==expected
                 assert position.call_count==4 and len(queries)==2
                 after_move=('苏州市 · 昆山市',(31.301,121.094))
                 assert requested(restarted,refresh=True)==requested(restarted)==(after_move,'ready')
                 assert position.call_count==5 and len(queries)==3
+                saved=cache.read_bytes()
                 assert requested(restarted,refresh=True)==(after_move,'timeout')
-                assert requested(restarted,refresh=True)==(None,'permission')
-                assert position.call_count==7 and len(queries)==3
+                assert requested(restarted,refresh=True)==(after_move,'permission')
+                assert position.call_count==7 and len(queries)==3 and cache.read_bytes()==saved
+                offline=Mock(return_value=None)
+                assert WeatherLocation().resolve(directory,city_from_position,lambda:False,read=offline)==(after_move,'unavailable')
+                offline.assert_called_once_with(refresh=False)
+                assert cache.read_bytes()==saved and len(queries)==3
 
                 def crossing_midnight(*,refresh):
                     assert not refresh
@@ -478,25 +486,38 @@ def run(api,runtime,app,output,checks):
         with TemporaryDirectory(dir=output) as directory, \
                 patch('weather_location.windows_position',return_value=fixes) as refreshed_position, \
                 patch('resource_weather.fetch_json',return_value=district_address), \
-                patch('resource_weather.forecast',side_effect=lambda name,coordinates:forecast(name,lookup,coordinates=coordinates)) as weather_forecast, \
+                patch('resource_weather.forecast') as weather_forecast, \
                 patch.object(WeatherJob,'read_air',return_value=({},'')):
             job=WeatherJob([],location_dir=directory,refresh_location=True)
-            located_rows=[]
+            located_rows=[];positions=[]
+            job.location_ready.connect(lambda name,status:positions.append((name,status)))
             job.ready.connect(located_rows.extend)
+            def read_forecast(name,coordinates):
+                assert positions==[(district_name,'ready')]
+                return forecast(name,lookup,coordinates=coordinates)
+            weather_forecast.side_effect=read_forecast
             job.run()
             refreshed_position.assert_called_once_with(refresh=True)
             weather_forecast.assert_called_once_with(district_name,coordinates=district_coords)
             assert len(located_rows)==1 and located_rows[0]['located'] and located_rows[0]['temperature']==16
-        with patch.object(runtime.dock,'preview',False),patch('resource_weather.WeatherJob') as jobs:
-            extra.cancel();extra.weather_timer.stop()
-            extra.sync()
-            jobs.assert_called_once()
-            assert jobs.call_args.kwargs['location_session'] is service.weather_location
-            jobs.return_value.start.assert_called_once()
-            assert service.compact and extra.weather_timer.isActive()
-            extra.cancel();extra.weather_timer.timeout.emit()
-            assert jobs.call_count==2 and jobs.call_args.kwargs['location_session'] is service.weather_location
-            extra.cancel()
+            feature_visible=service.feature_visible
+            with patch.object(runtime.dock,'preview',False),patch('resource_weather.WeatherJob') as jobs, \
+                    patch.object(runtime.api,'CONFIG_DIR',directory),patch.object(extra,'location_name',None), \
+                    patch.object(service,'feature_visible',side_effect=lambda key:key!='weather' and feature_visible(key)):
+                extra.cancel();extra.weather_timer.stop()
+                service.sync()
+                assert service.extras is extra and extra.located_city()==district_name
+                w.weather_view.refresh()
+                assert w.weather_view.city.currentText()==district_name and '上次定位' in w.weather_view.city.toolTip()
+                assert not w.weather_view.refresh_button.isEnabled()
+                jobs.assert_called_once()
+                assert jobs.call_args.kwargs['location_session'] is service.weather_location
+                jobs.return_value.start.assert_called_once()
+                assert service.compact and extra.weather_timer.isActive()
+                extra.cancel();extra.weather_timer.timeout.emit()
+                assert jobs.call_count==2 and jobs.call_args.kwargs['location_session'] is service.weather_location
+                extra.cancel()
+        w.weather_view.refresh()
         with patch.object(extra,'refresh_weather') as refresh:
             w.weather_view.refresh_button.click()
             refresh.assert_called_once_with(refresh_location=True)
@@ -514,8 +535,9 @@ def run(api,runtime,app,output,checks):
         extra.weather.pop(0)
         w.weather_view.refresh()
         checks.append('Weather notice and location: the rain block opens its city, the hourly chart paints the liquid-rain peak, and the first dry hour is marked.')
-        checks.append('Weather location starts in the folded capsule, requests once per launch and local date change, merges a request spanning midnight, and refreshes the position and forecast on every Refresh click.')
+        checks.append('Weather locates at startup even while hidden, once per launch and local date change, and refreshes the position and forecast on demand. A midnight-spanning request covers the new day.')
         checks.append('Weather district location: the reported county boundary outranks street names, legacy cached labels are upgraded, and the district forecast uses the rounded device coordinates.')
+        checks.append('Weather shows the last saved district while locating and retains it across timeouts, denied access, and restarts. The location result is emitted before the forecast request.')
         checks.append('Weather defaults and audio: the located city appears first, manual cities stay selectable, and the opt-in cue plays once for a new condition.')
         # A real PNG exercises the wallpaper crop and material cache even with motion off.
         import wallpaper_source as wallpaper

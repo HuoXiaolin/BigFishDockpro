@@ -4,8 +4,7 @@
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
 
-// Only Start's two footer menus use this fallback. The normal XAML flyout is
-// kept when its rows are reachable where Windows drew them.
+// Start uses the original XAML menu when its visible rows receive input.
 using BF_FooterCommandButton = Controls::Primitives::ButtonBase;
 using BF_FooterPopup = Controls::Primitives::Popup;
 namespace BF_FooterPeers = winrt::Windows::UI::Xaml::Automation::Peers;
@@ -38,7 +37,7 @@ struct BF_FooterMenu {
     HWND roundedWindow=nullptr;
     HMENU roundedMenu=nullptr;
     std::vector<HWND> framedWindows;
-    winrt::weak_ref<BF_FooterCommandButton> anchor;
+    winrt::weak_ref<FrameworkElement> anchor;
     HWND owner=nullptr;
     UINT_PTR measureTimer=0;
     bool cancelled=false;
@@ -108,15 +107,37 @@ static bool BF_FooterPopupForButton(const BF_FooterPopup& popup,const BF_FooterC
 // withhold their visual while deciding which menu can receive this mouse click.
 using BF_FooterVisual=winrt::Windows::UI::Composition::Visual;
 struct BF_FooterPreview {
+    winrt::weak_ref<UIElement> element;
     BF_FooterVisual visual;
+    wf::IInspectable localOpacity;
+    double opacity;
     bool visible;
-    explicit BF_FooterPreview(const BF_FooterVisual& value):visual(value),visible(value.IsVisible()) {
-        visual.IsVisible(false);
+    BF_FooterPreview(const UIElement& target,const BF_FooterVisual& value):element(winrt::make_weak(target)),
+        visual(value),localOpacity(target.ReadLocalValue(UIElement::OpacityProperty())),
+        opacity(target.Opacity()),visible(value.IsVisible()) {}
+    void mask() {
+        if (auto target=element.get();target && target.Opacity()!=0) target.Opacity(0);
+        if (visual.IsVisible()) visual.IsVisible(false);
     }
     ~BF_FooterPreview() {
-        if (visible) try {visual.IsVisible(true);} catch (const winrt::hresult_error&) {}
+        try {
+            if (auto target=element.get();target && target.Opacity()==0) {
+                if (localOpacity==DependencyProperty::UnsetValue()) target.ClearValue(UIElement::OpacityProperty());
+                else {
+                    try {target.SetValue(UIElement::OpacityProperty(),localOpacity);}
+                    catch (const winrt::hresult_error&) {target.Opacity(opacity);}
+                }
+            }
+            visual.IsVisible(visible);
+        } catch (const winrt::hresult_error&) {}
     }
 };
+static void BF_MaskFlyout(const UIElement& content,std::shared_ptr<BF_FooterPreview>& preview) {
+    auto visual=winrt::Windows::UI::Xaml::Hosting::ElementCompositionPreview::GetElementVisual(content);
+    if (!visual) return;
+    if (!preview || preview->visual!=visual) preview=std::make_shared<BF_FooterPreview>(content,visual);
+    preview->mask();
+}
 static thread_local std::shared_ptr<BF_FooterPreview> bf_footerPreview;
 static thread_local winrt::event_token bf_footerRendering{};
 
@@ -126,9 +147,7 @@ static void BF_MaskFooterPreview(const BF_FooterCommandButton& button) {
         if (!BF_FooterPopupForButton(popup,button)) continue;
         auto content=popup.Child();
         if (!content || !BF_FooterPresenter(content)) continue;
-        auto visual=winrt::Windows::UI::Xaml::Hosting::ElementCompositionPreview::GetElementVisual(content);
-        if (!visual) continue;
-        if (!bf_footerPreview || bf_footerPreview->visual!=visual) bf_footerPreview=std::make_shared<BF_FooterPreview>(visual);
+        BF_MaskFlyout(content,bf_footerPreview);
         return;
     }
 }
@@ -336,20 +355,16 @@ static std::optional<RECT> BF_PointerAnchor(const BF_FooterCommandButton& button
     return RECT{left,top,left+static_cast<LONG>(std::lround(width*scale)),top+static_cast<LONG>(std::lround(height*scale))};
 }
 
-static bool BF_ReachableXamlFooter(const Controls::MenuFlyoutPresenter& presenter,const RECT& anchor) {
-    // Verify the whole original menu, especially its last item, after the
-    // opening animation. A matching HWND alone does not identify a row.
-    auto face=BF_PanelPeer(presenter).GetBoundingRectangle();
+static bool BF_ReachableMenuRows(const Controls::MenuFlyoutPresenter& presenter,const wf::Rect& face) {
     const auto root=presenter.XamlRoot();
+    if (!root || !presenter.IsHitTestVisible() || face.Width<1 || face.Height<1) return false;
     const auto scale=root.RasterizationScale();
     const auto layoutWindow=BF_LayoutWindow();
-    double gap=std::max({0.,double(anchor.top-face.Y-face.Height),double(face.Y-anchor.bottom)});
-    if (face.Width<1 || face.Height<1 || gap>16*scale || face.X>anchor.right+8*scale ||
-        face.X+face.Width<anchor.left-8*scale) return false;
     unsigned rows=0;
     for (const auto& value:presenter.Items()) {
         auto item=value.try_as<Controls::MenuFlyoutItemBase>();
         if (!item || item.Visibility()!=Visibility::Visible || item.try_as<Controls::MenuFlyoutSeparator>()) continue;
+        if (!item.IsHitTestVisible()) return false;
         auto peer=BF_FooterPeers::FrameworkElementAutomationPeer::CreatePeerForElement(item);
         if (!peer) return false;
         auto bounds=peer.GetBoundingRectangle();
@@ -377,6 +392,28 @@ static bool BF_ReachableXamlFooter(const Controls::MenuFlyoutPresenter& presente
     return rows>0;
 }
 
+static bool BF_ReachableXamlFooter(const Controls::MenuFlyoutPresenter& presenter,const RECT& anchor) {
+    const auto face=BF_PanelPeer(presenter).GetBoundingRectangle();
+    const auto scale=presenter.XamlRoot().RasterizationScale();
+    const double gap=std::max({0.,double(anchor.top-face.Y-face.Height),double(face.Y-anchor.bottom)});
+    return gap<=16*scale && face.X<=anchor.right+8*scale && face.X+face.Width>=anchor.left-8*scale &&
+        BF_ReachableMenuRows(presenter,face);
+}
+
+static std::shared_ptr<BF_FooterMenu> BF_CopyStartMenu(const Controls::MenuFlyoutPresenter& presenter,
+                                                     const FrameworkElement& anchor,HWND window) {
+    auto menu=std::make_shared<BF_FooterMenu>();
+    menu->anchor=winrt::make_weak(anchor);
+    menu->owner=GetAncestor(window,GA_ROOT);
+    if (!menu->handle || !menu->owner) return {};
+    menu->dpi=static_cast<UINT>(std::lround(anchor.XamlRoot().RasterizationScale()*96));
+    for (const auto& item:presenter.Items())
+        if (!BF_AddFooterItem(*menu,menu->handle,item.try_as<Controls::MenuFlyoutItemBase>(),menu->dpi)) return {};
+    if (menu->commands.empty()) return {};
+    BF_ColorFooterMenu(*menu);
+    return menu;
+}
+
 static void BF_StopFooterRequest() {
     ++bf_footerRequest;
     bf_openingFooter={};
@@ -388,7 +425,7 @@ static void BF_StopFooterRequest() {
     bf_footerPreview.reset();
 }
 
-static void BF_TrackFooter(BF_FooterMenu& menu,const RECT& anchor,bool rtl,BF_SettingsLauncher launch) {
+static void BF_TrackFooter(BF_FooterMenu& menu,const RECT& anchor,bool rtl,BF_SettingsLauncher launch,bool atPointer=false) {
     if (bf_activeFooter) return;
     struct ResetActive {~ResetActive() {bf_activeFooter=nullptr;}} reset;
     bf_activeFooter=&menu;
@@ -399,7 +436,8 @@ static void BF_TrackFooter(BF_FooterMenu& menu,const RECT& anchor,bool rtl,BF_Se
         if (bf_status_event) SetEvent(bf_status_event);
     }
     TPMPARAMS placement{sizeof(placement)};placement.rcExclude=anchor;
-    const UINT flags=TPM_RETURNCMD|TPM_NONOTIFY|TPM_BOTTOMALIGN|TPM_WORKAREA|TPM_NOANIMATION|
+    const UINT align=atPointer ? TPM_TOPALIGN|TPM_RIGHTBUTTON : TPM_BOTTOMALIGN;
+    const UINT flags=TPM_RETURNCMD|TPM_NONOTIFY|align|TPM_WORKAREA|TPM_NOANIMATION|
         (rtl ? TPM_RIGHTALIGN|TPM_LAYOUTRTL : TPM_LEFTALIGN);
     SetLastError(ERROR_SUCCESS);
     const UINT selected=TrackPopupMenuEx(menu.handle,flags,rtl ? anchor.right : anchor.left,anchor.top,menu.owner,&placement);
@@ -420,15 +458,8 @@ static bool BF_TryFooterMenu(const BF_FooterCommandButton& button,HWND window,co
         auto presenter=BF_FooterPresenter(content);
         if (!presenter || presenter.ActualHeight()<1 || !presenter.Items().Size()) continue;
         if (BF_ReachableXamlFooter(presenter,anchor)) return settled;
-        auto menu=std::make_shared<BF_FooterMenu>();
-        if (!menu->handle) return true;
-        menu->anchor=winrt::make_weak(button);menu->owner=GetAncestor(window,GA_ROOT);
-        if (!menu->owner) return true;
-        const UINT dpi=static_cast<UINT>(std::lround(root.RasterizationScale()*96));
-        menu->dpi=dpi;
-        for (const auto& item:presenter.Items()) if (!BF_AddFooterItem(*menu,menu->handle,item.try_as<Controls::MenuFlyoutItemBase>(),dpi)) return true;
-        if (menu->commands.empty()) return true;
-        BF_ColorFooterMenu(*menu);
+        auto menu=BF_CopyStartMenu(presenter,button,window);
+        if (!menu) return true;
         if (bf_traceMenuInput && !original.IsConstrainedToRootBounds()) ++bf_footerWindowed;
         auto preview=std::move(bf_footerPreview);
         BF_StopFooterRequest();

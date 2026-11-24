@@ -1,4 +1,4 @@
-"""Build the 2026.2 ExplorerTAP with XAML-root matching and tray overflow styling."""
+"""Build the 2026.2 ExplorerTAP with XAML-root matching and flyout styling."""
 import argparse
 import hashlib
 import os
@@ -19,13 +19,15 @@ def replace_once(code, old, new):
     return code.replace(old, new, 1)
 
 
-def add_tray_overflow(tap):
-    shutil.copy2(Path(__file__).with_name('taskbar_overflow.hpp'), tap / 'taskbar_overflow.hpp')
+def add_taskbar_flyouts(tap):
+    for name in ('taskbar_overflow.hpp', 'taskbar_context_menu.hpp'):
+        shutil.copy2(Path(__file__).with_name(name), tap / name)
     header = tap / 'taskbarappearanceservice.hpp'
     code = replace_once(header.read_text(encoding='utf-8-sig'), '#include "wilx.hpp"',
-                        '#include "wilx.hpp"\n#include "taskbar_overflow.hpp"')
+                        '#include "wilx.hpp"\n#include "taskbar_context_menu.hpp"')
     code = replace_once(code, '\tvoid RegisterTaskbar(InstanceHandle frameHandle, HWND window);',
-                        '\tbigfish::TrayOverflow TrayOverflow;\n\tvoid RegisterTaskbar(InstanceHandle frameHandle, HWND window);')
+                        '\tbigfish::TrayOverflow TrayOverflow;\n\tbigfish::TaskbarContextMenus ContextMenus;\n'
+                        '\tvoid RegisterTaskbar(InstanceHandle frameHandle, HWND window);')
     header.write_text(code, encoding='utf-8')
 
     watcher = tap / 'visualtreewatcher.cpp'
@@ -33,9 +35,12 @@ def add_tray_overflow(tap):
     code = replace_once(code, '\t\telse if (type_view == L"Taskbar.TaskbarFrame")',
                         '\t\telse if (name && bigfish::TrayOverflow::Matches(type_view, std::wstring_view{name.get(), SysStringLen(name.get())}))\n'
                         '\t\t{\n\t\t\tm_AppearanceService->TrayOverflow.Add(element.Handle, FromHandle<wuxc::Border>(element.Handle));\n\t\t}\n'
+                        '\t\telse if (type_view == winrt::name_of<wuxc::MenuFlyoutPresenter>())\n'
+                        '\t\t{\n\t\t\tm_AppearanceService->ContextMenus.Add(element.Handle, FromHandle<wuxc::MenuFlyoutPresenter>(element.Handle));\n\t\t}\n'
                         '\t\telse if (type_view == L"Taskbar.TaskbarFrame")')
     code = replace_once(code, 'case Remove: // only element.Handle is valid\n',
-                        'case Remove: // only element.Handle is valid\n\t\tm_AppearanceService->TrayOverflow.Remove(element.Handle);\n')
+                        'case Remove: // only element.Handle is valid\n\t\tm_AppearanceService->TrayOverflow.Remove(element.Handle);\n'
+                        '\t\tm_AppearanceService->ContextMenus.Remove(element.Handle);\n')
     watcher.write_text(code, encoding='utf-8')
 
     service = tap / 'taskbarappearanceservice.cpp'
@@ -43,7 +48,7 @@ def add_tray_overflow(tap):
     for signature, call in (('SetTaskbarBorderVisibility(HWND taskbar, BOOL visible)', 'Refresh'),
                             ('RestoreAllTaskbarsToDefault()', 'Restore')):
         start = f'HRESULT TaskbarAppearanceService::{signature} try\n{{\n'
-        code = replace_once(code, start, start + f'\tTrayOverflow.{call}();\n')
+        code = replace_once(code, start, start + f'\tTrayOverflow.{call}();\n\tContextMenus.{call}();\n')
     service.write_text(code, encoding='utf-8')
 
 
@@ -66,7 +71,7 @@ def build(archive_path, compiler, output, probe=False):
         '\t\t\t\tconst auto xamlRoot = frame ? frame.XamlRoot() : nullptr;\n'
         '\t\t\t\tconst auto rootContent = xamlRoot ? xamlRoot.Content() : FromHandle<wux::UIElement>(relation.Parent);')
     watcher.write_text(code.replace('content == rootGrid', 'content == rootContent'), encoding='utf-8')
-    add_tray_overflow(tap)
+    add_taskbar_flyouts(tap)
 
     vc, = (compiler / 'VC/Tools/MSVC').glob('14.44.*')
     binaries = vc / 'bin/Hostx64/x64'
@@ -103,7 +108,7 @@ def build(archive_path, compiler, output, probe=False):
     arguments = [*cl, '/LD', f'/FI{header}', *(str(path) for path in sources), '/link', '/Brepro', '/guard:cf', '/NODEFAULTLIB:OLDNAMES',
                  f'/DEF:{tap / "ExplorerTAP.def"}',
                  f'/OUT:{output / "ExplorerTAP.dll"}', 'dxguid.lib', 'ole32.lib', 'oleaut32.lib', 'rpcrt4.lib',
-                 'runtimeobject.lib', 'user32.lib', 'shell32.lib', 'shlwapi.lib', 'uuid.lib']
+                 'runtimeobject.lib', 'user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'uuid.lib']
     subprocess.run(arguments, cwd=output, env=environment, check=True)
     print('ExplorerTAP patch', FIX_COMMIT, hashlib.sha256((output/'ExplorerTAP.dll').read_bytes()).hexdigest())
     if probe:
@@ -113,7 +118,7 @@ def build(archive_path, compiler, output, probe=False):
                         *(str(path) for path in sorted((tap/'effects').glob('*.cpp'))), '/link', '/NODEFAULTLIB:OLDNAMES',
                         '/MANIFEST:EMBED', f'/MANIFESTINPUT:{manifest}',
                         f'/OUT:{output / "TrayOverflowProbe.exe"}', 'ole32.lib', 'oleaut32.lib', 'user32.lib', 'runtimeobject.lib',
-                        'dxguid.lib', 'uuid.lib'], cwd=output, env=environment, check=True)
+                        'gdi32.lib', 'shlwapi.lib', 'dxguid.lib', 'uuid.lib'], cwd=output, env=environment, check=True)
 
 
 if __name__ == '__main__':

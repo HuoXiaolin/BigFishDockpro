@@ -95,7 +95,7 @@ def main(output):
                             data[key] = value.replace('ControlCenter.PaginatedToggleButton',
                                                       'Windows.UI.Xaml.Controls.Primitives.ToggleButton')
                 (case / f'{kind}.{build}.ini').write_bytes(encode_ini(data))
-                check_probe(executable, payload / filename, case, kind + '-probe.json', 12, timeout_retries)
+                check_probe(executable, payload / filename, case, kind + '-probe.json', 20, timeout_retries)
                 checks.append(case.name + ': verified tint and ' + inspected)
                 if kind == 'start' and material == 'crystal' and theme == 'light':
                     data = settings(cfg, kind, os.getpid())

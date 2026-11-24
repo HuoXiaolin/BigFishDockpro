@@ -289,6 +289,26 @@ def run(api,runtime,root,app,output,checks):
                     assert (top[0], top[1], top[4]) == ('↑', up, '上传')
                     assert (bottom[0], bottom[1], bottom[4]) == ('↓', down, '下载')
         checks.append('Taskbar network speed: upload is the upper row and download the lower row, including zero and missing samples.')
+        from resource_compact import paint_values
+        from resource_pages import TrafficReadout
+        from resource_traffic import amount
+        from PyQt5.QtGui import QImage
+        download, upload = 9 * 1024, 350 * 1024
+        with patch.dict(service.latest, network=(download, upload)), patch.object(window, 'compact_shown', [], create=True), \
+                patch('resource_compact.text') as draw:
+            paint_values(window, None, [('network', '', '', None)], 0, 16, 80, dense=True, widths=[80])
+            top, bottom = [call.args for call in draw.call_args_list]
+            assert top[1].y() < bottom[1].y() and top[2] == '↑ 350.0K' and bottom[2] == '↓ 9.0K'
+        totals = {'day': (download, upload), 'month': (2 * download, 2 * upload), 'year': (3 * download, 3 * upload)}
+        traffic = TrafficReadout(window)
+        traffic.resize(500, traffic.height())
+        with patch.dict(service.latest, traffic=totals), patch('resource_pages.text') as draw:
+            traffic.render(QImage(traffic.size(), QImage.Format_ARGB32))
+            values = [call.args[2] for call in draw.call_args_list]
+        traffic.deleteLater()
+        assert [values[index:index + 4] for index in (2, 8, 14)] == [
+            ['上传', amount(up), '下载', amount(down)] for down, up in totals.values()]
+        checks.append('Capsule network speed and the three period totals display upload first, with the original readings mapped to each label.')
         with patch.dict(cfg,resource_task_metrics=list(FAN_METRICS)):
             for missing in FAN_METRICS:
                 service.sensors.values={key:dict(label=METRICS[key],source='测试转速计',value=0 if key=='gpu_fan' else 1200)

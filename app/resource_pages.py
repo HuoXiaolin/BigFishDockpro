@@ -317,10 +317,10 @@ class TrafficReadout(QWidget):
             detail_x=x+10 if paired else x+width/2
             detail_width=x+width-10-detail_x
             detail_y=y+48 if paired else y+10
-            for j,title in enumerate(('下载','上传')):
-                top=detail_y+15*j
+            for offset,(title,direction) in enumerate((('上传',1),('下载',0))):
+                top=detail_y+15*offset
                 text(p,QRectF(detail_x,top,detail_width,14),title,c['muted'],10)
-                text(p,QRectF(detail_x,top,detail_width,14),amount(values[j]) if values is not None else '—',
+                text(p,QRectF(detail_x,top,detail_width,14),amount(values[direction]) if values is not None else '—',
                      c['ink'],10,True,Qt.AlignRight)
 
 

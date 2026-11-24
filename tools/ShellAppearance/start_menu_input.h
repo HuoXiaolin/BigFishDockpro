@@ -21,8 +21,11 @@ static void BF_MenuInputCount(std::atomic<unsigned>& count) {
     if (bf_status_event) SetEvent(bf_status_event);
 }
 static void BF_ObserveMenuInput(ElementId id,const FrameworkElement& element) {
-    if (auto button=bf_openingFooter.get();button && element.try_as<Controls::MenuFlyoutPresenter>()) {
-        try {BF_MaskFooterPreview(button);} catch (const winrt::hresult_error&) {}
+    if (element.try_as<Controls::MenuFlyoutPresenter>()) {
+        try {
+            if (auto button=bf_openingFooter.get()) BF_MaskFooterPreview(button);
+            else if (bf_contextSource.get()) BF_MaskContextPreview();
+        } catch (const winrt::hresult_error&) {}
     }
     if (!bf_traceMenuInput || !bf_is_start_menu || bf_menuInputWatches.contains(id)) return;
     if (element.try_as<Controls::MenuFlyoutPresenter>() || element.try_as<Controls::FlyoutPresenter>()) {

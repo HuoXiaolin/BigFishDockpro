@@ -274,6 +274,7 @@ def moon_phase(stamp):
 
 class WeatherJob(BackgroundWorker):
     ready=pyqtSignal(object)
+    location_ready=pyqtSignal(object,str)
     def __init__(self,cities,source='auto',connection=('', ''),location_dir=None,*,location_session=None,refresh_location=False):
         super().__init__();self.cities=list(cities);self.source=source;self.connection=connection
         self.location_dir=location_dir;self.refresh_location=refresh_location;self.location_status='disabled'
@@ -309,6 +310,8 @@ class WeatherJob(BackgroundWorker):
         if self.location_dir:
             located,self.location_status=self.location_session.resolve(self.location_dir,fetch_json,self.cancelled.is_set,
                                                                        refresh=self.refresh_location)
+            if self.cancelled.is_set():return
+            self.location_ready.emit(located[0] if located else None,self.location_status)
         cities={located[0]:located[1]} if located else {}
         for name in self.cities:cities.setdefault(name,None)
         for city,coordinates in cities.items():

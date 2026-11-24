@@ -38,7 +38,7 @@ Name: "taskbar"; Description: "安装 Windows 11 任务栏效果组件（离线�
 [Files]
 Source: "..\dist\BigFishDockpro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-Source: "..\artifacts\taskbar-payload\backend\*"; DestDir: "{localappdata}\BigFishDock\TaskbarBackend\2026.2-tray"; Tasks: taskbar; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\artifacts\taskbar-payload\backend\*"; DestDir: "{localappdata}\BigFishDock\TaskbarBackend\2026.2-tray-menu"; Tasks: taskbar; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\artifacts\taskbar-payload\VCLibs-x64.appx"; Flags: dontcopy
 Source: "..\artifacts\taskbar-payload\WinUI-x64.appx"; Flags: dontcopy
 Source: "install_taskbar_frameworks.ps1"; Flags: dontcopy

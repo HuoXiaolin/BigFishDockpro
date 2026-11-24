@@ -68,12 +68,13 @@ def magpie_history(checks):
     import csv
     from datetime import timezone
     from io import StringIO
-    from resource_magpie_usage import apply_session_history, parse_usage
-    from resource_usage import aggregate
+    from resource_magpie_usage import MagpieJob, apply_session_history, parse_usage
+    from resource_usage import aggregate, heatmap_days, heatmap_start
 
     today = date.today()
     yesterday = today - timedelta(days=1)
     older = today - timedelta(days=4)
+    first = heatmap_start(today)
     def stamp(day, hour=0):
         return datetime(day.year, day.month, day.day, hour, 15).astimezone(timezone.utc).isoformat()
 
@@ -87,12 +88,16 @@ def magpie_history(checks):
         (stamp(today), 'codex', 'new-model', '', 'false', 1, 1, 0, 0, 0, '', 'log', 'false'),
         (stamp(yesterday), 'codex', 'free-model', '', 'false', 10, 2, 8, 0, 1, '0', 'log', 'false'),
         (stamp(older), 'codex', 'older', '', 'false', 12, 6, 4, 0, 2, '.02', 'log', 'false'),
+        (stamp(first), 'codex', '', '', 'false', 5, 1, 4, 0, 0, '', 'log', 'false'),
         (stamp(today), 'codex', 'rejected', '', 'false', 50, 20, 0, 0, 0, '1', 'log', 'true'),
         (stamp(today), 'codex', 'gateway', '', 'false', 50, 20, 0, 0, 0, '1', 'gateway', 'false'),
         (stamp(today), 'dsh', 'deepseek', '', 'false', 6, 4, 0, 0, 0, '.0005', 'log', 'false'),
     ])
     stream.seek(0)
-    imported = parse_usage(stream, older, today)
+    job = MagpieJob('heatmap')
+    assert job.start_date == first and job.arguments == ('--days', str((today-first).days+1))
+    job.deleteLater()
+    imported = parse_usage(stream, first, today)
     recent = dict(tokens=100, input=20, output=10, cacheRead=60, cacheWrite=10,
                   records=1, cost=.05, estimated=True, unpriced=0)
     fuller = dict(recent, records=2)
@@ -103,7 +108,9 @@ def magpie_history(checks):
                         dict(date=yesterday.isoformat()+'T05', summary=fuller)])
     merged = apply_session_history(local, imported['Codex'])
     assert merged['quotas'] == local['quotas'] and len(local['days']) == 2
-    assert {row['model'] for row in merged['days']} == {'served', 'new-model', 'older', 'local'}
+    assert {row['model'] for row in merged['days']} == {'served', 'new-model', 'older', 'local', '未记录模型'}
+    first_day = dict(heatmap_days([merged], today=today))[first]
+    assert first_day['records'] == 1 and first_day['tokens'] == 10 and first_day['cost'] is None
     result = aggregate([merged], 'today', today=today)
     assert result['magpie'] and result['total']['tokens'] == 102 and result['total']['records'] == 2
     assert result['total']['cost'] == .015 and result['total']['unpriced'] == 1
@@ -114,6 +121,7 @@ def magpie_history(checks):
     assert imported['Codex']['hours'][0]['summary']['cost'] == 0
     assert imported['Dsh']['days'][0]['summary']['cost'] == .0005
     checks.append('Magpie usage: CSV effective prices, local dates, exact token buckets, zero and missing prices, and historical coverage with no duplicate day totals.')
+    checks.append('The default heatmap export covers the first visible week and keeps historical requests without a model name.')
 
 
 def ai_tray_modes(service, app, output, checks):

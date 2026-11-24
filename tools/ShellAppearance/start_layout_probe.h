@@ -2,7 +2,15 @@
 #include <winrt/Windows.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Storage.Streams.h>
 
-static void BF_ProbePump() { MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);} }
+static void BF_ProbePump() {
+    MSG msg;
+    // Animation and paint messages may arrive continuously. Keep the caller's
+    // deadline reachable even when the private desktop queue stays busy.
+    for (unsigned count=0;count<128 && PeekMessageW(&msg,nullptr,0,0,PM_REMOVE);++count) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
 
 static void BF_WriteProbeBitmap(const std::filesystem::path& path,int width,int height,const void* pixels) {
     BITMAPINFOHEADER header{};header.biSize=sizeof(header);header.biWidth=width;header.biHeight=-height;
@@ -162,7 +170,10 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     trace("cold_registered");
     const bool deferred=appsRoot.Margin().Top==-37&&appsRoot.Width()==282;
     BF_ClearStartColumns();
-    source.Content(root);ShowWindow(window,SW_SHOW);BF_ProbePump();root.UpdateLayout();
+    source.Content(root);
+    winrt::check_bool(SetWindowPos(window,nullptr,0,0,0,0,
+        SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW));
+    BF_ProbePump();root.UpdateLayout();
     // A private panel's ArrangeOverride can reserve 52 DIPs on both sides even
     // though its public Margin and Padding have both been cleared. Reproduce
     // that slot geometry with Grid columns instead of another removable margin.
@@ -330,6 +341,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     pinned.SelectedIndex(4);root.UpdateLayout();
     for(auto until=GetTickCount64()+250;GetTickCount64()<until;) {BF_ProbePump();Sleep(1);}
     BF_SaveLayoutBitmap(root,output/L"start-layout.bmp");
+    trace("layout_bitmap");
     // Invoke only owned dummy controls: no system shutdown/logoff command exists
     // in this process. Check the routed Click and secondary-menu action as well
     // as geometry, so a visually correct but inert footer cannot pass.
@@ -347,6 +359,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     menuPeer.GetPattern(winrt::Windows::UI::Xaml::Automation::Peers::PatternInterface::Invoke)
         .as<winrt::Windows::UI::Xaml::Automation::Provider::IInvokeProvider>().Invoke();
     BF_ProbePump();flyout.Hide();
+    trace("footer_commands");
     const bool commands=powerClicks==1&&menuClicks==1&&detached==0;
     // Expanded folders inherit the same pinned column and four-column cells.
     // Reproduce the obsolete fixed widths and negative inner offsets first.
@@ -414,6 +427,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     // its settled appearance rather than a transparent, translated first frame.
     for(auto until=GetTickCount64()+350;GetTickCount64()<until;) {BF_ProbePump();Sleep(1);}
     BF_SaveLayoutBitmap(root,output/L"start-folder-layout.bmp");
+    trace("folder_bitmap");
     // A wider scrolling canvas can place the native vertical thumb on top of
     // the first pin even when the app rows themselves are correctly aligned.
     Controls::Grid barColumn;barColumn.Width(210);barColumn.Height(180);

@@ -1,5 +1,6 @@
 // BigFishDockpro adapter, 2026. Pinned BrimDeck sources stay in references/BrimDeck
 // under Apache-2.0; Core/ adapts its log reader to bounded metadata parsing.
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -32,7 +33,10 @@ internal static class Program
     static DeckSettings Settings = new();
     static string Data = "";
     static Pricing? Prices;
-    static bool AllHistory, RefreshPrices;
+    static readonly DateTime EarliestUsage = new(2000, 1, 1);
+    static DateTime? UsageSince;
+    static bool AllHistory => UsageSince == EarliestUsage;
+    static bool RefreshPrices;
     static DispatcherTimer Tick = null!;
     const uint AlwaysShowErrorUi = 0x10;
     const uint NoErrorUi = 0x20;
@@ -100,7 +104,22 @@ internal static class Program
         {
             string op = q.Get("op").Text();
             if (op == "quit") { Ui.InvokeShutdown(); return; }
-            if (op == "history") { AllHistory = q.Get("range").Text() == "all"; NextAi = DateTimeOffset.MinValue; return; }
+            if (op == "history")
+            {
+                var range = q.Get("range").Text();
+                DateTime? since = range == "all" ? EarliestUsage : null;
+                var today = DateTime.Today;
+                if (range == "heatmap" &&
+                    DateTime.TryParseExact(q.Get("since").Text(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var first) &&
+                    first >= today.AddDays(-181) && first <= today)
+                    since = first;
+                if (UsageSince != since)
+                {
+                    UsageSince = since;
+                    NextAi = DateTimeOffset.MinValue;
+                }
+                return;
+            }
             if (op == "configure")
             {
                 Presentation = Flag(q, "presentation");
@@ -163,6 +182,7 @@ internal static class Program
     {
         Busy = true; NextAi = DateTimeOffset.UtcNow.AddSeconds(60);
         var enabled = Providers.ToArray(); var key = ProviderKey;
+        var since = UsageSince;
         Reading?.Dispose(); Reading = new CancellationTokenSource(TimeSpan.FromSeconds(90)); var cancellation = Reading.Token;
         try
         {
@@ -170,18 +190,18 @@ internal static class Program
             Usage ??= new UsageService(new DesktopSources(), quotaCache: Path.Combine(Data, "claude-quota.json"), kimiQuotaCache: Path.Combine(Data, "kimi-quota.json"));
             Settings = new DeckSettings { IncludeWsl = false, UsagePage = true, Apps = enabled.Where(x => Enum.TryParse<ProviderId>(x, out _)).Select(x => new AppEntry { QuotaSource = Enum.Parse<ProviderId>(x), UsageSource = Enum.Parse<ProviderId>(x) }).ToList() };
             var reader = Usage;
-            var snapshots = await Task.Run(() => reader.RefreshAsync(Settings, cancellation, AllHistory ? new DateTime(2000, 1, 1) : null), cancellation);
-            if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
+            var snapshots = await Task.Run(() => reader.RefreshAsync(Settings, cancellation, since), cancellation);
+            if (!AiEnabled || key != ProviderKey || since != UsageSince || cancellation.IsCancellationRequested) return;
             Prices ??= new Pricing(Data);
             bool refreshPrices = RefreshPrices;
             RefreshPrices = false;
             try { await Prices.RefreshAsync(force: refreshPrices, cancellation: cancellation); } catch (Exception) { }
-            if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
+            if (!AiEnabled || key != ProviderKey || since != UsageSince || cancellation.IsCancellationRequested) return;
             var columns = DashboardUsage.Columns(Settings, snapshots);
             (ResetCreditReading? Credits, string Plan) codexAccount = (null, "");
             if (columns.FirstOrDefault(c => c.Entry.Id == ProviderId.Codex) is { } codex)
                 codexAccount = await CodexResetCredits.ReadAsync(cancellation, !codex.Quota.LiveQuota || string.IsNullOrWhiteSpace(codex.Quota.Plan));
-            if (!AiEnabled || key != ProviderKey || cancellation.IsCancellationRequested) return;
+            if (!AiEnabled || key != ProviderKey || since != UsageSince || cancellation.IsCancellationRequested) return;
             Emit(new { type = "ai", at = DateTimeOffset.Now, providers = columns.Select(c => Provider(c, DateTime.Today, codexAccount.Credits, codexAccount.Plan)).ToArray() });
         }
         catch (OperationCanceledException) { }

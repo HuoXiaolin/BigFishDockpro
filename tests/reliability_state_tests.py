@@ -278,12 +278,13 @@ def check_taskbar_shell_recovery(checks):
 
 def check_taskbar_effect_status(runtime, checks):
     from taskbar_appearance import TaskbarAppearance
-    from taskbar_xaml import XamlTaskbar, effect_key
+    from taskbar_xaml import RELOAD_NOTICE, XamlTaskbar, effect_key, effect_settings
     from dock_extras import DockQuickSettings
 
     dock = runtime.dock
     original = {k:dock.cfg[k] for k in ('taskbar_mode','taskbar_color','taskbar_opacity','taskbar_blur',
-                'shell_notifications_enabled','shell_notifications_tray_overflow','shell_notifications_source',
+                'shell_notifications_enabled','shell_notifications_tray_overflow','shell_notifications_taskbar_menu',
+                'shell_notifications_text_mode','shell_notifications_source',
                 'shell_notifications_material','shell_notifications_theme','shell_notifications_color',
                 'shell_notifications_opacity','shell_notifications_blur')}
     saved_component = runtime.taskbar
@@ -371,6 +372,7 @@ def check_taskbar_effect_status(runtime, checks):
                 assert popup.tiles['taskbar'].value == '跟随系统' and not component.error
                 with patch('shell_appearance.system_appearance',return_value=(True,True)):
                     dock.cfg.update(shell_notifications_enabled=True,shell_notifications_tray_overflow=True,
+                                    shell_notifications_taskbar_menu=True,shell_notifications_text_mode='white',
                                     shell_notifications_source='custom',shell_notifications_material='liquid',
                                     shell_notifications_theme='light',shell_notifications_color='#4d92bf',
                                     shell_notifications_opacity=33,shell_notifications_blur=16)
@@ -378,7 +380,17 @@ def check_taskbar_effect_status(runtime, checks):
                     component.sync()
                     path = Path(directory) / 'tray-overflow.ini'
                     assert starts.call_count == started + 1 and state == QProcess.Running
-                    assert 'Brush=3\nTint=544d92bf\nAmount=1600\n' in path.read_text(encoding='ascii')
+                    with patch.object(backend, 'monitor_shell', True), patch.object(backend, 'shell', (1, 42, (2,))), \
+                            patch('taskbar_xaml.explorer_taskbar_library') as loaded:
+                        style = effect_settings(dock.cfg)
+                        loaded.return_value = Path(directory).parent / '2026.2-tray' / 'ExplorerTAP.dll'
+                        assert backend.applied_status(style, 'ready') == RELOAD_NOTICE
+                        loaded.assert_called_once_with(42)
+                        loaded.return_value = Path(directory) / 'ExplorerTAP.dll'
+                        assert backend.applied_status(style, 'ready') == 'ready'
+                    content = path.read_text(encoding='ascii')
+                    assert content.count('Brush=3\nTint=544d92bf\nAmount=1600\n') == 2
+                    assert '[TaskbarMenu]' in content and 'Ink=2\n' in content
                     from json import loads
                     data = loads((Path(directory) / 'settings.json').read_text(encoding='utf-8'))
                     assert data['desktop_appearance']['accent']=='normal' and data['desktop_appearance']['show_line']
@@ -388,10 +400,20 @@ def check_taskbar_effect_status(runtime, checks):
                     assert 'Tint=824d92bf' in path.read_text(encoding='ascii') and starts.call_count==started+1
                     dock.cfg['shell_notifications_tray_overflow']=False
                     component.sync()
+                    content = path.read_text(encoding='ascii')
+                    assert content.startswith('[Appearance]\nBrush=0\n[TaskbarMenu]\nBrush=3\n')
+                    assert starts.call_count == started + 1 and state == QProcess.Running
+                    dock.cfg['shell_notifications_text_mode']='black'
+                    component.sync()
+                    assert 'Ink=1\n' in path.read_text(encoding='ascii')
+                    dock.cfg['shell_notifications_taskbar_menu']=False
+                    component.sync()
                     finish()
                     assert path.read_text(encoding='ascii')=='[Appearance]\nBrush=0\n'
             checks.append('Taskbar: live config reload reuses one simulated process; channel errors, stale notifications, rapid reversal and verified same-path handoff keep the mode label. Disk mismatch, foreign instance, start failure and crash remain visible; Quick Settings reopens and recovers from stale failure. No desktop taskbar modified.')
             checks.append('Tray overflow takes the notification tint and blur. It starts the shared worker with the taskbar in system mode, reloads opacity without a second worker, and restores the overflow settings when disabled.')
+            checks.append('The taskbar context menu follows notification tint and text colour. It shares the existing worker and stays enabled with tray overflow off.')
+            checks.append('The taskbar reports an Explorer reload when the new worker is running but Explorer still loads an older bundled library.')
         finally:
             state = QProcess.NotRunning
             popup.close()

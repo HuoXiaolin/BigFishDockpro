@@ -125,7 +125,7 @@ class WeatherCards(QWidget):
             message='在天气设置中添加城市'
             if service.cfg['resource_weather_location']:
                 extra=service.extras
-                if extra and extra.weather_job:message='正在获取当前位置…'
+                if extra and extra.weather_job and extra.location_status=='locating':message='正在获取当前位置…'
                 else:message=LOCATION_MESSAGES.get(getattr(extra,'location_status',''),LOCATION_MESSAGES['unavailable'])
             text(p,QRectF(self.rect()),message,colors['muted'],12,False,Qt.AlignHCenter)
             return
@@ -438,6 +438,9 @@ class WeatherView(QWidget):
         located=extra.located_city() if extra else None
         if located and located!=getattr(self,'located_city',None):self.select_city(located)
         self.located_city=located
+        tip=self.city.currentText()
+        if tip and extra and tip==extra.location_name and extra.location_status!='ready':tip+='\n上次定位'
+        self.city.setToolTip(tip)
         self.week.setChecked(service.cfg['resource_weather_days']==7)
         self.cards.refresh()
         stamp=max((r.get('updated',0) for r in extra.weather),default=0) if extra else 0

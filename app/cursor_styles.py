@@ -29,7 +29,15 @@ BUILTINS = (
 TITLES = {
     BUILTINS[0][0]: 'Bibata 琥珀',
     BUILTINS[1][0]: 'Bibata 冰白',
-    'W11 Cursor Light Free v2.2 by Jepri Creations': 'W11 浅色',
+    BUILTINS[2][0]: 'Spirit 玻璃',
+    BUILTINS[3][0]: 'Tinted Glass',
+    BUILTINS[4][0]: 'Future 动态',
+    BUILTINS[5][0]: 'Layan 白色',
+    BUILTINS[6][0]: 'Phinger 浅色',
+    'W11 Cursor Light Free v2.2 by Jepri Creations': 'Windows 11 浅色',
+    'GrokBot-Soft-Pointer': '柔光动态',
+    '【动态个性】酷狗老皮': '酷狗老皮',
+    '【动态个性】路飞': '路飞',
 }
 CURSOR_EXTENSIONS = {'.cur', '.ani'}
 NOTICE_FILES = {'license.txt', '作者与来源.txt'}

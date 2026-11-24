@@ -264,9 +264,9 @@ class RuntimeController:
             self.resources.sync()
         if changed is None or any(key.startswith('flash_') for key in changed) or changed & capsule_style:
             self.flash.sync()
-        from taskbar_xaml import overflow_requested
+        from taskbar_xaml import taskbar_surfaces_requested
         if (changed is None or any(key.startswith(('taskbar_', 'shell_notifications_')) for key in changed)
-                or (dock_appearance_changed and overflow_requested(self.dock.cfg))):
+                or (dock_appearance_changed and taskbar_surfaces_requested(self.dock.cfg))):
             self.taskbar.sync()
             if self.resources.ai_tray:
                 self.resources.ai_tray.sync_taskbar_text()

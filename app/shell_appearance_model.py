@@ -6,7 +6,7 @@ from background_contrast import foreground
 
 KINDS = ('start', 'notifications')
 NOTIFICATION_PARTS = (('quick', '快速设置'), ('media', '媒体控制'), ('toast', '通知弹窗'),
-                      ('calendar', '日历'), ('tray_overflow', '托盘收纳'))
+                      ('calendar', '日历'), ('tray_overflow', '托盘收纳'), ('taskbar_menu', '任务栏右键菜单'))
 SOURCES = [APPEARANCE_SOURCES[0], ('跟随系统', 'system'), APPEARANCE_SOURCES[1]]
 TEXT_MODES = [('自动调整', 'auto'), ('跟随系统', 'system'), ('自定义 · 白色', 'white'), ('自定义 · 黑色', 'black')]
 START_STYLES = [('系统默认', False), ('Windows 11 · 玻璃网格', True)]
@@ -159,13 +159,17 @@ def menu_color(ink):
     return '#26323e' if ink == '#ffffff' else '#edf5fc'
 
 
+def panel_highlight(style):
+    return round(style['highlight'] * 1.6)
+
+
 def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, system_text_light=None):
     cfg = normalize(dict(cfg))
     style = appearance(cfg, kind, system_light, transparent)
     ink = panel_ink(style, surface_color, system_text_light)
     theme = 'Light' if ink == '#000000' else 'Dark'
     brush = background(style)
-    highlight = round(style['highlight'] * 1.6)
+    highlight = panel_highlight(style)
     edge = f'#{highlight:02x}ffffff'
     if style['material'] == 'flowing':
         edge_brush = '<LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#b864e8de" Offset="0"/><GradientStop Color="#b88a64eb" Offset="1"/></LinearGradientBrush>'

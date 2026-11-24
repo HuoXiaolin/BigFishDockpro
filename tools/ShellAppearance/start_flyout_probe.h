@@ -5,8 +5,9 @@ struct BF_FooterPointerProbe {
     std::wstring settings;
     BF_FooterPopup source{nullptr};
     size_t target=0;
+    size_t submenuRow=SIZE_MAX;
     ULONGLONG start=0;
-    bool checked=false,sent=false,expired=false,cancel=false,palette=false,hoverPosted=false;
+    bool checked=false,sent=false,expired=false,cancel=false,palette=false,hoverPosted=false,submenuPosted=false;
     unsigned attempts=0;
     std::string detail, paintDetail;
 };
@@ -109,10 +110,11 @@ static void CALLBACK BF_ProbeMenuPointer(HWND,UINT,UINT_PTR,DWORD) {
     bool valid=true;
     unsigned rows=0;
     POINT target{};
+    HMENU submenu=nullptr;
     for (int i=0,n=GetMenuItemCount(handle);i<n;++i) {
         MENUITEMINFOW item{sizeof(item)};
         wchar_t text[100]{};
-        item.fMask=MIIM_FTYPE|MIIM_ID|MIIM_STRING;
+        item.fMask=MIIM_FTYPE|MIIM_ID|MIIM_STRING|MIIM_SUBMENU;
         item.dwTypeData=text;item.cch=std::size(text);
         if (!GetMenuItemInfoW(handle,i,TRUE,&item)) return;
         if (item.fType&MFT_SEPARATOR) continue;
@@ -121,10 +123,12 @@ static void CALLBACK BF_ProbeMenuPointer(HWND,UINT,UINT_PTR,DWORD) {
         if (rows>=probe->labels.size()) return;
         if (rows==probe->target) {
             target={(rect.left+rect.right)/2,(rect.top+rect.bottom)/2};
+            submenu=item.hSubMenu;
             if (hit && probe->hoverPosted)
                 probe->palette=BF_ProbeFooterRow(*bf_activeFooter,rect,probe->labels[rows],true,probe->paintDetail);
         }
-        valid=valid && hit && probe->labels[rows]==text && item.wID==rows+1;
+        valid=valid && hit && probe->labels[rows]==text &&
+            (rows==probe->submenuRow ? item.hSubMenu!=nullptr : item.wID==rows+1);
         ++rows;
     }
     ++probe->attempts;
@@ -141,11 +145,24 @@ static void CALLBACK BF_ProbeMenuPointer(HWND,UINT,UINT_PTR,DWORD) {
     const auto pos=MAKELPARAM(target.x,target.y);
     if (!probe->hoverPosted) {probe->hoverPosted=PostMessageW(window,WM_MOUSEMOVE,0,pos)!=FALSE;return;}
     if (probe->cancel) {probe->sent=true;EndMenu();return;}
+    if (submenu) {
+        if (!probe->submenuPosted) {
+            probe->submenuPosted=PostMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,pos) && PostMessageW(window,WM_LBUTTONUP,0,pos);
+        }
+        RECT row{};
+        if (!BF_FooterVisibleRow(submenu,0,row)) return;
+        POINT child{(row.left+row.right)/2,(row.top+row.bottom)/2};
+        auto popup=WindowFromPoint(child);
+        if (GetWindowThreadProcessId(popup,&pid)!=GetCurrentThreadId() || pid!=GetCurrentProcessId()) return;
+        const auto childPosition=MAKELPARAM(child.x,child.y);
+        probe->sent=PostMessageW(popup,WM_LBUTTONDOWN,MK_LBUTTON,childPosition) && PostMessageW(popup,WM_LBUTTONUP,0,childPosition);
+        return;
+    }
     probe->sent=PostMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,pos) && PostMessageW(window,WM_LBUTTONUP,0,pos);
 }
 
-static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Controls::Button& anchor,
-        HWND island,std::initializer_list<PCWSTR> labels,void (*pump)(),bool privateMenu=false) {
+static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const FrameworkElement& anchor,
+        HWND island,std::initializer_list<PCWSTR> labels,void (*pump)(),bool privateMenu=false,bool contextMenu=false) {
     BF_FooterPointerProbe probe;
     std::vector<unsigned> invoked(labels.size());
     std::vector<Controls::MenuFlyoutItem::Click_revoker> subscriptions;
@@ -158,15 +175,21 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Contro
         // template with the source's total height used to clip the final row.
         row.MinHeight(0);row.Height(28);
         if (index==1) menu.Items().Append(Controls::MenuFlyoutSeparator());
-        if (index%2==0 || privateMenu) {
+        if (index%2==0 || privateMenu || contextMenu) {
             Controls::FontIcon glyph;glyph.FontFamily(Media::FontFamily(L"Segoe Fluent Icons"));
             const auto symbol=BF_FooterPresentationFor(label).glyph;
             glyph.Glyph(*symbol ? symbol : L"\uE713");
             row.Icon(glyph);
         }
         subscriptions.push_back(row.Click(winrt::auto_revoke,[&,index](auto&&,auto&&){++invoked[index];}));
-        menu.Items().Append(row);
+        if (contextMenu && std::wstring_view(label)==L"更多") {
+            probe.submenuRow=index;
+            Controls::MenuFlyoutSubItem more;
+            more.Text(label);more.Icon(row.Icon());row.Icon(nullptr);row.Text(L"示例位置");
+            more.Items().Append(row);menu.Items().Append(more);
+        } else menu.Items().Append(row);
     }
+    if (contextMenu) anchor.ContextFlyout(menu);
     Controls::MenuFlyoutItem hidden;
     hidden.Text(L"隐藏的测试项");hidden.Visibility(Visibility::Collapsed);menu.Items().Append(hidden);
     std::ofstream trace(bf_root/L"footer-hit-targets.txt",std::ios::app);
@@ -181,11 +204,13 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Contro
         const bool cancel=target==probe.labels.size();
         probe.target=cancel ? 0 : target;
         probe.cancel=cancel;
-        probe.checked=probe.sent=probe.expired=probe.palette=probe.hoverPosted=false;probe.settings.clear();probe.attempts=0;probe.detail.clear();probe.paintDetail.clear();
+        probe.checked=probe.sent=probe.expired=probe.palette=probe.hoverPosted=probe.submenuPosted=false;
+        probe.settings.clear();probe.attempts=0;probe.detail.clear();probe.paintDetail.clear();
         auto before=invoked;
         BF_StopFooterRequest();
-        BF_ArmFooterPreview(anchor);
-        menu.ShowAt(anchor);pump();anchor.UpdateLayout();
+        if (contextMenu) {BF_ArmContextPreview(anchor);menu.ShowAt(anchor,{0,0});}
+        else {BF_ArmFooterPreview(anchor.as<BF_FooterCommandButton>());menu.ShowAt(anchor);}
+        pump();anchor.UpdateLayout();
         auto ready=[&] {
             for (const auto& popup:Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(anchor.XamlRoot()))
                 if (auto presenter=BF_FooterPresenter(popup.Child());popup.IsOpen() && presenter && presenter.ActualHeight()>0) {probe.source=popup;return true;}
@@ -195,12 +220,13 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Contro
         if (!ready()) {BF_StopFooterRequest();menu.Hide();return 0;}
         auto sourceVisual=winrt::Windows::UI::Xaml::Hosting::ElementCompositionPreview::GetElementVisual(probe.source.Child());
         for (auto until=GetTickCount64()+250;sourceVisual.IsVisible() && GetTickCount64()<until;Sleep(2)) pump();
-        const bool previewHidden=!sourceVisual.IsVisible();
+        const bool previewHidden=!sourceVisual.IsVisible() && probe.source.Child().Opacity()==0;
         bf_pointerProbe=&probe;
         probe.start=GetTickCount64();
         auto timer=SetTimer(nullptr,0,25,BF_ProbeMenuPointer);
         if (!timer) {bf_pointerProbe=nullptr;BF_StopFooterRequest();menu.Hide();return 0;}
-        BF_TryFooterMenu(anchor,island,displaced,true,BF_ProbeFooterSettings);
+        if (contextMenu) BF_TryStartContextMenu(anchor,island,{displaced.left,displaced.top});
+        else BF_TryFooterMenu(anchor.as<BF_FooterCommandButton>(),island,displaced,true,BF_ProbeFooterSettings);
         for (auto until=GetTickCount64()+1550;!probe.sent && !probe.expired && GetTickCount64()<until;Sleep(2)) pump();
         KillTimer(nullptr,timer);bf_pointerProbe=nullptr;
         pump();
@@ -222,5 +248,6 @@ static unsigned BF_ProbeFlyoutRows(const Controls::MenuFlyout& menu,const Contro
         if (!passed) return 0;
         if (!cancel) ++verified;
     }
+    if (contextMenu) anchor.ContextFlyout(nullptr);
     return verified;
 }

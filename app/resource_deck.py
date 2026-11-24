@@ -32,6 +32,7 @@ class DeckBridge(QObject):
         self.ai_revision=0
         self.ai_status='正在读取…';self.alert='';self.alert_until=0.;self.previous_levels={}
         self.history_requested=False
+        self.heatmap_since=None
         self.memory_blocked=False
         self.failures=0
         self.launched_at=0.
@@ -154,7 +155,10 @@ class DeckBridge(QObject):
                 return
             self.launch_watch.start(35000)
         self.send(op='configure',ai=signature[0],providers=signature[1],music=signature[2],lyrics=signature[3],equalizer=signature[4],presentation=signature[5],desktopSpectrum=signature[6])
-        if starting and self.history_requested:self.send(op='history',range='all')
+        if starting and self.history_requested:
+            self.send(op='history',range='all')
+        elif starting and self.heatmap_since is not None:
+            self.send(op='history',range='heatmap',since=self.heatmap_since)
 
     def request_history(self):
         if not self.history_requested:
@@ -163,6 +167,15 @@ class DeckBridge(QObject):
     def request_usage(self, include_history=False, *, force=False):
         if self.closed or self.owner.runtime.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'):
             return
+        if include_history:
+            self.request_history()
+        elif not self.history_requested:
+            from datetime import date
+            from resource_usage import heatmap_start
+            since = heatmap_start(date.today()).isoformat()
+            if self.heatmap_since != since:
+                self.heatmap_since = since
+                self.send(op='history',range='heatmap',since=since)
         if any(row['id'] in ('Codex', 'Dsh') for row in self.local_providers):
             if self.magpie is None:
                 from resource_magpie_usage import MagpieUsage

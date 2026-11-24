@@ -33,28 +33,58 @@ inline std::wstring OverflowSettingsPath()
 	return path + L"tray-overflow.ini";
 }
 
-inline std::optional<OverflowStyle> ReadOverflowStyle(const std::wstring& path)
+inline std::optional<OverflowStyle> ReadOverflowStyle(const std::wstring& path, PCWSTR section = L"Appearance")
 {
 	if (path.empty()) return std::nullopt;
-	const auto mode = GetPrivateProfileIntW(L"Appearance", L"Brush", 0, path.c_str());
-	const auto pid = GetPrivateProfileIntW(L"Appearance", L"OwnerPid", 0, path.c_str());
+	const auto mode = GetPrivateProfileIntW(section, L"Brush", 0, path.c_str());
+	const auto pid = GetPrivateProfileIntW(section, L"OwnerPid", 0, path.c_str());
 	if (mode < 1 || mode > 3 || !pid) return std::nullopt;
 	const wil::unique_process_handle owner(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid));
 	FILETIME created{}, exit{}, kernel{}, user{};
 	if (!owner || WaitForSingleObject(owner.get(), 0) != WAIT_TIMEOUT ||
 		!GetProcessTimes(owner.get(), &created, &exit, &kernel, &user)) return std::nullopt;
 	wchar_t text[32]{};
-	GetPrivateProfileStringW(L"Appearance", L"OwnerStarted", L"", text, ARRAYSIZE(text), path.c_str());
+	GetPrivateProfileStringW(section, L"OwnerStarted", L"", text, ARRAYSIZE(text), path.c_str());
 	const auto started = (static_cast<unsigned long long>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
 	if (std::wcstoull(text, nullptr, 10) != started) return std::nullopt;
-	if (GetPrivateProfileStringW(L"Appearance", L"Tint", L"", text, ARRAYSIZE(text), path.c_str()) != 8)
+	if (GetPrivateProfileStringW(section, L"Tint", L"", text, ARRAYSIZE(text), path.c_str()) != 8)
 		return std::nullopt;
 	wchar_t* end = nullptr;
 	const auto argb = std::wcstoul(text, &end, 16);
 	if (end != text + 8) return std::nullopt;
-	const auto amount = GetPrivateProfileIntW(L"Appearance", L"Amount", 0, path.c_str());
+	const auto amount = GetPrivateProfileIntW(section, L"Amount", 0, path.c_str());
 	if (amount > (mode == 2 ? 10000u : 5000u)) return std::nullopt;
 	return OverflowStyle{mode, argb, amount};
+}
+
+inline winrt::Windows::UI::Color SurfaceTint(const OverflowStyle& style)
+{
+	return {static_cast<uint8_t>(style.argb >> 24), static_cast<uint8_t>(style.argb >> 16),
+		static_cast<uint8_t>(style.argb >> 8), static_cast<uint8_t>(style.argb)};
+}
+
+inline wux::Media::Brush MakeSurfaceBrush(const wux::UIElement& target, const OverflowStyle& style)
+{
+	const auto tint = SurfaceTint(style);
+	if (style.mode == 2)
+	{
+		wux::Media::AcrylicBrush brush;
+		brush.BackgroundSource(wux::Media::AcrylicBackgroundSource::Backdrop);
+		brush.TintColor({255, tint.R, tint.G, tint.B});
+		brush.TintOpacity(style.amount / 10000.0);
+		brush.TintLuminosityOpacity(winrt::box_value(0.0).as<wf::IReference<double>>());
+		brush.FallbackColor(tint);
+		return brush;
+	}
+	if (style.mode == 3)
+	{
+		auto compositor = wuxh::ElementCompositionPreview::GetElementVisual(target).Compositor();
+		auto brush = winrt::make<XamlBlurBrush>(std::move(compositor), style.amount / 100.f,
+			wfn::float4{tint.R / 255.f, tint.G / 255.f, tint.B / 255.f, tint.A / 255.f});
+		brush.FallbackColor(tint);
+		return brush;
+	}
+	return wux::Media::SolidColorBrush(tint);
 }
 
 class OverflowSurface
@@ -86,7 +116,7 @@ public:
 			return;
 		}
 		if (owned && m_Style == style) return;
-		const auto brush = MakeBrush(border, *style);
+		const auto brush = MakeSurfaceBrush(border, *style);
 		if (!owned)
 		{
 			m_Local = border.ReadLocalValue(property);
@@ -108,32 +138,6 @@ public:
 	catch (...) {}
 
 private:
-	static wux::Media::Brush MakeBrush(const wuxc::Border& border, const OverflowStyle& style)
-	{
-		const winrt::Windows::UI::Color tint{
-			static_cast<uint8_t>(style.argb >> 24), static_cast<uint8_t>(style.argb >> 16),
-			static_cast<uint8_t>(style.argb >> 8), static_cast<uint8_t>(style.argb)};
-		if (style.mode == 2)
-		{
-			wux::Media::AcrylicBrush brush;
-			brush.BackgroundSource(wux::Media::AcrylicBackgroundSource::Backdrop);
-			brush.TintColor({255, tint.R, tint.G, tint.B});
-			brush.TintOpacity(style.amount / 10000.0);
-			brush.TintLuminosityOpacity(winrt::box_value(0.0).as<wf::IReference<double>>());
-			brush.FallbackColor(tint);
-			return brush;
-		}
-		if (style.mode == 3)
-		{
-			auto compositor = wuxh::ElementCompositionPreview::GetElementVisual(border).Compositor();
-			auto brush = winrt::make<XamlBlurBrush>(std::move(compositor), style.amount / 100.f,
-				wfn::float4{tint.R / 255.f, tint.G / 255.f, tint.B / 255.f, tint.A / 255.f});
-			brush.FallbackColor(tint);
-			return brush;
-		}
-		return wux::Media::SolidColorBrush(tint);
-	}
-
 	winrt::weak_ref<wuxc::Border> m_Border;
 	wf::IInspectable m_Local{nullptr};
 	wux::Media::Brush m_Original{nullptr}, m_Applied{nullptr};

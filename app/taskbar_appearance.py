@@ -7,11 +7,11 @@ from shutil import copytree
 from tempfile import TemporaryDirectory
 from ctypes import wintypes
 from PyQt5.QtCore import QObject, pyqtSignal
-from taskbar_xaml import effect_key, effect_settings, overflow_requested
+from taskbar_xaml import effect_key, effect_settings, taskbar_surfaces_requested
 
 MODES = [('跟随系统', 'system'), ('全透明', 'clear'), ('自定义颜色', 'color'),
          ('亚克力模糊', 'acrylic'), ('玻璃模糊', 'glass')]
-BACKEND_VERSION = '2026.2-tray'
+BACKEND_VERSION = '2026.2-tray-menu'
 
 
 class AccentPolicy(ctypes.Structure):
@@ -46,7 +46,7 @@ def accent_policy(mode, color, opacity):
 def upgrade_installed_backend(payload, directory):
     # Existing installations already have the Windows UI prerequisites.
     if directory.exists() or not any((directory.with_name(old) / 'TranslucentTB.exe').is_file()
-                                     for old in ('2026.2-xamlroot', '2026.2')):
+                                     for old in ('2026.2-tray', '2026.2-xamlroot', '2026.2')):
         return
     source = payload / 'backend'
     if not (source / 'ExplorerTAP.dll').is_file():
@@ -211,7 +211,8 @@ class TaskbarAppearance:
         cfg = effect_settings(self.dock.cfg)
         if self.xaml.confirmed(cfg):
             if self.error:
-                self.xaml_completed(effect_key(cfg), True, '任务栏组件正在使用当前效果配置。')
+                status = self.xaml.applied_status(cfg, '任务栏组件正在使用当前效果配置。')
+                self.xaml_completed(effect_key(cfg), True, status)
         elif self.xaml.shared and not self.error:
             self.xaml_completed(effect_key(cfg), False, '共享任务栏组件已退出或配置已改变，可点击重新应用。')
 
@@ -312,7 +313,7 @@ class TaskbarAppearance:
 
     def resume_session(self):
         self.sync_text()
-        if self.xaml is not None and (self.dock.cfg['taskbar_mode'] != 'system' or overflow_requested(self.dock.cfg)):
+        if self.xaml is not None and (self.dock.cfg['taskbar_mode'] != 'system' or taskbar_surfaces_requested(self.dock.cfg)):
             self.retry()
 
     def close(self,shutdown=False):

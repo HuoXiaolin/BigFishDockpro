@@ -143,7 +143,7 @@ class ResourceCapsule(QObject):
         self.monitor_sources = {}
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
         from weather_location import WeatherLocation
-        self.weather_location=WeatherLocation()
+        self.weather_location=WeatherLocation(runtime.api.log)
         self.reminder_audio=None
         self.mail=None
         self.calendar_sync=None;self.calendar_checked=False
@@ -611,7 +611,7 @@ class ResourceCapsule(QObject):
         elif self.window is not None:
             window,self.window=self.window,None;window.dispose()
         self.sync_desktop_cards()
-        if self.feature_visible('weather'):
+        if not self.runtime.game_active and resource_page_active(self.cfg,'weather'):
             if self.extras is None:
                 from resource_extras import ResourceExtras
                 self.extras=ResourceExtras(self)

@@ -14,7 +14,7 @@ SWITCHES=('clock_flipped','clock_locked','calendar_locked','daily_picture_enable
           'spectrum_locked','spectrum_manual_size','flash_enabled','flash_edge_hide','flash_auto_hide',
           'watermark_enabled','shell_start_enabled','shell_notifications_enabled',
           'shell_notifications_quick','shell_notifications_media','shell_notifications_toast','shell_notifications_calendar',
-          'shell_notifications_tray_overflow',
+          'shell_notifications_tray_overflow','shell_notifications_taskbar_menu',
           'dock_clock','dock_quick_settings','dock_add_button')
 CHOICES={'calendar_style':('calendar_card','almanac'),'watermark_mode':('single','tile'),
          'watermark_position':('top','bottom','left','right','center'),'watermark_layer':('bottom','top'),

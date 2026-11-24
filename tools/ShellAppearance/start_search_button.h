@@ -5,6 +5,7 @@
 #include <winrt/Windows.UI.Xaml.Automation.Provider.h>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 #include "start_footer_flyouts.h"
+#include "start_context_flyouts.h"
 
 struct BF_StartSearchButton {
     winrt::weak_ref<Controls::Grid> pane;
@@ -75,6 +76,7 @@ static FrameworkElement BF_FooterButton(const FrameworkElement& node) {
 static void BF_PositionStartFooter(BF_StartSearchButton& entry) {
     auto pane=entry.pane.get();
     if (!pane || !pane.IsLoaded() || entry.arranging || BF_StartMenuFlyoutOpen(pane)) return;
+    BF_WatchStartContext(pane.XamlRoot());
     entry.arranging=true;
     struct Guard {bool& value;~Guard(){value=false;}} guard{entry.arranging};
 
@@ -224,6 +226,8 @@ static void BF_QueueStartSearchButton(const FrameworkElement& element) {
 static void BF_ClearStartSearchButtons() {
     ++bf_startSearchGeneration;
     BF_StopFooterRequest();
+    BF_StopContextRequest();
+    bf_startContextWatch.reset();
     BF_CloseFooterMenu();
     bf_search_button_ready = false;
     auto entries=std::exchange(bf_startSearchButtons,{});

@@ -12,6 +12,7 @@ from config_store import _atomic
 _LOCATION_FAILURES = ('permission', 'timeout', 'unavailable')
 _ADDRESS_VERSION = 2
 _CURRENT_LOCATION = '当前位置'
+_CACHE_FILE = 'weather-location.json'
 
 
 def windows_position(*,refresh=False):
@@ -99,19 +100,27 @@ def address_name(address):
     return place(f'{parent} · {county}') or county
 
 
-def location_name(path,coords,lookup,*,refresh=False):
-    """Reuse a district-aware label for an unchanged Windows position."""
-    from resource_weather import WEATHER_ERRORS,clean_cities
-    cached = _CURRENT_LOCATION
+def load_location(directory):
+    """Load the last usable position, including caches from earlier versions."""
+    from resource_weather import clean_cities
     try:
-        with path.open('rb') as source:
+        with (Path(directory) / _CACHE_FILE).open('rb') as source:
             raw=source.read(1025)
         record=json.loads(raw) if len(raw)<=1024 else {}
-        if (coordinates(record)==coords and record.get('address_version')==_ADDRESS_VERSION
-                and record.get('name')!=_CURRENT_LOCATION):
-            cached=clean_cities([record.get('name')],strict=True)[0]
+        if coordinates(record) is not None:
+            record['name']=next(iter(clean_cities([record.get('name')])),_CURRENT_LOCATION)
+            return record
     except (OSError,ValueError,RecursionError):
         pass
+    return None
+
+
+def location_name(previous,coords,lookup,*,refresh=False):
+    """Reuse a district-aware label for an unchanged Windows position."""
+    from resource_weather import WEATHER_ERRORS
+    cached = _CURRENT_LOCATION
+    if coordinates(previous)==coords and previous.get('address_version')==_ADDRESS_VERSION:
+        cached=previous['name']
     if not refresh and cached!=_CURRENT_LOCATION:
         return cached
     lat,lon=coords
@@ -125,40 +134,44 @@ def location_name(path,coords,lookup,*,refresh=False):
 
 
 class WeatherLocation:
-    def __init__(self):
+    def __init__(self,log=None):
         self._lock=threading.Lock()
+        self._log=log
+        self._directory=None
+        self._attempt_day=None
+        self._status='unavailable'
         self._record=None
 
     def resolve(self,directory,lookup,cancelled,*,refresh=False,read=None):
-        path=Path(directory)/'weather-location.json'
+        directory=Path(directory)
         with self._lock:
             if cancelled():return None,'unavailable'
-            previous=record=self._record
-            changed=(refresh or record is None or record['day']!=date.today().isoformat())
-            if changed:
+            if directory!=self._directory:
+                self._directory=directory
+                self._record=load_location(directory)
+                self._attempt_day=None
+                self._status='unavailable'
+            if refresh or self._attempt_day!=date.today():
                 position=(read or windows_position)(refresh=refresh)
-                # A request that completes after midnight also covers the new day.
-                record={'day':date.today().isoformat()}
+                if cancelled():return None,'unavailable'
                 coords=coordinates(position)
-                if coords is not None:
-                    record.update(status='ready',latitude=coords[0],longitude=coords[1])
-                else:
+                if coords is None:
                     state=position.get('status') if isinstance(position,dict) else None
-                    status=state if state in _LOCATION_FAILURES else 'unavailable'
-                    if (refresh and status!='permission' and previous and 'name' in previous
-                            and record['day']==previous['day']):
-                        record.update(previous)
-                    record['status']=status
-                self._record=record
-            if cancelled():return None,'unavailable'
-            coords=coordinates(record)
-            if coords is not None and 'name' not in record:
-                record['name']=location_name(path,coords,lookup,refresh=refresh)
-                record['address_version']=_ADDRESS_VERSION
-                changed=True
-            if changed:
-                try:
-                    _atomic(path,json.dumps(record,ensure_ascii=False).encode('utf-8'))
-                except OSError:
-                    pass
-            return ((record['name'],coords) if coords is not None else None),record['status']
+                    self._status=state if state in _LOCATION_FAILURES else 'unavailable'
+                else:
+                    name=location_name(self._record,coords,lookup,refresh=refresh)
+                    if cancelled():return None,'unavailable'
+                    self._status='ready'
+                    self._record=dict(day=date.today().isoformat(),status='ready',name=name,
+                                      latitude=coords[0],longitude=coords[1],address_version=_ADDRESS_VERSION)
+                    try:
+                        _atomic(directory/_CACHE_FILE,json.dumps(self._record,ensure_ascii=False).encode('utf-8'))
+                    except OSError:
+                        pass
+                # A request that completes after midnight covers the new day.
+                self._attempt_day=date.today()
+                if self._log:
+                    trigger='手动' if refresh else '自动'
+                    self._log(f'天气定位（{trigger}） {self._status}')
+            record=self._record
+            return ((record['name'],coordinates(record)) if record else None),self._status

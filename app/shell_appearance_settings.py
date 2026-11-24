@@ -81,6 +81,7 @@ def build_page(dialog, form, kind):
         for part, _ in NOTIFICATION_PARTS:
             dialog.add_field(form, prefix + part)
         dialog.fields[prefix + 'tray_overflow'].setToolTip('任务栏上箭头打开的隐藏图标面板使用此页外观。需要任务栏效果组件。')
+        dialog.fields[prefix + 'taskbar_menu'].setToolTip('右键任务栏空白处打开的系统菜单使用此页外观。需要任务栏效果组件。')
     text = ('点击系统开始按钮或按 Win 键打开。玻璃网格左侧显示应用列表，右侧显示固定应用。'
             if kind == 'start' else 'Win+A 打开快速设置与媒体控制，Win+N 打开通知与日历；通知弹窗保留系统位置。')
     form.addRow(label(text, 'muted'))
@@ -105,11 +106,20 @@ def build_page(dialog, form, kind):
         status = label(backend.status, 'muted')
         form.addRow(status)
         backend.changed.connect(status.setText)
+        if kind == 'notifications' and runtime.taskbar is not None:
+            from taskbar_xaml import taskbar_surfaces_requested
+            taskbar_status = label('', 'muted')
+            form.addRow(taskbar_status)
+            def update_taskbar_status(message):
+                taskbar_status.setText(message)
+                taskbar_status.setVisible(taskbar_surfaces_requested(runtime.dock.cfg))
+            update_taskbar_status(runtime.taskbar.status)
+            runtime.taskbar.changed.connect(update_taskbar_status)
         def retry():
             backend.retry()
             if kind == 'notifications':
-                from taskbar_xaml import overflow_requested
-                if overflow_requested(runtime.dock.cfg):
+                from taskbar_xaml import taskbar_surfaces_requested
+                if taskbar_surfaces_requested(runtime.dock.cfg):
                     runtime.taskbar.retry()
         dialog.action_row(form, '当前配置', button('重试接入', retry))
     def restore():

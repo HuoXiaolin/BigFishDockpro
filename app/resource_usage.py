@@ -20,9 +20,13 @@ def bounds(period,today=None):
     return (None if period=='all' else end-timedelta(days={'week':6,'month':29}.get(period,0))),end
 
 
+def heatmap_start(today):
+    return today - timedelta(days=today.weekday() + 7*(HEATMAP_WEEKS-1))
+
+
 def heatmap_days(providers, provider='', today=None):
     today = today or date.today()
-    first = today - timedelta(days=today.weekday() + 7*(HEATMAP_WEEKS-1))
+    first = heatmap_start(today)
     lower, upper = first.isoformat(), today.isoformat()
     daily = {}
     covered_since = today + timedelta(days=1)

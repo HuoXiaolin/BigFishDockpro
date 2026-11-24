@@ -17,7 +17,7 @@ from PyQt5.QtCore import QObject, Qt, pyqtSlot
 from background_worker import BackgroundWorker
 from external_launch import clean_environment
 from resource_processes import ProcessRanking, executable_path
-from resource_usage import bounds
+from resource_usage import heatmap_start
 
 
 PROVIDERS = {'codex': 'Codex', 'dsh': 'Dsh'}
@@ -89,8 +89,9 @@ def parse_usage(stream, start, end, cancelled=lambda: False):
         model = row['model']
         if row.get('swapped') == 'true':
             model = row.get('served_model') or model
+        model = model or row.get('served_model') or row.get('sent_model') or '未记录模型'
         tokens = {key: int(row[column]) for key, column in TOKEN_COLUMNS.items()}
-        if min(tokens.values()) < 0 or not model:
+        if min(tokens.values()) < 0:
             raise ValueError('Invalid Magpie usage row')
         value = row['cost_usd']
         cost = Decimal(value) if value else None
@@ -138,7 +139,10 @@ class MagpieJob(BackgroundWorker):
     def __init__(self, period):
         super().__init__()
         self.period = period
-        self.start_date, self.end_date = bounds('all' if period == 'all' else 'month')
+        self.end_date = date.today()
+        self.start_date = None if period == 'all' else heatmap_start(self.end_date)
+        self.arguments = ('all',) if self.start_date is None else (
+            '--days', str((self.end_date - self.start_date).days + 1))
         self.snapshot = None
 
     def run(self):
@@ -148,7 +152,7 @@ class MagpieJob(BackgroundWorker):
                 return
             with TemporaryFile() as output:
                 with clean_environment() as env:
-                    process = subprocess.Popen([str(executable), 'usage', '--csv', self.period],
+                    process = subprocess.Popen([str(executable), 'usage', '--csv', *self.arguments],
                                                cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
                                                stdout=output, stderr=subprocess.DEVNULL,
                                                creationflags=subprocess.CREATE_NO_WINDOW)
@@ -178,7 +182,7 @@ class MagpieUsage(QObject):
         self.next_read = {}
 
     def refresh(self, include_history=False, *, force=False):
-        period = 'all' if include_history else '30d'
+        period = 'all' if include_history else 'heatmap'
         if self.job is not None or (not force and time.monotonic() < self.next_read.get(period, 0)):
             return
         self.job = MagpieJob(period)
@@ -195,7 +199,7 @@ class MagpieUsage(QObject):
         self.next_read[job.period] = now + (60 if job.snapshot is None else REFRESH_SECONDS)
         if job.snapshot is not None:
             if job.start_date is None:
-                self.next_read['30d'] = now + REFRESH_SECONDS
+                self.next_read['heatmap'] = now + REFRESH_SECONDS
                 self.rows = job.snapshot
             else:
                 start = job.start_date.isoformat()

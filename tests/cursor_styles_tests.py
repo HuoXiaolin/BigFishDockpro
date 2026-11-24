@@ -49,6 +49,13 @@ def run(api, runtime, app, output, checks):
         assert [style.name for style in styles[:len(BUILTINS)]] == [name for name, _ in BUILTINS]
         assert {'【玻璃通透】Spirit', '【玻璃通透】Tinted Glass', '【动态个性】Future',
                 '【圆润几何】Layan White', '【圆润几何】Phinger Light'} <= {style.name for style in styles}
+        assert [style.title for style in styles[:len(BUILTINS)]] == [
+            'Bibata 琥珀', 'Bibata 冰白', 'Spirit 玻璃', 'Tinted Glass', 'Future 动态', 'Layan 白色', 'Phinger 浅色']
+        for style in other_styles:
+            if style.name == 'GrokBot-Soft-Pointer':
+                assert style.title == '柔光动态'
+        assert len({style.title for style in styles}) == len(styles)
+        assert all('【' not in style.title and 'grok' not in style.title.casefold() for style in styles)
         for style in other_styles:
             name, roles, _ = read_pack(style.source)
             assert name == style.name and 'Arrow' in roles
@@ -104,6 +111,8 @@ pin="pin.cur"
                 page = main.findChild(CursorStylePanel)
                 assert page.current.text().endswith('Windows 当前方案')
                 assert page.choices.count() == len(styles) + 1
+                assert [page.choices.itemText(index) for index in range(len(styles))] == [
+                    style.title for style in styles]
                 assert all(not icon.pixmap().isNull() for preview in page.previews for icon in preview)
                 page.choices.setCurrentIndex(1)
                 page.apply_button.click()
@@ -119,6 +128,13 @@ pin="pin.cur"
                     tile.click()
                     assert tile.value == style.title
                     assert page.current.text().endswith(style.title)
+                    if style.title == '柔光动态':
+                        preview_menu = QMenu()
+                        add_tray_menu(preview_menu, runtime)
+                        preview_menu.aboutToShow.emit()
+                        assert preview_menu.actions()[0].text().endswith('柔光动态')
+                        assert system.read()[''][0] == style.name
+                        preview_menu.deleteLater()
                 add_tray_menu(menu, runtime)
                 menu.aboutToShow.emit()
                 action = menu.actions()[0]

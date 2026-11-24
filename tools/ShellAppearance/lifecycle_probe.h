@@ -1,5 +1,9 @@
 // Exercise the real hook / XAML diagnostics path inside the owned test host.
 // BigFishShellProbe validates a non-input desktop before calling this function.
+#ifndef BIGFISH_START_ENGINE
+#include <winrt/Windows.UI.Xaml.Media.Imaging.h>
+#endif
+
 static int BF_ProbeLifecycle(PCWSTR directory) {
     const auto trace = [&](const char* stage) {
         std::ofstream file(std::filesystem::path(directory)/L"lifecycle-stage.txt", std::ios::app);
@@ -62,7 +66,11 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
         Controls::Border border;border.Name(L"LifecycleSurface");
         auto original = Media::SolidColorBrush(winrt::Windows::UI::Colors::Red());
         border.Background(original);root.Children().Append(border);
-        source.Content(root);ShowWindow(window,SW_SHOWNOACTIVATE);
+        source.Content(root);
+        // SW_HIDE from the test launcher can override the process's initial
+        // ShowWindow call. Explicitly display the owned window on this desktop.
+        winrt::check_bool(SetWindowPos(window,nullptr,0,0,0,0,
+            SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW));
         trace("xaml_loaded");
         if (!cold) initialize();
         const auto pump = [](unsigned milliseconds) {
@@ -73,6 +81,17 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
                 Sleep(5);
             } while(GetTickCount64()<until);
         };
+#ifndef BIGFISH_START_ENGINE
+        const auto renderFrame = [&] {
+            // The non-input desktop can throttle composition of the test window.
+            // Request a real offscreen frame so XAML completes its Loaded pass.
+            Media::Imaging::RenderTargetBitmap frame;
+            auto render=frame.RenderAsync(root);
+            const auto until=GetTickCount64()+1000;
+            while (render.Status()==winrt::Windows::Foundation::AsyncStatus::Started && GetTickCount64()<until)
+                pump(5);
+        };
+#endif
         // XAML Islands may not expose a top-level CoreWindow. In that case use
         // the same initializer directly, still going through diagnostics/TAP.
         BF_RequestShellInitialization(window);
@@ -107,6 +126,7 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
         });
         first.Name(L"LifecycleSurface");root.Children().Append(first);
         first.Background(original);root.UpdateLayout();
+        if (!firstLoaded) renderFrame();
         // Loaded is asynchronous on a non-input desktop. Check the first
         // presentation itself, even if the compositor takes more than 25 ms.
         const auto loadDeadline=GetTickCount64()+750;
@@ -123,6 +143,7 @@ static int BF_ProbeLifecycle(PCWSTR directory) {
         if (!retry) calendar.Name(L"CalendarCenterGrid");
         calendar.Height(0);
         root.Children().Append(calendar);root.UpdateLayout();pump(25);
+        if (!calendar.IsLoaded()) renderFrame();
         if (retry) calendar.Name(L"CalendarCenterGrid");
         calendar.Background(original);pump(25);
         calendar.Height(120);root.UpdateLayout();pump(25);
