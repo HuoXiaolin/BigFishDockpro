@@ -61,6 +61,8 @@ def run(output):
         check_watermark(api,runtime,app,checks)
         from material_tests import check_zero_crystal
         check_zero_crystal(api,runtime,output,checks)
+        from component_navigation_tests import run as check_component_navigation
+        check_component_navigation(runtime,app,output,checks)
         app.processEvents();runtime.panels.sync_windows();app.processEvents()
         checks.append('private Windows desktop: '+desktop+'; temporary configuration and synthetic entries only')
         # Sample this test process before/after enabling one clock; this is not a power measurement.
@@ -369,9 +371,12 @@ def run(output):
             app.sendPostedEvents(None, QEvent.DeferredDelete)
             assert len(tray.menu.findChildren(QMenu)) == len(original_menus)
         assert all(sip.isdeleted(menu) for menu in original_menus)
-        titles={action.text() for action in tray.menu.actions()}
-        assert {'应用批量管理…','Dock 布局','桌面卡片','便签','资源胶囊','每日图片','组件暂停','设置…','帮助与更新'}<=titles
-        pause_menu = next(action.menu() for action in tray.menu.actions() if action.text() == '组件暂停')
+        from menu_paths import action_at
+        titles=[action.text() for action in tray.menu.actions() if not action.isSeparator()]
+        assert titles==['设置…','显示 / 隐藏 Dock','Dock 与应用','桌面组件','胶囊与监控','系统外观','帮助与更新','退出']
+        for group,entries in [('Dock 与应用',('应用批量管理…','Dock 布局')),('桌面组件',('桌面卡片','便签','每日图片')),('胶囊与监控',('灵动胶囊','闪念胶囊'))]:
+            for entry in entries:assert action_at(tray.menu,group,entry).isEnabled()
+        pause_menu = action_at(tray.menu,'桌面组件','组件暂停').menu()
         assert [action.text() for action in pause_menu.actions()] == ['暂停桌面组件', '全屏自动暂停']
         assert all(action.isCheckable() for action in pause_menu.actions())
         context=dock.icon_context_menu(-1)
@@ -473,6 +478,8 @@ def run(output):
         check_face_roles(api,runtime,app,output,checks)
         from resource_pomodoro_tests import run as check_pomodoro
         check_pomodoro(api,runtime,app,output,checks)
+        from capsule_interaction_tests import run as check_capsule_interactions
+        check_capsule_interactions(api,runtime,app,output,checks)
         from resource_calendar_tests import run as check_calendar_sync
         check_calendar_sync(app,output,checks)
         from mail_tests import run as check_mail

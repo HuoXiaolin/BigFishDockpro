@@ -142,6 +142,7 @@ class ResourceCapsule(QObject):
         self.runner_totals = {}
         self.monitor_sources = {}
         self.extras=None;self.pomodoro=None;self.agenda=None;self.battery_warned=False
+        self.indicators=None
         from weather_location import WeatherLocation
         self.weather_location=WeatherLocation(runtime.api.log)
         self.reminder_audio=None
@@ -381,17 +382,25 @@ class ResourceCapsule(QObject):
             card=self.detached(key)
             if card and card.isVisible():card.refresh()
 
+    def peek_reminder(self,notice=None):
+        edge=getattr(self.window,'edge_reveal',None)
+        if edge and not (self.closed or self.runtime.session_ending or self.runtime.game_active):edge.notify(notice)
+
     def play_reminder_sound(self,kind):
+        quota=getattr(self.deck,'alert','') if kind=='quota' else ''
+        self.peek_reminder(('quota_notice',quota) if quota else None)
         if (self.closed or self.runtime.session_ending or not self.cfg['resource_reminder_sound']
                 or self.runtime.dock.preview or self.runtime.game_active):return
         if kind=='weather' and not self.cfg['resource_weather_alert_sound']:return
         if self.reminder_audio is None:
             from resource_reminder_audio import ReminderAudio
             self.reminder_audio=ReminderAudio(self)
-        self.reminder_audio.play(kind)
+        self.reminder_audio.play('focus_done' if kind=='alarm' else kind)
 
     def reminders(self):
         badges=[]
+        edge=getattr(self.window,'edge_reveal',None)
+        if edge and edge.notice and edge.peek_until>time.monotonic():badges.append(edge.notice)
         code=self.mail.current_code() if self.compact and self.mail else None
         if code:badges.append(('mail_code',code.value))
         due=self.agenda.due() if self.agenda else ()
@@ -560,6 +569,9 @@ class ResourceCapsule(QObject):
             else:desktop.difference_update(('rank','bluetooth'))
         if self.feature_visible('traffic'):desktop.add('traffic')
         if self.window and self.window.isVisible() and self.cfg['resource_alert_battery']:desktop.add('battery')
+        if self.indicators:
+            if 'microphone' in self.indicators.selected:desktop.add('microphone')
+            if 'network_link' in self.indicators.selected:desktop.add('network_links')
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
         custom=getattr(self.runtime,'custom_cards',None)
         if custom:desktop.update(custom.needs())
@@ -568,7 +580,7 @@ class ResourceCapsule(QObject):
 
     def active_keys(self):
         return self.needs() & {'cpu','cpu_cores','gpu','memory','network','rank','traffic','system_status',
-                               'battery','connection','volume','disk_activity','network_utilization'}
+                               'battery','connection','volume','microphone','network_links','disk_activity','network_utilization'}
 
     def strip_allowed(self):
         return not self.runtime.game_active or (
@@ -610,6 +622,12 @@ class ResourceCapsule(QObject):
             self.window.sync_window()
         elif self.window is not None:
             window,self.window=self.window,None;window.dispose()
+        from resource_options import DEVICE_ALERTS
+        selected=[key for key in DEVICE_ALERTS if visible and self.compact and self.cfg.get('resource_alert_'+key)]
+        if selected and self.indicators is None:
+            from capsule_indicators import Indicators
+            self.indicators=Indicators(self)
+        if self.indicators:self.indicators.configure(selected)
         self.sync_desktop_cards()
         if not self.runtime.game_active and resource_page_active(self.cfg,'weather'):
             if self.extras is None:
@@ -798,6 +816,10 @@ class ResourceCapsule(QObject):
             if key in ('connection','system_status') and data.get('connection_device', network_device) != network_device:continue
             device = self.monitor_sources.get(key)
             value = device_reading(self.device_readings, key, device) if device else data.get(key)
+            if self.indicators and key=='microphone':
+                self.indicators.observe('microphone',value)
+            elif self.indicators and key=='network_links':
+                self.indicators.observe('network_link',value)
             if value is not None and (key!='cpu_cores' or value):
                 self.latest[key]=value;self.observed[key]=now
                 if key in ('cpu','memory','network','gpu'):record[key] = value
@@ -937,6 +959,7 @@ class ResourceCapsule(QObject):
         if self.strip:self.strip.placement.restore();self.strip.reposition()
     def suspend_session(self):
         """Release collectors early; settings and desktop geometry remain intact."""
+        if self.indicators:self.indicators.configure(())
         self.signature=None
         if self.job:
             job,self.job=self.job,None
@@ -951,6 +974,7 @@ class ResourceCapsule(QObject):
         if self.reminder_audio:self.reminder_audio.stop()
 
     def close(self):
+        if self.indicators:self.indicators.configure(())
         self.closed=True;self.signature=None;self.history=None;self.latest.clear();self.observed.clear()
         self.stop_runners()
         self.stop_hardware()

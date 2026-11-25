@@ -18,7 +18,7 @@ EVENTS = {
     'panel_new': '新建收纳卡片',
     'note_new': '新建便签',
     'clock_settings': '时钟与日历设置',
-    'resource_open': '展开资源胶囊',
+    'resource_open': '展开灵动胶囊',
     'flash_new': '新建闪念',
     'agenda_new': '新建本地日程',
 }

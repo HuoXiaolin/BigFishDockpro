@@ -4,10 +4,10 @@ from PyQt5.QtCore import QObject,QTimer,Qt,QRectF,QPointF,QSize,QPoint,QMimeData
 from PyQt5.QtGui import QPixmap,QPainter,QColor,QLinearGradient,QFont,QPen,QDrag,QPainterPath
 from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QApplication,QStackedWidget,QWidget,QFrame
 
-from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,WIDGET_SWITCHES,normalize_order
+from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,TILE_TINTS,WIDGET_SWITCHES,normalize_order
 from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
 from dock_icon_shape import circular_icon
-from background_contrast import foreground, wallpaper_color
+from background_contrast import blend, foreground, wallpaper_color
 
 REFLECTION_BUDGET=2*1024*1024
 
@@ -112,7 +112,8 @@ def symbol(p,rect,kind,color):
 
 class QuickTile(QPushButton):
     def __init__(self,popup,key,title,kind):
-        super().__init__(popup);self.popup=popup;self.key=key;self.title=title;self.kind=kind;self.value='';self.active=False
+        super().__init__(popup);self.popup=popup;self.key=key;self.title=title;self.kind=kind;self.value='';self.active=None
+        self.tint=QColor(TILE_TINTS[key])
         self.setObjectName('QuickTile')
         self.setAccessibleName(title)
         self.setMinimumSize(84,82)
@@ -166,13 +167,27 @@ class QuickTile(QPushButton):
         first=order[page*9];menu.addAction('移到本页开头').triggered.connect(lambda:self.popup.move_action(self.key,first))
         menu.exec_(event.globalPos());menu.deleteLater()
     def paintEvent(self,event):
-        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);colors=self.popup.colors();accent=colors['accent']
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);colors=self.popup.colors()
         rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
-        background=QColor('#dceaf2' if colors['light'] else '#34434d') if self.active else QColor('#e9f0f5' if colors['light'] else '#28333b') if self.underMouse() else QColor('#f0f5f8' if colors['light'] else '#232b31')
-        if self.isDown():background.setAlpha(65)
-        p.setPen(Qt.NoPen);p.setBrush(background);p.drawRoundedRect(rect,8,8)
+        base=(252,253,255) if colors['light'] else (26,31,37)
+        amount=.48 if self.active else .17 if self.active is False else .29
+        background=QColor(*(round(v) for v in blend(self.tint.getRgb()[:3],base,amount)))
+        alpha=188 if self.active else 132 if self.active is False else 159
+        background.setAlpha(min(232,alpha+(40 if self.isDown() else 20 if self.underMouse() else 0)))
+        outline=QColor(self.tint);outline.setAlpha(195 if self.active or self.hasFocus() else 66)
+        p.setPen(QPen(colors['ink'] if self.hasFocus() else outline,1.5 if self.hasFocus() else 1))
+        p.setBrush(background);p.drawRoundedRect(rect,8,8)
         title_ink = colors['ink'] if self.isEnabled() else colors['muted']
-        symbol(p,QRectF((self.width()-25)/2,11,25,25),self.kind,accent if self.active else title_ink)
+        accent=self.tint.darker(156) if colors['light'] else self.tint.lighter(166)
+        symbol(p,QRectF((self.width()-25)/2,11,25,25),self.kind,accent if self.isEnabled() else title_ink)
+        if self.active is not None and not self.popup.editing:
+            mark=QRectF(self.width()-18,7,10,10)
+            p.setPen(QPen(accent,1.2));p.setBrush(accent if self.active else Qt.NoBrush);p.drawEllipse(mark)
+            if self.active:
+                p.setPen(QPen(QColor('white' if colors['light'] else '#17212c'),1.3))
+                corner=mark.topLeft()
+                p.drawLine(corner+QPointF(2,5),corner+QPointF(4.2,7))
+                p.drawLine(corner+QPointF(4.2,7),corner+QPointF(8,3))
         font=QFont('Microsoft YaHei UI');font.setPixelSize(12);font.setWeight(QFont.DemiBold);p.setFont(font);p.setPen(title_ink)
         p.drawText(QRectF(3,42,self.width()-6,18),Qt.AlignCenter,self.title)
         font.setPixelSize(10);font.setWeight(QFont.Normal);p.setFont(font);p.setPen(colors['muted'])
@@ -186,7 +201,8 @@ class QuickTile(QPushButton):
 class PageTurnButton(QPushButton):
     def __init__(self,popup,direction,text):
         super().__init__(text,popup);self.popup=popup;self.direction=direction
-        self.setStyleSheet('min-width:24px;max-width:24px;min-height:22px;max-height:22px;padding:0;font-size:18px;');self.setAcceptDrops(True)
+        self.setObjectName('QuickNav');self.setFixedSize(26,24);self.setAcceptDrops(True)
+        self.setAccessibleName('上一页' if direction < 0 else '下一页')
         self.clicked.connect(lambda:popup.set_page(popup.pages.currentIndex()+direction))
         self.hover_timer=QTimer(self);self.hover_timer.setSingleShot(True);self.hover_timer.setInterval(380)
         self.hover_timer.timeout.connect(lambda:popup.set_page(popup.pages.currentIndex()+direction))
@@ -208,11 +224,15 @@ class DockQuickSettings(QDialog):
         self.extras=extras;self.dock=extras.dock;self.setObjectName('DockQuickSettings');self.setWindowTitle('Dock 快捷设置')
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_NoMouseReplay);self.setFixedSize(320,402)
         self.editing=False;self._wheel_delta=0;self._bound_taskbar=None
+        self.backdrop=None;self._backdrop_key=None;self.spec_alpha=0.0
+        self._light_ink=None;self._control_palette=None
         body=QVBoxLayout(self);body.setContentsMargins(16,12,16,12);body.setSpacing(9)
-        header=QHBoxLayout();self.title=QLabel('快捷设置');self.title.setStyleSheet('font-size:15px;font-weight:600;background:transparent;');header.addWidget(self.title);header.addStretch()
-        self.reset_button=QPushButton('重置');self.reset_button.setStyleSheet('min-width:30px;max-width:38px;padding:2px;min-height:22px;');self.reset_button.clicked.connect(self.reset_order);header.addWidget(self.reset_button);self.reset_button.hide()
-        self.edit_button=QPushButton('排序');self.edit_button.setStyleSheet('min-width:30px;max-width:38px;padding:2px;min-height:22px;');self.edit_button.clicked.connect(self.toggle_edit);header.addWidget(self.edit_button)
-        close=QPushButton('×');close.setFixedSize(25,25);close.setStyleSheet('border:0;background:transparent;padding:0;font-size:20px;');close.clicked.connect(self.close);header.addWidget(close);body.addLayout(header)
+        header=QHBoxLayout();self.title=QLabel('快捷设置');self.title.setObjectName('QuickTitle')
+        header.addWidget(self.title,0,Qt.AlignVCenter);header.addStretch()
+        self.reset_button=QPushButton('重置');self.reset_button.setFixedSize(38,26);self.reset_button.clicked.connect(self.reset_order);header.addWidget(self.reset_button);self.reset_button.hide()
+        self.edit_button=QPushButton('排序');self.edit_button.setFixedSize(38,26);self.edit_button.setCheckable(True);self.edit_button.clicked.connect(self.toggle_edit);header.addWidget(self.edit_button)
+        self.close_button=QPushButton('×');self.close_button.setObjectName('QuickClose');self.close_button.setAccessibleName('关闭快捷设置')
+        self.close_button.setFixedSize(26,26);self.close_button.clicked.connect(self.close);header.addWidget(self.close_button);body.addLayout(header)
         self.pages=QStackedWidget();self.pages.setObjectName('QuickPages');self.pages.setFrameShape(QFrame.NoFrame);self.pages.setAutoFillBackground(False)
         self.pages.setStyleSheet('QStackedWidget#QuickPages,QWidget#QuickPage {background:transparent;border:0;}')
         self.page_grids=[]
@@ -223,10 +243,14 @@ class DockQuickSettings(QDialog):
             self.pages.addWidget(page);self.page_grids.append(grid)
         self.tiles={key:QuickTile(self,key,title,kind) for key,title,kind in ACTIONS}
         body.addWidget(self.pages,1)
-        footer=QHBoxLayout();hint=QLabel('滚轮翻页');hint.setStyleSheet('background:transparent;font-size:10px;');footer.addWidget(hint);footer.addStretch()
-        self.prev_button=PageTurnButton(self,-1,'‹');self.next_button=PageTurnButton(self,1,'›');self.page_label=QLabel('1 / 2');self.page_label.setAlignment(Qt.AlignCenter);self.page_label.setStyleSheet('background:transparent;font-size:11px;')
-        footer.addWidget(self.prev_button);footer.addWidget(self.page_label);footer.addWidget(self.next_button);body.addLayout(footer)
-        self.status=QLabel('更改即保存 · 点击「排序」可调整按钮位置');self.status.setStyleSheet('background:transparent;font-size:10px;');body.addWidget(self.status)
+        footer=QHBoxLayout();hint=QLabel('滚轮翻页');footer.addWidget(hint,0,Qt.AlignVCenter);footer.addStretch()
+        self.prev_button=PageTurnButton(self,-1,'‹');self.next_button=PageTurnButton(self,1,'›');self.page_label=QLabel();self.page_label.setAlignment(Qt.AlignCenter);self.page_label.setObjectName('QuickCounter')
+        footer.addWidget(self.prev_button);footer.addWidget(self.page_label,0,Qt.AlignVCenter);footer.addWidget(self.next_button);body.addLayout(footer)
+        self.status=QLabel('更改即保存 · 点击「排序」可调整按钮位置');body.addWidget(self.status,0,Qt.AlignLeft)
+        for label in (self.title,hint,self.page_label,self.status):
+            label.setProperty('quickCaption',True)
+        for button in (self.reset_button,self.edit_button,self.close_button,self.prev_button,self.next_button):
+            button.setProperty('quickControl',True)
         self.rebuild_pages()
         for child in self.findChildren(QWidget):child.installEventFilter(self)
         from idle_resources import watch
@@ -263,6 +287,7 @@ class DockQuickSettings(QDialog):
         event.accept()
     def toggle_edit(self):
         self.editing=not self.editing;self.edit_button.setText('完成' if self.editing else '排序');self.reset_button.setVisible(self.editing)
+        self.edit_button.setChecked(self.editing)
         self.status.setText('拖动交换位置 · 拖到翻页按钮切页，或右键跨页移动' if self.editing else '更改即保存 · 点击「排序」可调整按钮位置')
         self.status.setWordWrap(self.editing)
         for tile in self.tiles.values():tile.setCursor(Qt.OpenHandCursor if self.editing else Qt.PointingHandCursor)
@@ -287,13 +312,78 @@ class DockQuickSettings(QDialog):
         self.set_page(page);return True
     def reset_order(self):return self.save_order(list(DEFAULT_ORDER))
     def colors(self):
-        light=self.dock.is_light();accent=QColor(self.dock.cfg.get('theme_color') or '#5f9fc8')
-        if accent.lightness()>195:accent=accent.darker(145)
-        return {'light':light,'accent':accent,'ink':QColor('#233c4c' if light else '#f1f6fa'),'muted':QColor('#526571' if light else '#b1c8d6')}
+        light=self.dock.is_light() if self._light_ink is None else not self._light_ink
+        return {'light':light,'ink':QColor('#152831' if light else '#f6f9fb'),'muted':QColor('#344650' if light else '#d7e0e6')}
+
+    @property
+    def cfg(self):
+        return self.dock.cfg
+
+    def refresh_surface(self):
+        from glass_capture import backdrop_key, capture_behind, smooth_backdrop
+        from liquid_glass import dock_tint_layers, material_alpha
+        cfg=self.cfg
+        colors=self.dock.theme_colors()
+        material=cfg.get('dock_material','liquid')
+        glass=cfg['glass'] and not cfg.get('clear_background') and material not in ('clear','solid')
+        radius=self.dock.blur_divisor()
+        key=backdrop_key(self,glass,radius) if not self.dock.preview else None
+        if not glass:
+            self.backdrop=None
+        elif key is not None and (key!=self._backdrop_key or self.backdrop is None):
+            sample=capture_behind(self)
+            self.backdrop=smooth_backdrop(sample,radius) if sample is not None and not sample.isNull() else None
+        self._backdrop_key=key
+        wallpaper=wallpaper_color(self,QRectF(self.rect())) if key is not None else None
+        tint,opacity=dock_tint_layers(colors,cfg.get('transparency',40))
+        alpha=0 if cfg.get('clear_background') else material_alpha(tint,material)*opacity/255
+        self._light_ink=foreground(colors['tint'].getRgb()[:3],wallpaper,alpha)=='#ffffff' if wallpaper is not None else not self.dock.is_light()
+        self.style_controls(colors['tint'])
+        self.update()
+
+    def style_controls(self,tint):
+        colors=self.colors()
+        key=(colors['light'],tint.rgb())
+        if key==self._control_palette:
+            return
+        self._control_palette=key
+        light=colors['light']
+        ink=colors['ink']
+        base=blend(tint.getRgb()[:3],(231,238,244) if light else (23,31,44),.18)
+        def rgba(rgb,alpha):
+            r,g,b=map(round,rgb)
+            return f'rgba({r},{g},{b},{alpha})'
+        # Both glyph and fill belong to the popup. The desktop can change from
+        # light to dark between two controls on the same transparent window.
+        ink_rgb=ink.getRgb()[:3]
+        hover=blend(ink_rgb,base,.10)
+        pressed=blend(ink_rgb,base,.19)
+        active=blend(tint.getRgb()[:3],(145,183,211) if light else (42,83,113),.22)
+        control='QPushButton[quickControl="true"]'
+        caption='QLabel[quickCaption="true"]'
+        self.setStyleSheet(f"""
+            {control} {{color:{ink.name()}; background:{rgba(base,196)}; border:1px solid {rgba(ink_rgb,90)};
+                        border-radius:6px; min-height:0; padding:0;}}
+            QPushButton#QuickNav {{font-size:18px;}}
+            QPushButton#QuickClose {{font-size:18px;}}
+            {control}:hover {{background:{rgba(hover,220)}; border-color:{rgba(ink_rgb,162)};}}
+            {control}:checked {{background:{rgba(active,222)}; border-color:{rgba(ink_rgb,190)};}}
+            {control}:checked:hover {{background:{rgba(active,244)};}}
+            {control}:pressed, {control}:checked:pressed {{background:{rgba(pressed,238)};}}
+            {control}:focus, {control}[keyboardFocus="true"] {{border-color:{ink.name()};}}
+            {control}:disabled {{color:{rgba(ink_rgb,156)}; background:{rgba(base,167)}; border-color:{rgba(ink_rgb,47)};}}
+            {caption} {{color:{ink.name()}; background:{rgba(base,174)}; border-radius:4px;
+                        padding:1px 5px; font-size:10px;}}
+            QLabel#QuickTitle {{font-size:15px; font-weight:600;}}
+            QLabel#QuickCounter {{font-size:11px;}}
+        """)
+
     def paintEvent(self,event):
-        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);colors=self.colors();rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
-        p.setBrush(QColor('#ffffff' if colors['light'] else '#202124'))
-        p.setPen(QPen(QColor('#dbe3e8' if colors['light'] else '#44474e'),1));p.drawRoundedRect(rect,16,16)
+        p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.SmoothPixmapTransform)
+        rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
+        path=QPainterPath();path.addRoundedRect(rect,16,16)
+        p.fillPath(path,QColor(0,0,0,2))
+        self.dock.paint_dock_surface(self,p,[path],rect,self.dock.theme_colors())
     def refresh(self):
         if tuple(self.order())!=getattr(self,'_shown_order',None):self.rebuild_pages()
         from appearance_profiles import MODES as PROFILE_MODES, selected_mode
@@ -319,7 +409,7 @@ class DockQuickSettings(QDialog):
             self.tiles[key].setAccessibleDescription(values[key])
         self.tiles['clock'].setToolTip('左键开关时钟，右键设置时光进度与倒计时')
         values['resources']='已开启' if cfg['resource_enabled'] else '已关闭'
-        self.tiles['resources'].setToolTip('切换桌面资源胶囊')
+        self.tiles['resources'].setToolTip('切换桌面灵动胶囊')
         values['flash']='已开启' if cfg['flash_enabled'] else '已关闭'
         self.tiles['flash'].setToolTip('切换桌面闪念胶囊')
         productivity=getattr(runtime,'productivity',None)
@@ -392,11 +482,19 @@ class DockQuickSettings(QDialog):
         if cfg['position']=='custom':values['position']='自定义 · '+str(cfg['custom_bottom'])
         self.tiles['appearance'].setToolTip('一起切换 Dock、桌面卡片、便签、时钟、日历和闪念胶囊的主题，循环后恢复各自的自定义外观。')
         for key in ('size','position'):self.tiles[key].setToolTip('点击循环切换，循环一轮可回到已保存的自定义值。')
-        for key,tile in self.tiles.items():tile.value=values[key];tile.active=values[key]=='已开启';tile.update()
-        colors=self.colors();self.title.setStyleSheet('background:transparent;font-size:15px;font-weight:600;color:'+colors['ink'].name())
-        self.status.setStyleSheet('background:transparent;font-size:10px;color:'+colors['muted'].name());self.update()
+        for key,tile in self.tiles.items():
+            tile.value=values[key]
+            tile.active={'已开启':True,'已关闭':False}.get(tile.value)
+            description=tile.value
+            if key in SHELL_ACTIONS and shell_supported:
+                tile.active=cfg[key+'_enabled']
+                description=('已开启' if tile.active else '已关闭')+' · '+tile.value
+            tile.setAccessibleDescription(description)
+            tile.update()
+        if self.isVisible():self.refresh_surface()
     def showEvent(self, event):
         super().showEvent(event)
+        self.refresh_surface()
         taskbar = self._bound_taskbar
         if hasattr(taskbar, 'reconcile_status'):
             taskbar.reconcile_status()
@@ -406,6 +504,10 @@ class DockQuickSettings(QDialog):
         error=getattr(self._bound_taskbar,'error','')
         self.status.setText('任务栏效果应用失败，请查看提示。' if error else str(message))
         self.status.setToolTip(str(error) if error else '')
+
+    def moveEvent(self,event):
+        super().moveEvent(event)
+        if self.isVisible():self.refresh_surface()
 
     def reanchor(self):
         from PyQt5.QtCore import QPoint

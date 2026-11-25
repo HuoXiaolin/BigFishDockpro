@@ -24,7 +24,7 @@ def field_catalog(api, cfg):
     from sticky_notes_store import STYLES
     from taskbar_appearance import MODES
     from taskbar_text import MODES as TEXT_MODES
-    from feature_config import DOCK_ICON_SHAPES, SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
+    from feature_config import DOCK_ICON_SHAPES, SPECTRUM_COLOR_MODES, SPECTRUM_STYLES, STARTUP_ANIMATION_STYLES
     from feature_config import WATERMARK_LAYERS, WATERMARK_MODES, WATERMARK_POSITIONS, WATERMARK_RANGES
     from resource_options import FACE_SWITCH_RANGE, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
     from shell_appearance_model import catalog as shell_catalog
@@ -79,6 +79,7 @@ def field_catalog(api, cfg):
         'panel_layer': (1, '桌面卡片层级', 'combo', [('置底','bottom'),('置顶','top')]),
         'panel_locked': (1, '锁定卡片位置与大小', 'check', None),
         'card_snap': (1, '卡片吸附（屏幕边缘与相邻卡片）', 'check', None),
+    'card_edge_hide': (1, '桌面卡片贴边隐藏为光条', 'check', None),
         'card_snap_distance': (1, '吸附距离（像素）', 'number', (2, 64)),
         'panel_auto_hide': (1, '鼠标离开后自动收起', 'check', None),
         'panel_expand_mode': (1, '展开方式', 'combo', [('鼠标移入', 'hover'), ('点击展开', 'click')]),
@@ -112,7 +113,7 @@ def field_catalog(api, cfg):
         'spectrum_appearance_source': (WIDGETS, '频谱外观来源', 'combo', APPEARANCE_SOURCES),
         'spectrum_backdrop_mode': (WIDGETS, '频谱玻璃背景', 'combo', BACKDROP_MODES),
         'spectrum_layer': (WIDGETS, '频谱桌面层级', 'combo', [('置底','bottom'),('置顶','top')]),
-        'spectrum_color_mode': (WIDGETS, '频谱配色', 'combo', [('炫彩','colorful'),('单色','mono')]),
+        'spectrum_color_mode': (WIDGETS, '频谱配色', 'combo', SPECTRUM_COLOR_MODES),
         'spectrum_mono_color': (WIDGETS, '频谱单色', 'color', None),
         'daily_picture_enabled': (WIDGETS, '桌面每日图片', 'check', None),
         'daily_picture_appearance_source': (WIDGETS, '每日图片外观来源', 'combo', APPEARANCE_SOURCES),
@@ -133,7 +134,7 @@ def field_catalog(api, cfg):
         'flash_drop': (CAPSULES, '拖入选中文字生成闪念', 'check', None),
         'flash_auto_hide': (CAPSULES, '鼠标离开后自动收起', 'check', None),
         'flash_delay': (CAPSULES, '收起延迟（秒）', 'number', (1, 30)),
-        'resource_enabled': (CAPSULES, '显示资源胶囊', 'check', None),
+        'resource_enabled': (CAPSULES, '显示灵动胶囊', 'check', None),
         'resource_taskbar': (TASKBAR, '显示任务栏监控', 'check', None),
         'resource_bt_tray': (CAPSULES, '外设电量托盘图标', 'check', None),
         'resource_ai_tray': (CAPSULES, 'AI 用量托盘图标', 'check', None),
@@ -171,7 +172,7 @@ def targets(catalog):
                        ('@layouts', '桌面布局方案'), ('@references', '失效入口检查')):
         result.append(dict(key=key, title=title, page='组件与整理', options=''))
     for key, options in (('@usage', '操作趋势 功能排行 重置统计'), ('@taskbar', '任务栏效果 监控'),
-                         ('@widgets', '桌面时钟 日历 音乐频谱 每日图片'), ('@capsules', '资源胶囊 闪念胶囊'),
+                         ('@widgets', '桌面时钟 日历 音乐频谱 每日图片'), ('@capsules', '灵动胶囊 闪念胶囊'),
                          ('@data', '导入配置 导出配置 恢复默认'),
                          ('@cursors', '鼠标指针 光标 导入方案 恢复系统默认 cur ani')):
         name = PAGES[PAGE_TARGETS[key]]

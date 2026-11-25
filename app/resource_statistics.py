@@ -10,6 +10,7 @@ from resource_options import content_columns
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,cost_label,reset_text
 from resource_usage import HEATMAP_WEEKS,aggregate,heatmap_days
 from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, tray_metric_key, used_percent
+from resource_provider_icons import paint_provider_mark
 import reset_credits
 from card_design import blend,paint_capsule_card
 
@@ -107,6 +108,16 @@ class QuotaOverview(QWidget):
             card_columns = min(columns, max(1, len(quotas)))
             cell_width = (self.width() - 2 * self.inset - self.metric_gap * (card_columns - 1)) / card_columns
             metric_height = 64 if cell_width < 168 else 48
+            if quotas and all(amount_text(q) is not None for q in quotas):
+                font=QFont(self.font());font.setPixelSize(16);font.setWeight(QFont.DemiBold)
+                values=QFontMetrics(font)
+                font.setPixelSize(11);font.setWeight(QFont.Normal)
+                labels=QFontMetrics(font)
+                needed=max(82, max(max(values.horizontalAdvance(amount_text(q)),labels.horizontalAdvance(amount_label(q)))+4 for q in quotas))
+                usable=self.width()-2*self.inset
+                card_columns=max(1,min(3,len(quotas),(usable+self.metric_gap)//(needed+self.metric_gap)))
+                metric_height=31 if card_columns==1 and usable>=164 else 45
+                if any(q.get('reset') for q in quotas):metric_height+=16
             metric_rows = (len(quotas) + card_columns - 1) // card_columns
             body_height = metric_rows * metric_height if quotas else 28
             footer_y = y + self.header_height + body_height
@@ -130,7 +141,7 @@ class QuotaOverview(QWidget):
         if not colors:
             return
         p = QPainter(self)
-        p.setFont(self.font())
+        p.setFont(QFont('Microsoft YaHei UI'))
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         if not self.cards:
             bridge = self.view.owner.service.deck
@@ -140,21 +151,28 @@ class QuotaOverview(QWidget):
             self.paint_card(p, colors, row, rect, columns, metric_height, footer_y)
 
     def paint_card(self, p, colors, row, rect, columns, metric_height, footer_y):
-        surface(p, rect, self.view.owner, 'sky', base=colors['field'])
+        quotas = row.get('quotas', [])
+        amounts=bool(quotas) and all(amount_text(q) is not None for q in quotas)
+        surface(p, rect, self.view.owner, 'mint' if amounts else 'sky', base=colors['field'])
         left = self.inset
         right = rect.width() - left
         width = max(0, right - left)
-        quotas = row.get('quotas', [])
         plan = provider_plan_name(row)
         if row.get('stale'):
             plan = f'{plan} · 上次读数' if plan else '上次读数'
         elif not plan and quotas:
             plan = row.get('status') or ''
-        title_width = width * .55 if plan else width
-        text(p, QRectF(left, rect.top() + 6, title_width, 21), row['name'], colors['ink'], 14, True)
+        mark=QRectF(left,rect.top()+9,16,16)
+        p.save();paint_provider_mark(p,mark,row,colors['ink']);p.restore()
+        title_left=mark.right()+7
+        plan_font=QFont(p.font());plan_font.setPixelSize(10)
+        plan_width=min(width*.44,QFontMetrics(plan_font).horizontalAdvance(plan)+14) if plan else 0
+        text(p, QRectF(title_left, rect.top()+5, max(0,right-title_left-plan_width-4), 23), row['name'], colors['ink'], 13, True)
         if plan:
-            text(p, QRectF(left + title_width, rect.top() + 6, width - title_width, 21),
-                 plan, colors['muted'], 11, True, Qt.AlignRight)
+            tag=QRectF(right-plan_width,rect.top()+8,plan_width,18)
+            tone=QColor(colors['muted']);tone.setAlpha(25 if colors['light'] else 47)
+            p.setBrush(tone);p.setPen(Qt.NoPen);p.drawRoundedRect(tag,5,5)
+            text(p,tag.adjusted(3,0,-3,0),plan,colors['muted'],10,False,Qt.AlignHCenter)
 
         top = rect.top() + self.header_height
         if not quotas:
@@ -165,7 +183,24 @@ class QuotaOverview(QWidget):
         for index, metric in enumerate(quotas):
             x = left + (index % columns) * (cell_width + gap)
             y = top + (index // columns) * metric_height
-            self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64, stale=bool(row.get('stale')))
+            if amounts:
+                inline=columns==1 and width>=164
+                if columns>1 and index%columns:
+                    rule=QColor(colors['muted']);rule.setAlpha(50)
+                    p.setPen(QPen(rule,1));p.drawLine(QPointF(x-gap/2,y+4),QPointF(x-gap/2,y+metric_height-7))
+                reset=reset_text(metric.get('reset'))
+                if inline:
+                    value_box=QRectF(x+cell_width*.42,y,cell_width*.58,26)
+                    label_box=QRectF(x,y,cell_width*.42-3,26)
+                else:
+                    value_box=QRectF(x,y+15,cell_width,24)
+                    label_box=QRectF(x,y,cell_width,16)
+                text(p,label_box,amount_label(metric),colors['muted'],11)
+                text(p,value_box,amount_text(metric),colors['muted' if row.get('stale') else 'ink'],16,True,
+                     Qt.AlignRight if inline else Qt.AlignLeft)
+                if reset:text(p,QRectF(x,value_box.bottom(),cell_width,16),reset,colors['muted'],10)
+            else:
+                self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64, stale=bool(row.get('stale')))
 
         if footer_y is not None:
             line = QColor(colors['ink'])
@@ -234,8 +269,8 @@ class UsageSummary(QWidget):
         self.fit_rows()
 
     def fit_rows(self):
-        self.columns=content_columns(self.view.owner.width())
-        self.row_height=42 if self.columns==1 else 64
+        self.columns=2 if self.width()>=284 else 1
+        self.row_height=36 if self.columns==1 else 54
         self.setFixedHeight(4*self.row_height//self.columns)
 
     def resizeEvent(self,event):
@@ -245,6 +280,7 @@ class UsageSummary(QWidget):
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.view.owner.colors
         if not c:return
+        p.setFont(QFont('Microsoft YaHei UI'))
         surface(p,QRectF(self.rect()),self.view.owner,'sky');data=self.view.data;total=data['total'];w=self.width()/self.columns
         fields=[('Token',number(total['tokens']),f"输入 {number(total['input'])} · 输出 {number(total['output'])}"),
                 ('调用记录',number(total['records']),'按来源计量记录'),
@@ -255,14 +291,18 @@ class UsageSummary(QWidget):
             x=(i%self.columns)*w+10;y=(i//self.columns)*self.row_height
             ink=cost_ink if i==2 else c['ink']
             value=value if data['available'] else '—'
+            rule=QColor(c['muted']);rule.setAlpha(35)
+            p.setPen(QPen(rule,1))
+            if y:p.drawLine(QPointF(x,y),QPointF(x+w-20,y))
+            if i%self.columns:p.drawLine(QPointF(x-10,y+7),QPointF(x-10,y+self.row_height-7))
             if self.columns==1:
-                text(p,QRectF(x,y+4,w/2-12,18),label,c['muted'],10)
+                text(p,QRectF(x,y+2,w/2-12,18),label,c['muted'],10)
                 text(p,QRectF(w/2,y+3,w/2-10,22),value,ink,16,True,Qt.AlignRight)
-                text(p,QRectF(x,y+23,w-20,15),note,c['muted'],9)
+                text(p,QRectF(x,y+19,w-20,15),note,c['muted'],9)
                 continue
-            text(p,QRectF(x,y+6,w-15,16),label,c['muted'],9)
-            text(p,QRectF(x,y+23,w-15,24),value,ink,16,True)
-            text(p,QRectF(x,y+46,w-15,15),note,c['muted'],9)
+            text(p,QRectF(x,y+3,w-19,14),label,c['muted'],10)
+            text(p,QRectF(x,y+16,w-19,22),value,ink,16,True)
+            text(p,QRectF(x,y+37,w-19,14),note,c['muted'],9)
 
 
 class UsageCharts(QWidget):

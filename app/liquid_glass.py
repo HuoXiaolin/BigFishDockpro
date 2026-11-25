@@ -4,6 +4,16 @@ from PyQt5.QtGui import QColor, QLinearGradient, QRadialGradient, QBrush, QPen, 
 from appearance_presets import FLOWING_TINT, LIQUID_TINT, THEME_GRADIENTS, THEME_INKS, VIVID_BLUE
 
 
+SURFACE_FINISHES = {
+    'obsidian': dict(border=('#dfa47a','#dfa47a',220), border_w=1.2, corner=.23, spec=15, spec_wide=.92,
+                     grad=((0,28),(.38,4),(1,10)), hl=((0,30),(.12,4),(1,0))),
+    'celadon': dict(border=('#497f6e','#93cbb5',146), border_w=1., corner=.41, spec=33, spec_wide=1.6,
+                    grad=((0,88),(.28,40),(.72,0),(1,24)), hl=((0,49),(.5,12),(1,0))),
+    'velvet': dict(border=('#98535c','#da928b',146), border_w=.9, corner=.32, spec=7, spec_wide=1.8,
+                   grad=((0,12),(.48,4),(1,2)), hl=((0,15),(.6,6),(1,0))),
+}
+
+
 def base_theme_colors(theme, system_light):
     """按当前模式返回整套配色与外观参数。
 
@@ -110,6 +120,16 @@ def material_palette(colors, material):
     if material=='flowing' and tint not in ('',FLOWING_TINT,'#ffe0e9'):
         tone=QColor(tint)
         colors['wash']=(tone.lighter(117).name(),tone.darker(112).name())
+    if material in SURFACE_FINISHES:
+        light=colors.get('light',True)
+        pigment=QColor(tint)
+        if pigment.isValid() and (pigment.lightness()>=128)==light:
+            colors['tint']=pigment
+        colors.update(SURFACE_FINISHES[material],tint_scale=1.,tint_floor=0,gloss=False)
+        light_edge,dark_edge,alpha=colors['border']
+        colors['border']=QColor(light_edge if light else dark_edge)
+        colors['border'].setAlpha(alpha)
+        return colors
     if material in ('crystal','flowing','paper_glass'):
         light=colors.get('light',True)
         if material=='crystal':
@@ -164,7 +184,7 @@ def material_blur(value, material):
 
 
 from functools import lru_cache
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def grain_tile(material):
     tile = QImage(64,64,QImage.Format_ARGB32_Premultiplied)
     tile.fill(Qt.transparent)
@@ -173,7 +193,14 @@ def grain_tile(material):
             value = ((x+1)*73856093)^((y+1)*19349663)
             value ^= value>>13; value *= 1540483477; value ^= value>>15
             channel = 255 if value & 4 else 0
-            tile.setPixelColor(x,y,QColor(channel,channel,channel,(value&3) if material=='acrylic' else (value&1)))
+            alpha=(value&3) if material=='acrylic' else (value&1)
+            if material=='obsidian':
+                # Elongated, low-contrast fibres keep the graphite finish matte.
+                channel=225 if (y*17+x//12)%7<3 else 18
+                alpha=3+(value&3)
+            elif material=='velvet':
+                alpha=2+(value&7)
+            tile.setPixelColor(x,y,QColor(channel,channel,channel,alpha))
     return tile
 
 
@@ -196,7 +223,19 @@ def _material_wash(painter, rect, material, colors):
     if not wash:
         return
     gradient=QLinearGradient(rect.topLeft(),rect.bottomRight())
-    if material=='flowing':
+    if material=='obsidian':
+        stops=((0,'#b18d79',24),(.35,'#464f60',18),(.62,'#252c38',8),(1,'#100f16',52))
+        dark_strength=1.
+    elif material=='celadon':
+        stops=((0,'#ffffec',90),(.34,'#d4efd5',86),(.60,'#77b694',108),(1,'#447c64',116))
+        dark_strength=.42
+    elif material=='velvet':
+        # A broad pool of side light leaves the right edge in plum shadow.
+        center=QPointF(rect.left()+rect.width()*.12,rect.top()+rect.height()*.2)
+        gradient=QRadialGradient(center,max(rect.width()*.92,rect.height(),1.))
+        stops=((0,'#ffad83',105),(.35,'#ef8879',66),(.67,'#843854',42),(1,'#372039',122))
+        dark_strength=1.
+    elif material=='flowing':
         stops=((0,wash[0],108),(1,wash[1],98))
         dark_strength=.76
     else:
@@ -260,7 +299,7 @@ def paint_liquid_glass(surface, p, path, path_rect, bar, c, tint_a, stops):
         p.fillRect(path_rect, col)
 
     material = surface.cfg.get('dock_material',c.get('material','liquid'))
-    if material in ('acrylic','mica'): p.fillRect(path_rect,QBrush(grain_tile(material)))
+    if material in ('acrylic','mica','obsidian','velvet'): p.fillRect(path_rect,QBrush(grain_tile(material)))
 
     # 竖向渐变 + 顶部高光（已经合并成一条渐变，省一次裁切+填充）
     # 注：实测这里用 QLinearGradient 直接填充比"缓存贴图再拉伸"更快，

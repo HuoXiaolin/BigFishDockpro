@@ -123,7 +123,7 @@ def check_theme(api, runtime, main, checks):
             assert main.fields['update_use_proxy'].isChecked()!=cfg['update_use_proxy']
         added=normalize_notes([dict(default_note_style(cfg),id='added-under-preset',visible=False,text='另一张便签')])[0]
         cfg['sticky_notes']=[*cfg['sticky_notes'],added]
-        assert selected_mode(cfg)=='transparent'
+        assert selected_mode(cfg)==PRESET_IDS[-1]
         popup.tiles['appearance'].click()
         assert popup.tiles['appearance'].value==main.overall_style.currentText()=='自定义'
         restored=api.load_config()
@@ -139,8 +139,9 @@ def check_theme(api, runtime, main, checks):
         main.commit()
         popup.refresh()
         assert popup.tiles['appearance'].value=='浅色纸玻璃'
-        popup.tiles['appearance'].click()
-        popup.tiles['appearance'].click()
+        for expected in (*PRESET_IDS[PRESET_IDS.index('paper_glass')+1:],'custom'):
+            popup.tiles['appearance'].click()
+            assert selected_mode(cfg)==expected
         assert selected_mode(cfg)=='custom' and snapshot(cfg)==live_custom
         popup.tiles['appearance'].click()
         main.overall_style.setCurrentIndex(main.overall_style.findData('custom'))

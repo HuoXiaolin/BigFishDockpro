@@ -184,7 +184,8 @@ def run(output):
             assert cfg.keys() == api.DEFAULT_CONFIG.keys()
             tray.rebuild()
             labels = [a.text() for a in tray.menu.actions()]
-            assert '应用批量管理…' in labels and '设置…' in labels
+            from menu_paths import action_at
+            assert action_at(tray.menu,'Dock 与应用','应用批量管理…').isEnabled() and labels[0]=='设置…'
             assert not any(any(extra in title for extra in ['启动器', '小组件', '快捷设置', '状态栏']) for title in labels)
             checks.append('original batch management and settings remain compatible')
             dock.grab().save(str(output/'dock.png'))

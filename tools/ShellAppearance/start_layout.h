@@ -130,6 +130,8 @@ static Controls::ListViewBase BF_FindStartList(const FrameworkElement& root,int 
     return nullptr;
 }
 
+#include "start_folder_pages.h"
+
 static void BF_CompactStartPath(BF_StartColumns& state,FrameworkElement element,const FrameworkElement& boundary) {
     while (element && element!=boundary) {
         auto& saved=BF_StartContentState(state,element);
@@ -628,6 +630,7 @@ static void BF_QueueStartColumns(const FrameworkElement& element) {
 
 static void BF_QueueStartFolder(const FrameworkElement& element) {
     if (!bf_is_start_menu) return;
+    BF_WatchFolderList(element);
     const auto type=winrt::get_class_name(element);
     if (type!=L"StartMenu.ExpandedFolderList" && type!=L"StartMenu.FolderModal" && element.Name()!=L"ExpandedFolderList") return;
     auto root=element;
@@ -656,6 +659,7 @@ static void BF_QueueStartFolder(const FrameworkElement& element) {
 
 static void BF_ClearStartColumns() {
     ++bf_startLayoutGeneration;
+    BF_ClearFolderPages();
     auto states=std::exchange(bf_startColumns,{});
     for (auto& state:states) {
         state->layout.revoke();

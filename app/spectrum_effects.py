@@ -3,19 +3,31 @@ from functools import lru_cache
 from math import cos, pi, sin, tau
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
-from PyQt5.QtGui import QBrush, QColor, QConicalGradient, QLinearGradient, QPainterPath, QPen, QPolygonF, QRadialGradient
+from PyQt5.QtGui import QBrush, QColor, QConicalGradient, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient
+from feature_config import SPECTRUM_PALETTES
 
 
-SPECTRUM_COLORS = ('#4cdddf', '#639ffb', '#aa83fd', '#f38eba', '#ffd086')
-CROWN_COLORS = ('#24c5c5', '#5580ef', '#905de8', '#df65bb', '#f2a064')
+SPECTRUM_COLORS = SPECTRUM_PALETTES['colorful'][1]
 CROWN_PHASES_PER_COLUMN = 12
-SPHERE_COLORS = ('#62eee9', '#71a5ff', '#bd8cff', '#ff91c1', '#ffda97', '#62eee9')
 
 
 def _palette(gradient, colors):
     for index, color in enumerate(colors):
         gradient.setColorAt(index / (len(colors) - 1), QColor(color))
     return QBrush(gradient)
+
+
+@lru_cache(maxsize=len(SPECTRUM_PALETTES))
+def palette_icon(key):
+    pixmap=QPixmap(48,48)
+    pixmap.fill(Qt.transparent)
+    painter=QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(_palette(QLinearGradient(1,0,47,0),SPECTRUM_PALETTES[key][1]))
+    painter.drawRoundedRect(QRectF(1,8,46,32),8,8)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _bands(values, count):
@@ -30,9 +42,9 @@ def _directions(count):
     return tuple((cos(tau * i / count), sin(tau * i / count)) for i in range(count))
 
 
-@lru_cache(maxsize=8)
-def _crown_shades(count):
-    colors = tuple(QColor(value).getRgbF() for value in CROWN_COLORS)
+@lru_cache(maxsize=24)
+def _crown_shades(count, palette):
+    colors = tuple(QColor(value).getRgbF() for value in palette)
     shades = []
     for x, _ in _directions(count):
         position = (x + 1) / 2 * (len(colors) - 1)
@@ -70,7 +82,7 @@ def _crown_mesh(width, height, count, phase):
     return center, radius_x, radius_y, blocks
 
 
-def draw_crown(painter, area, levels, _peaks, *, rotation=0.):
+def draw_crown(painter, area, levels, _peaks, palette=SPECTRUM_COLORS, *, rotation=0.):
     width, height = area.width(), area.height()
     bands = list(_bands(levels, max(12, min(52, round(width / 6)))))
     pulse = bands + bands[::-1]
@@ -80,15 +92,16 @@ def draw_crown(painter, area, levels, _peaks, *, rotation=0.):
     travel = round(rotation * count * CROWN_PHASES_PER_COLUMN / tau)
     shift, phase = divmod(travel, CROWN_PHASES_PER_COLUMN)
     center, radius_x, radius_y, blocks = _crown_mesh(width, height, count, phase)
-    shades = _crown_shades(count)
+    shades = _crown_shades(count, palette)
     power = max(levels)
     painter.save()
     painter.translate(area.topLeft())
 
     light = QRadialGradient(0, .15, 1)
-    light.setColorAt(0, QColor(105, 109, 236, 110))
-    light.setColorAt(.60, QColor(99, 159, 244, 72))
-    light.setColorAt(1, QColor(104, 186, 252, 0))
+    for stop, value, alpha in ((0,palette[len(palette)//2],110),(.60,palette[1],72),(1,palette[0],0)):
+        color=QColor(value)
+        color.setAlpha(alpha)
+        light.setColorAt(stop,color)
     painter.save()
     painter.translate(center.x(), center.y() - height * .15)
     painter.scale(radius_x, radius_y + height * .18)
@@ -100,10 +113,9 @@ def draw_crown(painter, area, levels, _peaks, *, rotation=0.):
 
     floor = QRectF(center.x() - radius_x * .88, center.y() - radius_y * .88,
                    radius_x * 1.76, radius_y * 1.76)
-    floor_brush = _palette(QLinearGradient(floor.topLeft(), floor.bottomRight()),
-                           ('#266b9e', '#5743a6', '#b269ae'))
+    floor_brush = _palette(QLinearGradient(floor.topLeft(), floor.bottomRight()),palette)
     painter.setBrush(floor_brush)
-    painter.setPen(QPen(QColor('#b1cbff'), 1))
+    painter.setPen(QPen(QColor(palette[1]).lighter(130), 1))
     painter.setOpacity(.14 + .14 * power)
     painter.drawEllipse(floor)
 
@@ -122,7 +134,7 @@ def draw_crown(painter, area, levels, _peaks, *, rotation=0.):
     painter.restore()
 
 
-def draw_peak_bars(painter, area, levels, peaks):
+def draw_peak_bars(painter, area, levels, peaks, palette=SPECTRUM_COLORS):
     count = max(3, int(area.width() / 2.7))
     levels, peaks = _bands(levels, count), _bands(peaks, count)
     step = area.width() / len(levels)
@@ -144,7 +156,7 @@ def draw_peak_bars(painter, area, levels, peaks):
             cap = QRectF(x - cap_width / 2, bottom - 3 - cap_height - peak * travel, cap_width, cap_height)
             caps.addRect(cap)
             cap_glow.addRect(cap.adjusted(-.35, -.45, .35, .45))
-    brush = _palette(QLinearGradient(area.left(), 0, area.right(), 0), SPECTRUM_COLORS)
+    brush = _palette(QLinearGradient(area.left(), 0, area.right(), 0), palette)
     painter.setOpacity(.96)
     painter.fillPath(base, brush)
     painter.setOpacity(.19)
@@ -174,7 +186,7 @@ def sphere_power(levels):
     return min(1, max(0, (energy - .025) / .79))
 
 
-def draw_particle_sphere(painter, area, levels, _peaks, *, rotation=0., power=None):
+def draw_particle_sphere(painter, area, levels, _peaks, palette=SPECTRUM_COLORS, *, rotation=0., power=None):
     center = area.center()
     radius = min(area.width(), area.height()) / 2
     power = sphere_power(levels) if power is None else power
@@ -189,7 +201,7 @@ def draw_particle_sphere(painter, area, levels, _peaks, *, rotation=0., power=No
         depth = y * tilt_sin + rotated_z * tilt_cos
         point = QPointF(center.x() + rotated_x * globe, center.y() + vertical * globe)
         mesh[0 if depth < 0 else 1 if depth < .55 else 2].append(point)
-    brush = _palette(QLinearGradient(center.x() - radius, 0, center.x() + radius, 0), SPHERE_COLORS[:-1])
+    brush = _palette(QLinearGradient(center.x() - radius, 0, center.x() + radius, 0), palette)
     dot = max(1, min(2.35, radius * .017))
     for i, points in enumerate(mesh):
         painter.setOpacity((.23 + i * .28) * (.58 + .42 * min(1, power * 2)))
@@ -198,7 +210,7 @@ def draw_particle_sphere(painter, area, levels, _peaks, *, rotation=0., power=No
 
     # Keep the rim still so the movement reads as the mesh breathing inside it.
     painter.setBrush(Qt.NoBrush)
-    rim = _palette(QConicalGradient(center, 95), SPHERE_COLORS)
+    rim = _palette(QConicalGradient(center, 95), palette + (palette[0],))
     reach = radius * .90
     for width, opacity in ((.17, .10), (.10, .18), (.043, .92)):
         painter.setOpacity(opacity)

@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QApplication,QColorDialog,QDialog,QFileDialog,QForm
                              QLineEdit,QPlainTextEdit,QScrollArea,QTableWidget,QTabWidget,QVBoxLayout,QWidget)
 
 from appearance_presets import APPEARANCE_SOURCES
+from component_settings import ComponentPages, section, settings_footer
 from custom_card_data import ARRANGEMENTS,KINDS,MAX_CARDS,MAX_ROWS,STYLES,TEMPLATE,TOOLS,developer_prompt,parse_card_json,validate_card
 from ui_style import ModernCheckBox,ModernComboBox,ModernSpinBox,SettingsHeader,button,compact_dialog,label
 
@@ -18,14 +19,14 @@ class CardEditor(QDialog):
         self.manager=manager;self.identity=identity
         self.setProperty('simpleForms',True)
         self.setWindowTitle('原生卡片编辑器')
-        self.resize(620,500)
+        self.resize(760,520)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'原生卡片编辑器'))
         picker=QHBoxLayout()
         self.cards=ModernComboBox();self.cards.setAccessibleName('选择卡片');picker.addWidget(self.cards,1)
         self.remove_button=button('删除卡片',self.remove);picker.addWidget(self.remove_button)
         body.addLayout(picker)
-        self.tabs=QTabWidget();body.addWidget(self.tabs,1)
-        basic=QWidget();base=QVBoxLayout(basic);self.tabs.addTab(basic,'内容')
+        self.tabs=ComponentPages(self,body,'原生卡片')
+        base=section(self.tabs.page('内容','notes'),'卡片内容')
         form=QFormLayout();self.title=QLineEdit();self.title.setMaxLength(28)
         self.title.setAccessibleName('卡片名称');form.addRow('名称',self.title)
         self.source=self.combo({key:title for title,key in APPEARANCE_SOURCES});form.addRow('外观来源',self.source)
@@ -40,6 +41,7 @@ class CardEditor(QDialog):
         header=self.fields.horizontalHeader();header.setSectionResizeMode(2,QHeaderView.Stretch)
         for col,width in ((0,111),(1,105),(3,35)):self.fields.setColumnWidth(col,width)
         self.fields.verticalHeader().hide();self.fields.setSelectionMode(QTableWidget.NoSelection)
+        self.fields.setMinimumHeight(150)
         base.addWidget(self.fields,1)
         add_row=QHBoxLayout();add_row.addWidget(button('添加一行',lambda:self.add_row({'kind':'text'})));add_row.addStretch();base.addLayout(add_row)
         self.build_design()
@@ -47,10 +49,9 @@ class CardEditor(QDialog):
         actions=QHBoxLayout()
         actions.addWidget(button('导入 JSON',self.import_json))
         actions.addWidget(button('复制开发提示词',self.copy_prompt))
-        actions.addStretch(1);actions.addWidget(button('保存卡片',self.commit,'primary'))
-        body.addLayout(actions)
-        self.status=label('每张卡片最多 6 行，可组合文字、倒计时与系统读数。','muted')
-        body.addWidget(self.status)
+        actions.addStretch(1);base.addLayout(actions)
+        self.status=label('每张卡片最多 6 行。','muted')
+        settings_footer(self,body,self.status,self.commit)
         self.cards.currentIndexChanged.connect(self.load)
         self.source.currentIndexChanged.connect(self.sync_source)
         self.fill_cards(identity)
@@ -76,8 +77,7 @@ class CardEditor(QDialog):
         return field
 
     def build_design(self):
-        scroll=QScrollArea();scroll.setWidgetResizable(True);self.tabs.addTab(scroll,'排版与配图')
-        page=QWidget();form=QFormLayout(page);form.setRowWrapPolicy(QFormLayout.WrapLongRows);scroll.setWidget(page)
+        form=self.tabs.form('排版与配图','palette','排版、图片与文字')
         self.arrangement=self.combo(ARRANGEMENTS);form.addRow('排版',self.arrangement)
         self.header_date=ModernCheckBox('标题右侧显示日期');form.addRow(self.header_date)
         self.image=self.file_input(form,'配图','图片 (*.jpg *.jpeg *.png *.webp *.bmp)')
@@ -104,7 +104,7 @@ class CardEditor(QDialog):
         for field in (self.style,*self.color_controls):field.setEnabled(custom)
 
     def build_tools(self):
-        page=QWidget();lay=QVBoxLayout(page);self.tabs.addTab(page,'工具与接口')
+        lay=section(self.tabs.page('工具与接口','apps'),'工具与参数')
         self.tool=self.combo(TOOLS);lay.addWidget(self.tool)
         lay.addWidget(label('可选模板，也可在下方修改工具参数或导入提示词生成的完整卡片 JSON。','muted'))
         self.tool_json=QPlainTextEdit();self.tool_json.setAccessibleName('工具 JSON');lay.addWidget(self.tool_json,1)

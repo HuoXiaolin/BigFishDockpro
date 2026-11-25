@@ -1255,7 +1255,11 @@ class Dock(QWidget):
             path.lineTo(cx + dx * r, cy + dy * r)
 
     def corner_ratio(self):
-        """圆角半径占条高的比例。光感模式更圆一些。"""
+        """与材质预览共用圆角比例，保留旧光感模式的圆角。"""
+        from liquid_glass import SURFACE_FINISHES
+        finish = SURFACE_FINISHES.get(self.cfg.get('dock_material'))
+        if finish:
+            return finish['corner']
         t = str(self.cfg.get("theme", "auto"))
         return 0.44 if t in ("gloss", "fog") else 0.40
 
@@ -1991,7 +1995,7 @@ class Dock(QWidget):
     def paint_dock_surface(self, surface, painter, paths, bar, colors):
         from liquid_glass import dock_tint_layers, paint_liquid_glass
 
-        tint, opacity = dock_tint_layers(colors, self.cfg.get('transparency', 40))
+        tint, opacity = dock_tint_layers(colors, surface.cfg.get('transparency', 40))
         stops = self.merged_grad_stops(colors)
         painter.save()
         painter.setOpacity(opacity)

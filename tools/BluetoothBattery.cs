@@ -135,6 +135,25 @@ internal static class BluetoothBattery {
         return found.Values.ToList();
     }
 
+    static async Task<List<Reading>> Connections() {
+        const string address = "System.Devices.Aep.DeviceAddress";
+        var found = new Dictionary<string,Reading>(StringComparer.OrdinalIgnoreCase);
+        var selectors = new[] {
+            BluetoothDevice.GetDeviceSelectorFromConnectionStatus(BluetoothConnectionStatus.Connected),
+            BluetoothLEDevice.GetDeviceSelectorFromConnectionStatus(BluetoothConnectionStatus.Connected)
+        };
+        foreach (var selector in selectors) {
+            var devices = await DeviceInformation.FindAllAsync(selector, new[] {address});
+            foreach (var info in devices) {
+                object value;
+                string id = info.Properties.TryGetValue(address, out value) && value != null
+                    ? value.ToString().Replace(":","").Replace("-","").ToUpperInvariant() : info.Id;
+                found[id] = new Reading {id=id, name=info.Name};
+            }
+        }
+        return found.Values.ToList();
+    }
+
     [MTAThread]
     static int Main(string[] args) {
         try {
@@ -150,6 +169,7 @@ internal static class BluetoothBattery {
             else if(args.Length==1 && args[0]=="--peripherals-scan") result=PeripheralBattery.Scan();
             else if(args.Length==1 && args[0]=="--peripherals-read") result=PeripheralBattery.Read();
             else if(args.Length==1 && args[0]=="--peripherals-sample") result=PeripheralBattery.Sample();
+            else if(args.Length==1 && args[0]=="--bluetooth-links") result=Connections().GetAwaiter().GetResult();
             else if(args.Length==0) result=Scan().GetAwaiter().GetResult();
             else return 1;
             Console.OutputEncoding=new UTF8Encoding(false);

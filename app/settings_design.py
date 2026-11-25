@@ -19,6 +19,37 @@ class SettingsNavDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def navigation_icon(kind, palette):
+    from dock_extras import symbol
+    light = palette.color(QPalette.Window).lightness() > 128
+    color = QColor('#526b7a' if light else '#bcc9d1')
+    if kind=='settings':
+        from flash_view import icon
+        return icon('settings',color.name(),18)
+    pixmap = QPixmap(40,40)
+    pixmap.setDevicePixelRatio(2)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    if kind in ('update','info','wave'):
+        painter.setPen(QPen(color,1.3,Qt.SolidLine,Qt.RoundCap))
+        if kind == 'info':
+            painter.drawEllipse(QRectF(3,3,14,14))
+            painter.drawLine(10,9,10,14)
+            painter.drawPoint(10,6)
+        elif kind == 'update':
+            painter.drawArc(3,3,14,14,35*16,285*16)
+            painter.drawLine(16,3,16,7)
+            painter.drawLine(12,7,16,7)
+        else:
+            for x,height in ((4,4),(8,9),(12,14),(16,7)):
+                painter.drawLine(x,10-height//2,x,10+height//2)
+    else:
+        symbol(painter,QRectF(0,0,20,20),kind,color)
+    painter.end()
+    return QIcon(pixmap)
+
+
 class SettingsNavigation(QListWidget):
     """The same outline icons and themed list styling in both settings windows."""
     symbol_role = Qt.UserRole + 1
@@ -60,32 +91,7 @@ class SettingsNavigation(QListWidget):
                 item.setSizeHint(QSize(0, max(17, widget_px(self, 27 if row else 22))))
 
     def set_page_icon(self, item):
-        from dock_extras import symbol
-        kind = item.data(self.symbol_role)
-        light = self.palette().color(QPalette.Window).lightness() > 128
-        color = QColor('#526b7a' if light else '#bcc9d1')
-        pixmap = QPixmap(40,40)
-        pixmap.setDevicePixelRatio(2)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        if kind in ('update','info','wave'):
-            painter.setPen(QPen(color,1.3,Qt.SolidLine,Qt.RoundCap))
-            if kind == 'info':
-                painter.drawEllipse(QRectF(3,3,14,14))
-                painter.drawLine(10,9,10,14)
-                painter.drawPoint(10,6)
-            elif kind == 'update':
-                painter.drawArc(3,3,14,14,35*16,285*16)
-                painter.drawLine(16,3,16,7)
-                painter.drawLine(12,7,16,7)
-            else:
-                for x,height in ((4,4),(8,9),(12,14),(16,7)):
-                    painter.drawLine(x,10-height//2,x,10+height//2)
-        else:
-            symbol(painter,QRectF(0,0,20,20),kind,color)
-        painter.end()
-        item.setIcon(QIcon(pixmap))
+        item.setIcon(navigation_icon(item.data(self.symbol_role), self.palette()))
 
     def changeEvent(self,event):
         super().changeEvent(event)
@@ -214,60 +220,6 @@ class NumericControl(QWidget):
         if obj is self.spin and event.type() == QEvent.EnabledChange:
             self.slider.setEnabled(self.spin.isEnabled())
         return super().eventFilter(obj, event)
-
-
-class DockPreview(QWidget):
-    """Small event-driven preview: no timer, wallpaper capture or icon loading."""
-    def __init__(self, dialog):
-        super().__init__()
-        self.dialog = dialog
-        self.setObjectName('SettingsPreview')
-        self.setAccessibleName('Dock 外观预览')
-        self.setFixedHeight(48)
-        for key in ('theme_color','transparency','dock_highlight'):
-            field=dialog.fields[key]
-            if isinstance(field, QComboBox):
-                field.currentIndexChanged.connect(self.update)
-            elif isinstance(field, QSpinBox):
-                field.valueChanged.connect(self.update)
-            elif isinstance(field, QLineEdit):
-                field.textChanged.connect(self.update)
-            elif isinstance(field, QCheckBox):
-                field.toggled.connect(self.update)
-
-    def sizeHint(self):
-        from ui_style import widget_px
-        return QSize(widget_px(self, 420), widget_px(self, 48))
-
-    def paintEvent(self, event):
-        from PyQt5.QtCore import QRectF
-        from ui_style import widget_px
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        light = self.palette().color(QPalette.Window).lightness() > 128
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor('#e5f1f7' if light else '#283139'))
-        p.drawRoundedRect(QRectF(self.rect()), 10, 10)
-        fields = self.dialog.fields
-        color = QColor(fields['theme_color'].text() or '#8fbfe0')
-        if not color.isValid(): color = QColor('#8fbfe0')
-        p.setPen(self.palette().color(QPalette.Text))
-        font = self.font(); font.setPixelSize(widget_px(self, 12)); p.setFont(font)
-        p.drawText(QRectF(widget_px(self, 14), 0, widget_px(self, 70), self.height()), Qt.AlignVCenter, '配色预览')
-        strip = QRectF(widget_px(self, 92), widget_px(self, 10), self.width()-widget_px(self, 106), self.height()-widget_px(self, 20))
-        fill = QColor(color); fill.setAlpha(max(18, round(fields['transparency'].value()*1.8)))
-        p.setPen(QPen(QColor(255,255,255,round(fields['dock_highlight'].value()*2)), 1))
-        p.setBrush(fill); p.drawRoundedRect(strip, 10, 10)
-        from dock_extras import symbol
-        size = min(widget_px(self, 23), max(14, (strip.width()-100)/6))
-        symbols = ['apps', 'size', 'notes', 'clock']
-        x = strip.center().x() - size*3.8
-        for kind in symbols:
-            symbol(p, QRectF(x, strip.center().y()-size/2, size, size), kind, color.darker(140))
-            x += size*1.65
-        font.setPixelSize(widget_px(self, 13)); font.setWeight(QFont.DemiBold); p.setFont(font)
-        p.setPen(self.palette().color(QPalette.Text))
-        p.drawText(QRectF(x,strip.top(),size*2.8,strip.height()),Qt.AlignCenter,'10:30')
 
 
 def _item_widget(item):
@@ -517,6 +469,8 @@ def finish_dialog(dialog):
             if child is not None and not callable(child):queue.append(child)
     from settings_layout import fit_auxiliary_dialog
     fit_auxiliary_dialog(dialog,cfg or {})
+    for nav in dialog.findChildren(SettingsNavigation):
+        nav.fit_density()
 
 
 def stylesheet(colors):

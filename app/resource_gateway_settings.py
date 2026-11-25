@@ -1,20 +1,23 @@
 """Manage opt-in AI usage sources. Credentials stay in the local protected store."""
 from uuid import uuid4
+from PyQt5.QtCore import Qt
 
 from PyQt5.QtWidgets import QDialog,QFormLayout,QHBoxLayout,QLabel,QLineEdit,QVBoxLayout
 
 from resource_gateway import ENDPOINTS,KINDS,MAX_ACCOUNTS,UsageError,account_value,load_accounts,save_accounts
+from component_settings import ComponentPages, settings_footer
 from ui_style import ModernComboBox,SettingsHeader,button,compact_dialog,exec_dialog
 
 
 class GatewaySettings(QDialog):
     def __init__(self,service,parent):
-        super().__init__(parent)
+        super().__init__(parent,Qt.Dialog|Qt.FramelessWindowHint)
         self.service=service
         self.directory=service.runtime.api.CONFIG_DIR
-        self.setWindowTitle('自定义用量接口');self.resize(510,314);self.setProperty('simpleForms',True)
+        self.setWindowTitle('自定义用量接口');self.resize(670,385)
         layout=QVBoxLayout(self);layout.addWidget(SettingsHeader(self,self.windowTitle()))
-        form=QFormLayout();layout.addLayout(form)
+        self.tabs=ComponentPages(self,layout,'用量接口')
+        form=self.tabs.form('连接与服务','monitor','接口配置')
         self.saved=ModernComboBox();self.kind=ModernComboBox()
         for key,label in KINDS.items():self.kind.addItem(label,key)
         self.name=QLineEdit();self.name.setMaxLength(48);self.name.setPlaceholderText('可留空')
@@ -24,11 +27,10 @@ class GatewaySettings(QDialog):
         for label,field in (('连接',self.saved),('供应商',self.kind),('显示名称',self.name),('API 地址',self.url),('Token',self.token)):
             field.setAccessibleName(label);form.addRow(label,field)
         self.hint=QLabel('自动识别可填写常用 API 地址。也可以指定完整用量地址。Token 使用 Windows 加密保存在本机。')
-        self.hint.setWordWrap(True);layout.addWidget(self.hint)
-        self.status=QLabel();self.status.setWordWrap(True);layout.addWidget(self.status)
-        actions=QHBoxLayout();layout.addLayout(actions)
-        self.remove_button=button('移除连接',self.remove);actions.addWidget(self.remove_button);actions.addStretch()
-        actions.addWidget(button('关闭',self.accept));actions.addWidget(button('保存连接',self.save,'primary'))
+        self.hint.setWordWrap(True);form.addRow(self.hint)
+        self.remove_button=button('移除连接',self.remove);form.addRow('',self.remove_button)
+        self.status=QLabel()
+        settings_footer(self,layout,self.status,self.save)
         self.saved.currentIndexChanged.connect(self.select)
         self.kind.currentIndexChanged.connect(self.preset)
         try:self.accounts=load_accounts(self.directory)

@@ -1,11 +1,14 @@
 """Small, finite liquid interactions for the existing resource window."""
 import time
-from PyQt5.QtCore import Qt,QRect,QTimer,QPropertyAnimation,QEasingCurve
-from PyQt5.QtGui import QColor,QPainter,QPen,QPainterPath
+from PyQt5.QtCore import Qt,QRect,QRectF,QTimer,QPropertyAnimation,QEasingCurve
+from PyQt5.QtGui import QColor,QBrush,QLinearGradient,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QWidget,QApplication
 from card_snap import edge_gaps,resolve,touching_edge
 from screen_layout import capture,screen_records
 from resource_liquid_shape import body_path,edge_corners,neck_path,drip_path
+from capsule_glass import CapsuleGlass
+from card_design import blend
+from window_backdrop import component_backdrop
 
 from widget_face import FaceTracker
 
@@ -25,12 +28,14 @@ class LiquidBridge(QWidget):
     def __init__(self,owner):
         super().__init__(owner,Qt.Tool|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint|Qt.WindowTransparentForInput|Qt.WindowDoesNotAcceptFocus)
         self.owner=owner;self.path=QPainterPath();self.fade=0.;self.drip=None
+        self.glass=CapsuleGlass()
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.timer=QTimer(self);self.timer.setInterval(33);self.timer.timeout.connect(self.tick)
-    def draw(self,path):
+    def draw(self,path,edge,tension):
         self.path=path
         if path.isEmpty():self.hide();return
+        self.edge=edge;self.tension=tension
         bounds=path.boundingRect().adjusted(-3,-3,3,3).toAlignedRect()
         self.setGeometry(bounds);self.show();self.update()
     def break_off(self,edge,line,center):
@@ -38,19 +43,64 @@ class LiquidBridge(QWidget):
     def tick(self):
         elapsed=time.monotonic()-self.fade
         if elapsed>=.32:self.stop();return
-        self.draw(drip_path(*self.drip,10*(1-elapsed/.32)**2))
+        remaining=1-elapsed/.32
+        self.draw(drip_path(*self.drip,10*remaining**2),self.drip[0],remaining)
     def stop(self):
-        self.timer.stop();self.drip=None;self.path=QPainterPath();self.hide()
+        self.timer.stop();self.drip=None;self.path=QPainterPath();self.glass.clear();self.hide()
     def paintEvent(self,event):
-        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.translate(-self.x(),-self.y())
-        c=self.owner.colors;color=QColor(c.get('surface','#e7f2f5'))
-        accent=self.owner.background.get('color')
-        if accent:
-            from flash_view import blend
-            color=blend(QColor(accent),color,.78)
-        color.setAlpha(215)
-        border=QColor(c.get('ink','#405765'));border.setAlpha(45)
-        p.setPen(QPen(border,.8));p.setBrush(color);p.drawPath(self.path)
+        if self.path.isEmpty():return
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        origin=self.mapToGlobal(self.rect().topLeft())
+        path=self.path.translated(-origin.x(),-origin.y())
+        if self.drip is None:
+            # The neck enters the body to keep its silhouette continuous.
+            # Stop both material layers at the join so it has no end cap.
+            _,inset,corners=self.owner.glass_shape()
+            inset+=.8
+            body=QRectF(self.owner.frameGeometry().translated(-origin)).adjusted(inset,inset,-inset,-inset)
+            exposed=QPainterPath();exposed.addRect(QRectF(self.rect()))
+            p.setClipPath(exposed.subtracted(body_path(body,corners)))
+        style=self.owner.background
+        self.glass.paint(p,self,self.owner.service.runtime.dock,0,appearance=style,
+                         backdrop_mode=component_backdrop(self.owner.service.cfg,'resource'),
+                         outline=path)
+        self.paint_refraction(p,path,style)
+
+    def paint_refraction(self,p,path,style):
+        bounds=path.boundingRect()
+        across=bounds.topRight() if self.edge in ('top','bottom') else bounds.bottomLeft()
+        tint=QColor(style['color'] or '#82b9ca')
+        pearl=blend(tint,QColor('#edfdff'),.82)
+        shade=blend(tint,QColor('#132d48'),.74)
+        water=blend(tint,QColor('#63b7ca'),.34)
+        # Reflections follow the normal across the stretched surface. Even
+        # clear glass has a narrow light and dark rim around its empty centre.
+        strength=(.65+.35*self.tension)*(.82+.18*style['opacity']/100)
+        shine=.73+.27*min(1,style['highlight']/65)
+        if style['material'] in ('paper','paper_glass','solid','mica','obsidian','celadon','velvet'):
+            shine*=.82
+        def tone(color,alpha):
+            result=QColor(color)
+            result.setAlpha(round(alpha*strength))
+            return result
+        p.save()
+        p.setClipPath(path,Qt.IntersectClip)
+        if style['material']!='clear':
+            wash=QLinearGradient(bounds.topLeft(),across)
+            wash.setColorAt(0,tone(pearl,70*shine))
+            wash.setColorAt(.26,tone(water,46))
+            wash.setColorAt(.54,tone(water,0))
+            wash.setColorAt(1,tone(shade,68))
+            p.fillPath(path,QBrush(wash))
+        rim=QLinearGradient(bounds.topLeft(),across)
+        rim.setColorAt(0,tone(pearl,255*shine))
+        rim.setColorAt(.38,tone(pearl,245*shine))
+        rim.setColorAt(.62,tone(shade,218))
+        rim.setColorAt(1,tone(shade,245))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QBrush(rim),3.2,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+        p.drawPath(path)
+        p.restore()
 
 
 class CapsuleMotion(FaceTracker):
@@ -86,6 +136,8 @@ class CapsuleMotion(FaceTracker):
             if landing:w.reposition()
         if not self.can_stretch:
             self.drag_edge='free';self.stop_bridge()
+        elif self.bridge and self.bridge.isVisible():
+            self.bridge.update()
         self.sync_face()
     def radii(self,radius):
         w=self.window;cfg=w.service.cfg
@@ -125,7 +177,8 @@ class CapsuleMotion(FaceTracker):
         if gap>85 or abs(center-original)>100:
             self.broken=True;self.bridge.break_off(edge,line,original);return
         length=min(120,rect.width() if horizontal else rect.height())
-        self.bridge.draw(neck_path(edge,line,center,length,gap,gap/85,1,12,10))
+        tension=gap/85
+        self.bridge.draw(neck_path(edge,line,center,length,gap,tension,1,12,10),edge,tension)
         self.pulse(.25)
     def released(self):
         self.down=False;self.pulse(.6);self.drag_edge='free'

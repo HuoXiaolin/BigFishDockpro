@@ -154,7 +154,7 @@ def run(output,checks):
             assert manager.save([])
             checks.append('Native cards import Explorer paths and escaped JSON without altering text line breaks, preserve values on invalid input, and support local/HTTPS bindings and native tools.')
 
-            from feature_config import SPECTRUM_FIXED_PALETTES, SPECTRUM_STYLES
+            from feature_config import SPECTRUM_STYLES
             from ui_test_events import Events
             assert runtime.set_spectrum_options(spectrum_enabled=True,theme_color='#54b2de')
             assert cfg['spectrum_color_mode']=='colorful'
@@ -167,7 +167,7 @@ def run(output,checks):
             assert len(spectrum.levels)==120
             collage=QImage(680,390,QImage.Format_RGB32);collage.fill(QColor('#142636'))
             painter=QPainter(collage)
-            legacy_styles=[item for item in SPECTRUM_STYLES if item[1] not in SPECTRUM_FIXED_PALETTES]
+            legacy_styles=[item for item in SPECTRUM_STYLES if item[1] in ('line','bars','ring','mirror','dots')]
             for i,(title,style) in enumerate(legacy_styles):
                 assert runtime.set_spectrum_options(spectrum_style=style)
                 pump()
@@ -222,6 +222,19 @@ def run(output,checks):
             assert runtime.set_spectrum_options(spectrum_manual_size=False)
             assert (spectrum.width(),spectrum.height())==(min(576,area.width()),min(152,area.height()))
             checks.append('Five transparent spectrum styles use double-sized defaults, persist an edge resize, restore default size, and only request audio while enabled.')
+
+            from feature_config import SPECTRUM_COLOR_MODES
+            import hashlib
+            for _,style in SPECTRUM_STYLES:
+                images=set()
+                for _,palette in SPECTRUM_COLOR_MODES:
+                    assert runtime.set_spectrum_options(spectrum_style=style,spectrum_color_mode=palette,
+                                                        spectrum_mono_color='#f69f45')
+                    spectrum.set_levels(frame)
+                    rendered=spectrum.grab().toImage()
+                    images.add(hashlib.sha256(rendered.constBits().asstring(rendered.byteCount())).digest())
+                assert len(images)==len(SPECTRUM_COLOR_MODES),style
+            checks.append('All eight desktop spectrum shapes produce distinct rendered output for custom monochrome, the classic palette and all five new multicolor presets.')
 
             assert runtime.set_spectrum_options(spectrum_style='ring',spectrum_layout={})
             spectrum.move(area.center()-spectrum.rect().center())
@@ -358,7 +371,7 @@ def run(output,checks):
                     assert '国庆节' in words and any('发薪日' in value for value in words)
             checks.append('Clock faces: second readout and 24-hour ruler, holiday/lunar week and countdown, manual text entry switches off auto color.')
 
-            from appearance_presets import LIGHT_GLASS_INK,LIQUID_TINT,PANEL_PRESETS,PRESET_IDS,THEME_GRADIENTS
+            from appearance_presets import LIGHT_GLASS_INK,LIQUID_TINT,PANEL_PRESETS,PRESET_IDS,THEME_GRADIENTS,THEME_INKS
             from clock_legibility import contrast
             from liquid_glass import material_palette,tint_palette
             packaged=api.initial_defaults()
@@ -369,7 +382,7 @@ def run(output,checks):
                 assert appearance['auto_contrast'] and appearance['color']==LIQUID_TINT
                 assert appearance['material']==packaged['panel_material']=='liquid'
             for key,(_,preset) in zip(PRESET_IDS,PANEL_PRESETS):
-                for theme,ink in (('light',LIGHT_GLASS_INK),('dark','#ffffff')):
+                for theme,ink in (('light',THEME_INKS.get(key,LIGHT_GLASS_INK)),('dark','#ffffff')):
                     palette=material_palette(tint_palette(dock.base_theme_colors(theme),preset['color']),preset['material'])
                     if key=='transparent':assert not palette.get('wash')
                     else:assert palette['wash']==THEME_GRADIENTS[key] and palette['fg'].name()==ink
@@ -418,7 +431,9 @@ def run(output,checks):
             dates=[dt.date(2026,11,7)+dt.timedelta(days=i) for i in range(8)]
             def forecast_data(url):
                 fields=parse_qs(urlsplit(url).query)
-                assert 'daylight_duration' in fields['daily'][0] and fields['hourly']==['temperature_2m'] and fields['timezone']==['auto']
+                hourly_fields=fields['hourly'][0].split(',')
+                assert {'temperature_2m','weather_code','rain'}<=set(hourly_fields)
+                assert 'daylight_duration' in fields['daily'][0] and fields['timezone']==['auto']
                 return dict(utc_offset_seconds=28800,current=dict(temperature_2m=13,weather_code=2,time='2026-11-08T13:15',
                             apparent_temperature=12,relative_humidity_2m=62,wind_speed_10m=11),
                     hourly=dict(time=[f'2026-11-08T{i}:00' for i in range(13,20)],temperature_2m=[13,14,15,15,14,12,11]),
@@ -698,7 +713,8 @@ def run(output,checks):
             assert set_component(runtime,'picture',False) and not passes(daily_card)
             assert runtime.set_spectrum_options(spectrum_enabled=False)
             with patch('taskbar_menu.auto_hide',side_effect=(False,True)),patch.object(service,'settings') as open_settings:
-                tray.rebuild();taskbar=next(action.menu() for action in tray.menu.actions() if action.text()=='任务栏')
+                from menu_paths import action_at
+                tray.rebuild();taskbar=action_at(tray.menu,'系统外观','任务栏').menu()
                 titles={action.text() for action in taskbar.actions()}
                 assert {'任务栏效果','任务栏文字','自动隐藏 Windows 任务栏','任务栏监控设置…'}<=titles
                 next(action for action in taskbar.actions() if action.text()=='任务栏监控设置…').trigger()
@@ -822,7 +838,7 @@ def run(output,checks):
             assert manager.save([component_card])
             assert service.set_options(resource_enabled=True,resource_collapsed=False,resource_ai=True,
                 resource_music=True,resource_weather=True,resource_pomodoro=True,resource_agenda=True,
-                resource_news=True,resource_auto_hide=False,
+                resource_news=True,resource_mail=True,resource_traffic=True,resource_auto_hide=False,
                 clock_enabled=True,calendar_enabled=True,daily_picture_enabled=True)
             from resource_settings import ResourceOptions
             from resource_options import DESKTOP_COMPONENTS,RESOURCE_PAGES

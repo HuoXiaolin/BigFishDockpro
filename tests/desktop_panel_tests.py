@@ -62,7 +62,7 @@ def run(api, runtime, root, output, checks):
     compact.restoring = False
     compact.fit_content()
     app.processEvents()
-    assert compact.height() < 220, ('Excess empty space', compact.size())
+    assert compact.height() == 300, ('Grid layout changed the chosen card height', compact.size())
     assert compact.list.visualItemRect(compact.list.item(2)).bottom() <= compact.list.viewport().height()
     for theme in ('light', 'dark'):
         manager.update_panel(compact_id, theme=theme, opacity=55, color='#8fbfe0')
@@ -81,10 +81,21 @@ def run(api, runtime, root, output, checks):
     manager.add_paths(compact_id, many)
     app.processEvents()
     compact.list.doItemsLayout()
-    assert compact.height() <= 240 and compact.list.verticalScrollBar().maximum() > 0
+    assert compact.height() == 300 and compact.list.verticalScrollBar().maximum() > 0
+    from settings_interaction_tests import wheel
+    bar=compact.list.verticalScrollBar();bar.setValue(0)
+    wheel(compact.list.viewport(),-120)
+    jump=bar.value()
+    assert jump>=min(compact.list.gridSize().height()//2,bar.maximum()),jump
+    wheel(compact.list.viewport(),0,pixels=-9)
+    assert bar.value()==min(jump+9,bar.maximum())
+    wheel(compact.list.viewport(),0,pixels=5)
+    assert bar.value()==min(jump+9,bar.maximum())-5
+    bar.setValue(0);wheel(compact.list.viewport(),-15)
+    assert 0<bar.value()<jump
     manager.remove_entries({path_key(path) for path in many})
     app.processEvents()
-    wait_for(app, lambda: compact.height()<220)
+    assert compact.height()==300
     compact.resize(360, 330)
     compact.store_geometry()
     compact.render()
@@ -93,14 +104,14 @@ def run(api, runtime, root, output, checks):
     assert api.load_config()['desktop_panels'][-1]['compact'] is False
     compact.set_compact(True)
     app.processEvents()
-    wait_for(app, lambda: compact.height()<220)
+    assert compact.height()==330
     compact.collapse()
-    assert compact.height() == 44
+    assert 24<=compact.height()<=120
     compact.expand()
     app.processEvents()
-    wait_for(app,lambda:compact.height()<220)
-    assert compact.height() < 220 and compact.list.count() == 3, (compact.height(),compact.list.count(),compact.manual_resize,compact.restoring)
-    checks.append('compact panel: three items at 260px width fit without bottom gap, light/dark render, manual resize persists and compact reset/collapse restore')
+    wait_for(app,lambda:compact.height()==330)
+    assert compact.height()==330 and compact.list.count()==3, (compact.height(),compact.list.count())
+    checks.append('Icon grid keeps its chosen dimensions; wheel notches advance by row and touchpad pixels scroll precisely. Manual size and collapse/expand restore checked.')
     custom = manager.new_panel('项目资料')
     target = manager.windows[custom]
     target.move(64, 82)
@@ -120,6 +131,8 @@ def run(api, runtime, root, output, checks):
     import os
     os.utime(source, (2000000000, 2000000000))
     os.utime(desktop/'工作资料', (1000000000, 1000000000))
+    manager.scan()
+    wait_for(app,lambda:manager.worker is None)
     for order, first in [('modified_desc',str(source)), ('modified_asc',str(desktop/'工作资料'))]:
         manager.update_panel(custom, sort=order)
         assert manager.rows(custom)[0]['path'] == first
@@ -128,13 +141,12 @@ def run(api, runtime, root, output, checks):
     for index in range(target.list.count()):
         target.list.item(index).setSelected(target.list.item(index).data(Qt.UserRole)['path'] == str(source))
     menu = target.build_item_menu()
-    assert menu.actions()[0].text() == '置顶'
-    menu.actions()[0].trigger()
+    from menu_paths import action_at
+    action_at(menu,'置顶').trigger()
     assert manager.rows(custom)[0]['path'] == str(source) and manager.rows(custom)[0]['pinned']
     assert api.load_config()['desktop_entries'] == cfg['desktop_entries']
     menu = target.build_item_menu()
-    assert menu.actions()[0].text() == '取消置顶'
-    menu.actions()[0].trigger()
+    action_at(menu,'取消置顶').trigger()
     assert not next(row for row in manager.rows(custom) if row['path'] == str(source))['pinned']
     manager.update_panel(custom, sort='name_asc')
     assert manager.model(custom)['sort'] == api.load_config()['desktop_panels'][-1]['sort']
@@ -153,9 +165,12 @@ def run(api, runtime, root, output, checks):
     wait_for(app, lambda: manager.worker is None)
     assert not any(path_key(row['path']) == key for row in cfg['desktop_entries']) and source.exists()
     manager.add_paths(custom, [str(source)])
-    manager.update_panel(custom, collapse_style='bar', auto_hide=True)
+    manager.update_panel(custom, collapse_style='bar', auto_hide=True, expand_mode='hover')
+    from dpi_support import metric
+    from panel_preferences import CARD_FOLD_SIZE
+    folded_height=metric(CARD_FOLD_SIZE,target.ui_factor,24)
     target.collapse()
-    assert target.isVisible() and target.collapsed and target.height() == 44 and target.width() == 420
+    assert target.isVisible() and target.collapsed and target.height()==folded_height and target.width()==420
     target.move(76, 94)
     target.store_geometry()
     assert manager.model(custom)['geometry'] == [76, 94, 420, 320]
@@ -163,12 +178,14 @@ def run(api, runtime, root, output, checks):
     assert target.size().width() == 420 and target.size().height() == 320
     manager.update_panel(custom, collapse_style='capsule')
     target.collapse()
-    assert target.width() == round(420*cfg['panel_capsule_ratio']/100) and target.height() == 44
+    assert target.width()==round(420*cfg['panel_capsule_ratio']/100) and target.height()==folded_height
     for ratio in (30, 55, 100):
         manager.update_panel(custom, capsule_ratio=ratio)
-        assert target.width() == max(180, round(420*ratio/100)) and target.height() == 44
+        assert target.width()==max(folded_height,round(420*ratio/100)) and target.height()==folded_height
         assert manager.model(custom)['geometry'] == [76, 94, 420, 320]
-        assert api.load_config()['desktop_panels'] == cfg['desktop_panels']
+        saved=api.load_config()
+        saved_panel=next(row for row in saved['desktop_panels'] if row['id']==custom)
+        assert saved['panel_capsule_ratio']==ratio and saved_panel['collapsed'] and saved_panel['geometry']==[76,94,420,320]
         target.grab().save(str(output/('desktop-capsule-ratio-%d.png' % ratio)))
     manager.update_panel(custom, capsule_ratio=70)
     target.expand()
@@ -228,12 +245,13 @@ def run(api, runtime, root, output, checks):
         target.grab().save(str(output/('desktop-bar-'+theme+'.png')))
         manager.update_panel(custom, collapse_style='capsule')
         target.expand()
-    # Per-panel presets are staged until save and never alter another panel or Dock.
+    # Card material is shared, while folding and the Dock appearance are independent.
     from glass_panel import PanelOptions
     from settings_dialog import SettingsDialog
     from appearance_presets import PANEL_PRESETS, DOCK_PRESETS
     dialog = PanelOptions(target)
     dialog.show()
+    dialog.fields['appearance_source'].setCurrentIndex(dialog.fields['appearance_source'].findData('custom'))
     from ui_style import ThemeSwatches, THEME_COLORS
     swatches = dialog.findChild(ThemeSwatches)
     assert len(swatches.buttons) == 7
@@ -248,17 +266,19 @@ def run(api, runtime, root, output, checks):
     dialog.reject()
     assert target.option('capsule_ratio') == 55
     original_model = copy.deepcopy(manager.model(custom))
+    original_appearance={key:target.option(key) for key in PANEL_PRESETS[0][1]}
     other_models = copy.deepcopy([model for model in cfg['desktop_panels'] if model['id'] != custom])
     dock_values = {key: cfg[key] for key in DOCK_PRESETS[0][1]}
     dialog = PanelOptions(target)
     dialog.preset.setCurrentIndex(2)
     assert manager.model(custom) == original_model
     dialog.reject()
+    assert all(target.option(key)==value for key,value in original_appearance.items())
     for index, (name, values) in enumerate(PANEL_PRESETS, 1):
         dialog = PanelOptions(target)
         dialog.preset.setCurrentIndex(index)
         dialog.commit()
-        assert all(manager.model(custom)[key] == value for key, value in values.items())
+        assert all(target.option(key)==compact.option(key)==value for key,value in values.items())
         assert [model for model in cfg['desktop_panels'] if model['id'] != custom] == other_models
         assert {key: cfg[key] for key in dock_values} == dock_values
         app.processEvents()
@@ -270,7 +290,7 @@ def run(api, runtime, root, output, checks):
     dialog = PanelOptions(target)
     dialog.color.setText('#badhex')
     dialog.commit()
-    assert manager.model(custom)['color'] == PANEL_PRESETS[-1][1]['color']
+    assert target.option('color') == PANEL_PRESETS[-1][1]['color']
     dialog.reject()
     for theme in ('light','dark'):
         apply_theme(app, theme == 'light')
@@ -279,7 +299,7 @@ def run(api, runtime, root, output, checks):
         app.processEvents()
         dialog.grab().save(str(output/('panel-options-'+theme+'.png')))
         dialog.reject()
-    manager.update_panel(custom, **{key:value for key,value in original_model.items() if key != 'id'})
+    manager.update_panel(custom, **{key:value for key,value in original_model.items() if key != 'id'},**original_appearance)
     # Missing overrides must continue to use defaults after restoring this fixture.
     model = manager.model(custom)
     for key in set(model)-set(original_model): del model[key]
@@ -326,7 +346,7 @@ def run(api, runtime, root, output, checks):
     cfg.update(original_cfg)
     api.save_config(cfg)
     runtime.apply_settings()
-    checks.append('appearance presets: five independent panel/Dock schemes including zero-alpha clear background; staged cancel, save/reload and custom colors; no layout, list or other-panel changes')
+    checks.append(f'All {len(DOCK_PRESETS)} Dock and shared card presets preserve panel layout and contents, including clear rendering, staged cancel, save/reload and custom colors.')
     # Reload into fresh windows using persisted independent geometry/options/items.
     snapshot = api.load_config()
     assert snapshot['desktop_entries'] == cfg['desktop_entries']

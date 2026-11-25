@@ -53,7 +53,7 @@ def content_column_checks(window,app,output,checks):
                 assert (first.top()==second.top())==(columns==2),(width,first,second)
             elif key=='ai':
                 stats=window.stats_view;scroll=stats.scroll
-                assert stats.summary.columns==stats.charts.columns==columns
+                assert stats.summary.columns==2 and stats.charts.columns==columns
                 multi=[card[2] for card in stats.quotas.cards if len(card[0].get('quotas',[]))>1]
                 assert multi and all(count==columns for count in multi),(width,multi)
             else:

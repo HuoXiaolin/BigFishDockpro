@@ -16,17 +16,21 @@ class ClockProgressDialog(QDialog):
         self.save = save
         self.rows = {}
         self.setWindowTitle('时光进度与倒计时')
-        self.resize(620,410)
+        self.resize(790,500)
         body=QVBoxLayout(self)
         body.addWidget(SettingsHeader(self,'时光进度与倒计时'))
-        body.addWidget(label(f'选一个主项目与时钟并排。下方同一行可放最多 {MAX_SECONDARY} 个次项目。','muted'))
+        from component_settings import ComponentPages, section, settings_footer
+        self.tabs=ComponentPages(self,body,'时光进度')
+        content=section(self.tabs.page('项目与倒计时','calendar'),'显示项目')
+        content.addWidget(label(f'选一个主项目与时钟并排。下方同一行可放最多 {MAX_SECONDARY} 个次项目。','muted'))
         self.table=QTableWidget(0,5)
         self.table.setHorizontalHeaderLabels(('项目','目标日期和时间','重复','显示',''))
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
         for i,width in enumerate((164,84,90,36),1):self.table.setColumnWidth(i,width)
         self.table.setSelectionMode(QTableWidget.NoSelection)
-        body.addWidget(self.table,1)
+        self.table.setMinimumHeight(200)
+        content.addWidget(self.table,1)
         self.status=label('','muted')
         for identity,title in PROGRESS_ITEMS:
             self.add_row(identity,title,self.role_for(identity,progress))
@@ -36,8 +40,8 @@ class ClockProgressDialog(QDialog):
         for title,name,repeat in (('添加倒计时','新倒计时','once'),('＋ 发薪日','发薪日','monthly'),('＋ 生日','生日','yearly')):
             tools.addWidget(button(title,lambda _,name=name,repeat=repeat:self.add_countdown(name,repeat)))
         tools.addStretch(1)
-        tools.addWidget(button('保存',self.commit))
-        body.addLayout(tools);body.addWidget(self.status)
+        content.addLayout(tools)
+        settings_footer(self,body,self.status,self.commit)
         compact_dialog(self)
 
     @staticmethod
@@ -111,4 +115,4 @@ class ClockProgressDialog(QDialog):
         if self.save(progress) is False:
             self.status.setText('保存失败，请重试。')
             return
-        self.accept()
+        self.status.setText('已保存。')

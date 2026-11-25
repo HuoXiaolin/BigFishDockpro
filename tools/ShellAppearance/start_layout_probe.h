@@ -366,7 +366,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     BF_ProbePump();flyout.Hide();
     trace("footer_commands");
     const bool commands=powerClicks==1&&menuClicks==1&&detached==0;
-    // Expanded folders inherit the same pinned column and four-column cells.
+    // Keep the native light-dismiss layer around a three-column folder surface.
     // Reproduce the obsolete fixed widths and negative inner offsets first.
     auto folder=Markup::XamlReader::Load(LR"(<ContentControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Name="ExpandedFolderList" Width="400" Height="480" Margin="85,40,0,0" HorizontalAlignment="Left" VerticalAlignment="Top">
       <ContentControl.Template><ControlTemplate TargetType="ContentControl">
@@ -389,14 +389,15 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     pinnedRoot.as<Controls::Grid>().Children().Append(folder);root.UpdateLayout();BF_ProbePump();
     auto folderList=BF_FindLayoutElement(folder,L"FolderList").as<Controls::GridView>();
     std::vector<Controls::GridViewItem> folderItems;
-    for (unsigned i=0;i<6;++i) {
+    for (unsigned i=0;i<19;++i) {
         Controls::GridViewItem item;item.MinWidth(96);item.MinHeight(96);item.Padding({8,8,8,8});
         Controls::StackPanel tile;tile.HorizontalAlignment(HorizontalAlignment::Center);
         Controls::Border icon;icon.Width(28);icon.Height(28);icon.CornerRadius({6,6,6,6});
         icon.Background(Media::SolidColorBrush(winrt::Windows::UI::Color{255,72,125,158}));
         Controls::TextBlock name;name.Text(L"应用 "+std::to_wstring(i+1));name.Margin({0,6,0,0});
         tile.Children().Append(icon);tile.Children().Append(name);item.Content(tile);
-        folderList.Items().Append(item);folderItems.push_back(item);
+        folderItems.push_back(item);
+        if (i<2) folderList.Items().Append(item);
     }
     root.UpdateLayout();BF_ProbePump();
     const auto oldFolder=BF_FooterBounds(folder,root);
@@ -404,6 +405,21 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     const auto folderStart=styled.size();collect(collect,folder);
     if (!observed) for(unsigned i=folderStart;i<styled.size();++i) ApplyCustomizations(static_cast<ElementId>(10000+i),styled[i],winrt::get_class_name(styled[i]).c_str());
     BF_ProbePump();root.UpdateLayout();BF_ProbePump();root.UpdateLayout();
+    const auto smallFolder=BF_FooterBounds(BF_FindLayoutElement(folder,L"FolderSurface"),root);
+    auto settleFolder=[&]{for (int i=0;i<5;++i) {root.UpdateLayout();BF_ProbePump();}};
+    auto appendTo=[&](unsigned count) {
+        const auto first=folderList.Items().Size();
+        for (auto i=first;i<count;++i) folderList.Items().Append(folderItems[i]);
+        settleFolder();
+        if (!observed) {
+            const auto start=styled.size();
+            for (auto i=first;i<count;++i) collect(collect,folderItems[i]);
+            for (auto i=start;i<styled.size();++i)
+                ApplyCustomizations(static_cast<ElementId>(10000+i),styled[i],winrt::get_class_name(styled[i]).c_str());
+            settleFolder();
+        }
+    };
+    appendTo(9);
     const auto folderBox=BF_FooterBounds(folder,root);
     auto folderSurface=BF_FindLayoutElement(folder,L"FolderSurface").as<Controls::Border>();
     auto folderTitle=BF_FindLayoutElement(folder,L"ExpandedFolderNameTextBox").as<Controls::TextBox>();
@@ -413,25 +429,50 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     bool folderFits=(observed||folderOverflow)&&std::abs(folderBox.X-right.X)<1&&std::abs(folderBox.Width-right.Width)<1&&
         surfaceBox.X>=right.X-1&&surfaceBox.X+surfaceBox.Width<=right.X+right.Width+1&&
         titleBox.X>=right.X&&titleBox.X+titleBox.Width<=right.X+right.Width+1&&root.Width()==563&&root.Height()==625;
+    folderFits=folderFits && smallFolder.Height+160<=surfaceBox.Height && surfaceBox.Width<=265 &&
+        surfaceBox.Height<=325 && folderList.ActualHeight()==252;
     std::vector<wf::Rect> folderBoxes;
-    for(auto item:folderItems) {
+    for(unsigned i=0;i<9;++i) {
+        auto item=folderItems[i];
         auto box=BF_FooterBounds(item,root);
         auto icon=item.Content().as<Controls::StackPanel>().Children().GetAt(0).as<FrameworkElement>();
         folderFits=folderFits&&std::abs(box.Width-76)<1&&std::abs(box.Height-84)<1&&icon.Width()==28&&icon.Height()==28&&
             box.X>=right.X-.5&&box.X+box.Width<=right.X+right.Width+.5;
         folderBoxes.push_back(box);
     }
-    folderFits=folderFits&&std::abs(folderBoxes[3].Y-folderBoxes[0].Y)<1&&
-        std::abs(folderBoxes[4].X-folderBoxes[0].X)<1&&std::abs(folderBoxes[4].Y-folderBoxes[0].Y-84)<1;
+    folderFits=folderFits&&std::abs(folderBoxes[2].Y-folderBoxes[0].Y)<1&&
+        std::abs(folderBoxes[3].X-folderBoxes[0].X)<1&&std::abs(folderBoxes[3].Y-folderBoxes[0].Y-84)<1&&
+        std::abs(folderBoxes[8].Y-folderBoxes[0].Y-168)<1;
     const auto folderInk=folderTitle.Foreground().try_as<Media::SolidColorBrush>();
     const bool folderAppearance=folderSurface.CornerRadius().TopLeft==18&&folderInk&&folderInk.Color().R==(dark?255:0);
     const bool folderEdgeHit=hitAt(folderSurface,{surfaceBox.X+surfaceBox.Width-4,surfaceBox.Y+surfaceBox.Height/2})&&
-        hitAt(folderItems[3],{folderBoxes[3].X+folderBoxes[3].Width-2,folderBoxes[3].Y+folderBoxes[3].Height/2});
+        hitAt(folderItems[8],{folderBoxes[8].X+folderBoxes[8].Width-2,folderBoxes[8].Y+folderBoxes[8].Height/2});
     folderFits=folderFits&&folderEdgeHit;
     // GridView's native entrance transition runs on the compositor. Capture
     // its settled appearance rather than a transparent, translated first frame.
     for(auto until=GetTickCount64()+350;GetTickCount64()<until;) {BF_ProbePump();Sleep(1);}
     BF_SaveLayoutBitmap(root,output/L"start-folder-layout.bmp");
+    auto paging=std::find_if(bf_folderPages.begin(),bf_folderPages.end(),[&](const auto& page){return page->list.get()==folderList;});
+    bool folderPages=paging!=bf_folderPages.end();
+    if (folderPages) {
+        auto scroll=BF_FindLayoutElement(folderList,L"ScrollViewer").as<Controls::ScrollViewer>();
+        auto& page=**paging;
+        folderPages=!BF_ScrollFolderPage(page,-120) && scroll.ScrollableHeight()<1;
+        appendTo(10);
+        folderPages=folderPages && BF_ScrollFolderPage(page,-120);
+        settleFolder();
+        auto tenth=BF_FooterBounds(folderItems[9],root);
+        folderPages=folderPages && std::abs(tenth.Y-folderBoxes[0].Y)<1 && hitAt(folderItems[9],{tenth.X+12,tenth.Y+20});
+        appendTo(19);
+        folderPages=folderPages && BF_ScrollFolderPage(page,-120);
+        settleFolder();
+        auto last=BF_FooterBounds(folderItems[18],root);
+        folderPages=folderPages && std::abs(last.Y-folderBoxes[0].Y)<1 && !BF_ScrollFolderPage(page,-120);
+        folderPages=folderPages && BF_ScrollFolderPage(page,240);
+        settleFolder();
+        folderPages=folderPages && scroll.VerticalOffset()<1;
+    }
+    folderFits=folderFits && folderPages;
     trace("folder_bitmap");
     // A wider scrolling canvas can place the native vertical thumb on top of
     // the first pin even when the app rows themselves are correctly aligned.
@@ -491,7 +532,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
            <<",\"inner_templates_restored\":"<<innerRestored<<",\"core_apps_grid\":"<<coreApps<<",\"late_insets_corrected\":"<<lateInsets
           <<",\"footer_and_popup_commands\":"<<commands
           <<",\"four_columns_unchanged_icons\":"<<hitboxes<<",\"folder_fits\":"<<folderFits<<",\"folder_appearance\":"<<folderAppearance
-          <<",\"pinned_edge_hit\":"<<pinnedEdgeHit<<",\"folder_edge_hit\":"<<folderEdgeHit
+          <<",\"folder_paging\":"<<folderPages<<",\"pinned_edge_hit\":"<<pinnedEdgeHit<<",\"folder_edge_hit\":"<<folderEdgeHit
           <<",\"folder_rect\":["<<folderBox.X<<","<<folderBox.Y<<","<<folderBox.Width<<","<<folderBox.Height<<"]"
           <<",\"folder_surface\":["<<surfaceBox.X<<","<<surfaceBox.Y<<","<<surfaceBox.Width<<","<<surfaceBox.Height<<"]"
           <<",\"folder_title\":["<<titleBox.X<<","<<titleBox.Y<<","<<titleBox.Width<<","<<titleBox.Height<<"]"

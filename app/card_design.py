@@ -2,7 +2,7 @@
 from PyQt5.QtCore import Qt,QPointF,QRectF
 from PyQt5.QtGui import QBrush,QColor,QGradient,QLinearGradient,QPen,QPainterPath
 from appearance_presets import THEME_GRADIENTS
-DESIGNS=[('液态玻璃','aurora'),('浅色渐变','gradient'),('经典纸张','paper'),('极简纯色','minimal'),('清透水晶','crystal'),('柔光流彩','flowing'),('活力原色','vivid'),('浅色纸玻璃','paper_glass')]
+DESIGNS=[('液态玻璃','aurora'),('浅色渐变','gradient'),('经典纸张','paper'),('极简纯色','minimal'),('清透水晶','crystal'),('柔光流彩','flowing'),('活力原色','vivid'),('浅色纸玻璃','paper_glass'),('曜石铜边','obsidian'),('青瓷釉面','celadon'),('落霞丝绒','velvet')]
 
 # Card surfaces, in light and dark order.
 SOFT_SURFACES={
@@ -33,6 +33,9 @@ SURFACE_MATERIALS={
     'acrylic':(.82,243),
     'crystal':(.82,240),
     'flowing':(.84,242),
+    'obsidian':(.60,249),
+    'celadon':(.69,247),
+    'velvet':(.54,249),
 }
 
 
@@ -92,6 +95,15 @@ def paint_design(painter,rect,cfg,design=None,clear=False,body_top=None,body_ins
     radius=min(20,rect.height()*.12) if corner_radius is None else corner_radius
     path=QPainterPath();path.addRoundedRect(rect,radius,radius)
     painter.save();painter.setClipPath(path,Qt.IntersectClip)
+    if design in ('obsidian','celadon','velvet'):
+        boundary=body_top if body_top is not None else rect.top()+min(40,rect.height()*.22)
+        if header_separator and rect.top()+8<boundary<rect.bottom()-8:
+            left=QPointF(rect.left()+12,boundary);right=QPointF(rect.right()-12,boundary)
+            rule=QLinearGradient(left,right)
+            edge=QColor({'obsidian':'#c19474','celadon':'#467f71','velvet':'#dd9b94'}[design])
+            edge.setAlpha(118);rule.setColorAt(0,edge);edge.setAlpha(14);rule.setColorAt(1,edge)
+            painter.setPen(QPen(QBrush(rule),1));painter.drawLine(left,right)
+        painter.restore();painter.restore();return
     if design in ('crystal','flowing','paper_glass'):
         # The shared material already owns the edge and wallpaper surface. Keep
         # content still; only the header receives a small readable tone step.

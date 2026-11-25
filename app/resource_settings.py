@@ -1,5 +1,6 @@
 """Preferences shared by the desktop monitor and the independent taskbar readout."""
 from weakref import proxy
+from component_settings import section
 from PyQt5.QtCore import Qt, QSignalBlocker, QUrl
 from PyQt5.QtGui import QColor, QDesktopServices
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
@@ -14,7 +15,7 @@ from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BA
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_metric_options
 from resource_device_picker import DevicePicker
-from resource_options import DEVICE_SOURCES, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
+from resource_options import DEVICE_ALERTS, DEVICE_SOURCES, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -36,20 +37,6 @@ PLACEMENT_GROUPS = (
     ('日常内容', ('weather','pomodoro','agenda','news','mail')),
     ('桌面组件', tuple(DESKTOP_COMPONENTS)),
 )
-
-
-def section(parent, title):
-    box = QWidget()
-    box.setObjectName('SettingsGroup')
-    box.setAttribute(Qt.WA_StyledBackground)
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(12,9,12,10)
-    layout.setSpacing(7)
-    heading = QLabel(title)
-    heading.setProperty('role','group-title')
-    layout.addWidget(heading)
-    parent.addWidget(box)
-    return layout
 
 
 class OptionFields(dict):
@@ -82,16 +69,16 @@ class ResourceOptions(QDialog):
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
-           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'},
+           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'} | {'resource_alert_'+key for key in DEVICE_ALERTS},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_background','resource_backdrop_mode','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
-        {'resource_edge_snap','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
+        {'resource_edge_snap','resource_edge_hide','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_weather_location','resource_weather_alert_sound','resource_news'},set(),
         {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound',
-         'resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval'}]
+         'resource_alert_stopwatch','resource_alert_alarm','resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval'}]
 
     def ensure_page(self,index):
         if index in self.loaded:return
@@ -195,7 +182,7 @@ class ResourceOptions(QDialog):
         super().__init__(None,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         self.setProperty('simpleForms', True)
         self.service=service;cfg=service.cfg
-        self.setWindowTitle('资源胶囊设置 · 大肥鱼Dock');self.resize(598,506)
+        self.setWindowTitle('灵动胶囊设置 · 大肥鱼Dock');self.resize(598,506)
         self.loaded=set();self.fields=OptionFields(self);self.tints=dict(cfg['resource_tints'])
         self.drafts = {}
         self.orders = {}
@@ -205,12 +192,12 @@ class ResourceOptions(QDialog):
         from copy import deepcopy
         self.baseline = {key: deepcopy(value) if key.startswith('resource_') else value for key, value in cfg.items()
                          if key.startswith(('resource_', 'panel_'))}
-        box=QVBoxLayout(self);box.addWidget(SettingsHeader(self,'资源胶囊设置'))
+        box=QVBoxLayout(self);box.addWidget(SettingsHeader(self,'灵动胶囊设置'))
         content = QHBoxLayout()
         content.setSpacing(10)
         box.addLayout(content,1)
         self.nav = SettingsNavigation()
-        self.nav.setAccessibleName('资源胶囊设置分类')
+        self.nav.setAccessibleName('灵动胶囊设置分类')
         content.addWidget(self.nav)
         self.tabs = QStackedWidget()
         content.addWidget(self.tabs,1)
@@ -257,7 +244,7 @@ class ResourceOptions(QDialog):
         def build_0():
             layout=page(0)
             desktop=section(layout,'显示与层级')
-            self.fields['resource_enabled']=check('显示资源胶囊',cfg['resource_enabled']);desktop.addWidget(self.fields['resource_enabled'])
+            self.fields['resource_enabled']=check('显示灵动胶囊',cfg['resource_enabled']);desktop.addWidget(self.fields['resource_enabled'])
             form=QFormLayout();desktop.addLayout(form)
             combo(form,'resource_open_page','展开后默认页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
             combo(form,'resource_layer','桌面层级',[('置顶','top'),('置底','bottom')],cfg['resource_layer'],self.fields)
@@ -361,6 +348,12 @@ class ResourceOptions(QDialog):
             compact=section(layout,'收起时自动提醒')
             for key in ('resource_alert_battery','resource_alert_weather'):
                 self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
+            devices=section(layout,'键盘与设备状态')
+            note=QLabel('已选状态在收起时显示图标。状态变化时显示文字，5 秒后收回。')
+            note.setWordWrap(True);devices.addWidget(note)
+            for kind,title in DEVICE_ALERTS.items():
+                key='resource_alert_'+kind
+                self.fields[key]=check(title,cfg[key]);devices.addWidget(self.fields[key])
             layout.addStretch()
 
         def build_3():
@@ -486,7 +479,7 @@ class ResourceOptions(QDialog):
             form = QFormLayout();devices.addLayout(form)
             for key, title in (('gpu', 'GPU'), ('network', '网速'), ('disk_activity', '磁盘'), ('display', '显示器')):
                 hardware_picker(form, MONITOR_DEVICES[key], title, key)
-            hint = QLabel('资源胶囊、桌面资源卡和任务栏监控共用此设置。自动显示最忙 GPU、最忙磁盘和已连接网卡汇总。指定设备后显示该设备的读数。')
+            hint = QLabel('灵动胶囊、桌面资源卡和任务栏监控共用此设置。自动显示最忙 GPU、最忙磁盘和已连接网卡汇总。指定设备后显示该设备的读数。')
             hint.setWordWrap(True);devices.addWidget(hint)
             note = QLabel('显示器选择用于亮度和桌面更新帧率。应用帧率按应用读取。')
             note.setWordWrap(True);devices.addWidget(note)
@@ -512,7 +505,7 @@ class ResourceOptions(QDialog):
         def build_6():
             layout=page(6)
             interaction=section(layout,'吸附与拖动')
-            for key,title in [('resource_edge_snap','屏幕边缘吸附'),('resource_peer_snap','相邻卡片吸附'),
+            for key,title in [('resource_edge_snap','屏幕边缘吸附'),('resource_edge_hide','贴边隐藏为光条，有新提醒时短暂显示收起胶囊'),('resource_peer_snap','相邻卡片吸附'),
                               ('resource_liquid','液态拉伸、断开水滴与贴边圆角')]:
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
             hint=QLabel('吸附距离在主设置「桌面收纳」中调整。')
@@ -599,7 +592,7 @@ class ResourceOptions(QDialog):
                 form=QFormLayout();placement.addLayout(form)
                 for key in keys:
                     label='番茄钟与喝水' if key=='pomodoro' else PLACED_COMPONENTS[key]
-                    combo(form,key,label,[('收入资源胶囊','capsule'),('独立桌面卡片','desktop')],
+                    combo(form,key,label,[('收入灵动胶囊','capsule'),('独立桌面卡片','desktop')],
                           component_location(cfg,key),self.location_fields)
             layout.addStretch()
 
@@ -634,6 +627,7 @@ class ResourceOptions(QDialog):
             self.fields['resource_pomodoro']=check('显示番茄钟与喝水提醒',cfg['resource_pomodoro'])
             timers.addWidget(self.fields['resource_pomodoro'])
             for key,title in (('resource_alert_focus','收起时显示专注计时与完成提醒'),
+                              ('resource_alert_stopwatch','收起时同步显示正计时'),('resource_alert_alarm','收起时显示下次闹钟与到点提醒'),
                               ('resource_alert_water','收起时显示喝水提醒')):
                 self.fields[key]=check(title,cfg[key]);timers.addWidget(self.fields[key])
             layout.addStretch()

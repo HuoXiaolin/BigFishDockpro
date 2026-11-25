@@ -7,11 +7,11 @@ from PyQt5.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QTimer, Qt
 from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import QApplication, QColorDialog, QWidget
 
-from feature_config import RING_HEIGHT_MAX, SPECTRUM_FIXED_PALETTES, SPECTRUM_STYLES
+from feature_config import RING_HEIGHT_MAX, SPECTRUM_COLOR_MODES, SPECTRUM_PALETTES, SPECTRUM_STYLES
 from appearance_presets import dock_appearance
 from capsule_glass import CapsuleGlass
 from screen_layout import capture, project, screen_records
-from spectrum_effects import COLOR_EFFECTS, SPECTRUM_COLORS, sphere_power
+from spectrum_effects import COLOR_EFFECTS, SPECTRUM_COLORS, palette_icon, sphere_power
 from window_edges import BOTTOM, LEFT, RIGHT, TOP, edges_at, paint_edge_targets, resize_cursor, resized_rect
 from window_backdrop import component_backdrop, uses_wallpaper
 
@@ -62,38 +62,43 @@ def paint_ring_targets(painter, area):
 
 
 def add_menu_actions(menu, runtime):
+    from component_preferences import open_preferences
+    from ui_style import menu_group
+    menu.addAction('音乐频谱设置…', lambda: open_preferences(runtime, 'spectrum'))
     from appearance_presets import APPEARANCE_SOURCES
     cfg = runtime.dock.cfg
     show = menu.addAction('显示桌面音乐频谱')
     show.setCheckable(True)
     show.setChecked(cfg['spectrum_enabled'])
     show.triggered.connect(lambda on: runtime.set_spectrum_options(spectrum_enabled=on))
-    styles = menu.addMenu('频谱样式')
+    menu.addSeparator()
+    styles = menu_group(menu,'频谱样式','wave')
     for title, style in SPECTRUM_STYLES:
         action = styles.addAction(title)
         action.setCheckable(True)
         action.setChecked(cfg['spectrum_style'] == style)
         action.triggered.connect(lambda _, value=style: runtime.set_spectrum_options(spectrum_style=value))
-    color=menu.addMenu('频谱配色')
+    color=menu_group(menu,'频谱配色','palette')
     for title,value in APPEARANCE_SOURCES:
         action=color.addAction(title);action.setCheckable(True)
         action.setChecked(cfg['spectrum_appearance_source']==value)
         action.triggered.connect(lambda _,key=value:runtime.set_spectrum_options(spectrum_appearance_source=key))
     color.addSeparator()
-    for title,value in (('炫彩','colorful'),('单色','mono')):
+    for title,value in SPECTRUM_COLOR_MODES:
         action=color.addAction(title)
+        if value in SPECTRUM_PALETTES:action.setIcon(palette_icon(value))
         action.setCheckable(True)
-        action.setChecked(cfg['spectrum_color_mode']==value)
+        action.setChecked(cfg['spectrum_appearance_source']=='custom' and cfg['spectrum_color_mode']==value)
         action.triggered.connect(lambda _,key=value:runtime.set_spectrum_options(spectrum_color_mode=key))
     color.addAction('选择单色…',lambda:choose_mono_color(runtime))
-    color.setEnabled(cfg['spectrum_style'] not in SPECTRUM_FIXED_PALETTES)
-    size=menu.addAction('恢复默认大小',lambda:runtime.set_spectrum_options(spectrum_manual_size=False))
+    window=menu_group(menu,'窗口与交互','position')
+    size=window.addAction('恢复默认大小',lambda:runtime.set_spectrum_options(spectrum_manual_size=False))
     size.setEnabled(cfg['spectrum_manual_size'] and not cfg['spectrum_locked'])
-    top=menu.addAction('置顶');top.setCheckable(True);top.setChecked(cfg['spectrum_layer']=='top')
+    top=window.addAction('置顶');top.setCheckable(True);top.setChecked(cfg['spectrum_layer']=='top')
     top.triggered.connect(lambda on:runtime.set_spectrum_options(spectrum_layer='top' if on else 'bottom'))
     from component_passthrough import component_actions
-    component_actions(menu.addMenu('鼠标穿透'),runtime,'spectrum')
-    lock = menu.addAction('锁定位置')
+    component_actions(window.addMenu('鼠标穿透'),runtime,'spectrum')
+    lock = window.addAction('锁定位置')
     lock.setCheckable(True)
     lock.setChecked(cfg['spectrum_locked'])
     lock.triggered.connect(lambda on: runtime.set_spectrum_options(spectrum_locked=on))
@@ -402,8 +407,9 @@ class DesktopSpectrum(QWidget):
         event.accept()
 
     def contextMenuEvent(self, event):
-        from ui_style import AlignedMenu
+        from ui_style import AlignedMenu,menu_heading
         menu = AlignedMenu(self.runtime.dock)
+        menu_heading(menu,'桌面音乐频谱')
         add_menu_actions(menu, self.runtime)
         menu.exec_(event.globalPos())
         menu.deleteLater()
@@ -456,33 +462,35 @@ class DesktopSpectrum(QWidget):
         crown_angle = 0.
         if style == 'crown' and self.crown_started is not None:
             crown_angle = (monotonic() - self.crown_started) % CROWN_ROTATION_SECONDS * tau / CROWN_ROTATION_SECONDS
+        preset=SPECTRUM_PALETTES.get(self.cfg['spectrum_color_mode'])
         draw_spectrum(painter,QRectF(self.rect()),self.levels,style,accent,
-                      not following and self.cfg['spectrum_color_mode']=='colorful',self.peaks,ring_height=height,
+                      not following and preset is not None,self.peaks,ring_height=height,palette=preset[1] if preset else SPECTRUM_COLORS,
                       show_limit=preview is not None,crown_angle=crown_angle,
                       sphere_angle=self.sphere_angle,sphere_strength=self.sphere_strength)
 
 
-def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_height=100,show_limit=False,
+def draw_spectrum(painter,rect,levels,style,accent,colorful,peaks=None,*,ring_height=100,show_limit=False,palette=SPECTRUM_COLORS,
                   crown_angle=0.,sphere_angle=0.,sphere_strength=None):
     """Paint bounded strokes only. Peaks advance with the existing audio frames."""
     area=spectrum_area(rect,style)
     if area.isEmpty() or not levels:return
     peaks=levels if peaks is None else peaks
+    stops=palette if colorful else (accent.name(),accent.name())
     effect = COLOR_EFFECTS.get(style)
     if effect is not None:
         painter.save()
         try:
             painter.setClipRect(area, Qt.IntersectClip)
             if style == 'particle_sphere':
-                effect(painter, area, levels, peaks, rotation=sphere_angle, power=sphere_strength)
+                effect(painter, area, levels, peaks, stops, rotation=sphere_angle, power=sphere_strength)
             elif style == 'crown':
-                effect(painter, area, levels, peaks, rotation=crown_angle)
+                effect(painter, area, levels, peaks, stops, rotation=crown_angle)
             else:
-                effect(painter, area, levels, peaks)
+                effect(painter, area, levels, peaks, stops)
         finally:
             painter.restore()
         return
-    shades=tuple(map(QColor,SPECTRUM_COLORS)) if colorful else (QColor(accent),)*2
+    shades=tuple(map(QColor,stops))
     span=min(area.width(),area.height())*1.85 if style=='ring' else area.width()
     count=max(3,min(len(levels),int(span/(5 if style=='dots' else 2.3))))
     if count<len(levels):

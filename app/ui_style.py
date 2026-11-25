@@ -293,6 +293,20 @@ class PopupDelegate(QStyledItemDelegate):
         return super().helpEvent(event,view,option,index)
 
 
+def menu_heading(menu,title):
+    heading=menu.addAction(title)
+    heading.setEnabled(False)
+    heading.setProperty('componentHeading',True)
+    return heading
+
+
+def menu_group(menu,title,icon):
+    from settings_design import navigation_icon
+    group=menu.addMenu(title)
+    group.menuAction().setIcon(navigation_icon(icon,menu.palette()))
+    return group
+
+
 class AlignedMenu(QMenu):
     """One text column for checked, ordinary and submenu actions."""
     def __init__(self, *args):
@@ -330,6 +344,16 @@ class AlignedMenu(QMenu):
             if not action.isVisible(): continue
             rect = self.actionGeometry(action)
             rect.setRight(self.width()-compact_px(6))
+            if action.property('componentHeading'):
+                p.save()
+                heading=QFont(font);heading.setWeight(QFont.DemiBold);p.setFont(heading)
+                p.setPen(palette.color(QPalette.Text))
+                p.drawText(rect.adjusted(compact_px(12),0,-8,0),Qt.AlignVCenter,action.text())
+                line=palette.color(QPalette.Mid);line.setAlpha(85)
+                p.setPen(QPen(line,1))
+                p.drawLine(rect.left()+compact_px(10),rect.bottom(),rect.right()-compact_px(4),rect.bottom())
+                p.restore()
+                continue
             if action.isSeparator():
                 p.setPen(QPen(palette.color(QPalette.Mid), .5))
                 p.drawLine(rect.left()+12, rect.center().y(), rect.right()-12, rect.center().y())
@@ -344,6 +368,9 @@ class AlignedMenu(QMenu):
                 path = QPainterPath(); y = rect.center().y()
                 path.moveTo(rect.left()+compact_px(11),y); path.lineTo(rect.left()+compact_px(14),y+compact_px(3)); path.lineTo(rect.left()+compact_px(20),y-compact_px(4))
                 p.setPen(QPen(ink,1.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)); p.drawPath(path)
+            elif not action.icon().isNull():
+                side=compact_px(16)
+                action.icon().paint(p,rect.left()+compact_px(8),rect.center().y()-side//2,side,side)
             if action.menu():
                 path = QPainterPath(); x,y = rect.right()-compact_px(13),rect.center().y()
                 path.moveTo(x-2,y-3); path.lineTo(x+1,y); path.lineTo(x-2,y+3)

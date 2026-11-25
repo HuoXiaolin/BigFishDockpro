@@ -15,6 +15,7 @@ from ui_style import label, button, ModernComboBox, ModernSpinBox, ModernCheckBo
 from dpi_support import metric, minimum, panel_css
 from window_edges import edges_at, paint_edge_targets, resize_cursor, resized_rect
 from window_backdrop import BACKDROP_HINT, component_backdrop, uses_wallpaper
+from panel_preferences import ICON_ALIGNMENTS
 
 
 CATEGORY_COLORS={
@@ -66,7 +67,28 @@ def _category_icon(category,ink,size,dpr):
 
 
 class CollectionList(QListWidget):
-    def center_icons(self):
+    def wheelEvent(self,event):
+        bar=self.verticalScrollBar()
+        pixels=event.pixelDelta().y()
+        angle=event.angleDelta().y()
+        if self.viewMode()!=QListWidget.IconMode or not bar.maximum() or event.modifiers() or not (pixels or angle):
+            super().wheelEvent(event)
+            return
+        if pixels:
+            delta=pixels
+            self._wheel_remainder=0.
+        else:
+            # Three system lines advance one icon row; a precision wheel can
+            # move a fraction of a row without waiting for an entire detent.
+            step=min(self.viewport().height(),self.gridSize().height()*QApplication.wheelScrollLines()/3)
+            remainder=getattr(self,'_wheel_remainder',0.)
+            distance=angle*step/120+(remainder if remainder*angle>0 else 0.)
+            delta=int(distance)
+            self._wheel_remainder=distance-delta
+        bar.setValue(bar.value()-delta)
+        event.accept()
+
+    def align_icons(self,alignment):
         if self.viewMode()!=QListWidget.IconMode or not self.count():
             return
         grid=self.gridSize()
@@ -76,7 +98,8 @@ class CollectionList(QListWidget):
         columns=max(1,(width-1)//grid.width())
         for first in range(0,self.count(),columns):
             count=min(columns,self.count()-first)
-            left=max(0,(width-count*grid.width())//2)
+            remaining=max(0,width-count*grid.width())
+            left=remaining if alignment=='right' else remaining//2 if alignment=='center' else 0
             top=(first//columns)*grid.height()
             for column in range(count):
                 index=self.model().index(first+column,0)
@@ -412,6 +435,8 @@ class DesktopPanel(QDialog):
         self.notice.setStyleSheet('font-size:%dpx;'%metric(11,factor,6))
         view = self.model.get('view','small')
         self.list.setViewMode(QListWidget.ListMode if view=='list' else QListWidget.IconMode)
+        if view=='list':self.list.resetVerticalScrollMode()
+        else:self.list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         # Programmatic icon placement uses Free mode. File dragging is handled
         # by CollectionList, and internal drops into this view stay disabled.
         self.list.setMovement(QListWidget.Static if view=='list' else QListWidget.Free)
@@ -586,7 +611,7 @@ class DesktopPanel(QDialog):
         # Preserve freely chosen dimensions, including when merged pages switch.
         self.fit_timer.stop()
         self.list.doItemsLayout()
-        self.list.center_icons()
+        self.list.align_icons(self.model.get('icon_alignment','center'))
         self.notice.update()
 
     def set_compact(self, enabled):
@@ -660,7 +685,13 @@ class DesktopPanel(QDialog):
         views=[(title+('（当前）' if self.model.get('view','small')==key else ''),
                 lambda mode=key:self.manager.update_panel(identity,view=mode))
                for key,title in [('small','小图标'),('large','大图标'),('list','列表')]]
-        commands.append(('显示方式',views));commands.append(('粘贴到桌面',lambda:self.paste_files()))
+        commands.append(('显示方式',views))
+        if self.model.get('view','small')!='list':
+            alignment=self.model.get('icon_alignment','center')
+            commands.append(('图标对齐',[(title+('（当前）' if value==alignment else ''),
+                             lambda mode=value:self.manager.update_panel(identity,icon_alignment=mode))
+                            for title,value in ICON_ALIGNMENTS]))
+        commands.append(('粘贴到桌面',lambda:self.paste_files()))
         if len(paths)==1 and os.path.isdir(paths[0]):commands.append(('粘贴到此文件夹',lambda:self.paste_files(paths[0])))
         commands.append(('移除收纳引用（保留原文件）',lambda:self.manager.remove_entries(keys,identity)))
         return commands
@@ -745,6 +776,12 @@ class DesktopPanel(QDialog):
             action.setCheckable(True)
             action.setChecked(self.model.get('view','small')==key)
             action.triggered.connect(lambda checked=False,value=key:self.manager.update_panel(self.identity,view=value))
+        if self.model.get('view','small')!='list':
+            align=menu.addMenu('图标对齐')
+            for title,value in ICON_ALIGNMENTS:
+                action=align.addAction(title);action.setCheckable(True)
+                action.setChecked(self.model.get('icon_alignment','center')==value)
+                action.triggered.connect(lambda checked=False,mode=value:self.manager.update_panel(self.identity,icon_alignment=mode))
         return views
 
     def contextMenuEvent(self, event):
@@ -764,48 +801,55 @@ class DesktopPanel(QDialog):
     def build_panel_menu(self):
         menu = QMenu(self)
         from fold_options import FoldOptions
-        from ui_style import exec_dialog
-        menu.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
-        menu.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
+        from ui_style import exec_dialog,menu_group,menu_heading
+        menu_heading(menu,self.model['name']+' · 桌面收纳')
+        menu.addAction('外观与收起…').triggered.connect(self.edit_options)
         menu.addAction('粘贴到桌面').triggered.connect(lambda:self.paste_files())
-        menu.addAction('添加文件…').triggered.connect(self.add_files)
-        menu.addAction('添加文件夹…').triggered.connect(self.add_folder)
-        menu.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)
-        merge = menu.addAction('独立显示此卡片' if self.manager.is_merged(self.identity) else '加入合并卡片')
+        menu.addSeparator()
+        layout=menu_group(menu,'图标与排列','grid')
+        self.add_view_menu(layout)
+        files=menu_group(menu,'文件与收纳','apps')
+        files.addAction('添加文件…').triggered.connect(self.add_files)
+        files.addAction('添加文件夹…').triggered.connect(self.add_folder)
+        files.addAction('重新扫描桌面').triggered.connect(self.manager.scan)
+        manage=menu_group(menu,'卡片与分组','panels')
+        manage.addAction('分组与合并管理…').triggered.connect(self.manager.manage_groups)
+        merge = manage.addAction('独立显示此卡片' if self.manager.is_merged(self.identity) else '加入合并卡片')
         merge.triggered.connect(lambda: self.manager.set_merged(self.identity, not self.manager.is_merged(self.identity)))
-        groups=menu.addMenu('加入合并组')
+        groups=manage.addMenu('加入合并组')
         for group in self.dock.cfg['merge_groups']:
             action=groups.addAction(group['name']);action.setCheckable(True)
             action.setChecked(self.manager.is_merged(self.identity) and self.manager.group_id(self.identity)==group['id'])
             action.triggered.connect(lambda checked=False,key=group['id']:self.manager.assign_group(self.identity,key))
         groups.addSeparator();groups.addAction('新建合并组…').triggered.connect(lambda:self.manager.new_merge_group(identity=self.identity))
         if self.identity not in dict(__import__('desktop_catalog').CATEGORIES):
-            menu.addAction('自动归入格式…').triggered.connect(self.edit_definition)
-        menu.addAction('设置…').triggered.connect(self.runtime.show_settings)
-        menu.addAction('新建面板…').triggered.connect(lambda: self.manager.new_panel())
-        menu.addAction('重命名…').triggered.connect(self.rename)
-        menu.addAction('外观与收起…').triggered.connect(self.edit_options)
-        top = menu.addAction('桌面卡片置顶')
+            files.addAction('自动归入格式…').triggered.connect(self.edit_definition)
+        manage.addAction('新建面板…').triggered.connect(lambda: self.manager.new_panel())
+        manage.addAction('重命名…').triggered.connect(self.rename)
+        manage.addSeparator()
+        manage.addAction('移除此面板…').triggered.connect(lambda: self.manager.delete_panel(self.identity))
+        window=menu_group(menu,'窗口与交互','position')
+        window.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
+        window.addAction('尺寸与文字…').triggered.connect(lambda: self.runtime.open_card_sizing('panel',self.identity))
+        top = window.addAction('桌面卡片置顶')
         top.setCheckable(True)
         top.setChecked(self.option('layer')=='top')
         top.triggered.connect(lambda on:self.manager.update_panel(self.identity,layer='top' if on else 'bottom'))
         from component_passthrough import component_actions
-        component_actions(menu.addMenu('鼠标穿透'),self.runtime,self.property('clickThroughKey'))
-        self.add_view_menu(menu)
-        sort = menu.addMenu('排序方式')
+        component_actions(window.addMenu('鼠标穿透'),self.runtime,self.property('clickThroughKey'))
+        sort = layout.addMenu('排序方式')
         for key, title in [('name_asc','文件名：升序'), ('name_desc','文件名：降序'),
                            ('modified_desc','修改时间：最新优先'), ('modified_asc','修改时间：最早优先')]:
             action = sort.addAction(title)
             action.setCheckable(True)
             action.setChecked(self.model.get('sort', 'name_asc') == key)
             action.triggered.connect(lambda checked=False, value=key: self.manager.update_panel(self.identity, sort=value))
-        lock = menu.addAction('锁定位置和大小')
+        lock = window.addAction('锁定位置和大小')
         lock.setCheckable(True)
         lock.setChecked(self.option('locked'))
         lock.triggered.connect(lambda checked: self.manager.update_panel(self.identity, locked=checked))
         menu.addSeparator()
-        menu.addAction('重新扫描桌面').triggered.connect(self.manager.scan)
-        menu.addAction('移除此面板…').triggered.connect(lambda: self.manager.delete_panel(self.identity))
+        menu.addAction('设置…').triggered.connect(self.runtime.show_settings)
         return menu
 
     def edit_definition(self):
@@ -828,8 +872,9 @@ class DesktopPanel(QDialog):
         path = QFileDialog.getExistingDirectory(self, '收纳文件夹（保留原位）')
         if path: self.manager.add_paths(self.identity, [path])
 
-    def edit_options(self):
+    def edit_options(self,page=0):
         dialog = PanelOptions(self)
+        if type(page) is int:dialog.tabs.setCurrentIndex(page)
         dialog.exec_()
         dialog.deleteLater()
         if self.option('auto_hide'): self.collapse_timer.start()
@@ -1224,15 +1269,24 @@ class PanelOptions(QDialog):
         from appearance_presets import APPEARANCE_SOURCES, material_choices, COLOR_MODES
         from resource_options import FACE_SWITCH_RANGE
         self.panel,self.fields=panel,{};self.applying_preset=True
-        self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(540,620)
-        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'));form=QFormLayout();form.setVerticalSpacing(10);body.addLayout(form)
+        from component_settings import ComponentPages, settings_footer
+        self.setWindowTitle('卡片外观设置 · 大肥鱼Dock');self.resize(650,500)
+        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'卡片外观设置'))
+        self.tabs=ComponentPages(self,body,'桌面卡片')
+        form=self.tabs.form('材质与配色','palette','卡片外观')
         management=QHBoxLayout()
         self.groups_button=button('分组管理…',panel.manager.manage_groups)
         self.sizing_button=button('尺寸控制…',self.open_sizing)
         management.addWidget(self.groups_button)
         management.addWidget(self.sizing_button)
         management.addStretch()
-        form.addRow(management)
+        behavior=self.tabs.form('显示与交互','panels','卡片管理与层级')
+        behavior.addRow(management)
+        self.icon_alignment=ModernComboBox()
+        for title,value in ICON_ALIGNMENTS:self.icon_alignment.addItem(title,value)
+        self.icon_alignment.setAccessibleName('当前分类的图标对齐')
+        self.icon_alignment.setCurrentIndex(self.icon_alignment.findData(panel.model.get('icon_alignment','center')))
+        behavior.addRow('当前分类的图标对齐',self.icon_alignment)
         self.text_size=ModernSpinBox()
         self.text_size.setRange(8,48)
         form.addRow('卡片文字大小（像素）',self.text_size)
@@ -1251,6 +1305,7 @@ class PanelOptions(QDialog):
         from ui_style import ThemeSwatches
         colors.addWidget(ThemeSwatches(self.color));form.addRow('主题色',self.color_box)
         number('highlight','高光（%）',0,100);number('opacity','不透明度（%）',0,100);number('blur','模糊强度',0,30)
+        form=behavior
         choice('layer','桌面卡片层级',[('置底','bottom'),('置顶','top')])
         from component_passthrough import CHOICES
         self.passthrough=ModernComboBox()
@@ -1258,6 +1313,7 @@ class PanelOptions(QDialog):
         self.passthrough.setAccessibleName('当前卡片的鼠标穿透')
         form.addRow('当前卡片的鼠标穿透',self.passthrough)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
+        form=self.tabs.form('展开与收起','size','触发方式与尺寸')
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
         choice('expand_mode','展开方式',[('鼠标移入','hover'),('点击展开','click')])
         choice('collapse_style','收起形状',[('胶囊','capsule'),('方条','bar'),('圆球','ball')]);number('capsule_ratio','胶囊宽度比例（%）',1,100)
@@ -1265,6 +1321,7 @@ class PanelOptions(QDialog):
         number('ball_diameter','圆球直径（像素）',*FOLD_SIZE_RANGE)
         number('fold_height','收起栏高度（像素）',*FOLD_SIZE_RANGE)
         self.fields['collapse_style'].currentIndexChanged.connect(self.sync_fold_fields)
+        form=self.tabs.form('表情与角色','paw','表情与互动')
         self.face=ModernCheckBox('显示小表情（展开与收起均保留）');form.addRow(self.face)
         self.face_interactive=ModernCheckBox('表情跟随鼠标与按压互动');form.addRow(self.face_interactive)
         choice('face_mood','表情样式',[('随机变化','random'),('默认','default'),('开心','happy'),('眨眼','wink'),('爱心','love'),('星星眼','star'),('害羞','shy'),('嘟嘴','pout'),('眯眼','squint')])
@@ -1273,11 +1330,11 @@ class PanelOptions(QDialog):
         number('face_switch_minutes', '切换间隔（分钟）', *FACE_SWITCH_RANGE)
         self.face_auto_switch.toggled.connect(self.fields['face_switch_minutes'].setEnabled)
         number('face_scale','表情大小（%）',60,130)
-        self.status=label('所有桌面卡片共用此设置；保存后同步主设置。位置、大小和内容分别保留。','muted');body.addWidget(self.status)
+        self.status=label('外观与收起设置由桌面卡片共用。','muted')
         self.status.setWordWrap(True)
         from face_role_controls import add_role_controls
         self.fields['face_role']=add_role_controls(self,form,panel.runtime,self.status,panel.option('face_role'))
-        actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
+        settings_footer(self,body,self.status,self.commit)
         self.refresh_shared()
         self.preset.currentIndexChanged.connect(self.apply_preset)
         for key,field in self.fields.items():
@@ -1365,7 +1422,7 @@ class PanelOptions(QDialog):
         values['face_auto_switch'] = self.face_auto_switch.isChecked()
         values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio'),
                         'diameter':values.pop('ball_diameter'),'height':values.pop('fold_height')}
-        if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),
+        if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),icon_alignment=self.icon_alignment.currentData(),
                                            _pointer_mode=self.passthrough.currentData(),**values):
             self.status.setText('已保存。外观和层级应用到所有桌面卡片。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

@@ -1,18 +1,20 @@
 """One theme vocabulary; rendering adapters retain each component's units."""
-MATERIALS = [('液态玻璃','liquid'), ('高光玻璃','gloss'), ('亚克力','acrylic'), ('云母','mica'), ('全透明','clear'), ('纯色','solid'), ('清透水晶','crystal'), ('柔光流彩','flowing'), ('浅色纸玻璃','paper_glass')]
+MATERIALS = [('液态玻璃','liquid'), ('高光玻璃','gloss'), ('亚克力','acrylic'), ('云母','mica'), ('全透明','clear'), ('纯色','solid'), ('清透水晶','crystal'), ('柔光流彩','flowing'), ('浅色纸玻璃','paper_glass'), ('铜边缎面','obsidian'), ('青瓷釉面','celadon'), ('霞光丝绒','velvet')]
 COLOR_MODES = [('跟随系统','auto'), ('浅色','light'), ('深色','dark')]
 APPEARANCE_SOURCES = [('跟随本应用', 'app'), ('自定义', 'custom')]
 BACKDROP_MODES = [('动态透明', 'dynamic'), ('仅壁纸', 'wallpaper')]
 VIVID_BLUE, VIVID_GREEN, VIVID_RED = '#5b8def', '#5fd97b', '#ff5d5d'
 LIQUID_TINT = '#d3e4f8'
 FLOWING_TINT = '#d3b6ee'
-PRESET_IDS = ('crystal', 'liquid', 'flowing', 'vivid', 'paper_glass', 'transparent')
+PRESET_IDS = ('crystal', 'liquid', 'flowing', 'vivid', 'paper_glass', 'transparent', 'obsidian', 'celadon', 'velvet')
 DEFAULT_PRESET_ID = 'crystal'
-NEW_PRESET_IDS = ('crystal', 'flowing', 'paper_glass')
+NEW_PRESET_IDS = ('crystal', 'flowing', 'paper_glass', 'obsidian', 'celadon', 'velvet')
 LIGHT_GLASS_INK = '#1b2c3c'
 THEME_INKS = dict.fromkeys(('liquid','crystal','flowing','paper_glass','vivid'),LIGHT_GLASS_INK)
+THEME_INKS.update(obsidian='#483124',celadon='#193e34',velvet='#562238')
 THEME_ACCENTS = {'liquid':'#5678bc','crystal':'#2874ac','flowing':'#8659b0',
-                 'paper_glass':'#ab7332','vivid':'#2e8de1','clear':'#15809c'}
+                 'paper_glass':'#ab7332','vivid':'#2e8de1','clear':'#15809c',
+                 'obsidian':'#d7a277','celadon':'#277a65','velvet':'#ffc1ad'}
 THEME_GRADIENTS = {
     'liquid':('#64e8de','#8a64eb'),
     'crystal':('#6ee2f5','#3499ff'),
@@ -20,6 +22,9 @@ THEME_GRADIENTS = {
     'vivid':('#b65eba','#2e8de1'),
     'paper_glass':('#f8d279','#e6a352'),
     'clear':('#00ffed','#0088ba'),
+    'obsidian':('#efd1a0','#ad6b48'),
+    'celadon':('#9bd9be','#216e63'),
+    'velvet':('#ffc0a3','#d87898'),
 }
 PROGRESS_COLORS = (THEME_GRADIENTS['liquid'],('#f3cf80','#dc9c44'),('#72d5b5','#37a98c'))
 PANEL_PRESETS = [
@@ -29,8 +34,11 @@ PANEL_PRESETS = [
     ('活力原色', dict(opacity=30, blur=7, highlight=34, material='liquid', theme='light', color=VIVID_BLUE)),
     ('浅色纸玻璃', dict(opacity=84, blur=14, highlight=18, material='paper_glass', theme='light', color='#f5e8d2')),
     ('全透明', dict(opacity=0, blur=2, highlight=0, material='clear', theme='auto', color='')),
+    ('曜石铜边', dict(opacity=92, blur=5, highlight=26, material='obsidian', theme='dark', color='#272c34')),
+    ('青瓷釉面', dict(opacity=81, blur=11, highlight=39, material='celadon', theme='light', color='#c1e4d3')),
+    ('落霞丝绒', dict(opacity=93, blur=8, highlight=18, material='velvet', theme='dark', color='#80374b')),
 ]
-MATERIAL_CHOICES = [('清透玻璃','crystal'), ('液态玻璃','liquid'), ('柔光玻璃','flowing'), ('纸感玻璃','paper_glass'), ('纯色','solid'), ('全透明','clear')]
+MATERIAL_CHOICES = [('清透玻璃','crystal'), ('液态玻璃','liquid'), ('柔光玻璃','flowing'), ('纸感玻璃','paper_glass'), ('纯色','solid'), ('全透明','clear'), ('铜边缎面','obsidian'), ('青瓷釉面','celadon'), ('霞光丝绒','velvet')]
 
 def preset_design(key):
     return key if key in NEW_PRESET_IDS or key=='vivid' else 'aurora'
@@ -43,7 +51,8 @@ def material_choices(current=None):
     return choices
 
 def material_design(material,previous='aurora'):
-    return {'liquid':'aurora','crystal':'crystal','flowing':'flowing','paper_glass':'paper_glass','clear':'aurora','solid':'minimal'}.get(material,previous)
+    if material in NEW_PRESET_IDS:return material
+    return {'liquid':'aurora','clear':'aurora','solid':'minimal'}.get(material,previous)
 
 def select_material(field,value):
     # Importing/restoring an older custom appearance must not select another material.

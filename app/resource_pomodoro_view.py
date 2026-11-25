@@ -1,16 +1,16 @@
 """Two compact timer cards and the icons shared with the collapsed capsule."""
 from datetime import datetime
 
-from PyQt5.QtCore import QPointF, QRectF, QSize, Qt
+from PyQt5.QtCore import QPointF, QRectF, QSize, Qt, QTime
 from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
-from PyQt5.QtWidgets import (QBoxLayout, QDialog, QFormLayout, QHBoxLayout, QLabel,
-                             QToolButton, QVBoxLayout, QWidget)
+from PyQt5.QtWidgets import (QAbstractSpinBox, QBoxLayout, QDialog, QFormLayout, QHBoxLayout, QLabel,
+                             QStackedWidget, QTimeEdit, QToolButton, QVBoxLayout, QWidget)
 
 from flash_view import icon
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import ring, text
 from resource_options import content_columns
-from resource_pomodoro import duration_text, water_amount
+from resource_pomodoro import duration_text, elapsed_text, water_amount
 from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
 
 
@@ -18,10 +18,12 @@ def reminder_ink(kind,light,battery_level=None):
     if kind=='battery':
         return low_battery_ink(BATTERY_WARNING_LEVEL if battery_level is None else battery_level,light)
     palette={'agenda':('#6246a2','#c8b6ff'), 'almanac':('#356551','#a4dbb2'),
-             'mail_code':('#2357a0','#a7d8ff'),
+             'mail_code':('#2357a0','#a7d8ff'),'mail_new':('#2357a0','#a7d8ff'),'quota_notice':('#664996','#d6baff'),
              'weather_notice':('#216d98','#a1d8f4'),
              'water':('#1268ab','#83c7ff'), 'rest':('#087959','#72dfb4'),
-             'paused':('#59657b','#b9c5d8'), 'focus':('#ab412d','#ffa08a')}
+             'paused':('#59657b','#b9c5d8'), 'focus':('#ab412d','#ffa08a'),
+             'stopwatch':('#096e72','#91e3de'),'stopwatch_paused':('#59657b','#b9c5d8'),
+             'alarm':('#6d4b9d','#dcbcff'),'alarm_due':('#9c4125','#ffb19b')}
     return palette[kind.removesuffix('_done')][0 if light else 1]
 
 
@@ -31,7 +33,17 @@ def reminder_icon(p,rect,kind,ink):
         p.translate(rect.topLeft());p.scale(rect.width()/16,rect.height()/16)
         p.setPen(Qt.NoPen);p.setBrush(QColor(ink))
         path=QPainterPath()
-        if kind in ('mail','mail_new','mail_code'):
+        if kind=='quota_notice':
+            p.setPen(QPen(QColor(ink),1.5,Qt.SolidLine,Qt.RoundCap));p.setBrush(Qt.NoBrush)
+            p.drawArc(QRectF(1.5,3,13,13),24*16,132*16)
+            p.drawLine(QPointF(8,10),QPointF(11,6.5));p.setBrush(QColor(ink));p.drawEllipse(QPointF(8,10),1.3,1.3)
+        elif kind in ('stopwatch','stopwatch_paused','alarm','alarm_due'):
+            p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(ink),1.5,Qt.SolidLine,Qt.RoundCap))
+            p.drawEllipse(QRectF(2.5,4,11,10.5));p.drawLine(QPointF(8,6),QPointF(8,9.5));p.drawLine(QPointF(8,9.5),QPointF(10.5,10.5))
+            if kind.startswith('alarm'):
+                p.drawLine(QPointF(2,4),QPointF(4.3,1.8));p.drawLine(QPointF(11.7,1.8),QPointF(14,4))
+            else:p.drawLine(QPointF(6,1.5),QPointF(10,1.5));p.drawLine(QPointF(8,1.5),QPointF(8,4))
+        elif kind in ('mail','mail_new','mail_code'):
             color=QColor(ink)
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(color,1.4,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
@@ -142,9 +154,18 @@ class PomodoroView(QWidget):
         super().__init__()
         self.owner=window;self.model=window.service.get_pomodoro()
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(5)
+        tabs=QHBoxLayout();tabs.setSpacing(4)
+        self.tab_buttons=[]
+        for index,title in enumerate(('专注与喝水','正计时与闹钟')):
+            tab=QToolButton();tab.setText(title);tab.setCheckable(True);tab.setAutoExclusive(True)
+            tab.clicked.connect(lambda checked,i=index:self.tools.setCurrentIndex(i));tabs.addWidget(tab)
+            self.tab_buttons.append(tab)
+        tabs.addStretch();layout.addLayout(tabs);self.tab_buttons[0].setChecked(True)
+        self.tools=QStackedWidget();layout.addWidget(self.tools)
+        first=QWidget();self.tools.addWidget(first)
         self.cards=QBoxLayout(QBoxLayout.LeftToRight)
         self.cards.setContentsMargins(0,0,0,0);self.cards.setSpacing(7)
-        layout.addLayout(self.cards)
+        first.setLayout(self.cards)
 
         focus,focus_head,focus_body=self.card('番茄专注','peach')
         self.configure=QToolButton();self.configure.setText('设置')
@@ -175,6 +196,27 @@ class PomodoroView(QWidget):
         self.status=QLabel();self.status.setObjectName('Subtle');self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.cards.addWidget(focus,1);self.cards.addWidget(water,1)
+        second=QWidget();self.tools.addWidget(second)
+        self.clock_cards=QBoxLayout(QBoxLayout.LeftToRight,second)
+        self.clock_cards.setContentsMargins(0,0,0,0);self.clock_cards.setSpacing(7)
+        watch,_,body=self.card('正计时','mint')
+        self.watch_value=QLabel();self.watch_value.setAccessibleName('累计计时');body.addWidget(self.watch_value,1)
+        self.watch_status=QLabel();self.watch_status.setObjectName('Subtle');body.addWidget(self.watch_status)
+        row=QHBoxLayout();self.watch_toggle=self.control(row,'开始',self.model.toggle_stopwatch)
+        self.watch_reset=self.control(row,'归零',self.model.reset_stopwatch);body.addLayout(row)
+        alarm,_,body=self.card('闹钟','lavender')
+        row=QHBoxLayout();self.alarm_time=QTimeEdit();self.alarm_time.setDisplayFormat('HH:mm')
+        self.alarm_time.setButtonSymbols(QAbstractSpinBox.NoButtons);self.alarm_time.setMinimumHeight(32)
+        self.alarm_time.setAccessibleName('闹钟时间');self.alarm_time.setTime(QTime.fromString(self.model.state['alarm_time'],'HH:mm'))
+        row.addWidget(self.alarm_time,1)
+        self.repeat=QToolButton();self.repeat.setCheckable(True);self.repeat.setText('每天');self.repeat.setAccessibleName('每天重复')
+        self.repeat.setChecked(self.model.state['alarm_daily']);row.addWidget(self.repeat);body.addLayout(row)
+        self.alarm_status=QLabel();self.alarm_status.setObjectName('Subtle');body.addWidget(self.alarm_status,1)
+        row=QHBoxLayout()
+        self.arm=self.control(row,'设定',lambda:self.model.arm_alarm(self.alarm_time.time().toString('HH:mm'),self.repeat.isChecked()))
+        self.cancel=self.control(row,'取消',self.model.cancel_alarm)
+        self.dismiss=self.control(row,'知道了',self.model.dismiss_alarm);body.addLayout(row)
+        self.clock_cards.addWidget(watch,1);self.clock_cards.addWidget(alarm,1)
         self.refresh()
 
     def card(self,title,tone):
@@ -196,9 +238,39 @@ class PomodoroView(QWidget):
         if not self.owner.service.set_options(resource_water_enabled=enabled):
             self.refresh();self.status.setText('保存失败，请重试。');self.status.show()
 
+    def show_timer(self,kind):
+        index=int(kind in ('stopwatch','stopwatch_paused','alarm','alarm_due'))
+        self.tab_buttons[index].setChecked(True)
+        self.tools.setCurrentIndex(index)
+
     def refresh(self):
         if not self.owner.colors:return
         sync_card_controls(self,self.owner.colors)
+        state=self.model.state;watch=state['stopwatch_status']
+        colors=self.owner.colors
+        signature=(colors['light'],colors['ink'])
+        if getattr(self,'timer_theme',None)!=signature:
+            self.timer_theme=signature
+            ink=colors['ink']
+            self.watch_value.setStyleSheet(f'QLabel{{background:transparent;color:{ink};font-size:27px;font-weight:650;}}')
+            self.alarm_time.setStyleSheet('QTimeEdit{background:rgba(120,112,165,28);border:1px solid rgba(120,112,165,95);'
+                                         f'border-radius:5px;padding:0 6px;font-size:21px;font-weight:600;color:{ink};}}')
+            for widget in (self.watch_toggle,self.arm):
+                widget.setStyleSheet('QToolButton{background:rgba(112,134,160,35);border:1px solid rgba(112,134,160,82);'
+                                     f'border-radius:5px;padding:2px 8px;font-weight:600;color:{ink};}}'
+                                     'QToolButton:hover{background:rgba(112,134,160,66)}')
+        self.watch_value.setText(elapsed_text(self.model.elapsed()))
+        self.watch_status.setText({'idle':'待开始','running':'计时中','paused':'已暂停'}[watch])
+        self.watch_toggle.setText({'idle':'开始','running':'暂停','paused':'继续'}[watch])
+        self.watch_reset.setEnabled(watch!='idle')
+        due=state['alarm_due'];at=state['alarm_at']
+        if due:alarm_text=state['alarm_time']+' 到点了'
+        elif at:
+            local=datetime.fromtimestamp(at);today=datetime.fromtimestamp(self.model.clock()).date()
+            alarm_text=('每天' if state['alarm_daily'] else '今天' if local.date()==today else '明天')+' '+state['alarm_time']
+        else:alarm_text='未设定闹钟'
+        self.alarm_status.setText(alarm_text);self.arm.setText('更新' if at else '设定')
+        self.cancel.setVisible(bool(at));self.dismiss.setVisible(due)
         phase,status,_,_=self.model.focus()
         self.focus_button.setChecked(phase=='focus');self.rest_button.setChecked(phase=='rest')
         self.toggle.setText({'idle':'开始','running':'暂停','paused':'继续','done':'再来一轮'}[status])
@@ -219,6 +291,7 @@ class PomodoroView(QWidget):
         wide=content_columns(self.owner.width())==2
         direction=QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
         if self.cards.direction()!=direction:self.cards.setDirection(direction)
+        if self.clock_cards.direction()!=direction:self.clock_cards.setDirection(direction)
         height=69 if wide else 51
         for summary in (self.focus_summary,self.water_summary):
             if summary.height()!=height:summary.setFixedHeight(height)
@@ -230,9 +303,14 @@ class PomodoroView(QWidget):
 
     def settings(self):
         from resource_options import TIMER_RANGES
-        from ui_style import ModernSpinBox, button, compact_dialog, exec_dialog
-        dialog=QDialog(self.owner);dialog.setWindowTitle('番茄钟与喝水设置')
-        layout=QVBoxLayout(dialog);form=QFormLayout();layout.addLayout(form)
+        from ui_style import ModernSpinBox, SettingsHeader, compact_dialog, exec_dialog
+        from component_settings import ComponentPages, settings_footer
+        dialog=QDialog(self.owner,Qt.Dialog|Qt.FramelessWindowHint);dialog.setWindowTitle('番茄钟与喝水设置')
+        dialog.resize(610,350)
+        layout=QVBoxLayout(dialog);layout.addWidget(SettingsHeader(dialog,dialog.windowTitle()))
+        pages=ComponentPages(dialog,layout,'提醒')
+        focus=pages.form('番茄钟','clock','专注与休息')
+        water=pages.form('喝水提醒','calendar','间隔与目标')
         fields={}
         for key,label in (
             ('resource_focus_minutes','专注（分钟）'),('resource_break_minutes','休息（分钟）'),
@@ -240,17 +318,15 @@ class PomodoroView(QWidget):
             ('resource_water_goal','今日目标（mL）'),
         ):
             field=ModernSpinBox();field.setRange(*TIMER_RANGES[key]);field.setValue(self.model.cfg[key])
-            field.setAccessibleName(label);form.addRow(label,field);fields[key]=field
-        status=QLabel();layout.addWidget(status)
+            field.setAccessibleName(label);(water if 'water' in key else focus).addRow(label,field);fields[key]=field
+        status=QLabel()
         def save():
             values={key:field.value() for key,field in fields.items()}
             interval_changed=values['resource_water_interval']!=self.model.cfg['resource_water_interval']
             if self.owner.service.set_options(**values):
                 if interval_changed and self.model.water()[0] and self.model.water()[3]:self.model.delay_water()
-                dialog.accept()
+                status.setText('已保存。')
             else:status.setText('保存失败，请重试。')
-        actions=QHBoxLayout();actions.addStretch()
-        actions.addWidget(button('取消',dialog.reject));actions.addWidget(button('保存',save,'primary'))
-        layout.addLayout(actions);compact_dialog(dialog)
+        settings_footer(dialog,layout,status,save);compact_dialog(dialog)
         try:exec_dialog(dialog)
         finally:dialog.deleteLater()

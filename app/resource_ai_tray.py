@@ -87,8 +87,9 @@ class AiPopup(QWidget):
         super().__init__(None,Qt.Popup|Qt.FramelessWindowHint);self.service=service;self.page_key='ai';self.colors={}
         self.setAttribute(Qt.WA_TranslucentBackground);self.setWindowTitle('AI 用量 · 大肥鱼Dock')
         from resource_pages import AiView
-        lay=QVBoxLayout(self);lay.setContentsMargins(10,8,10,10);lay.setSpacing(5);head=QHBoxLayout();head.addWidget(QLabel('AI 用量'),1);self.tabs={}
-        close=QToolButton();close.setText('×');close.setAccessibleName('关闭 AI 用量');close.clicked.connect(self.hide);head.addWidget(close);lay.addLayout(head)
+        lay=QVBoxLayout(self);lay.setContentsMargins(10,8,10,10);lay.setSpacing(5);head=QHBoxLayout()
+        title=QLabel('AI 用量');title.setObjectName('UsageTitle');head.addWidget(title,1);self.tabs={}
+        close=QToolButton();close.setText('×');close.setFixedSize(25,25);close.setAccessibleName('关闭 AI 用量');close.clicked.connect(self.hide);head.addWidget(close);lay.addLayout(head)
         self.ai_view=AiView(self);self.stats_view=self.ai_view.statistics;lay.addWidget(self.ai_view,1);self.refresh()
     def select_page(self,key,focus=None):
         self.page_key='ai'
@@ -98,7 +99,7 @@ class AiPopup(QWidget):
     def refresh(self):
         colors=palette_for(self.service,background(self.service.cfg))
         if colors!=self.colors:
-            self.colors=colors;self.setStyleSheet('QWidget{background:transparent;color:%(ink)s;font-size:10px} QLabel#Subtle{color:%(muted)s;font-size:9px} QToolButton{border:0;padding:3px 7px;border-radius:5px;color:%(muted)s} QToolButton:hover,QToolButton:checked{background:%(hover)s;color:%(ink)s} QTableWidget{border:0;background:transparent} QHeaderView::section{background:%(hover)s;color:%(muted)s;border:0;padding:4px}'%colors+SCROLL_STYLE)
+            self.colors=colors;self.setStyleSheet('QWidget{background:transparent;color:%(ink)s;font:11px "Microsoft YaHei UI"} QLabel#UsageTitle{font-size:15px;font-weight:600;padding-left:5px} QLabel#Subtle{color:%(muted)s;font-size:10px} QToolButton{border:0;padding:3px 6px;border-radius:5px;color:%(muted)s} QToolButton:hover,QToolButton:checked{background:%(hover)s;color:%(ink)s} QTableWidget{border:0;background:transparent} QHeaderView::section{background:%(hover)s;color:%(muted)s;border:0;padding:4px}'%colors+SCROLL_STYLE)
         self.ai_view.refresh();self.update()
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setBrush(QColor(self.colors['surface']));p.setPen(QPen(QColor(self.colors['line']),1));p.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),12,12)
@@ -112,8 +113,10 @@ class AiTray(QObject):
         self.taskbar_ink=None
         self.data_key=None
         self.appearance=None
-        self.menu.addAction('AI',lambda:self.open('ai'))
-        self.menu.addAction('刷新',lambda:service.deck.refresh() if service.deck else None);self.menu.addAction('设置',lambda:service.settings(page=3))
+        from ui_style import menu_heading
+        menu_heading(self.menu,'AI 用量')
+        self.menu.addAction('查看用量',lambda:self.open('ai'))
+        self.menu.addAction('刷新',lambda:service.deck.refresh() if service.deck else None);self.menu.addAction('AI 用量设置…',lambda:service.settings(page=3))
         self.menu.addSeparator();self.menu.addAction('关闭 AI 用量托盘图标',lambda:service.set_options(resource_ai_tray=False));self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(lambda reason:self.open('stats') if reason==QSystemTrayIcon.Trigger else None)
         service.ai_data_changed.connect(self.refresh)

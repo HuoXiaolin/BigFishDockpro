@@ -85,10 +85,12 @@ class CustomCards:
     def change(self,identity,**changes):
         return self.save([dict(card,**changes) if card['id']==identity else card for card in self.cards])
 
-    def edit(self,identity=None):
+    def edit(self,identity=None,page=0):
         from custom_card_editor import CardEditor
         from ui_style import exec_dialog
-        exec_dialog(CardEditor(self,identity))
+        dialog=CardEditor(self,identity)
+        dialog.tabs.setCurrentIndex(page)
+        exec_dialog(dialog)
 
     def close(self):
         self.clock.stop()
@@ -292,9 +294,12 @@ class CustomCard(QWidget):
 
     def contextMenuEvent(self,event):
         from ui_style import AlignedMenu
+        from ui_style import menu_heading
         identity=self.card['id'];menu=AlignedMenu(self.runtime.dock)
+        menu_heading(menu,self.card.get('name') or '自定义卡片')
         menu.addAction('编辑卡片…').triggered.connect(lambda:self.manager.edit(identity))
         if self.card['data_file']:menu.addAction('刷新本地数据',self.read_data)
+        menu.addSeparator()
         lock=menu.addAction('锁定位置');lock.setCheckable(True);lock.setChecked(self.card['locked'])
         lock.triggered.connect(lambda on:self.manager.change(identity,locked=on))
         menu.addAction('隐藏卡片').triggered.connect(lambda:self.manager.change(identity,visible=False))

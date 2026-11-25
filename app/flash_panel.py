@@ -209,12 +209,18 @@ class EdgeHandle(QWidget):
             copy_drop(event)
         else:event.ignore()
     def contextMenuEvent(self,event):
+        from component_preferences import open_preferences
+        from ui_style import menu_group,menu_heading
         menu=AlignedMenu(self)
+        menu_heading(menu,'闪念胶囊')
         menu.addAction('记一条闪念',lambda:self.service.open(compose=True))
         menu.addAction('查看闪念',lambda:self.service.open())
-        hide=menu.addAction('贴边隐藏入口');hide.setCheckable(True);hide.setChecked(self.service.cfg['flash_edge_hide']);hide.toggled.connect(self.toggle_edge_hide)
+        menu.addAction('闪念设置…',lambda:open_preferences(self.service.runtime,'flash'))
+        menu.addSeparator()
+        window=menu_group(menu,'贴边与交互','corner')
+        hide=window.addAction('贴边隐藏入口');hide.setCheckable(True);hide.setChecked(self.service.cfg['flash_edge_hide']);hide.toggled.connect(self.toggle_edge_hide)
         from component_passthrough import component_actions
-        component_actions(menu.addMenu('鼠标穿透'),self.service.runtime,'flash')
+        component_actions(window.addMenu('鼠标穿透'),self.service.runtime,'flash')
         menu.addSeparator();menu.addAction('隐藏贴边胶囊',lambda:self.service.set_enabled(False))
         try:menu.exec_(event.globalPos())
         finally:menu.deleteLater();self.arm_hide()
@@ -391,8 +397,8 @@ class FlashPanel(QWidget):
             ('trash','回收站',None),('settings','闪念设置…',None),('off','关闭贴边胶囊',None)])
         if target in ('open','done','trash'):self.view.setCurrentIndex(self.view.findData(target))
         elif target=='settings':
-            self.service.runtime.show_settings()
-            self.service.runtime.tray.settings_dialog.focus_setting('flash_palette')
+            from component_preferences import open_preferences
+            open_preferences(self.service.runtime,'flash',1)
         elif target=='off':self.service.set_enabled(False)
     def hide_notice(self):
         self.status.hide();self.reflow()

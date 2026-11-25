@@ -132,9 +132,13 @@ static bool BF_ProbeBufferedSubmenu(BF_FooterMenu& menu,HMENU submenu,HWND popup
         DRAWITEMSTRUCT draw{};draw.CtlType=ODT_MENU;draw.itemID=item.wID;draw.itemAction=ODA_DRAWENTIRE;
         draw.itemData=item.dwItemData;draw.hwndItem=reinterpret_cast<HWND>(submenu);draw.hDC=dc;draw.rcItem=row;
         const bool painted=SendMessageW(menu.owner,WM_DRAWITEM,0,reinterpret_cast<LPARAM>(&draw))==TRUE;
-        menu.backdrop=oldBackdrop;menu.backdropBounds=oldBounds;menu.backdropSize=oldSize;
         const auto left=GetPixel(dc,row.left+5,row.top+2),right=GetPixel(dc,row.right-6,row.top+2);
-        passed=painted && left==RGB(208,48,64) && right==RGB(32,80,224);
+        PatBlt(dc,0,0,client.right,client.bottom,BLACKNESS);
+        SendMessageW(popup,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);
+        passed=painted && left==RGB(208,48,64) && right==RGB(32,80,224) &&
+            GetPixel(dc,5,2)==left && GetPixel(dc,client.right-6,2)==right &&
+            GetPixel(dc,row.left+5,row.top+2)==left && GetPixel(dc,row.right-6,row.top+2)==right;
+        menu.backdrop=oldBackdrop;menu.backdropBounds=oldBounds;menu.backdropSize=oldSize;
         SelectObject(dc,prior);
     }
     if (output) DeleteObject(output);

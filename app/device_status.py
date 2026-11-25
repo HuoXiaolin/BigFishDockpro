@@ -71,6 +71,7 @@ class DeviceStatus:
         self.power.restype = W.BOOL
         self.com=None;self.free_string=None
         self.connection_cache=None
+        self.link_profiles={}
 
     def prepare_com(self):
         self.com = C.WinDLL('ole32')
@@ -99,15 +100,15 @@ class DeviceStatus:
             if hr >= 0:
                 self.com.CoUninitialize()
 
-    def volume(self):
+    def volume(self,capture=False):
         with self.apartment() as ready:
             if not ready:return None
             enum,device,endpoint=C.c_void_p(),C.c_void_p(),C.c_void_p()
             try:
                 if self.com.CoCreateInstance(C.byref(ENUMERATOR_CLASS),None,1,C.byref(ENUMERATOR),C.byref(enum))<0:
                     return None
-                # IMMDeviceEnumerator::GetDefaultAudioEndpoint(eRender, eMultimedia).
-                if invoke(enum,4,C.c_long,(C.c_int,C.c_int,OUT_INTERFACE),0,1,C.byref(device))<0:
+                # Windows default multimedia endpoint: eCapture for the microphone.
+                if invoke(enum,4,C.c_long,(C.c_int,C.c_int,OUT_INTERFACE),int(capture),1,C.byref(device))<0:
                     return None
                 if invoke(device,3,C.c_long,(C.POINTER(GUID),W.DWORD,C.c_void_p,OUT_INTERFACE),
                           C.byref(ENDPOINT_VOLUME),23,None,C.byref(endpoint))<0:
@@ -131,6 +132,19 @@ class DeviceStatus:
             ssid=self.connected_ssid(adapter) if wireless else ''
             cache=self.connection_cache=(adapter,now+5,ssid or self.network_profile(adapter))
         return alias,cache[2]
+
+    def active_links(self,rows,now):
+        profiles={};names=[]
+        for row in rows:
+            key=bytes(row.guid);name=row.alias or row.description
+            cached=self.link_profiles.get(key)
+            if cached is None or now>=cached[0]:
+                ssid=self.connected_ssid(key) if row.type==71 else ''
+                cached=(now+5,ssid or self.network_profile(key))
+            profiles[key]=cached
+            names.append((key.hex(),cached[1] or name))
+        self.link_profiles=profiles
+        return tuple(sorted(names))
 
     def connected_ssid(self,adapter):
         """Read the association on this interface, including when its network profile was renamed."""

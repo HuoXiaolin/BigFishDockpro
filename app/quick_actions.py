@@ -11,7 +11,7 @@ ACTIONS=[('settings','全部设置','grid'),('taskbar','任务栏效果','positi
          ('reflections','图标倒影','reflection'),('dock_time','Dock 时间','clock'),('color_mode','明暗模式','palette'),
          ('blur','背景模糊','blur'),('panel_auto_hide','卡片收起','panels'),('corners','屏幕圆角','corner'),('add','添加应用','plus'),
          ('search','统一搜索','search'),('undo','撤销整理','undo'),
-         ('layouts','布局方案','layouts'),('references','入口修复','repair'),('flash','闪念胶囊','flash'),('resources','资源胶囊','monitor'),('taskbar_monitor','任务栏监控','monitor')]
+         ('layouts','布局方案','layouts'),('references','入口修复','repair'),('flash','闪念胶囊','flash'),('resources','灵动胶囊','monitor'),('taskbar_monitor','任务栏监控','monitor')]
 PREVIOUS_ORDER = [key for key, _, _ in ACTIONS if key not in SYSTEM_ACTIONS]
 OLD_PRIORITY_ORDER = [
     'flash', 'resources', 'taskbar_monitor', 'notes', 'clock', 'reflections', 'dock_time', 'calendar',
@@ -25,7 +25,7 @@ PREVIOUS_DEFAULT = [key for key in DEFAULT_ORDER if key != 'cursor_styles']
 WIDGET_SWITCHES = {
     'capsule_pet': ('胶囊小动物','paw','resource_runner_enabled','resources','收起胶囊时显示小动物'),
     'tray_pet': ('托盘小动物','tray_paw','resource_tray_runner_enabled','taskbar_monitor','在系统托盘显示小动物'),
-    'almanac_alert': ('节气提醒','leaf','resource_alert_almanac','calendar','在资源胶囊显示农历节气与节日提醒'),
+    'almanac_alert': ('节气提醒','leaf','resource_alert_almanac','calendar','在灵动胶囊显示农历节气与节日提醒'),
     'daily_picture': ('每日图片','picture','daily_picture_enabled','watermark','显示每日图片组件'),
 }
 for key,(title,icon,field,anchor,tip) in WIDGET_SWITCHES.items():
@@ -33,6 +33,21 @@ for key,(title,icon,field,anchor,tip) in WIDGET_SWITCHES.items():
     DEFAULT_ORDER.insert(DEFAULT_ORDER.index(anchor)+1,key)
 PRODUCTIVITY_ACTIONS=('search','undo','layouts','references','flash','resources','taskbar_monitor')
 MIME='application/x-bigfishdock-quick-action'
+
+# Stable IDs keep each function's colour when a tile is moved to another page.
+TILE_TINTS = {
+    'settings':'#6987ab', 'taskbar':'#398ccc', 'taskbar_text':'#8271c5',
+    'shell_start':'#417fc4', 'shell_notifications':'#cc9043', 'cursor_styles':'#9974bc',
+    'manage':'#398e88', 'appearance':'#bf7097', 'panels':'#358baf',
+    'flash':'#c88643', 'resources':'#388e76', 'taskbar_monitor':'#4483a3',
+    'notes':'#c59c45', 'clock':'#548bb7', 'calendar':'#bb746b',
+    'watermark':'#7286a8', 'daily_picture':'#629775', 'capsule_pet':'#b7845c',
+    'tray_pet':'#be8b65', 'almanac_alert':'#809c56', 'size':'#547fa8',
+    'position':'#5d8b93', 'magnify':'#488f9e', 'reflections':'#6c87af',
+    'dock_time':'#648cb9', 'color_mode':'#947db8', 'blur':'#5b9caa',
+    'panel_auto_hide':'#678e7e', 'corners':'#8d80a6', 'add':'#57976d',
+    'search':'#479899', 'undo':'#ab8464', 'layouts':'#758ab6', 'references':'#a37e55',
+}
 
 
 def normalize_order(value):

@@ -207,7 +207,8 @@ def run(api,runtime,app,output,checks):
         buttons=Qt.NoButton if kind==QEvent.MouseButtonRelease else Qt.LeftButton
         app.sendEvent(w,QMouseEvent(kind,QPointF(pos),QPointF(global_pos),Qt.LeftButton,buttons,Qt.NoModifier))
     def edge_menu(menu,point):
-        action=next(action for action in menu.actions() if action.text()=='屏幕边缘吸附')
+        from menu_paths import action_at
+        action=action_at(menu,'展开与吸附','屏幕边缘吸附')
         assert action.isCheckable() and action.isEnabled() and not action.isChecked()
         action.trigger()
     try:
@@ -282,7 +283,21 @@ def run(api,runtime,app,output,checks):
         assert not w.liquid.bridge or not w.liquid.bridge.isVisible()
         event(w,QEvent.MouseMove,QPoint(65,20),start+QPoint(35,40));app.processEvents()
         assert w.liquid.bridge and w.liquid.bridge.isVisible() and not w.liquid.bridge.path.isEmpty()
-        w.liquid.bridge.grab().save(str(output/'liquid-tether.png'));assert w.liquid.down
+        bridge=w.liquid.bridge
+        bridge.grab().save(str(output/'liquid-tether.png'));assert w.liquid.down
+        with patch.object(w,'background',dict(w.background,material='clear')):
+            clear=bridge.grab().toImage()
+            y=clear.height()//2
+            edge=[clear.pixelColor(x,y) for x in range(clear.width()) if clear.pixelColor(x,y).alpha()>45]
+            assert 2<=len(edge)<clear.width()//3 and clear.pixelColor(clear.width()//2,y).alpha()==0
+            assert max(c.lightness() for c in edge)-min(c.lightness() for c in edge)>90
+        def material_sample(tint):
+            with patch.object(w,'background',dict(w.background,material='solid',color=tint,opacity=90,highlight=0)):
+                image=bridge.grab().toImage()
+                center=image.rect().center()
+                return image.pixelColor(center)
+        warm=material_sample('#ff6655');cool=material_sample('#3355ff')
+        assert warm.alpha()>0 and cool.alpha()>0 and warm.red()>cool.red() and cool.blue()>warm.blue()
         w.grab().save(str(output/'liquid-pressed.png'))
         scene=QImage(w.width()+32,w.height()+56,QImage.Format_RGB32);scene.fill(QColor('#173246'))
         origin=QPoint(w.x()-16,area.top());painter=QPainter(scene)

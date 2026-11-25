@@ -79,13 +79,23 @@ def run(api,runtime,root,output,checks):
         for mode,icon_width in [('large',54),('list',22),('small',34)]:
             window=manager.windows[second]
             menu=window.build_panel_menu()
-            submenu=next(action.menu() for action in menu.actions() if action.text()=='显示方式')
+            from menu_paths import action_at
+            submenu=action_at(menu,'图标与排列','显示方式').menu()
             index={'small':0,'large':1,'list':2}[mode]
             submenu.actions()[index].trigger();app.processEvents()
             assert window.model['view']==mode and window.list.iconSize().width()==icon_width
             assert window.list.count()==len(manager.rows(second))
             assert window.list.viewMode()==(QListWidget.ListMode if mode=='list' else QListWidget.IconMode)
             assert api.load_config()['desktop_panels'][-1]['view']==mode
+            if mode!='list':
+                offsets=[]
+                for label,alignment in (('左对齐','left'),('居中','center'),('右对齐','right')):
+                    align_menu=window.build_panel_menu()
+                    action_at(align_menu,'图标与排列','图标对齐',label).trigger()
+                    align_menu.deleteLater();app.processEvents();window.fit_content()
+                    offsets.append(window.list.visualItemRect(window.list.item(0)).left())
+                    assert api.load_config()['desktop_panels'][-1]['icon_alignment']==alignment
+                assert offsets[0]<offsets[1]<offsets[2],(mode,offsets)
             window.grab().save(str(Path(output)/('panel-view-'+mode+'.png')))
         manager.update_panel(second,view='list')
         save=api.save_config;previous=copy.deepcopy(cfg)
@@ -138,9 +148,9 @@ def run(api,runtime,root,output,checks):
         assert collection not in {manager.windows[second].tabs.tabData(i) for i in range(manager.windows[second].tabs.count())}
         # Actual context actions must join/split the active page and preserve independent geometry.
         independent=window.geometry().getRect();window.store_geometry()
-        menu=window.build_panel_menu();next(a for a in menu.actions() if a.text()=='加入合并卡片').trigger();menu.deleteLater()
+        menu=window.build_panel_menu();action_at(menu,'卡片与分组','加入合并卡片').trigger();menu.deleteLater()
         manager.select_page(collection);app.processEvents();assert window.tabs.isVisible() and not manager.windows[second].isVisible()
-        menu=window.build_panel_menu();next(a for a in menu.actions() if a.text()=='独立显示此卡片').trigger();menu.deleteLater()
+        menu=window.build_panel_menu();action_at(menu,'卡片与分组','独立显示此卡片').trigger();menu.deleteLater()
         app.processEvents();assert window.isVisible() and window.geometry().getRect()==independent
         assert manager.active_window!=collection and manager.windows[manager.active_window].isVisible()
         dialog=GroupDialog(manager)

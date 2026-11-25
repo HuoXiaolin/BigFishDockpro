@@ -6,6 +6,7 @@ from PyQt5.QtGui import QPainter,QColor,QFontDatabase,QLinearGradient,QPixmap
 from PyQt5.QtWidgets import QWidget,QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QScrollArea,QLineEdit,QColorDialog,QComboBox,QTabWidget,QGridLayout,QPlainTextEdit,QFileDialog
 from ui_style import SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ThemeSwatches,button,label,compact_dialog
 from clock_appearance import ACCENT_VERSION,STYLES,FONTS,PRESETS,DEFAULTS,normalize
+from component_settings import ComponentPages, settings_footer
 from appearance_presets import APPEARANCE_SOURCES, material_choices, COLOR_MODES
 import work_schedule
 
@@ -41,16 +42,17 @@ class ClockOptions(QDialog):
         super().__init__(clock,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         self.clock=clock;self.fields={};self.loading=True;self.calendar=clock.kind=='calendar';self.imported_calendars=copy.deepcopy(clock.option('appearance')['work']['calendars'])
         self.progress=copy.deepcopy(clock.option('appearance')['progress'])
-        self.setWindowTitle(clock.component_name+'设置 · 大肥鱼Dock');self.resize(740,700 if self.calendar else 820);self.setMinimumSize(500,500 if self.calendar else 540)
+        self.setWindowTitle(clock.component_name+'设置 · 大肥鱼Dock');self.resize(760,565);self.setMinimumSize(520,375)
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,clock.component_name+'设计'))
-        body.addWidget(label('调整月历的布局、字体、背景与农历节假日。' if self.calendar else '先选样式，再调整文字、背景与工作时间。','muted'))
+        self.tabs=ComponentPages(self,body,clock.component_name)
         self.preview=ClockPreview(self)
-        if self.calendar:self.preview.setMaximumWidth(440);body.addWidget(self.preview,0,Qt.AlignHCenter)
-        else:body.addWidget(self.preview)
-        self.tabs=QTabWidget();body.addWidget(self.tabs,1)
-        def page(title):
-            scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setFrameShape(QScrollArea.NoFrame);widget=QWidget();form=QFormLayout(widget);form.setVerticalSpacing(10);form.setHorizontalSpacing(16);form.setContentsMargins(12,12,12,12);scroll.setWidget(widget);self.tabs.addTab(scroll,title);return form
-        layout=page('样式布局');typeform=page('文字配色');material=page('材质');workform=page('农历与节假日' if self.calendar else '工作时间')
+        self.preview.setFixedHeight(155)
+        self.tabs.right.insertWidget(0,self.preview)
+        layout=self.tabs.form('样式布局','layouts','样式与尺寸')
+        typeform=self.tabs.form('文字配色','text_color','字体与颜色')
+        material=self.tabs.form('材质','palette','背景与透明度')
+        workform=self.tabs.form('农历与节假日' if self.calendar else '工作时间','calendar','日历规则' if self.calendar else '工作周与班次')
+        self.tabs.currentChanged.connect(lambda index:self.preview.setVisible(index!=3))
         def choice(form,key,title,items,visible=True):
             field=ModernComboBox(self);field.setAccessibleName(title)
             for name,value in items:field.addItem(name,value)
@@ -100,7 +102,7 @@ class ClockOptions(QDialog):
         self.fields['text_color'].textChanged.connect(self.text_color_changed)
         self.fields['auto_contrast'].toggled.connect(self.automatic_color_changed)
         from card_design import DESIGNS
-        if not clock.isWindow():material.addRow(label('收入资源胶囊时使用胶囊材质。下方设置用于独立显示。','muted'))
+        if not clock.isWindow():material.addRow(label('收入灵动胶囊时使用胶囊材质。下方设置用于独立显示。','muted'))
         choice(material,'source','外观来源',APPEARANCE_SOURCES)
         choice(material,'design','装饰样式',[('跟随桌面卡片','follow')]+DESIGNS,False)
         choice(material,'material','材质',material_choices(clock.option('appearance')['material']));choice(material,'theme','明暗模式',COLOR_MODES)
@@ -131,8 +133,8 @@ class ClockOptions(QDialog):
         self.calendar_info=label('','muted');self.calendar_info.setWordWrap(True);workform.addRow(self.calendar_info)
         row=QHBoxLayout();row.addWidget(button('导入…',self.import_calendar));self.calendar_years=ModernComboBox();row.addWidget(self.calendar_years,1);self.remove_calendar_button=button('移除导入',self.remove_calendar);row.addWidget(self.remove_calendar_button);workform.addRow('年度日历',row)
         workform.addRow(label('圆点仅表示节日或已收录假期，普通周末和调休上班日不加点。导入全年日历会替代该年内置安排。' if self.calendar else '调休优先于普通周末，自定义日期优先于节假日。跨夜按上班当天判断。导入全年日历会替代该年内置安排。','muted'))
-        self.status=label('保存后立即应用；关闭不会提交未保存的修改。','muted');self.status.setWordWrap(True);body.addWidget(self.status)
-        row=QHBoxLayout();row.addStretch();row.addWidget(button('关闭',self.reject));row.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(row)
+        self.status=label('','muted')
+        settings_footer(self,body,self.status,self.commit)
         saved=clock.option('appearance');work=saved['work']
         for key,field in self.fields.items():
             if key in ('style','calendar_style'):value=clock.option('style')

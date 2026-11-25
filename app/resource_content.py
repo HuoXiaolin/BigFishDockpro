@@ -3,7 +3,7 @@ import time
 from http.client import HTTPException
 from html import escape
 from pathlib import Path
-from PyQt5.QtCore import QByteArray,QBuffer,QIODevice,QPointF,QRectF,QSize,QStandardPaths,QTimer,Qt,QUrl,pyqtSignal
+from PyQt5.QtCore import QByteArray,QBuffer,QEasingCurve,QIODevice,QPointF,QRectF,QSize,QStandardPaths,QTimer,Qt,QUrl,QVariantAnimation,pyqtSignal
 from PyQt5.QtGui import QColor,QDesktopServices,QImage,QImageReader,QPainter,QPainterPath,QPen
 from PyQt5.QtWidgets import QAbstractButton,QFileDialog,QHBoxLayout,QToolButton,QVBoxLayout,QWidget
 from background_worker import BackgroundWorker
@@ -82,6 +82,58 @@ class ContentJob(BackgroundWorker):
 class Picture(QWidget):
     def __init__(self,owner):
         super().__init__();self.owner=owner;self.image=QImage();self.setFixedHeight(135)
+        self.outgoing=QImage()
+        self.fade=QVariantAnimation(self)
+        self.fade.setDuration(420)
+        self.fade.setStartValue(0.);self.fade.setEndValue(1.)
+        self.fade.setEasingCurve(QEasingCurve.InOutSine)
+        self.fade.valueChanged.connect(lambda _:self.update())
+        self.fade.finished.connect(self.finish_fade)
+
+    def finish_fade(self):
+        self.outgoing=QImage()
+        self.update()
+
+    def hideEvent(self,event):
+        self.fade.stop();self.finish_fade()
+        super().hideEvent(event)
+
+    @staticmethod
+    def draw_crop(painter,rect,image):
+        if rect.isEmpty() or image.isNull():return
+        width,height=image.width(),image.height()
+        ratio=min(width/rect.width(),height/rect.height())
+        crop_w,crop_h=rect.width()*ratio,rect.height()*ratio
+        painter.drawImage(rect,image,QRectF((width-crop_w)/2,(height-crop_h)/2,crop_w,crop_h))
+
+    def blended_image(self):
+        if self.outgoing.isNull():return self.image
+        # Blend premultiplied pixels, including transparent PNGs, at preview resolution.
+        size=(self.size()*self.devicePixelRatioF()).boundedTo(QSize(1600,1200))
+        size=self.size().scaled(size,Qt.KeepAspectRatio).expandedTo(QSize(1,1))
+        result=QImage(size,QImage.Format_ARGB32_Premultiplied);result.fill(Qt.transparent)
+        p=QPainter(result);p.setRenderHint(QPainter.SmoothPixmapTransform)
+        rect=QRectF(result.rect())
+        progress=self.fade.currentValue()
+        if self.image.hasAlphaChannel() or self.outgoing.hasAlphaChannel():
+            newest=QImage(size,QImage.Format_ARGB32_Premultiplied);newest.fill(Qt.transparent)
+            q=QPainter(newest);q.setRenderHint(QPainter.SmoothPixmapTransform)
+            q.setOpacity(progress);self.draw_crop(q,rect,self.image);q.end()
+            p.setOpacity(1.-progress);self.draw_crop(p,rect,self.outgoing)
+            p.setOpacity(1.);p.setCompositionMode(QPainter.CompositionMode_Plus);p.drawImage(0,0,newest)
+        else:
+            self.draw_crop(p,rect,self.outgoing)
+            p.setOpacity(progress);self.draw_crop(p,rect,self.image)
+        p.end()
+        return result
+
+    def set_image(self,image):
+        if image==self.image:return
+        previous=self.blended_image() if self.isVisible() and not image.isNull() else QImage()
+        self.fade.stop()
+        self.outgoing,self.image=previous,image
+        if not previous.isNull():self.fade.start()
+        self.update()
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.SmoothPixmapTransform)
@@ -90,10 +142,7 @@ class Picture(QWidget):
         if self.image.isNull():
             p.fillRect(rect,QColor(self.owner.colors['hover']))
             return
-        width,height=self.image.width(),self.image.height()
-        ratio=min(width/rect.width(),height/rect.height()) if rect.width()>0 else 1
-        crop_w,crop_h=rect.width()*ratio,rect.height()*ratio
-        p.drawImage(rect,self.image,QRectF((width-crop_w)/2,(height-crop_h)/2,crop_w,crop_h))
+        self.draw_crop(p,rect,self.blended_image())
 
 
 class PictureExport(BackgroundWorker):
@@ -163,7 +212,7 @@ class ContentView(QWidget):
         self.owner,self.kind=owner,kind
         self.job=None;self.source=None;self.items=[];self.index=0;self.next_fetch=0.
         self.is_local=False
-        self.picture_retry=None
+        self.picture_retry=None;self.pending_index=None;self.unreadable_index=None
         body=QVBoxLayout(self);body.setContentsMargins(0,0,0,0);body.setSpacing(4)
         head=QHBoxLayout();head.setSpacing(3)
         if kind=='picture':
@@ -225,6 +274,7 @@ class ContentView(QWidget):
         super().hideEvent(event)
 
     def cancel(self):
+        self.pending_index=None
         if self.job is not None:
             self.job.requestInterruption();self.job.deleteLater();self.job=None
 
@@ -246,7 +296,7 @@ class ContentView(QWidget):
                 self.heading.setToolTip('本地图片轮播' if self.is_local else '必应每日图片')
                 self.previous.setToolTip('上一张' if self.is_local else '前一天')
                 self.newer.setToolTip('下一张' if self.is_local else '后一天')
-                self.picture_retry=None
+                self.picture_retry=None;self.unreadable_index=None
                 image=QImage()
                 if not self.is_local:
                     self.picture_retry=(True,0)
@@ -256,7 +306,10 @@ class ContentView(QWidget):
                         image=ContentJob.decode(data)
                         if not image.isNull():
                             self.items,self.index=rows,index
-                self.set_status('');self.set_picture(image);self.update_controls()
+                self.set_status('')
+                if not image.isNull() or self.photo.image.isNull() or self.is_local and not paths:
+                    self.set_picture(image)
+                self.update_controls()
             if self.is_local:
                 if not paths:self.set_status('右键选择图片或文件夹')
                 elif not self.job and self.next_fetch==0:self.start(renew=True)
@@ -268,7 +321,7 @@ class ContentView(QWidget):
             if self.source!=urls:
                 self.source=urls;self.cancel();self.set_headlines([]);self.next_fetch=0.
             if not urls:
-                self.status.setText('订阅源已全部关闭。' if feeds else '在资源胶囊设置「天气与订阅」添加内置源，或填写 RSS / Atom 链接。')
+                self.status.setText('订阅源已全部关闭。' if feeds else '在灵动胶囊设置「天气与订阅」添加内置源，或填写 RSS / Atom 链接。')
                 self.update_controls()
                 return
         if not self.job and time.monotonic()>=self.next_fetch:
@@ -286,13 +339,22 @@ class ContentView(QWidget):
             self.picture_retry=(True,0)
         self.refresh()
 
+    def requested_index(self):
+        if self.pending_index is not None:return self.pending_index
+        if isinstance(self.job,ContentJob):return self.job.index
+        if self.unreadable_index is not None:return self.unreadable_index
+        return self.index
+
     def turn(self,step):
-        target=self.index+step
+        if self.job is not None and not isinstance(self.job,ContentJob):return
+        cursor=self.requested_index()
+        target=cursor+step
         if self.is_local and len(self.items)>1:target%=len(self.items)
-        if not self.job and 0<=target<len(self.items):
-            if target==self.index:return
+        if 0<=target<len(self.items) and target!=cursor:
             if self.is_local:self.timer.start()
-            self.start(index=target)
+            if self.job:
+                self.pending_index=target;self.update_controls()
+            else:self.start(index=target)
 
     def open_story(self):
         if self.items and self.items[self.index]['story']:
@@ -343,8 +405,8 @@ class ContentView(QWidget):
         job=self.job=ContentJob(kind,source,index)
         job.ready.connect(self.receive,Qt.QueuedConnection)
         job.finished.connect(self.finished,Qt.QueuedConnection)
-        if kind=='picture':
-            self.set_status('等待每日图片' if self.photo.image.isNull() else '')
+        if self.kind=='picture':
+            self.set_status(('正在读取…' if self.is_local else '等待每日图片') if self.photo.image.isNull() else '')
         else:
             self.set_status('正在读取…')
         self.update_controls()
@@ -352,6 +414,7 @@ class ContentView(QWidget):
 
     def receive(self,result):
         if self.sender() is not self.job:return
+        if self.pending_index is not None and self.pending_index!=self.job.index:return
         if self.kind=='news':
             rows,failed=result;self.set_headlines(rows)
             self.status.setText(f'{failed} 个订阅暂时无法更新' if failed else '' if rows else '暂无新闻')
@@ -363,8 +426,14 @@ class ContentView(QWidget):
                 self.next_fetch=time.monotonic()+60
                 if self.isVisible():
                     self.timer.start(60000)
+            elif self.is_local and items and image.isNull():
+                if not self.items:self.items=items
+                self.unreadable_index=self.job.index
+                self.set_status('图片暂时无法读取')
+                self.next_fetch=time.monotonic()+3600
             else:
                 self.items,self.index=items or [],self.job.index if items else 0
+                self.unreadable_index=None
                 self.set_picture(image)
                 self.picture_retry=None
                 if not self.is_local:
@@ -376,14 +445,21 @@ class ContentView(QWidget):
     def finished(self):
         job=self.sender()
         if job is self.job:
-            self.job=None;self.update_controls()
+            target,self.pending_index=self.pending_index,None
+            self.job=None
+            if target is not None and target!=self.index and 0<=target<len(self.items) and self.isVisible():
+                self.start(index=target)
+            elif target is not None:self.picture_retry=None
+            self.update_controls()
         job.deleteLater()
 
     def update_controls(self):
         self.reload.setEnabled(self.job is None and (self.kind=='picture' or bool(self.source)))
         if self.kind=='picture':
-            self.previous.setEnabled(self.job is None and (len(self.items)>1 if self.is_local else self.index+1<len(self.items)))
-            self.newer.setEnabled(self.job is None and (len(self.items)>1 if self.is_local else self.index>0))
+            paging=self.job is None or isinstance(self.job,ContentJob)
+            cursor=self.requested_index()
+            self.previous.setEnabled(paging and (len(self.items)>1 if self.is_local else cursor+1<len(self.items)))
+            self.newer.setEnabled(paging and (len(self.items)>1 if self.is_local else cursor>0))
             self.story.setVisible(not self.is_local);self.download.setVisible(not self.is_local)
             self.story.setEnabled(bool(self.items and self.items[self.index]['story']))
             available=self.job is None and bool(self.items and self.items[self.index].get('original'))
@@ -397,7 +473,7 @@ class ContentView(QWidget):
             self.rows.addWidget(Headline(self.owner,entry))
 
     def set_picture(self,image):
-        self.photo.image=image;self.photo.update()
+        self.photo.set_image(image)
         item=self.items[self.index] if self.items else {}
         date=item.get('date','')
         self.position.setText(f'{date[4:6]}/{date[6:8]}  {self.index+1}/{len(self.items)}' if date else f'{self.index+1}/{len(self.items)}' if self.items else '')

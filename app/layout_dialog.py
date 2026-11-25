@@ -53,7 +53,7 @@ class LayoutDialog(QDialog):
                                   (values.get('notes_enabled') and values.get('notes_visible'),'便签'),
                                   (values.get('clock_enabled'),'时钟'),(values.get('calendar_enabled'),'农历节气' if values.get('calendar_style')=='almanac' else '日历'),
                                   (values.get('daily_picture_enabled'),'每日图片'),(values.get('spectrum_enabled'),'音乐频谱'),
-                                  (values.get('flash_enabled'),'闪念胶囊'),(values.get('resource_enabled'),'资源胶囊'),
+                                  (values.get('flash_enabled'),'闪念胶囊'),(values.get('resource_enabled'),'灵动胶囊'),
                                   (values.get('resource_runner_enabled') and values.get('resource_enabled'),'胶囊小动物'),
                                   (values.get('resource_tray_runner_enabled'),'托盘小动物'),(values.get('resource_taskbar'),'任务栏监控'),
                                   (values.get('resource_ai_tray'),'AI 托盘'),(values.get('resource_bt_tray'),'外设托盘'),

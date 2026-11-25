@@ -50,9 +50,9 @@ def check_colorful_spectrum(runtime):
     from PyQt5.QtWidgets import QMenu
     from desktop_spectrum import (BANDS, SPECTRUM_DEFAULT_SIZES, DesktopSpectrum,
                                   add_menu_actions, draw_spectrum, spectrum_area)
-    from feature_config import SPECTRUM_FIXED_PALETTES, normalize
+    from feature_config import SPECTRUM_COLOR_MODES, SPECTRUM_PALETTES, SPECTRUM_STYLES, normalize
 
-    def frame(style, size, levels, peaks=None, dpr=1, **options):
+    def frame(style, size, levels, peaks=None, dpr=1, colorful=True, **options):
         width, height = size
         image = QImage(width*dpr, height*dpr, QImage.Format_ARGB32_Premultiplied)
         image.setDevicePixelRatio(dpr)
@@ -60,7 +60,7 @@ def check_colorful_spectrum(runtime):
         painter = QPainter(image)
         try:
             painter.setRenderHint(QPainter.Antialiasing)
-            draw_spectrum(painter, QRectF(0, 0, width, height), levels, style, QColor('white'), False, peaks, **options)
+            draw_spectrum(painter, QRectF(0, 0, width, height), levels, style, QColor('white'), colorful, peaks, **options)
         finally:
             painter.end()
         return image
@@ -68,14 +68,29 @@ def check_colorful_spectrum(runtime):
     active = [.21 + .73 * abs(sin(i * .14) * cos_level) for i, cos_level in
               enumerate(sin(i * .41 + .53) for i in range(BANDS))]
     with patch.dict(runtime.dock.cfg, spectrum_style='peak_bars', spectrum_color_mode='mono'):
-        for style in SPECTRUM_FIXED_PALETTES:
+        for _,style in SPECTRUM_STYLES:
             runtime.dock.cfg['spectrum_style'] = style
             assert normalize(runtime.dock.cfg)['spectrum_style'] == style
             menu = QMenu()
             add_menu_actions(menu, runtime)
             styles = next(action.menu() for action in menu.actions() if action.text() == '频谱样式')
             assert len(styles.actions()) == 8 and sum(action.isChecked() for action in styles.actions()) == 1
-            assert not next(action for action in menu.actions() if action.text() == '频谱配色').isEnabled()
+            palette_menu=next(action.menu() for action in menu.actions() if action.text()=='频谱配色')
+            assert palette_menu.menuAction().isEnabled()
+            assert all(any(a.text()==title for a in palette_menu.actions()) for title,_ in SPECTRUM_COLOR_MODES)
+            size=(160,104)
+            frames=[]
+            for key,(_,colors) in SPECTRUM_PALETTES.items():
+                assert normalize(dict(runtime.dock.cfg,spectrum_color_mode=key))['spectrum_color_mode']==key
+                sample=frame(style,size,active,palette=colors)
+                assert all(sample!=other for other in frames),(style,key)
+                frames.append(sample)
+            mono=frame(style,size,active,colorful=False)
+            solid=[mono.pixelColor(x,y) for x in range(0,size[0],2) for y in range(0,size[1],2)
+                   if mono.pixelColor(x,y).alpha()>80]
+            assert solid and all(c.saturation()<5 for c in solid),style
+            if style not in ('crown','peak_bars','particle_sphere'):
+                continue
             for size in ((96,40), SPECTRUM_DEFAULT_SIZES[style]):
                 quiet, loud = (frame(style, size, levels) for levels in ([0.] * BANDS, active))
                 assert quiet != loud and not loud.pixelColor(0, 0).alpha(), (style, size)

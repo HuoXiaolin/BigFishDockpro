@@ -99,6 +99,8 @@ class RunningAnimal(QObject):
             value = value[0]
         percent = max(0, min(100, value)) if isinstance(value, (int, float)) and isfinite(value) else None
         fps = frame_rate(self.speed, percent)
+        if self.animal=='bird' and self.speed=='adaptive':
+            fps=max(8.,fps)
         if self.fps != fps:
             now = perf_counter()
             # Preserve the current frame's progress when the sensor reading changes.

@@ -3,7 +3,7 @@ import re
 from content_sources import NEWS_FEED_PRESETS, clean_feeds
 from screen_layout import valid_record
 
-RUNNER_ANIMALS = {'cat': '小猫', 'dog': '小狗', 'rabbit': '小兔'}
+RUNNER_ANIMALS = {'cat': '小猫', 'dog': '小狗', 'rabbit': '小兔', 'bird':'小鸟', 'penguin':'小企鹅'}
 RUNNER_FIXED_RATES = {'fixed_low': ('低', 24), 'fixed_medium': ('中', 48), 'fixed_high': ('高', 96)}
 RUNNER_SPEEDS = {'adaptive': '跟随占用率'}
 RUNNER_SPEEDS.update({key: f'匀速 · {label}（{fps:g} 帧/秒）' for key, (label, fps) in RUNNER_FIXED_RATES.items()})
@@ -82,6 +82,11 @@ TIMER_RANGES={
     'resource_water_interval':(5,240), 'resource_water_amount':(50,1000),
     'resource_water_goal':(250,5000),
 }
+DEVICE_ALERTS = {
+    'caps_lock': '大小写锁定', 'input_mode': '中英文输入', 'num_lock': '数字小键盘',
+    'microphone': '麦克风静音状态', 'touchpad': '触控板开关',
+    'bluetooth_link': '蓝牙设备连接', 'network_link': '网络连接',
+}
 REMINDER_OPTIONS={
     'resource_alert_agenda':'日程到提醒时间', 'resource_alert_focus':'番茄钟倒计时与完成',
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
@@ -89,6 +94,7 @@ REMINDER_OPTIONS={
     'resource_alert_mail_code':'收起时显示邮箱验证码',
     'resource_alert_weather':'雨、雪、雾和雷雨',
 }
+REMINDER_OPTIONS.update({'resource_alert_'+key: title for key,title in DEVICE_ALERTS.items()})
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
 MAIL_INTERVAL_RANGE=(10,900)
 FACE_SWITCH_RANGE = (1, 1440)
@@ -136,6 +142,8 @@ DEFAULTS.update(resource_component_locations={},resource_component_order=list(CA
                 resource_card_transparency=20)
 DEFAULTS.update(resource_mail=False, resource_mail_accounts=[], resource_mail_notifications=True,
                 resource_alert_mail_code=True, resource_mail_icon=False, resource_mail_interval=30)
+DEFAULTS.update(dict.fromkeys(('resource_alert_'+key for key in DEVICE_ALERTS), False))
+DEFAULTS.update(resource_edge_hide=False, resource_alert_stopwatch=True, resource_alert_alarm=True)
 
 
 def component_location(cfg,key):
@@ -207,7 +215,7 @@ def clean_background(raw,strict=False):
            and isinstance(raw.get('color'),str) and (not raw['color'] or re.fullmatch(r'#[0-9a-fA-F]{6}',raw['color']))
            and all(type(raw.get(k)) is int and lo<=raw[k]<=hi for k,(lo,hi) in ranges.items()))
     if not valid:
-        if strict:raise ValueError('资源胶囊背景参数无效。')
+        if strict:raise ValueError('灵动胶囊背景参数无效。')
         return {}
     return {k:(raw[k].lower() if k=='color' else raw[k]) for k in ('material','theme','color',*ranges)}
 
@@ -269,7 +277,7 @@ def normalize(cfg,strict=False):
         mail_interval = DEFAULTS['resource_mail_interval']
     cfg['resource_mail_interval'] = mail_interval
     if type(cfg.get('resource_news')) is not bool:
-        if strict:raise ValueError('资源胶囊设置无效：resource_news')
+        if strict:raise ValueError('灵动胶囊设置无效：resource_news')
         cfg['resource_news']=False
     for key, limit in (('resource_ai_tray_provider', 96), ('resource_ai_tray_metric', 512)):
         value = cfg.get(key, '')
@@ -313,15 +321,15 @@ def normalize(cfg,strict=False):
              'resource_edge':('free','top','bottom','left','right')}
     for key,allowed in options.items():
         if cfg.get(key) not in allowed:
-            if strict:raise ValueError('资源胶囊设置无效：'+key)
+            if strict:raise ValueError('灵动胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
-    for key in ('resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
+    for key in ('resource_edge_hide','resource_alert_stopwatch','resource_alert_alarm','resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
                 'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',
                 'resource_mail','resource_mail_notifications','resource_mail_icon','resource_weather_location',
                 'resource_weather_alert_sound',*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
-            if strict:raise ValueError('资源胶囊设置无效：'+key)
+            if strict:raise ValueError('灵动胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
         else:cfg.setdefault(key,DEFAULTS[key])
     face_minutes = cfg.get('resource_face_switch_minutes', FACE_SWITCH_DEFAULT)
@@ -366,7 +374,7 @@ def normalize(cfg,strict=False):
         if key=='resource_compact_metrics' and isinstance(value,list):
             value=['bluetooth' if item=='peripherals' else item for item in value]
         if not isinstance(value,list) or any(not isinstance(k,str) or k not in choices for k in value):
-            if strict:raise ValueError('资源胶囊显示项目无效。')
+            if strict:raise ValueError('灵动胶囊显示项目无效。')
             value=DEFAULTS[key]
         cfg[key]=list(dict.fromkeys(value))[:7] if key=='resource_ai_providers' else list(dict.fromkeys(value))
     cfg['resource_task_order'] = list(dict.fromkeys(cfg['resource_task_order'] + list(TASK_COLUMN_NAMES)))
@@ -375,18 +383,18 @@ def normalize(cfg,strict=False):
                          ('resource_compact_badge_height',*COMPACT_BADGE_HEIGHT_RANGE),
                          ('resource_expanded_width',260,1000),('resource_expanded_height',180,800)]:
         if type(cfg.get(key)) is not int or not low<=cfg[key]<=high:
-            if strict:raise ValueError('资源胶囊尺寸或字号无效。')
+            if strict:raise ValueError('灵动胶囊尺寸或字号无效。')
             cfg[key]=DEFAULTS[key]
     delay=cfg.get('resource_delay')
     if type(delay) is not int or not 1<=delay<=30:
-        if strict:raise ValueError('资源胶囊收起时间无效。')
+        if strict:raise ValueError('灵动胶囊收起时间无效。')
         cfg['resource_delay']=3
     raw=cfg.get('resource_tints');raw=raw if isinstance(raw,dict) else {}
     clean={k:v.lower() for k,v in raw.items() if k in TINTS and isinstance(v,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',v)}
     if strict and len(clean)!=len(raw):raise ValueError('资源监控曲线颜色无效。')
     cfg['resource_tints']=clean
     record=valid_record(cfg.get('resource_layout'))
-    if strict and cfg.get('resource_layout') and not record:raise ValueError('资源胶囊位置无效。')
+    if strict and cfg.get('resource_layout') and not record:raise ValueError('灵动胶囊位置无效。')
     cfg['resource_layout']=record
     for key in ('resource_taskbar_anchor','resource_capsule_taskbar_anchor'):
         anchor=cfg.get(key,{})

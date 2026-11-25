@@ -133,7 +133,11 @@ def note_geometry(window,collapsed):
 class FoldOptions(QDialog):
     def __init__(self,owner):
         super().__init__(owner,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint);self.owner=owner;self.setWindowTitle('收起样式');self.resize(410,230)
-        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'收起样式'));form=QFormLayout();body.addLayout(form)
+        from component_settings import ComponentPages, settings_footer
+        self.resize(580,330)
+        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'收起样式'))
+        self.tabs=ComponentPages(self,body,'收起')
+        form=self.tabs.form('形状与尺寸','size','收起后的外观')
         self.style=ModernComboBox()
         for title,key in [('方条','bar'),('胶囊','capsule'),('圆球','ball')]:self.style.addItem(title,key)
         value=settings(owner)
@@ -148,9 +152,11 @@ class FoldOptions(QDialog):
         self.ratio=ModernSpinBox()
         self.ratio.setRange(1,100)
         self.ratio.setValue(value['ratio'])
-        form.addRow('胶囊宽度（%）',self.ratio)
-        self.status=label('设置应用于当前卡片、合并组或便签。','muted');self.status.setWordWrap(True);body.addWidget(self.status)
-        row=QHBoxLayout();row.addStretch();row.addWidget(button('关闭',self.reject));row.addWidget(button('保存',self.commit,'primary'));body.addLayout(row);compact_dialog(self)
+        self.ratio_label=label('胶囊宽度（%）')
+        form.addRow(self.ratio_label,self.ratio)
+        self.status=label('设置应用于当前卡片、合并组或便签。','muted')
+        settings_footer(self,body,self.status,self.commit)
+        compact_dialog(self)
         self.style.currentIndexChanged.connect(self.show_size_field)
         self.show_size_field()
 
@@ -161,8 +167,8 @@ class FoldOptions(QDialog):
         self.size_key = 'diameter' if shape == 'ball' else 'height'
         self.size_label.setText('圆球直径（像素）' if shape == 'ball' else '收起栏高度（像素）')
         self.size_field.setValue(self.sizes[self.size_key])
-        cell = self.ratio.parentWidget()
-        (cell if cell.objectName() == 'SettingsField' else self.ratio).setVisible(shape=='capsule')
+        self.ratio_label.setVisible(shape=='capsule')
+        self.ratio.setVisible(shape=='capsule')
 
     def commit(self):
         self.sizes[self.size_key] = self.size_field.value()

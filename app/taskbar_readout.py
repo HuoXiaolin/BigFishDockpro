@@ -270,28 +270,33 @@ class TaskbarReadout(QWidget):
         finally:self.placement.resume()
         event.accept()
     def contextMenuEvent(self,event):
-        menu=AlignedMenu(self);menu.addAction('监控设置…',self.service.settings)
-        alignment=menu.addMenu('任务栏位置')
+        from ui_style import menu_group,menu_heading
+        menu=AlignedMenu(self);menu_heading(menu,'任务栏监控');menu.addAction('监控设置…',lambda:self.service.settings(page=1))
+        menu.addSeparator()
+        window=menu_group(menu,'位置与交互','position')
+        alignment=window.addMenu('任务栏位置')
         for key,title in [('left','靠左'),('center','居中'),('right','靠右')]:
             action=alignment.addAction(title);action.setCheckable(True);action.setChecked(self.service.cfg['resource_taskbar_position']==key)
             action.triggered.connect(lambda checked,key=key:self.service.set_options(resource_taskbar_position=key))
-        layers=menu.addMenu('显示层级')
+        layers=window.addMenu('显示层级')
         for key,title in TASKBAR_LAYERS.items():
             action=layers.addAction(title);action.setCheckable(True);action.setChecked(self.service.cfg['resource_taskbar_layer']==key)
             action.triggered.connect(lambda checked,key=key:self.service.set_options(resource_taskbar_layer=key))
         from component_passthrough import component_actions
-        component_actions(menu.addMenu('鼠标穿透'),self.service.runtime,'taskbar')
+        component_actions(window.addMenu('鼠标穿透'),self.service.runtime,'taskbar')
         colors=menu.addAction('文字阈值变色');colors.setCheckable(True);colors.setChecked(self.service.cfg.get('resource_task_threshold',False))
         colors.triggered.connect(lambda on:self.service.set_options(resource_task_threshold=on))
-        music=menu.addAction('显示任务栏音乐');music.setCheckable(True);music.setChecked(self.service.cfg['resource_task_music'])
+        media=menu_group(menu,'音乐显示','wave')
+        music=media.addAction('显示任务栏音乐');music.setCheckable(True);music.setChecked(self.service.cfg['resource_task_music'])
         music.triggered.connect(lambda on:self.service.set_options(resource_task_music=on))
-        colorful=menu.addAction('音乐多彩样式');colorful.setCheckable(True);colorful.setChecked(self.service.cfg.get('resource_task_music_colorful',False))
+        colorful=media.addAction('音乐多彩样式');colorful.setCheckable(True);colorful.setChecked(self.service.cfg.get('resource_task_music_colorful',False))
         colorful.triggered.connect(lambda on:self.service.set_options(resource_task_music_colorful=on))
         from resource_options import TASK_MEDIA_PARTS
-        parts=menu.addMenu('音乐组件')
+        parts=media.addMenu('音乐组件')
         for key,title in TASK_MEDIA_PARTS.items():
             action=parts.addAction(title);action.setCheckable(True);action.setChecked(key in self.service.cfg['resource_task_media_parts'])
             action.triggered.connect(lambda on,key=key:self.set_media_part(key,on))
+        menu.addSeparator()
         menu.addAction('移到桌面',lambda:self.service.return_from_taskbar(None))
         menu.addAction('关闭任务栏监控',lambda:self.service.set_options(resource_taskbar=False))
         try:menu.exec_(event.globalPos())

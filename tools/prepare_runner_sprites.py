@@ -14,6 +14,10 @@ POSES = {
     'cat': ((0, 1, 2, 3, 4, 5, 6, 7), (0, 0, .025, 0, 0, .025, .095, .055)),
     'dog': ((0, 1, 2, 3, 4, 5, 6, 7), (0, 0, .012, .033, 0, 0, .012, .033)),
     'rabbit': ((0, 7, 1, 2, 3, 4, 5, 6), (.025, 0, 0, 0, 0, 0, .040, .12)),
+    # Use only airborne illustrations from the selected bird sheet. Register
+    # each wing beat at a different height so the body keeps hovering.
+    'bird': ((2, 3, 4, 2, 5, 5, 2, 3), (.10, .05, .03, .06, .13, .20, .22, .17)),
+    'penguin': ((0, 1, 2, 3, 4, 5, 6, 7), (0, .016, .035, .015, 0, .022, .040, .016)),
 }
 
 

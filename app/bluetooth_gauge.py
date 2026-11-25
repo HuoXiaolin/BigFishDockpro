@@ -76,6 +76,12 @@ def tray_line(row):
     return f'{name}  {row["display_value"]}'
 
 
+def probe_program():
+    root=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]))
+    return (root/'resource-probe'/'DesktopResourceProbe.exe' if getattr(sys,'frozen',False)
+            else root/'artifacts'/'generated'/'DesktopResourceProbe.exe')
+
+
 class BluetoothGauge(QObject):
     def __init__(self,owner):
         super().__init__(owner)
@@ -89,9 +95,7 @@ class BluetoothGauge(QObject):
 
     def refresh(self):
         if self.closed or self.busy or self.preview or not allowed():return
-        root=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]))
-        program=(root/'resource-probe'/'DesktopResourceProbe.exe' if getattr(sys,'frozen',False)
-                 else root/'artifacts'/'generated'/'DesktopResourceProbe.exe')
+        program=probe_program()
         if not program.is_file():
             self.publish([], '蓝牙读取器尚未生成，请从完整发行包启动或运行开发构建。');return
         self.busy=True;self.next.stop();self.deadline.start()
@@ -153,7 +157,8 @@ class BluetoothGauge(QObject):
 
     def build_menu(self):
         rows,pages=self.tray_group()
-        self.menu.clear();self.menu.addAction('外设电量').setEnabled(False)
+        from ui_style import menu_heading
+        self.menu.clear();menu_heading(self.menu,'外设电量')
         for row in rows:
             self.menu.addAction(tray_line(row).replace('&','&&')).setEnabled(False)
         if not rows:self.menu.addAction(self.owner.battery_status(tray=True)).setEnabled(False)
@@ -161,6 +166,8 @@ class BluetoothGauge(QObject):
             self.menu.addAction(f'下一组（{self.tray_page+1}/{pages}）',self.turn_tray)
         self.menu.addSeparator()
         self.menu.addAction('刷新电量',self.owner.refresh_batteries)
+        self.menu.addAction('外设电量设置…',lambda:self.owner.settings(page=5))
+        self.menu.addSeparator()
         self.menu.addAction('关闭外设电量托盘图标',lambda:self.owner.set_options(resource_bt_tray=False))
 
     def paint_tray(self):

@@ -77,6 +77,8 @@ class ResourceExtras(QObject):
         self.service.display()
         if new_condition and self.service.cfg['resource_weather_alert_sound']:
             self.service.play_reminder_sound('weather')
+        elif new_condition and self.service.cfg['resource_alert_weather']:
+            self.service.peek_reminder()
     def finished(self):
         job=self.sender()
         if job is None or job is not self.weather_job:return

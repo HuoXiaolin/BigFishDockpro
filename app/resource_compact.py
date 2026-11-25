@@ -103,7 +103,8 @@ def compact_badges(service):
     cfg=service.cfg
     active=service.reminders()
     badges=list(active)
-    seen={kind if kind in ('battery','water','agenda','almanac','mail_code','weather_notice') else 'pomodoro' for kind,_ in active}
+    focus_kinds={'focus','rest','focus_done','rest_done','paused'}
+    seen={'pomodoro' if kind in focus_kinds else kind for kind,_ in active}
     selected=cfg['resource_compact_metrics']
     routine={}
     model=service.pomodoro
@@ -211,7 +212,7 @@ def badge_slots(window,items,capacity,limit,priority=False):
     for index,(kind,label) in enumerate(items):
         if capacity<25:break
         text_width=metrics.horizontalAdvance(label)
-        cap=int(limit*.20) if kind=='agenda' else 110 if kind=='almanac' else 72
+        cap=int(limit*.20) if kind=='agenda' else 144 if kind in ('mail_new','quota_notice') else 110 if kind=='almanac' else 72
         budget=capacity-3
         if priority:
             others=(len(items)-index-1)*25
@@ -250,6 +251,11 @@ def _make_plan(window,limit=None):
     mail_width=STATUS_STEP if cfg['resource_mail'] and cfg['resource_mail_icon'] else 0
     capacity=max(0,max_width-16-face-face_gap-runner_width-mail_width)
     available=capacity
+    indicators=getattr(window.service,'indicators',None)
+    # Changed devices get first use of spare space; leave room for a due reminder.
+    budget=max(0,capacity-min(active_count*44,capacity//2))
+    devices=indicators.cells(budget,window.height()) if indicators else []
+    capacity-=sum(width+3 for _,_,width,_ in devices)
     active,capacity=badge_slots(window,badges[:active_count],capacity,max_width,priority=True)
     ordinary_floor=26 if values and not active else 0
     clock=COMPACT_CLOCK_FORMATS[cfg['resource_clock_format']][1] if cfg['resource_clock'] else ()
@@ -285,7 +291,7 @@ def _make_plan(window,limit=None):
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
                 pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,clock=clock,clock_width=clock_width,
                 face=face,face_gap=face_gap,core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),
-                active_badges=active,routine_badges=routine,status=status,runner_width=runner_width,mail_width=mail_width)
+                active_badges=active,routine_badges=routine,status=status,devices=devices,runner_width=runner_width,mail_width=mail_width)
 
 
 def natural_width(window,limit):
@@ -558,6 +564,9 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         left+=layout['face']+layout['face_gap']
     window.reminder_bounds=[];window.reminder_kinds=[];window.status_bounds={}
     if layout['active_badges']:right=paint_badges(window,p,layout['active_badges'],right,mid,overlays)
+    if layout['devices']:
+        right-=sum(width+3 for _,_,width,_ in layout['devices'])
+        window.service.indicators.paint(p,layout['devices'],right,mid,c)
     if layout['mail_width']:
         right-=layout['mail_width']
         paint_mail_status(window,p,QRectF(right,0,layout['mail_width'],window.height()))
@@ -626,6 +635,15 @@ def paint_compact(window,p,scroll=None,damage=None):
         window.liquid.paint_face(p,QPointF(8+layout['face']/2,window.height()/2),layout['face'])
 
 
+def ball_details(window,limit):
+    room=max(0,limit-38-(RUNNER_SLOT if window.service.cfg['resource_runner_enabled'] else 0))
+    timers=[item for item in window.service.reminders() if item[0] in ('stopwatch','stopwatch_paused','alarm','alarm_due')]
+    badges,left=badge_slots(window,timers,room,limit,priority=True)
+    indicators=getattr(window.service,'indicators',None)
+    cells=indicators.cells(left,38) if indicators else []
+    return cells,badges,room-left+sum(width+3 for _,_,width,_ in cells)
+
+
 def paint_ball_reminder(window,p,rect):
     badges=window.service.reminders()
     if not badges:return
@@ -643,7 +661,7 @@ def paint_ball_reminder(window,p,rect):
             mark=QRectF(rect.center().x()+4,rect.top()+3,13,13)
         p.setPen(Qt.NoPen);p.setBrush(QColor(window.colors['surface']));p.drawEllipse(mark)
         reminder_icon(p,mark.adjusted(1.5,1.5,-1.5,-1.5),kind,ink)
-        window.reminder_bounds=[mark];window.reminder_kinds=[kind]
+        window.reminder_bounds.append(mark);window.reminder_kinds.append(kind)
 
 
 def paint_mail_status(window,p,rect):

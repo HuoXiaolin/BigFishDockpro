@@ -268,10 +268,12 @@ class NoteWindow(QWidget):
         self.title.setFixedWidth(width)
         if not self.title.editing:self.title.setCursorPosition(0)
         self.title.setToolTip((self.title.text() or '便签标题')+' · 双击修改，Enter保存，Esc取消')
-    def open_settings(self):
+    def open_settings(self,page=0):
         if self.disposed:return
         self.title.finish_edit();self.collapse_timer.stop();self.expand_timer.stop()
-        dialog=NoteOptions(self);dialog.exec_();dialog.deleteLater()
+        dialog=NoteOptions(self)
+        if type(page) is int:dialog.tabs.setCurrentIndex(page)
+        dialog.exec_();dialog.deleteLater()
         if not self.disposed and self.row()['auto_hide']:self.collapse_timer.start()
     def format_text(self,kind):
         cursor=self.editor.textCursor();fmt=QTextCharFormat()
@@ -350,33 +352,40 @@ class NoteWindow(QWidget):
             self.collapse_timer.stop();self.expand_timer.stop()
             if value:self.collapse_timer.start()
     def build_menu(self):
+        from ui_style import menu_group,menu_heading
         menu=AlignedMenu(self)
+        menu_heading(menu,'桌面便签')
         menu.addAction('便签设置…').triggered.connect(self.open_settings)
-        menu.addAction('卡片尺寸与文字…').triggered.connect(lambda:self.runtime.open_card_sizing('note',self.identity))
         menu.addAction('新建便签').triggered.connect(self.manager.new)
+        menu.addAction('便签管理…').triggered.connect(self.manager.manage)
+        menu.addSeparator()
+        appearance=menu_group(menu,'外观与文字','palette')
+        appearance.addAction('卡片尺寸与文字…').triggered.connect(lambda:self.runtime.open_card_sizing('note',self.identity))
         from appearance_presets import APPEARANCE_SOURCES
-        source=menu.addMenu('外观来源')
+        source=appearance.addMenu('外观来源')
         for title,key in APPEARANCE_SOURCES:
             action=source.addAction(title);action.setCheckable(True);action.setChecked(self.row().get('appearance_source','custom')==key)
             action.triggered.connect(lambda _,value=key:self.set_option('appearance_source',value))
-        styles=menu.addMenu('外观样式')
+        styles=appearance.addMenu('外观样式')
         for title,key in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.row()['style']==key);action.triggered.connect(lambda checked=False,value=key:self.set_option('style',value))
-        colors=menu.addMenu('便签颜色')
+        colors=appearance.addMenu('便签颜色')
         for title,color in COLORS:colors.addAction(title).triggered.connect(lambda checked=False,value=color:self.set_option('color',value))
         choices=[] if self.embedded else [('pinned','置顶显示'),('locked','锁定位置与大小')]
         if not self.fixed_open:choices.insert(0,('auto_hide','自动收起（鼠标离开后）'))
+        if choices:window=menu_group(menu,'窗口与收起','position')
         for key,title in choices:
-            action=menu.addAction(title);action.setCheckable(True);action.setChecked(self.row()[key]);action.triggered.connect(lambda checked,k=key:self.set_option(k,checked))
+            action=window.addAction(title);action.setCheckable(True);action.setChecked(self.row()[key]);action.triggered.connect(lambda checked,k=key:self.set_option(k,checked))
         if not self.fixed_open:
             from fold_options import FoldOptions
             from ui_style import exec_dialog
-            menu.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
-            menu.addAction('展开便签' if self.row()['collapsed'] else '收起便签').triggered.connect(self.toggle_collapse)
+            window.addAction('收起样式…').triggered.connect(lambda:exec_dialog(FoldOptions(self)))
+            window.addAction('展开便签' if self.row()['collapsed'] else '收起便签').triggered.connect(self.toggle_collapse)
+        menu.addSeparator()
         menu.addAction('隐藏便签（保留内容）').triggered.connect(lambda:self.manager.update_and_save(self.identity,visible=False))
-        menu.addAction('便签管理…').triggered.connect(self.manager.manage)
-        menu.addSeparator();menu.addAction('删除便签（可恢复）').triggered.connect(lambda:self.manager.delete(self.identity))
-        menu.addAction('永久删除…').triggered.connect(lambda:self.manager.permanent_delete(self.identity,self));return menu
+        remove=menu_group(menu,'删除便签','notes')
+        remove.addAction('删除便签（可恢复）').triggered.connect(lambda:self.manager.delete(self.identity))
+        remove.addAction('永久删除…').triggered.connect(lambda:self.manager.permanent_delete(self.identity,self));return menu
     def show_menu(self):
         menu=self.build_menu();menu.exec_(self.more.mapToGlobal(self.more.rect().bottomLeft()));menu.deleteLater()
         if not self.disposed and self.row()['auto_hide']:self.collapse_timer.start()
@@ -590,7 +599,10 @@ class NoteOptions(QDialog):
         super().__init__(note,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         self.note=note;self.manager=note.manager;self.loading=True;row=note.row();self.custom='body_font_size' in row
         self.setWindowTitle('便签设置 · 大肥鱼Dock');self.resize(570,400);self.setMinimumSize(480,340)
-        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'便签设置'));form=QFormLayout();body.addLayout(form)
+        from component_settings import ComponentPages, settings_footer
+        body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'便签设置'))
+        self.tabs=ComponentPages(self,body,'便签')
+        form=self.tabs.form('材质与配色','palette','便签外观')
         from appearance_presets import APPEARANCE_SOURCES
         self.source=ModernComboBox()
         for title,key in APPEARANCE_SOURCES:self.source.addItem(title,key)
@@ -614,14 +626,15 @@ class NoteOptions(QDialog):
         self.preset.setCurrentIndex(matched)
         self.source.currentIndexChanged.connect(self.sync_source)
         self.sync_source()
+        form=self.tabs.form('文字与交互','notes','文字、收起与层级')
         self.body_font=ModernSpinBox();self.body_font.setRange(8,72);self.body_font.setValue(note.text_pixels());self.body_font.setAccessibleName('便签正文字号')
         font_row=QHBoxLayout();font_row.addWidget(self.body_font,1);self.follow_button=button('跟随卡片',self.follow_font);font_row.addWidget(self.follow_button);form.addRow('正文字号（像素）',font_row)
         self.auto_hide=ModernCheckBox('鼠标离开后自动收起');self.auto_hide.setChecked(row['auto_hide']);form.addRow(self.auto_hide)
         flags=QHBoxLayout();self.pinned=ModernCheckBox('置顶显示');self.locked=ModernCheckBox('锁定位置与大小')
         self.pinned.setChecked(row['pinned']);self.locked.setChecked(row['locked']);flags.addWidget(self.pinned);flags.addWidget(self.locked);flags.addStretch();form.addRow(flags)
-        body.addWidget(label('正文字号只影响这张便签，标题使用卡片字号。标题双击后编辑，Enter保存、Esc取消。','muted'))
-        self.status=label('修改后保存，窗口保持打开。','muted');body.addWidget(self.status)
-        actions=QHBoxLayout();actions.addStretch();actions.addWidget(button('关闭',self.reject));actions.addWidget(button('保存设置',self.commit,'primary'));body.addLayout(actions)
+        form.addRow(label('正文字号只影响这张便签，标题使用卡片字号。','muted'))
+        self.status=label('','muted')
+        settings_footer(self,body,self.status,self.commit)
         self.body_font.valueChanged.connect(self.font_changed);self.follow_button.setEnabled(self.custom);self.loading=False;compact_dialog(self)
         from settings_layout import fit_auxiliary_dialog
         fit_auxiliary_dialog(self,note.dock.cfg)

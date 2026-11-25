@@ -29,7 +29,7 @@ def run(api, runtime, main, app, output, checks):
     original['clock_appearance']['work']['start']='08:45'
     custom=snapshot(original);original['appearance_custom']=custom
     assert clean_snapshot(custom)==custom
-    assert PRESET_IDS==('crystal','liquid','flowing','vivid','paper_glass','transparent')
+    assert PRESET_IDS==('crystal','liquid','flowing','vivid','paper_glass','transparent','obsidian','celadon','velvet')
     liquid=DOCK_PRESETS[PRESET_IDS.index('liquid')][1]
     assert liquid['dock_highlight']==36 and liquid['transparency']==100
     configs=[]
@@ -77,17 +77,17 @@ def run(api, runtime, main, app, output, checks):
                 p.drawPixmap(20+index*45,16,category_icon(category,('#357ba4','#bd8c31','#379c90','#8c6cb0','#bd6385','#a37642')[index],26,2))
         elif kind=='panel':
             p.drawPixmap(14,12,category_icon('documents','#379c90',17,2));p.drawText(QRectF(39,8,width-55,25),'文档')
-            p.setPen(QColor('#000000'))
+            p.setPen(colors['fg'])
             for index,title in enumerate(('项目说明','设计参考','工作计划')):
                 x=27+index*93;p.drawPixmap(x+14,58,category_icon('documents','#379c90',28,2));p.drawText(QRectF(x-4,96,77,38),Qt.AlignHCenter|Qt.TextWordWrap,title)
         else:
             p.drawText(QRectF(16,10,width-32,25),'今日便签')
-            p.setPen(QColor('#000000'))
+            p.setPen(colors['fg'])
             p.drawText(QRectF(18,50,width-36,50),Qt.TextWordWrap,'整理桌面，留出专注空间。\n下午完成项目说明。')
         p.end();return image
 
-    sheet=QImage(1100,1048,QImage.Format_RGB32);sheet.fill(QColor('#f0f5f8'));p=QPainter(sheet)
-    widths=340;xs=(24,380,736);names=[PANEL_PRESETS[PRESET_IDS.index(mode)][0] for mode in NEW_PRESET_IDS]
+    sheet=QImage(36+356*len(configs),1048,QImage.Format_RGB32);sheet.fill(QColor('#f0f5f8'));p=QPainter(sheet)
+    widths=340;xs=[24+356*i for i in range(len(configs))];names=[PANEL_PRESETS[PRESET_IDS.index(mode)][0] for mode in NEW_PRESET_IDS]
     p.setPen(QColor('#18354b'));font=QFont('Microsoft YaHei UI');font.setPixelSize(19);font.setWeight(QFont.DemiBold);p.setFont(font)
     for x,name in zip(xs,names):p.drawText(QRectF(x,15,widths,30),name)
     signatures=[]
@@ -110,12 +110,34 @@ def run(api, runtime, main, app, output, checks):
             draw_clock(q,QRectF(0,0,336,224),dock,options,style,backdrop(336,224));q.end()
             face_painter.drawImage(10+(index%3)*348,10+(index//3)*238,tile)
         face_painter.end();assert faces.save(str(output/('visual-clock-'+mode+'.png')))
-    p.end();assert len(set(signatures))==3
+    p.end();assert len(set(signatures))==len(configs)
     for theme in ('light','dark'):
         crystal,flowing=(surface(make_dock(dict(cfg,panel_theme=theme)),340,158,'panel').pixelColor(170,140)
                          for cfg in configs[:2])
         assert flowing.red()-crystal.red()>=18 and crystal.blue()-crystal.red()>=18,(theme,crystal.name(),flowing.name())
     assert sheet.save(str(output/'visual-themes.png'))
+    from settings_dialog import SettingsDialog
+    dialog=SettingsDialog(runtime.tray,api)
+    previews=[]
+    try:
+        dialog.reveal();app.processEvents()
+        for key in ('obsidian','celadon','velvet'):
+            name,values=PANEL_PRESETS[PRESET_IDS.index(key)]
+            dialog.dock_preset.setCurrentIndex(dialog.dock_preset.findText(name));app.processEvents()
+            assert dialog.fields['dock_material'].currentData()==key
+            assert dialog.fields['theme'].currentData()==values['theme']
+            from liquid_glass import dock_theme_colors
+            native=make_dock(dialog.profile_candidate())
+            assert api.Dock.corner_ratio(native)==dock_theme_colors(native.cfg,True)['corner']
+            preview=dialog.dock_preview.grab().toImage();previews.append(preview)
+            assert preview.save(str(output/('dock-preview-'+key+'.png')))
+        # Sample just inside the bar's horizontal edge, clear of the application icons.
+        fraction=.16 if dialog.fields['position'].currentData()=='top' else .84
+        dark,light,velvet=[image.pixelColor(image.width()//2,round(image.height()*fraction)) for image in previews]
+        assert light.lightness()-dark.lightness()>70,(dark.name(),light.name())
+        assert velvet.red()-velvet.green()>36 and velvet.red()-dark.red()>40,(velvet.name(),dark.name())
+        checks.append('Selected each new preset through Dock Settings and measured distinct graphite, celadon and berry surfaces in the live preview.')
+    finally:dialog.reject();dialog.deleteLater()
 
     # Small progress cards keep each period label separate from its percentage.
     compact=QImage(1080,550,QImage.Format_RGB32);compact.fill(QColor('#f0f5f8'));cp=QPainter(compact)
@@ -169,4 +191,4 @@ def run(api, runtime, main, app, output, checks):
         assert attach(window,lambda:cfg) is motion
     finally:
         motion.stop();window.close();window.deleteLater();app.processEvents()
-    checks.append('three native shared themes: Dock/card/note/clock/calendar material agreement; all six clock styles rendered; legacy material values remain valid; custom snapshot roundtrips preserve content/work/layout; default restores crystal/digital; actual isolated QWidget finite-motion finish/hide/off checks, no idle timer or foreground capture')
+    checks.append(f'{len(configs)} shared materials render across Dock, cards, notes and all six clock/calendar faces; all {len(PRESET_IDS)} presets retain their identifiers, custom appearance round-trips preserve content and layout, finite motion stops on finish or hide.')

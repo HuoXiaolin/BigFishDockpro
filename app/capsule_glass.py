@@ -23,7 +23,7 @@ class CapsuleGlass:
         self.tiny = None
 
     def paint(self, painter, widget, dock, radius, moving=False, appearance=None, inset=0, shape=None,
-              backdrop_mode='wallpaper'):
+              backdrop_mode='wallpaper', outline=None):
         style=appearance if appearance is not None else panel_appearance(dock.cfg)
         material=style['material']
         self.uses_wallpaper = uses_wallpaper(backdrop_mode, style)
@@ -38,7 +38,7 @@ class CapsuleGlass:
         blur = material_blur(style['blur'], material) if self.uses_wallpaper and style.get('blur_enabled', True) else 0
         mode = style['theme']
         light = dock._sys_light if mode == 'auto' else mode == 'light'
-        key = (rect.getRect(), dpr, radius, inset, tuple(shape) if shape else None, moving, light, material, blur,
+        key = (rect.getRect(), dpr, radius, inset, tuple(shape) if shape else None, outline, moving, light, material, blur,
                style['opacity'], style['highlight'], style['color'], self.uses_wallpaper, dynamic, dock.preview)
         if self.key != key and (not moving or self.image is None or shape):
             texture_dpr = dpr * .5 if self.uses_wallpaper and blur and rect.width()*rect.height()*dpr*dpr > 128*1024 else dpr
@@ -64,7 +64,10 @@ class CapsuleGlass:
             surface = SimpleNamespace(cfg={'glass':self.uses_wallpaper,'dock_material':material,'live_backdrop':dynamic},
                                       backdrop=backdrop,spec_x=0,spec_alpha=0)
             area = QRectF(widget.rect()).adjusted(.8+inset,.8+inset,-.8-inset,-.8-inset)
-            if shape:
+            if outline is not None:
+                path=outline
+                area=path.boundingRect()
+            elif shape:
                 from resource_liquid_shape import body_path
                 path=body_path(area,shape)
             else:

@@ -10,7 +10,8 @@ def run(api,runtime,checks):
         cfg.update(game_mode=False,fullscreen_detection=False,panel_enabled=True,panels_visible=True,notes_enabled=True,notes_visible=True,clock_enabled=True)
         runtime.apply_settings();runtime.set_dock_visible(True)
         runtime.tray.rebuild()
-        pause_menu = next(action.menu() for action in runtime.tray.menu.actions() if action.text() == '组件暂停')
+        from menu_paths import action_at
+        pause_menu = action_at(runtime.tray.menu,'桌面组件','组件暂停').menu()
         manual, automatic = pause_menu.actions()
         assert not manual.isChecked() and not automatic.isChecked()
         with patch('runtime_controller.foreground_fullscreen', return_value=True) as fullscreen:

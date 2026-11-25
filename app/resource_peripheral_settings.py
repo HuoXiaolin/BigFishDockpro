@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 )
 
 from background_worker import BackgroundWorker
+from component_settings import ComponentPages, section, settings_footer
 from resource_peripherals import (
     DIAGNOSTICS_FILENAME, FIELDS, MAX_PROFILE_BYTES, MAX_PROFILES, MAX_REPORT_BYTES, PROFILE_FILENAME,
     SAMPLE_FILENAME, STATE_LABELS, PeripheralProbe, bind_profiles, diagnostics_prompt, export_sample_file, load_profile_file,
@@ -215,7 +216,7 @@ class PeripheralSettings(QDialog):
     def __init__(self, parent, profiles):
         super().__init__(parent, Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
         self.setWindowTitle('2.4G 外设电量')
-        self.resize(600, 380)
+        self.resize(745, 460)
         self.setProperty('simpleForms', True)
         self.profiles = normalize_profiles(profiles)
         self.original_profiles = self.profiles
@@ -239,10 +240,13 @@ class PeripheralSettings(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(SettingsHeader(self, self.windowTitle()))
+        self.tabs=ComponentPages(self,layout,'外设电量')
+        devices=section(self.tabs.page('设备管理','monitor'),'接收器与设备')
+        advanced=section(self.tabs.page('适配与诊断','repair'),'配置、采集与诊断')
         hint = QLabel('接上 USB 接收器，切换到 2.4G 模式并唤醒设备。试读成功后即可添加。')
         hint.setWordWrap(True)
         hint.setObjectName('Subtle')
-        layout.addWidget(hint)
+        devices.addWidget(hint)
         tools = QHBoxLayout()
         self.scan_button = button('扫描设备', self.scan)
         self.more_button = QPushButton('更多操作')
@@ -257,12 +261,12 @@ class PeripheralSettings(QDialog):
         self.copy_prompt_action = self.menu.addAction('复制适配提示词', self.copy_prompt)
         self.more_button.setMenu(self.menu)
         tools.addWidget(self.scan_button)
-        tools.addWidget(self.more_button)
+        advanced.addWidget(self.more_button,0,Qt.AlignLeft)
         tools.addStretch()
         self.count = QLabel()
         self.count.setObjectName('Subtle')
         tools.addWidget(self.count)
-        layout.addLayout(tools)
+        devices.addLayout(tools)
 
         self.table = QTreeWidget()
         self.table.setAccessibleName('扫描到的外设及已添加设备')
@@ -277,31 +281,29 @@ class PeripheralSettings(QDialog):
         self.table.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.currentItemChanged.connect(self._update_controls)
         self.table.itemDoubleClicked.connect(lambda *_: self.preview())
-        layout.addWidget(self.table, 1)
+        self.table.setMinimumHeight(140)
+        devices.addWidget(self.table, 1)
         self.status = QLabel()
         self.status.setTextFormat(Qt.PlainText)
         self.status.setObjectName('Subtle')
         self.status.setWordWrap(True)
         self.status.setAccessibleName('操作结果')
-        layout.addWidget(self.status)
         self.detail = QLabel()
         self.detail.setWordWrap(True)
         self.detail.setTextFormat(Qt.PlainText)
         self.detail.setAccessibleName('当前设备详情')
-        layout.addWidget(self.detail)
+        devices.addWidget(self.detail)
 
         actions = QHBoxLayout()
         self.preview_button = button('试读电量', self.preview)
         self.add_button = button('添加', self.add_profile)
         self.alias_button = button('设备别名…', self.edit_alias)
         self.remove_button = button('移除', self.remove_profile)
-        self.save_button = button('保存', self.accept, 'primary')
         for widget in (self.preview_button, self.add_button, self.alias_button, self.remove_button):
             actions.addWidget(widget)
         actions.addStretch()
-        actions.addWidget(button('取消', self.reject))
-        actions.addWidget(self.save_button)
-        layout.addLayout(actions)
+        devices.addLayout(actions)
+        self.save_button=settings_footer(self,layout,self.status,self.accept)
         compact_dialog(self)
         self._populate()
         QTimer.singleShot(0, self.scan)

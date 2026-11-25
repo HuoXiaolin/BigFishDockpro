@@ -22,9 +22,15 @@ def check_coat(animal, image):
         assert any(max(r, g, b) < 99 for r, g, b in fur)
         has_ginger = any(r >= 145 and r - g > 43 and g - b > 28 for r, g, b in fur)
         assert has_ginger == (animal == 'cat')
-    else:
+    elif animal=='rabbit':
         assert any(104 < r < 193 and 2 <= r - g <= 35 and 0 <= g - b <= 25 for r, g, b in fur)
         assert any(r >= 173 and 33 <= r - g <= 106 and 5 <= g - b <= 52 for r, g, b in fur)
+    elif animal=='bird':
+        assert any(b>r+35 and g>r+25 for r,g,b in fur)
+        assert any(r>185 and g>145 and b<130 for r,g,b in fur)
+    elif animal=='penguin':
+        assert any(b>r and max(r,g,b)<100 for r,g,b in fur)
+        assert any(min(r,g,b)>185 for r,g,b in fur)
 
 
 def run(api, runtime, app, output, checks):
@@ -57,7 +63,7 @@ def run(api, runtime, app, output, checks):
 
     def pet_menu():
         tray.rebuild()
-        taskbar = action(tray.contextMenu(), '任务栏').menu()
+        taskbar = action(action(tray.contextMenu(), '系统外观').menu(), '任务栏').menu()
         return action(taskbar, '托盘小动物').menu()
 
     try:

@@ -8,8 +8,8 @@ import re
 import time
 
 U64=C.c_ulonglong
-NET_KEYS=frozenset(('network','traffic','system_status','connection','network_utilization','network_devices'))
-DEVICE_KEYS=frozenset(('system_status','battery','connection','volume'))
+NET_KEYS=frozenset(('network','traffic','system_status','connection','network_links','network_utilization','network_devices'))
+DEVICE_KEYS=frozenset(('system_status','battery','connection','volume','microphone','network_links'))
 
 
 class MemoryStatus(C.Structure):
@@ -312,6 +312,8 @@ class Sampler:
                 return None
             eligible=[r for r in rows if r.oper==1 and selectable_interface(r)]
             rows_to_count=[r for r in eligible if r.flags&1] or eligible
+            if 'network_links' in self.metrics:
+                data['network_links']=self.device_status.active_links(eligible,now)
             readings={r.luid:(r.received,r.sent) for r in rows_to_count}
             if 'network_utilization' in self.metrics:
                 links={r.luid:((r.received,r.rx_speed),(r.sent,r.tx_speed)) for r in rows_to_count}
@@ -368,6 +370,9 @@ class Sampler:
                 status['battery']=self.device_status.battery()
             if full or 'volume' in self.metrics:
                 status['volume']=self.device_status.volume()
+            if 'microphone' in self.metrics:
+                capture=self.device_status.volume(capture=True)
+                status['microphone']=None if capture is None else not capture[1]
             if full or 'connection' in self.metrics:
                 data['connection_device'] = self.network_device
                 if self.adapter is None:

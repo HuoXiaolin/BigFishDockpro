@@ -477,7 +477,8 @@ def run(api, runtime, root, app, output, checks):
             with patch('settings_effects.save_changes',side_effect=saved), patch('taskbar_menu.auto_hide',return_value=False), \
                  patch.object(runtime,'show_settings') as opened, patch.object(runtime.tray,'settings_dialog',dialog,create=True):
                 common_actions(menu,runtime.tray)
-                start=action(menu,'开始菜单').menu();notifications=action(menu,'通知与快捷面板').menu();taskbar=action(menu,'任务栏').menu()
+                system=action(menu,'系统外观').menu()
+                start=action(system,'开始菜单').menu();notifications=action(system,'通知与快捷面板').menu();taskbar=action(system,'任务栏').menu()
                 assert [item.text() for item in start.actions() if item.isCheckable()] == ['系统默认', 'Windows 11 · 玻璃网格']
                 assert action(start, '系统默认').isChecked()
                 action(start, 'Windows 11 · 玻璃网格').trigger()
@@ -540,7 +541,7 @@ def run(api, runtime, root, app, output, checks):
                         if index:
                             tile.click()
                         saved = api.load_config()
-                        assert tile.value == label and not tile.active
+                        assert tile.value == label and tile.active == (mode is not None)
                         assert saved[enabled] == dialog.draft_values()[enabled] == (mode is not None)
                         if option:
                             assert saved[option] == dialog.fields[option].currentData() == (mode or modes[index-1][0])

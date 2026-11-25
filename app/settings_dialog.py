@@ -8,16 +8,16 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QWidget,
     QFormLayout, QSpinBox, QCheckBox, QComboBox, QScrollArea, QApplication, QLineEdit, QColorDialog,
-    QStackedWidget, QSizePolicy, QFileDialog)
+    QStackedWidget, QSizePolicy, QFileDialog, QPushButton)
 from ui_style import (label, button, apply_theme, ModernComboBox, ModernSpinBox,
                       ModernCheckBox, SettingsHeader, SettingsGrip, ThemeSwatches)
 from app_version import VERSION, AUTHOR, PROJECT_URL
 from appearance_presets import DOCK_PRESETS, material_choices, select_material, COLOR_MODES
 from window_backdrop import BACKDROP_HINT
-from feature_config import SPECTRUM_FIXED_PALETTES
 from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, CURSORS, DATA, PAGE_GROUPS,
                               PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
                               WIDGETS, START_MENU, NOTIFICATIONS, field_catalog)
+from settings_field_editors import SettingsFieldEditors
 from settings_design import SettingsNavigation
 
 
@@ -80,7 +80,7 @@ class SettingsFields(dict):
         return dict.__getitem__(self, key)
 
 
-class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
+class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     PAGE_ATTRIBUTES = {
         'dock_preset': APPEARANCE,
         'dock_preview': APPEARANCE,
@@ -131,7 +131,15 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         search_row=QHBoxLayout()
         self.setting_query=QLineEdit();self.setting_query.setPlaceholderText('搜索设置，例如：圆角、自启、透明度')
         self.setting_query.setClearButtonEnabled(True);self.setting_query.returnPressed.connect(self.search_settings)
-        search_row.addWidget(self.setting_query,1);search_row.addWidget(button('搜索',self.search_settings));body.addLayout(search_row)
+        search_row.addWidget(self.setting_query,1);search_row.addWidget(button('搜索',self.search_settings))
+        if getattr(tray,'runtime',None):
+            from settings_shortcuts import shortcut_menu
+            self.shortcuts=QPushButton('组件设置')
+            self.shortcuts.setAutoDefault(False)
+            self.shortcuts.setMenu(shortcut_menu(self))
+            self.shortcuts.setAccessibleName('跳转到组件设置页')
+            search_row.addWidget(self.shortcuts)
+        body.addLayout(search_row)
         self.tabs = SettingsPages()
         body.addWidget(self.tabs, 1)
         self.catalog = field_catalog(api, tray.cfg)
@@ -167,6 +175,16 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.initialize_size_behavior()
         self.tabs.pages.currentChanged.connect(self.show_page)
         self.ensure_page(APPEARANCE)
+
+    def open_secondary(self, callback):
+        before={key:self.tray.cfg[key] for key in self.catalog}
+        draft=self.draft_values()
+        try:
+            callback()
+        finally:
+            changed={key:(draft[key] if draft[key]!=previous else self.tray.cfg[key])
+                     for key,previous in before.items() if self.tray.cfg[key]!=previous}
+            if changed:self.set_draft_values(changed)
 
     def __getattr__(self, name):
         page = self.PAGE_ATTRIBUTES.get(name)
@@ -256,16 +274,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
                 self.show()
 
     @staticmethod
-    def field_value(key, field):
-        if isinstance(field, QComboBox):
-            return field.currentData()
-        if isinstance(field, QSpinBox):
-            return 100 - field.value() if key == 'transparency' else field.value()
-        if isinstance(field, QLineEdit):
-            return field.text().strip()
-        return field.isChecked()
-
-    @staticmethod
     def change_signal(field):
         if isinstance(field, QComboBox):
             return field.currentIndexChanged
@@ -322,41 +330,13 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         from settings_design import NumericControl
         for control in self.findChildren(NumericControl):
             control.slider.setValue(control.spin.value())
+        dock_preview=self.__dict__.get('dock_preview')
+        if dock_preview is not None and changes.keys() & set(dock_preview.keys):
+            dock_preview.update()
         if any(key.startswith('shell_') for key in changes):
             from shell_appearance_settings import ShellPreview
             for preview in self.findChildren(ShellPreview):
                 preview.refresh()
-
-    def add_field(self, form, key, visible=True):
-        _, title, kind, options = self.catalog[key]
-        if kind == 'combo':
-            self.combo(form, key, title, options, visible=visible)
-        elif kind == 'number':
-            self.number(form, key, title, *options)
-        else:
-            getattr(self, kind)(form, key, title)
-
-    def sync_appearance_sources(self, *args):
-        for source, keys in (
-                ('panel_appearance_source', ('panel_material', 'panel_theme', 'panel_color', 'panel_highlight', 'panel_opacity', 'panel_blur')),
-                ('daily_picture_appearance_source', ('daily_picture_material', 'daily_picture_color')),
-                ('spectrum_appearance_source', ('spectrum_color_mode', 'spectrum_mono_color')),
-                ('flash_appearance_source', ('flash_palette',)),
-                ('note_appearance_source', ('note_style',))):
-            if source not in self.fields:
-                continue
-            custom = self.fields[source].currentData() == 'custom'
-            if source == 'spectrum_appearance_source':
-                fixed_palette = self.fields['spectrum_style'].currentData() in SPECTRUM_FIXED_PALETTES
-                self.fields[source].setEnabled(not fixed_palette)
-                self.fields[source].setToolTip('当前样式使用彩色频谱' if fixed_palette else '')
-                custom = custom and not fixed_palette
-            for key in keys:
-                field = self.fields.get(key)
-                if field is not None:
-                    (field.parentWidget() if key.endswith('_color') else field).setEnabled(custom)
-            if source == 'panel_appearance_source' and 'panel_preset' in self.__dict__:
-                self.panel_preset.setEnabled(custom)
 
     def build_appearance(self, appearance):
         from settings_design import section_marker
@@ -413,7 +393,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
         for key in DOCK_PRESETS[0][1]:
             self.change_signal(self.fields[key]).connect(self.customize_dock)
-        from settings_design import DockPreview
+        from dock_appearance_preview import DockPreview
         self.dock_preview = DockPreview(self)
         appearance.insertRow(4, self.dock_preview)
 
@@ -538,6 +518,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.add_field(panel, 'panel_locked')
         self.add_field(panel, 'card_snap')
         self.add_field(panel, 'card_snap_distance')
+        self.add_field(panel, 'card_edge_hide')
         self.fields['card_snap_distance'].setToolTip('松手时检查与屏幕边缘、相邻卡片的距离。')
         self.add_field(panel, 'panel_auto_hide')
         self.add_field(panel, 'panel_expand_mode')
@@ -609,7 +590,7 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
         self.add_field(panel, 'note_appearance_source')
         self.add_field(panel, 'note_style')
-        for key in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source', 'spectrum_style'):
+        for key in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source', 'spectrum_color_mode'):
             self.fields[key].currentIndexChanged.connect(self.sync_appearance_sources)
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
         self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
@@ -617,8 +598,8 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
     def build_capsules(self, panel):
         from flash_data import COLORS
         from settings_design import section_marker
-        section_marker(panel,'资源胶囊')
-        self.component_row(panel,'resource_enabled','显示资源胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
+        section_marker(panel,'灵动胶囊')
+        self.component_row(panel,'resource_enabled','显示灵动胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
         self.add_field(panel, 'resource_bt_tray')
         self.add_field(panel, 'resource_ai_tray')
 
@@ -810,60 +791,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
         self.fields['panel_ball_diameter'].setEnabled(shape == 'ball')
         self.fields['panel_fold_height'].setEnabled(shape != 'ball')
 
-    def sync_watermark_fields(self):
-        tiled = self.fields['watermark_mode'].currentData() == 'tile'
-        self.fields['watermark_position'].setEnabled(not tiled)
-        self.fields['watermark_density'].setEnabled(tiled)
-
-    def field_label(self, title):
-        widget = label(title)
-        widget.setFixedWidth(130)
-        widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        return widget
-
-    def combo(self, form, key, title, options, visible=True):
-        field = ModernComboBox(form.parentWidget())
-        for name, value in options:
-            field.addItem(name, value)
-        field.setAccessibleName(title)
-        self.fields[key] = field
-        if visible:form.addRow(self.field_label(title), field)
-        else:field.hide()
-
-    def number(self, form, key, title, lower, upper):
-        field = ModernSpinBox()
-        field.setRange(lower, upper)
-        field.setAccessibleName(title)
-        self.fields[key] = field
-        form.addRow(self.field_label(title), field)
-
-    def text(self, form, key, title):
-        field = QLineEdit()
-        field.setAccessibleName(title)
-        self.fields[key] = field
-        form.addRow(self.field_label(title), field)
-
-    def color(self, form, key, title):
-        wrapper = QWidget()
-        container = QVBoxLayout(wrapper)
-        container.setContentsMargins(0, 0, 0, 0)
-        container.setSpacing(4)
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        field = QLineEdit()
-        field.setPlaceholderText('默认色 / #RRGGBB')
-        field.setAccessibleName(title)
-        self.fields[key] = field
-        row.addWidget(field, 1)
-        def choose():
-            value = QColorDialog.getColor(QColor(field.text() or '#b8d9ef'), self, title)
-            if value.isValid(): field.setText(value.name())
-        row.addWidget(button('选择', choose))
-        row.addWidget(button('默认', field.clear))
-        container.addLayout(row)
-        container.addWidget(ThemeSwatches(field))
-        form.addRow(self.field_label(title), wrapper)
-
     def face_role(self, form, key, title):
         from face_role_controls import add_role_controls
         self.fields[key] = add_role_controls(self, form, self.tray.runtime, self.status, self._draft[key])
@@ -906,11 +833,6 @@ class SettingsDialog(AppearanceProfileMixin,SettingsSizingMixin,QDialog):
 
     def customize_dock(self, *args):
         if not self.applying_dock_preset: self.dock_preset.setCurrentIndex(0)
-
-    def check(self, form, key, title):
-        field = ModernCheckBox(title)
-        self.fields[key] = field
-        form.addRow('', field)
 
     def position_changed(self):
         self.fields['custom_bottom'].setEnabled(self.fields['position'].currentData() == 'custom')

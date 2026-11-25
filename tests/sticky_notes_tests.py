@@ -43,7 +43,8 @@ def run(api,runtime,root,output,checks):
         for theme in ('light','dark'):
             apply_theme(app,theme=='light')
             for style in ('glass','paper','plain'):
-                menu=note.build_menu();submenu=next(action.menu() for action in menu.actions() if action.text()=='外观样式')
+                from menu_paths import action_at
+                menu=note.build_menu();submenu=action_at(menu,'外观与文字','外观样式').menu()
                 key={'glass':'液态玻璃','paper':'经典纸张','plain':'极简纯色'}[style]
                 next(action for action in submenu.actions() if action.text()==key).trigger();menu.deleteLater();app.processEvents()
                 assert manager.row(identity)['style']==style
@@ -55,7 +56,7 @@ def run(api,runtime,root,output,checks):
         # Exercise the actual single-shot leave/enter timers without moving the user's cursor.
         from PyQt5.QtCore import QPoint
         import sticky_notes
-        menu=note.build_menu();auto=next(a for a in menu.actions() if a.text().startswith('自动收起'))
+        menu=note.build_menu();auto=action_at(menu,'窗口与收起','自动收起（鼠标离开后）')
         assert not auto.isChecked();auto.trigger();menu.deleteLater()
         assert manager.row(identity)['auto_hide'] and api.load_config()['sticky_notes'][0]['auto_hide']
         with patch.object(sticky_notes.QCursor,'pos',return_value=note.mapToGlobal(QPoint(-30,-30))),patch.object(note,'isActiveWindow',return_value=False):

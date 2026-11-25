@@ -60,12 +60,13 @@ static void BF_CapturePopupBackdrop(BF_NativePopup& menu,POINT anchor) {
     MONITORINFO monitor{sizeof(monitor)};
     if (!GetMonitorInfoW(MonitorFromPoint(anchor,MONITOR_DEFAULTTONEAREST),&monitor)) return;
     const bool hasSubmenu=std::any_of(menu.rows.begin(),menu.rows.end(),[&](const auto& row){return row.parent!=menu.handle;});
-    const LONG wide=MulDiv(hasSubmenu ? 800 : 440,menu.dpi,96),tall=MulDiv(360,menu.dpi,96);
-    const RECT area{anchor.x-wide,anchor.y-tall,anchor.x+wide,anchor.y+tall};
+    const LONG wide=MulDiv(440,menu.dpi,96),tall=MulDiv(360,menu.dpi,96);
+    // USER can flip the entire cascade above or to the left of its anchor.
+    const RECT area=hasSubmenu ? monitor.rcMonitor : RECT{anchor.x-wide,anchor.y-tall,anchor.x+wide,anchor.y+tall};
     if (!IntersectRect(&menu.backdropBounds,&area,&monitor.rcMonitor)) return;
     const auto& rect=menu.backdropBounds;
     const auto width=rect.right-rect.left,height=rect.bottom-rect.top;
-    const auto step=1+std::clamp(menu.blur,0,50)/3;
+    const LONG step=std::max<LONG>(1+std::clamp(menu.blur,0,50)/3,(std::max(width,height)+2559)/2560);
     menu.backdropSize={std::max(1L,(width+step-1)/step),std::max(1L,(height+step-1)/step)};
     BITMAPINFO info{};
     info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
@@ -140,6 +141,8 @@ static bool BF_FillFooterFrame(HWND window,HDC dc,const BF_NativePopup& menu) {
     return painted;
 }
 
+static void BF_PaintSubmenuClient(HWND window,HDC dc,BF_NativePopup& menu);
+
 static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR context) {
     auto& menu=*reinterpret_cast<BF_NativePopup*>(context);
     if (msg==WM_NCPAINT) {
@@ -148,9 +151,23 @@ static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARA
             ReleaseDC(window,dc);
             if (painted) return 0;
         }
-    } else if (msg==WM_PRINT && (lp&PRF_NONCLIENT)) {
+    } else if (msg==WM_PAINT || msg==WM_PRINTCLIENT || msg==WM_PRINT) {
         const auto result=DefSubclassProc(window,msg,wp,lp);
-        BF_FillFooterFrame(window,reinterpret_cast<HDC>(wp),menu);
+        HDC dc=msg==WM_PAINT ? GetDC(window) : reinterpret_cast<HDC>(wp);
+        if (dc && (msg!=WM_PRINT || (lp&PRF_CLIENT))) {
+            const int saved=SaveDC(dc);
+            if (saved) {
+                if (msg==WM_PRINT && (lp&PRF_NONCLIENT)) {
+                    RECT frame{};POINT client{};
+                    if (GetWindowRect(window,&frame) && ClientToScreen(window,&client))
+                        OffsetViewportOrgEx(dc,client.x-frame.left,client.y-frame.top,nullptr);
+                }
+                BF_PaintSubmenuClient(window,dc,menu);
+                RestoreDC(dc,saved);
+            }
+        }
+        if (msg==WM_PAINT && dc) ReleaseDC(window,dc);
+        if (msg==WM_PRINT && (lp&PRF_NONCLIENT)) BF_FillFooterFrame(window,dc,menu);
         return result;
     } else if (msg==WM_NCDESTROY) {
         if (menu.roundedWindow==window) {menu.roundedWindow=nullptr;menu.roundedMenu=nullptr;}
@@ -263,7 +280,7 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
     }
     HDC dc=draw->hDC;
     const auto window=BF_FindFooterWindow(row->parent,dc);
-    if (window) BF_RoundFooterWindow(menu,row->parent,window);
+    if (window && IsWindowVisible(window)) BF_RoundFooterWindow(menu,row->parent,window);
     else BF_QueueFooterFrame(menu,row->parent);
     const int saved=SaveDC(dc);
     const auto brush=static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
@@ -316,6 +333,39 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
     }
     if (saved) RestoreDC(dc,saved);
     return TRUE;
+}
+
+// USER can cache a submenu's first owner-draw in a memory DC before placing
+// its HWND. Recompose the client (including the gutters) in its final screen
+// coordinates, preserving the original USER selection and command IDs.
+static void BF_PaintSubmenuClient(HWND window,HDC dc,BF_NativePopup& menu) {
+    if (!menu.backdrop) return;
+    auto handle=reinterpret_cast<HMENU>(SendMessageW(window,MN_GETHMENU,0,0));
+    if (!handle || handle==menu.handle) return;
+    RECT client{};POINT origin{};
+    if (!GetClientRect(window,&client) || !ClientToScreen(window,&origin)) return;
+    BF_DrawPopupBackdrop(menu,dc,client,origin);
+    for (const auto& row:menu.rows) {
+        if (row.parent!=handle) continue;
+        MENUITEMINFOW item{sizeof(item)};
+        item.fMask=MIIM_STATE|MIIM_ID|MIIM_SUBMENU;
+        DRAWITEMSTRUCT draw{};
+        if (!GetMenuItemInfoW(handle,row.position,TRUE,&item) || !GetMenuItemRect(nullptr,handle,row.position,&draw.rcItem)) continue;
+        OffsetRect(&draw.rcItem,-origin.x,-origin.y);
+        draw.CtlType=ODT_MENU;draw.itemAction=ODA_DRAWENTIRE;draw.itemID=item.wID;
+        draw.itemState=(item.fState&MFS_HILITE ? ODS_SELECTED : 0)|(item.fState&MFS_DISABLED ? ODS_DISABLED : 0)|
+                       (item.fState&MFS_CHECKED ? ODS_CHECKED : 0);
+        draw.itemData=reinterpret_cast<ULONG_PTR>(&row);draw.hDC=dc;draw.hwndItem=reinterpret_cast<HWND>(handle);
+        BF_PaintFooterItem(menu.owner,WM_DRAWITEM,0,reinterpret_cast<LPARAM>(&draw),0,reinterpret_cast<DWORD_PTR>(&menu));
+        if (item.hSubMenu) {
+            RECT arrow=draw.rcItem;
+            arrow.left=arrow.right-MulDiv(18,menu.dpi,96);
+            auto old=SelectObject(dc,menu.font);
+            SetTextColor(dc,menu.ink);SetBkMode(dc,TRANSPARENT);
+            DrawTextW(dc,L"\u203a",1,&arrow,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            SelectObject(dc,old);
+        }
+    }
 }
 
 struct BF_FooterPainting {

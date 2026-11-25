@@ -7,7 +7,7 @@ from flash_view import icon
 from resource_options import RESOURCE_PAGES
 from resource_panel import ResourceContentHost, display_values
 from screen_layout import capture, project, screen_records
-from ui_style import SubtleSizeGrip
+from ui_style import AlignedMenu,SubtleSizeGrip,menu_group,menu_heading
 
 
 INITIAL_SIZES={'resources':(560,305),'ai':(450,360),'music':(430,164),
@@ -28,7 +28,7 @@ class ResourceDesktopCard(ResourceContentHost):
         self.setWindowTitle(title+' · 大肥鱼Dock')
         self.header=QLabel(title,self)
         self.header.setObjectName('RankTitle')
-        self.header.setToolTip('拖动标题栏移动，拖回资源胶囊可合入')
+        self.header.setToolTip('拖动标题栏移动，拖回灵动胶囊可合入')
         self.settings_button=QToolButton(self)
         self.settings_button.setToolTip('组件设置')
         self.settings_button.setAccessibleName('组件设置')
@@ -131,6 +131,19 @@ class ResourceDesktopCard(ResourceContentHost):
         self.move(max(area.left(),min(self.x(),area.right()+1-self.width())),
                   max(area.top(),min(self.y(),area.bottom()+1-self.height())))
         self.update();self.save_geometry()
+
+    def contextMenuEvent(self,event):
+        from component_passthrough import component_actions
+        menu=AlignedMenu(self)
+        menu_heading(menu,RESOURCE_PAGES[self.page_key])
+        page={'resources':5,'traffic':5,'ai':3,'music':3,'weather':7,'news':7,
+              'pomodoro':9,'agenda':9,'mail':9}.get(self.page_key,8)
+        menu.addAction('组件设置…',lambda:self.service.settings(page))
+        menu.addAction('组件布局…',lambda:self.service.settings(8))
+        menu.addSeparator()
+        component_actions(menu_group(menu,'鼠标穿透','cursor'),self.runtime,'resource:'+self.page_key)
+        try:menu.exec_(event.globalPos())
+        finally:menu.deleteLater()
 
     def showEvent(self,event):
         super().showEvent(event)

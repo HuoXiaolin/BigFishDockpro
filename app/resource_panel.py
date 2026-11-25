@@ -446,7 +446,7 @@ class ResourceWindow(ResourceContentHost):
         self.halo_updated_at = None
         self.compact_scroll = None
         self.compact_scroll_pending = 0
-        self.setWindowTitle('资源胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
+        self.setWindowTitle('灵动胶囊 · 大肥鱼Dock');self.setAccessibleName('系统资源监控')
         self._ai_view=self._music_view=None
         self._traffic_view=self._weather_view=None
         self._news_view=self._pomodoro_view=self._agenda_view=self._mail_view=None
@@ -477,7 +477,7 @@ class ResourceWindow(ResourceContentHost):
         for key,title in tuple(OPEN_PAGES.items())[1:]:
             btn=CapsuleTab(self,key,title,self.nav_content)
             btn.clicked.connect(lambda checked=False,key=key:self.select_page(key));self.page_buttons[key]=btn
-        self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('资源胶囊设置');self.settings_button.setToolTip('资源胶囊设置');self.settings_button.clicked.connect(service.settings)
+        self.settings_button=QToolButton(self);self.settings_button.setAccessibleName('灵动胶囊设置');self.settings_button.setToolTip('灵动胶囊设置');self.settings_button.clicked.connect(service.settings)
         self.fold_button=QToolButton(self);self.fold_button.setAccessibleName('收起胶囊');self.fold_button.setToolTip('收起胶囊');self.fold_button.clicked.connect(lambda:service.fold(True))
         self.outside_since = None
         self.auto_fold_timer = QTimer(self)
@@ -922,10 +922,11 @@ class ResourceWindow(ResourceContentHost):
         projected = self.projected_layout(screens)
         rect = QRect(*projected) if compact and projected else self.desktop_rect(screens, projected)
         if compact:
-            kind=cfg['resource_fold']
+            kind=self.fold_shape()
             if kind=='ball':
                 rect=QRect(*fold_geometry(list(rect.getRect()),{'style':'ball','ratio':80},38))
-                if cfg['resource_runner_enabled']:rect.setWidth(rect.width()+RUNNER_SLOT)
+                area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
+                rect.setWidth(min(area.width(),rect.width()+self.ball_extra(min(area.width(),cfg['resource_compact_width']))))
             else:
                 center=rect.x()+rect.width()/2;screen=QApplication.screenAt(rect.center()) or QApplication.primaryScreen();area=screen.availableGeometry()
                 from resource_compact import natural_width
@@ -935,6 +936,15 @@ class ResourceWindow(ResourceContentHost):
         area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
         edge = cfg['resource_edge'] if self.liquid.edge_snap else 'free'
         return attached(rect,area,edge)
+
+    def fold_shape(self):
+        edge=getattr(self,'edge_reveal',None)
+        if edge and edge.as_pill:return 'pill'
+        return self.service.cfg['resource_fold']
+
+    def ball_extra(self,limit):
+        from resource_compact import ball_details
+        return ball_details(self,limit)[2]+(RUNNER_SLOT if self.service.cfg['resource_runner_enabled'] else 0)
 
     def sync_taskbar(self):
         cfg=self.service.cfg
@@ -966,7 +976,7 @@ class ResourceWindow(ResourceContentHost):
         if cfg['resource_fold']=='ball' or vertical:
             thickness=rect.width() if vertical else rect.height()
             diameter=min(thickness-4,38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
-            return diameter + (RUNNER_SLOT if not vertical and cfg['resource_runner_enabled'] else 0)
+            return diameter if vertical else diameter+self.ball_extra(cfg['resource_compact_width'])
         return cfg['resource_compact_width']
 
     def taskbar_rect(self,slot):
@@ -1053,14 +1063,19 @@ class ResourceWindow(ResourceContentHost):
             for key,name in [('day','今日'),('month','本月'),('year','本年')]:
                 if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
         reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注','almanac':'农历',
-                         'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停','weather_notice':'天气提醒'}
+                         'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停','weather_notice':'天气提醒',
+                         'stopwatch':'正计时','stopwatch_paused':'正计时暂停','alarm':'闹钟','alarm_due':'闹钟响铃',
+                         'mail_new':'新邮件','quota_notice':'额度提醒'}
         tips.extend('邮箱验证码，点击复制' if kind=='mail_code' else reminder_labels[kind]+' '+value
                     for kind,value in self.service.reminders())
         if self.service.compact:
             from resource_compact import status_values
+            if self.service.indicators:
+                from capsule_indicators import description
+                tips.extend(description(key,value) for key,value in self.service.indicators.values.items())
             tips.extend(label+' '+value for _,label,value,_ in status_values(self.service))
             tips.append('滚轮切换读数，点击展开')
-        self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '资源胶囊 · 点击展开')
+        self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '灵动胶囊 · 点击展开')
         if not self.service.compact:
             if not self.page_enabled(self.page_key):self.page_key=self.first_page()
             self.scroll.setVisible(self.page_key=='resources')
@@ -1105,21 +1120,34 @@ class ResourceWindow(ResourceContentHost):
         for index,button in enumerate(self.nav_arrows):
             button.setGeometry(left+width+18*index,5,18,24);button.setVisible(visible and overflow)
         self.nav_end=left+width+(36 if overflow else 0)
+    def glass_shape(self):
+        cfg=self.service.cfg
+        radius=max(0,(self.height()-2)/2)
+        if not self.service.compact:radius=min(17,radius)
+        elif cfg['resource_fold']=='bar':radius=min(12,radius)
+        return radius,4 if cfg['resource_halo'] else 0,self.liquid.radii(radius)
+
     def paintEvent(self,event):
         if not self.colors:return
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         cfg=self.service.cfg;c=self.colors;compact=self.service.compact;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
-        radius=min(17,rect.height()/2) if not compact else min(12,rect.height()/2) if cfg['resource_fold']=='bar' else rect.height()/2
-        self.glass.paint(p,self,self.service.runtime.dock,radius,self.press is not None,self.background,4 if cfg['resource_halo'] else 0,
-                         self.liquid.radii(radius),backdrop_mode=component_backdrop(cfg,'resource'))
+        radius,inset,corners=self.glass_shape()
+        self.glass.paint(p,self,self.service.runtime.dock,radius,self.press is not None,self.background,inset,
+                         corners,backdrop_mode=component_backdrop(cfg,'resource'))
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
         paint_halo(self,p,event.region())
-        if compact and (self.width()<70 or (cfg['resource_fold']=='ball')):
+        if compact and (self.width()<70 or self.fold_shape()=='ball'):
             self.reminder_bounds=[];self.reminder_kinds=[];self.status_bounds={}
             runner=self.service.runners.get('capsule')
             if runner:
                 from resource_runner import capsule_rect
                 rect.setRight(capsule_rect(self).left()-1)
+            if cfg['resource_fold']=='ball' and rect.width()>38:
+                from resource_compact import ball_details,paint_badges
+                cells,badges,_=ball_details(self,self.width())
+                if cells:self.service.indicators.paint(p,cells,38,self.height()/2,c)
+                if badges:paint_badges(self,p,badges,rect.right(),self.height()/2)
+                rect.setWidth(min(36,rect.width()))
             if cfg['resource_face']:
                 self.liquid.paint_face(p,rect.center(),min(rect.width(),max(12,rect.width()-10)))
             else:
@@ -1175,6 +1203,8 @@ class ResourceWindow(ResourceContentHost):
         if self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and self.service.compact:self.enter_timer.start()
         super().enterEvent(event)
     def expand_hover(self):
+        edge=getattr(self,'edge_reveal',None)
+        if edge and (edge.peek_until or edge.fraction<1.):return
         cursor=QCursor.pos()
         if self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
             self.expand_from(self.mapFromGlobal(cursor),automatic=True)
@@ -1210,7 +1240,7 @@ class ResourceWindow(ResourceContentHost):
             runner.show_reading(self.mapToGlobal(point))
             return
         badges=self.service.reminders()
-        icon_only=self.width()<70 or self.service.cfg['resource_fold']=='ball'
+        icon_only=self.width()<70 or self.fold_shape()=='ball'
         mail_rect=self.status_bounds.get('mail')
         if mail_rect is not None and mail_rect.contains(QPointF(point)):
             if not automatic:self.service.open_component('mail')
@@ -1223,7 +1253,8 @@ class ResourceWindow(ResourceContentHost):
                 QToolTip.showText(self.mapToGlobal(point),'验证码已复制',self,self.rect(),1200)
             return
         if kind:
-            target={'agenda':'agenda','battery':'resources','almanac':None,'weather_notice':'weather'}.get(kind,'pomodoro')
+            target={'agenda':'agenda','battery':'resources','almanac':None,'weather_notice':'weather',
+                    'mail_new':'mail','quota_notice':'ai'}.get(kind,'pomodoro')
         else:
             row=next((key for key,rect in zip(getattr(self,'compact_shown',()),getattr(self,'compact_bounds',()))
                       if rect.contains(QPointF(point))),None) if not icon_only else None
@@ -1236,6 +1267,7 @@ class ResourceWindow(ResourceContentHost):
             if not automatic:
                 self.service.open_component(target)
                 if weather:card.content.content.select_city(weather[0])
+                if target=='pomodoro' and kind:card.content.content.show_timer(kind)
             return
         was_compact = self.service.compact
         if self.service.fold(False,automatic=automatic) and not self.service.compact:
@@ -1245,6 +1277,7 @@ class ResourceWindow(ResourceContentHost):
             if target and self.page_enabled(target):
                 self.select_page(target)
                 if weather:self.weather_view.select_city(weather[0])
+                if target=='pomodoro' and kind:self.view('pomodoro').content.show_timer(kind)
     def leaveEvent(self,event):
         self.runner_hovered=False
         self.enter_timer.stop()
@@ -1316,28 +1349,35 @@ class ResourceWindow(ResourceContentHost):
         if not self.service.set_options(resource_edge='free',resource_layout=capture(list(rect.getRect()),screen_records())):self.reposition()
     def contextMenuEvent(self,event):
         self.enter_timer.stop();self.outside_since=None;menu=AlignedMenu(self);cfg=self.service.cfg
+        from ui_style import menu_group,menu_heading
+        menu_heading(menu,'灵动胶囊')
         menu.addAction('展开详情' if self.service.compact else '收起胶囊',lambda:self.service.fold(not self.service.compact))
-        opening=menu.addMenu('展开后默认页面')
+        menu.addAction('资源显示设置…',self.service.settings)
+        menu.addSeparator()
+        behavior=menu_group(menu,'展开与吸附','corner')
+        opening=behavior.addMenu('展开后默认页面')
         for key,label in OPEN_PAGES.items():
             item=opening.addAction(label);item.setCheckable(True);item.setChecked(cfg['resource_open_page']==key)
             item.setEnabled(key=='last' or self.page_enabled(key))
             item.triggered.connect(lambda checked,key=key:self.service.set_options(resource_open_page=key))
+        window=menu_group(menu,'窗口与交互','position')
         for name,layer in [('置顶显示','top'),('置于底层','bottom')]:
-            item=menu.addAction(name);item.setCheckable(True);item.setChecked(cfg['resource_layer']==layer)
+            item=window.addAction(name);item.setCheckable(True);item.setChecked(cfg['resource_layer']==layer)
             item.triggered.connect(lambda checked,layer=layer:self.service.set_options(resource_layer=layer))
         from component_passthrough import component_actions
-        component_actions(menu.addMenu('鼠标穿透'),self.service.runtime,'resource')
-        pin=menu.addAction('固定胶囊到任务栏');pin.setCheckable(True);pin.setChecked(cfg['resource_capsule_taskbar'])
+        component_actions(window.addMenu('鼠标穿透'),self.service.runtime,'resource')
+        taskbar=menu_group(menu,'任务栏与监控','monitor')
+        pin=taskbar.addAction('固定胶囊到任务栏');pin.setCheckable(True);pin.setChecked(cfg['resource_capsule_taskbar'])
         pin.triggered.connect(lambda on:self.service.set_options(resource_capsule_taskbar=on,
                                                                resource_collapsed=on or cfg['resource_collapsed']))
-        bar=menu.addAction('任务栏监控');bar.setCheckable(True);bar.setChecked(cfg['resource_taskbar'])
+        bar=taskbar.addAction('任务栏监控');bar.setCheckable(True);bar.setChecked(cfg['resource_taskbar'])
         bar.triggered.connect(lambda enabled:self.service.set_options(resource_taskbar=enabled))
-        auto=menu.addAction('鼠标离开自动收起');auto.setCheckable(True);auto.setChecked(cfg['resource_auto_hide'])
+        auto=behavior.addAction('鼠标离开自动收起');auto.setCheckable(True);auto.setChecked(cfg['resource_auto_hide'])
         auto.triggered.connect(lambda on:self.service.set_options(resource_auto_hide=on))
-        edge=menu.addAction('屏幕边缘吸附');edge.setCheckable(True);edge.setChecked(cfg['resource_edge_snap'])
+        edge=behavior.addAction('屏幕边缘吸附');edge.setCheckable(True);edge.setChecked(cfg['resource_edge_snap'])
         edge.setEnabled(cfg['card_snap']);edge.triggered.connect(lambda on:self.service.set_options(resource_edge_snap=on))
-        menu.addSeparator();menu.addAction('资源显示设置…',self.service.settings)
-        menu.addAction('关闭资源胶囊',lambda:self.service.set_options(resource_enabled=False))
+        menu.addSeparator()
+        menu.addAction('关闭灵动胶囊',lambda:self.service.set_options(resource_enabled=False))
         try:menu.exec_(event.globalPos())
         finally:menu.deleteLater()
     def closeEvent(self,event):

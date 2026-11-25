@@ -155,6 +155,7 @@ def normalize_desktop(cfg):
             if isinstance(raw.get(key), bool): panel[key] = raw[key]
         if raw.get('collapse_style') in ('bar', 'capsule'): panel['collapse_style'] = raw['collapse_style']
         if raw.get('view') in ('small','large','list'): panel['view'] = raw['view']
+        if raw.get('icon_alignment') in ('left','center','right'): panel['icon_alignment'] = raw['icon_alignment']
         if raw.get('sort') in ('name_asc', 'name_desc', 'modified_desc', 'modified_asc'): panel['sort'] = raw['sort']
         from appearance_presets import MATERIALS
         if raw.get('material') in {key for _,key in MATERIALS}: panel['material'] = raw['material']

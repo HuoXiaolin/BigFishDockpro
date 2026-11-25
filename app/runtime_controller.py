@@ -251,9 +251,7 @@ class RuntimeController:
             self.watermarks.sync()
         quick = self.dock.extras.popup
         if quick and quick.isVisible():
-            from quick_actions import WIDGET_SWITCHES
-            if changed is None or 'watermark_enabled' in changed or any(row[2] in changed for row in WIDGET_SWITCHES.values()):
-                quick.refresh()
+            quick.refresh()
         if changed is None or any(key.startswith('spectrum_') for key in changed) or changed & {'theme','theme_color','card_scale'}:
             self.sync_spectrum()
         if placement_changed or any(key.startswith('daily_picture_') for key in changed) or changed & (capsule_style|{'card_scale'}):
@@ -291,7 +289,7 @@ class RuntimeController:
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
             elif 'game_mode' in changed:self.apply_visibility()
             if 'startup_priority' in changed:set_priority(self.dock.cfg['startup_priority'])
-            if policy_changed or 'apps' in cfg['component_passthrough'].values():self.click_policy.refresh()
+            if policy_changed or changed&{'card_edge_hide','resource_edge_hide'} or 'apps' in cfg['component_passthrough'].values():self.click_policy.refresh()
             return
         self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
         self.sync_tray_visibility()
@@ -414,16 +412,18 @@ class RuntimeController:
         if self.custom_cards or self.dock.cfg['custom_cards']:
             self.custom_card_manager().sync()
 
-    def open_custom_cards(self):
+    def open_custom_cards(self,page=0):
         from contextlib import nullcontext
         dialog=getattr(self.tray,'settings_dialog',None)
         scope=dialog.suspend_page() if dialog and dialog.isVisible() else nullcontext()
-        with scope:self.custom_card_manager().edit()
+        with scope:self.custom_card_manager().edit(page=page)
 
-    def open_card_sizing(self,kind=None,identity=None):
+    def open_card_sizing(self,kind=None,identity=None,page=0):
         from card_sizing import CardSizingDialog
         from ui_style import exec_dialog
-        exec_dialog(CardSizingDialog(self,kind,identity))
+        dialog=CardSizingDialog(self,kind,identity)
+        dialog.tabs.setCurrentIndex(page)
+        exec_dialog(dialog)
 
     def checkpoint_session(self,*args):
         if self.closed:return False

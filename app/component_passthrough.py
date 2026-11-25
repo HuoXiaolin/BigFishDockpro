@@ -4,7 +4,7 @@ from PyQt5.QtCore import QObject,QEvent,QTimer
 from PyQt5.QtWidgets import QActionGroup,QApplication,QWidget
 
 MODES=(('全部穿透','all'),('全部可交互','none'),('自定义','custom'))
-COMPONENTS=(('dock','Dock'),('resource','资源胶囊'),('taskbar','任务栏监控'),('flash','闪念胶囊'),
+COMPONENTS=(('dock','Dock'),('resource','灵动胶囊'),('taskbar','任务栏监控'),('flash','闪念胶囊'),
             ('clock','桌面时钟'),('calendar','桌面日历'),('spectrum','桌面频谱'),('picture','每日图片'))
 LEGACY={'resource':'resource_click_through','taskbar':'resource_taskbar_click_through'}
 CHOICES=(('可交互',False),('始终穿透',True),('置顶时穿透应用窗口','apps'))
@@ -55,6 +55,16 @@ class ClickThroughPolicy(QObject):
         if not key or self.applying:return
         from window_layers import application_under,click_through,cursor_position,is_topmost
         mode=pointer_mode(self.runtime.dock.cfg,key)
+        edge=getattr(window,'edge_reveal',None)
+        if edge or self.runtime.dock.cfg.get('resource_edge_hide') or self.runtime.dock.cfg.get('card_edge_hide'):
+            from desktop_edge_reveal import EdgeReveal,option
+            setting=option(key)
+            enabled=bool(setting and self.runtime.dock.cfg.get(setting) and window.isWindow())
+            if enabled and edge is None:
+                window.edge_reveal=edge=EdgeReveal(window,self.runtime,key=='resource')
+            if edge:
+                edge.configure(enabled)
+                if edge.fraction<1.:mode=False
         passthrough=mode is True
         self.applying=True
         try:

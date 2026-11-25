@@ -15,6 +15,7 @@ START_SHADOWS = ('DropShadow', 'StartDropShadow', 'RootGridDropShadow', 'RightCo
 START_MENU_SIZE = (563, 625)
 START_PIN_COLUMNS = 4
 START_PIN_CELL = (76, 84)
+START_FOLDER_COLUMNS = 3
 DEFAULTS = {}
 for _kind in KINDS:
     DEFAULTS.update({f'shell_{_kind}_{key}': value for key, value in dict(
@@ -295,19 +296,33 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
             add(frame + ' > Grid > Grid', 'Margin=0', 'Padding=0', 'Width=Auto', 'MinWidth=0',
                 'HorizontalAlignment=Stretch', 'CornerRadius=12')
         add(folder + ' > Grid',
-            'ColumnDefinitions:=<ColumnDefinitionCollection><ColumnDefinition Width="0"/><ColumnDefinition Width="*"/><ColumnDefinition Width="0"/></ColumnDefinitionCollection>',
-            'RowDefinitions:=<RowDefinitionCollection><RowDefinition Height="0"/><RowDefinition Height="*"/><RowDefinition Height="0"/></RowDefinitionCollection>')
+            'ColumnDefinitions:=<ColumnDefinitionCollection><ColumnDefinition Width="*"/><ColumnDefinition Width="264"/><ColumnDefinition Width="*"/></ColumnDefinitionCollection>',
+            'RowDefinitions:=<RowDefinitionCollection><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></RowDefinitionCollection>')
         add(folder + ' > Grid > Grid',
-            'ColumnDefinitions:=<ColumnDefinitionCollection><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/></ColumnDefinitionCollection>')
+            'Padding=8,4,8,8',
+            'ColumnDefinitions:=<ColumnDefinitionCollection><ColumnDefinition Width="*"/><ColumnDefinition Width="20"/></ColumnDefinitionCollection>')
         add('TextBox#ExpandedFolderNameTextBox', 'Margin=10,8,10,8', 'MinWidth=0', 'Width=Auto',
             'FontSize=16', f'Foreground={ink}', f'RequestedTheme={theme}')
-        add('GridView#FolderList', 'Margin=0', 'Padding=0', 'MinWidth=0', 'HorizontalAlignment=Left')
-        add(folder + ' > Grid > Grid > Microsoft.UI.Xaml.Controls.PipsPager#PinnedListPipsPager', 'Margin=0', 'Padding=0', 'MinWidth=0', 'Width=10')
+        add(folder + ' > Grid > Grid > Microsoft.UI.Xaml.Controls.PipsPager#PinnedListPipsPager', 'Margin=0', 'Padding=0', 'MinWidth=0', 'Width=20')
+        container = 'StartMenu.UniversalTileContainer#UniversalTileContainer > Grid#GridViewContainer'
+        add(container, 'Width=264', 'Margin=0', 'Padding=8,4,8,8')
+        add(container + ' > Grid[2]', 'Margin=0')
+        add('TextBox#MutableFolderNameTextBox', 'Margin=8,4,8,4', 'MinWidth=0')
+        add('Grid#FolderLabels > TextBlock#FolderNameTextBlock', 'Margin=8,5,8,8')
         folder_tiles = 'GridView#FolderList > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid'
-        add(folder_tiles, *pinned_tiles)
+        folder_lists = ('GridView#FolderList', *(container + ' > Grid > GridView#' + name
+                                                for name in ('LevelOneGridView', 'LevelTwoGridView')))
+        tile_path = folder_tiles.removeprefix('GridView#FolderList')
+        for grid in folder_lists:
+            add(grid, 'Margin=0', 'Padding=0', 'MinWidth=0', f'Width={tile_width * START_FOLDER_COLUMNS}',
+                'HorizontalAlignment=Left', 'ScrollViewer.VerticalScrollMode=Enabled',
+                'ScrollViewer.VerticalScrollBarVisibility=Hidden', 'ScrollViewer.HorizontalScrollMode=Disabled',
+                'ScrollViewer.HorizontalScrollBarVisibility=Disabled', 'ScrollViewer.BringIntoViewOnFocusChange=True')
+            add(grid + tile_path, f'MaximumRowsOrColumns={START_FOLDER_COLUMNS}', 'Orientation=Horizontal',
+                f'ItemWidth={tile_width}', f'ItemHeight={tile_height}', 'Margin=0')
         # Resize cell/hover geometry only. Native icon and glyph sizes stay intact.
         for base in ('GridView#PinnedList > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid',
-                     folder_tiles):
+                     *(grid + tile_path for grid in folder_lists)):
             add(base + ' > GridViewItem', 'MinWidth=0', 'MinHeight=0', f'Width={tile_width}', f'Height={tile_height}',
                 f'MaxWidth={tile_width}', f'MaxHeight={tile_height}', 'Margin=0', 'Padding=0',
                 'HorizontalContentAlignment=Stretch', 'VerticalContentAlignment=Stretch')

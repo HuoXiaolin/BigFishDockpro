@@ -22,6 +22,8 @@ class DesktopClock(QWidget):
         self.setProperty('clickThroughKey',kind)
         self.minimum=(260,230) if kind=="calendar" else (160,100)
         self.backdrop = None; self.drag = None; self.loading = True; self.closed = False
+        from almanac_transition import AlmanacTransition
+        self.almanac_transition = AlmanacTransition(self)
         self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_TranslucentBackground); self.setWindowTitle('桌面'+self.component_name+' · 大肥鱼Dock')
         self.setMinimumSize(*self.minimum)
         self.setAccessibleDescription('拖动卡片移动，拖动边缘或四角调整大小')
@@ -183,6 +185,7 @@ class DesktopClock(QWidget):
         super().showEvent(event)
         if self.parentWidget() is None:self.layer();self.refresh_timer.start()
     def hideEvent(self,event):
+        self.almanac_transition.reset()
         self.tick.stop(); self.refresh_timer.stop();self.backdrop=None
         self.drag=None
         from clock_legibility import clear_cache
@@ -193,6 +196,7 @@ class DesktopClock(QWidget):
         if not self.loading and self.parentWidget() is None and self.drag is None: self.geometry_timer.start(); self.refresh_timer.start()
     def resizeEvent(self,event):
         super().resizeEvent(event)
+        self.almanac_transition.reset()
         self.place_controls()
         if not self.loading and self.parentWidget() is None and self.drag is None: self.geometry_timer.start(); self.refresh_timer.start()
     def mousePressEvent(self,event):
@@ -230,10 +234,12 @@ class DesktopClock(QWidget):
         self.geometry_timer.stop();self.refresh_timer.start()
         self.setCursor(resize_cursor(edges_at(self.rect(),self.mapFromGlobal(event.globalPos()))))
         event.accept()
-    def open_settings(self):
+    def open_settings(self,page=0):
         from usage_stats import record
         record(self.dock,'clock_settings')
-        dialog=ClockOptions(self);dialog.exec_();dialog.deleteLater()
+        dialog=ClockOptions(self)
+        if type(page) is int:dialog.tabs.setCurrentIndex(page)
+        dialog.exec_();dialog.deleteLater()
     def open_progress(self):
         from clock_progress import ClockProgressDialog
         from settings_effects import save_changes
@@ -248,8 +254,9 @@ class DesktopClock(QWidget):
         exec_dialog(ClockProgressDialog(self.dock,self.option('appearance')['progress'],apply))
 
     def build_menu(self):
-        from ui_style import AlignedMenu
+        from ui_style import AlignedMenu,menu_heading,menu_group
         menu=AlignedMenu(self)
+        menu_heading(menu,'桌面时钟')
         menu.addAction('时钟设置…').triggered.connect(self.open_settings)
         menu.addAction('时光进度与倒计时…').triggered.connect(self.open_progress)
         menu.addAction('翻到时钟' if self.flipped else '翻到农历卡片').triggered.connect(self.flip)
@@ -263,7 +270,7 @@ class DesktopClock(QWidget):
                     self._art_for_day=(model.day, next_art)
                     self.update()
                 menu.addAction('查看'+model.card(next_art).name+'彩绘').triggered.connect(switch_art)
-        styles=menu.addMenu('时钟样式')
+        styles=menu_group(menu,'时钟样式','clock')
         for title,style in STYLES:
             action=styles.addAction(title);action.setCheckable(True);action.setChecked(self.option('style')==style)
             action.triggered.connect(lambda checked=False,s=style:self.set_style(s))
@@ -316,8 +323,13 @@ class DesktopClock(QWidget):
         return options
 
     def paint_face(self,painter,style,**values):
-        ink=draw_clock(painter,QRectF(self.rect()).adjusted(1,1,-1,-1),self.dock,
-                       self.draw_options(**values),style,self.backdrop)
+        rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
+        options=self.draw_options(**values)
+        if style=='almanac' and getattr(self,'flip_progress',None) is None:
+            ink=self.almanac_transition.paint(painter,rect,options,datetime.datetime.now())
+        else:
+            self.almanac_transition.reset()
+            ink=draw_clock(painter,rect,self.dock,options,style,self.backdrop)
         painter.end()
         if ink!=getattr(self,'_control_ink',None):
             self._control_ink=ink
@@ -340,6 +352,7 @@ class DesktopClock(QWidget):
 
     def dispose(self,save_geometry=True):
         if self.closed:return
+        self.almanac_transition.reset()
         if hasattr(self,'flip_animation'):self.flip_animation.stop()
         if self.geometry_timer.isActive():
             self.geometry_timer.stop()

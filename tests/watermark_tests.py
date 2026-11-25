@@ -86,7 +86,8 @@ def run(api, runtime, app, checks):
         cfg['watermark_text']='测试 123'
         with patch.object(runtime.tray,'settings_dialog',dialog,create=True):
             common_actions(menu,runtime.tray)
-            toggle=next(a for a in menu.actions() if a.text()=='桌面文字水印')
+            from menu_paths import action_at
+            toggle=action_at(menu,'桌面组件','桌面文字水印','显示桌面文字水印')
             assert toggle.isChecked()
             toggle.trigger();quick.refresh()
             assert not cfg['watermark_enabled'] and not quick.tiles['watermark'].active and not manager.windows

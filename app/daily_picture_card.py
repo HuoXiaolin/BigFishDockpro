@@ -14,28 +14,34 @@ MINIMUM_SIZE = (270, 156)
 
 def add_menu_actions(menu,runtime):
     from appearance_presets import APPEARANCE_SOURCES, MATERIALS
+    from ui_style import menu_group
     cfg=runtime.dock.cfg
+    from component_preferences import open_preferences
+    menu.addAction('每日图片设置…',lambda:open_preferences(runtime,'daily_picture'))
     show=menu.addAction('显示桌面每日图片')
     show.setCheckable(True);show.setChecked(cfg['daily_picture_enabled'])
     show.triggered.connect(lambda on:runtime.set_daily_picture_options(daily_picture_enabled=on))
-    lock=menu.addAction('锁定位置')
+    menu.addSeparator()
+    source=menu_group(menu,'图片来源与轮播','picture')
+    frame=menu_group(menu,'外框与材质','palette')
+    window=menu_group(menu,'尺寸与位置','position')
+    lock=window.addAction('锁定位置')
     lock.setCheckable(True);lock.setChecked(cfg['daily_picture_locked'])
     lock.triggered.connect(lambda on:runtime.set_daily_picture_options(daily_picture_locked=on))
-    size=menu.addAction('恢复默认大小',lambda:runtime.set_daily_picture_options(daily_picture_manual_size=False))
+    size=window.addAction('恢复默认大小',lambda:runtime.set_daily_picture_options(daily_picture_manual_size=False))
     size.setEnabled(cfg['daily_picture_manual_size'] and not cfg['daily_picture_locked'])
-    appearance=menu.addMenu('外观来源')
+    appearance=frame.addMenu('外观来源')
     for name,value in APPEARANCE_SOURCES:
         action=appearance.addAction(name);action.setCheckable(True)
         action.setChecked(cfg['daily_picture_appearance_source']==value)
         action.triggered.connect(lambda _,source=value:runtime.set_daily_picture_options(daily_picture_appearance_source=source))
-    materials=menu.addMenu('自定义外框材质')
+    materials=frame.addMenu('自定义外框材质')
     for name,value in [('沿用桌面收纳材质','follow'),*MATERIALS]:
         action=materials.addAction(name);action.setCheckable(True)
         action.setChecked(cfg['daily_picture_material']==value)
         action.triggered.connect(lambda _,style=value:runtime.set_daily_picture_options(daily_picture_material=style))
-    menu.addAction('选择外框颜色…',lambda:choose_color(runtime))
-    menu.addAction('恢复外框默认色',lambda:runtime.set_daily_picture_options(daily_picture_color=''))
-    source=menu.addMenu('图片来源与轮播')
+    frame.addAction('选择外框颜色…',lambda:choose_color(runtime))
+    frame.addAction('恢复外框默认色',lambda:runtime.set_daily_picture_options(daily_picture_color=''))
     for label,value in (('必应每日图片','bing'),('本地图片轮播','local')):
         action=source.addAction(label);action.setCheckable(True);action.setChecked(cfg['daily_picture_source']==value)
         action.triggered.connect(lambda _,key=value:runtime.set_daily_picture_options(daily_picture_source=key))
@@ -44,12 +50,17 @@ def add_menu_actions(menu,runtime):
     source.addAction('轮播间隔…',lambda:choose_interval(runtime))
 
 
-def choose_local(runtime,folder=False):
+def pick_local_paths(parent,folder=False):
     if folder:
-        path=QFileDialog.getExistingDirectory(runtime.dock,'选择图片文件夹');paths=[path] if path else []
+        path=QFileDialog.getExistingDirectory(parent,'选择图片文件夹');paths=[path] if path else []
     else:
-        paths,_=QFileDialog.getOpenFileNames(runtime.dock,'选择轮播图片','','图片 (*.jpg *.jpeg *.png *.webp *.bmp)')
-    if paths:runtime.set_daily_picture_options(daily_picture_source='local',daily_picture_local_paths=paths[:64])
+        paths,_=QFileDialog.getOpenFileNames(parent,'选择轮播图片','','图片 (*.jpg *.jpeg *.png *.webp *.bmp)')
+    return paths[:64]
+
+
+def choose_local(runtime,folder=False):
+    paths=pick_local_paths(runtime.dock,folder)
+    if paths:runtime.set_daily_picture_options(daily_picture_source='local',daily_picture_local_paths=paths)
 
 
 def choose_interval(runtime):
@@ -262,7 +273,8 @@ class DailyPictureCard(QWidget):
 
     def contextMenuEvent(self,event):
         from ui_style import AlignedMenu
-        menu=AlignedMenu(self.runtime.dock);add_menu_actions(menu,self.runtime)
+        from ui_style import menu_heading
+        menu=AlignedMenu(self.runtime.dock);menu_heading(menu,'每日图片');add_menu_actions(menu,self.runtime)
         menu.exec_(event.globalPos());menu.deleteLater()
 
     def paintEvent(self,event):

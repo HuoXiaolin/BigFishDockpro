@@ -252,14 +252,19 @@ class MailInbox(QObject):
     def notify(self, account, new):
         runtime = self.service.runtime
         recent = []
+        has_code=False
         now = time.time()
         for item, code in new:
             if code and self.cfg['resource_alert_mail_code'] and now - MAX_CODE_AGE <= item.stamp <= now + 30:
+                has_code=True
                 self.codes.append(CodeNotice(account['id'], code, time.monotonic() + CODE_SECONDS))
             elif not code:
                 recent.append(item)
         self.codes = self.codes[-5:]
         self.expire_codes(announce=False)
+        if has_code:self.service.peek_reminder()
+        elif recent and self.cfg['resource_mail_notifications']:
+            self.service.peek_reminder(('mail_new',f'{len(recent)} 封新邮件'))
         if recent and self.cfg['resource_mail_notifications'] and not runtime.dock.preview:
             item = max(recent, key=lambda row: row.stamp)
             detail = item.sender + ' · ' + item.title if len(recent) == 1 else f'{len(recent)} 封新邮件 · {item.title}'

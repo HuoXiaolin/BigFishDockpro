@@ -480,7 +480,8 @@ def run(api,runtime,app,output,checks):
             labels = {value for value,_ in painted}
             assert {'Pro 100','5 小时额度','每周额度','每月额度','80%','0%','—','¥12.48'} <= labels
             assert overview.rect().contains(overview.reset_buttons[0].geometry())
-            assert overview.cards[-1][2] == popup.stats_view.summary.columns == popup.stats_view.charts.columns == columns
+            assert overview.cards[-1][2] == popup.stats_view.charts.columns == columns
+            assert popup.stats_view.summary.columns == (1 if width==180 else 2)
             assert (overview.reset_buttons[0].height() > 25) == (width == 180)
         selector = popup.stats_view.period_selector
         selector.setCurrentIndex(selector.findData('week'))

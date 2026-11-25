@@ -4,9 +4,56 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch,MagicMock
 from PyQt5.QtCore import Qt,QPointF,QEvent,QPoint
-from PyQt5.QtGui import QPixmap,QPainter,QColor,QFont,QMouseEvent,QWheelEvent
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QPixmap,QPainter,QColor,QFont,QMouseEvent,QWheelEvent,QImage,QRegion
+from PyQt5.QtWidgets import QApplication,QWidget
 from dock_extras import REFLECTION_BUDGET,DockQuickSettings
+
+
+def check_quick_controls(popup,dock,output,checks):
+    from background_contrast import blend,contrast
+    from ui_style import apply_theme
+    app=QApplication.instance()
+    app_light=app.palette().window().color().lightness()>128
+    def control_image(button):
+        image=QImage(button.size(),QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        button.render(image,QPoint(),QRegion(),QWidget.DrawChildren)
+        return image
+    try:
+        for dark in (True,False):
+            apply_theme(app,dark)
+            with patch.dict(dock.cfg,theme='dark' if dark else 'light',theme_color='#7450ca',clear_background=True):
+                popup.set_page(2);popup.refresh_surface()
+                app.processEvents()
+                frames={}
+                for button in (popup.edit_button,popup.close_button,popup.prev_button,popup.next_button):
+                    frame=control_image(button);fill=frame.pixelColor(4,frame.height()//2)
+                    assert 90<fill.alpha()<255,(dark,button.text(),fill.getRgb())
+                    # Real glyphs must have contrast on even the least favourable desktop.
+                    paper=(255,255,255) if dark else (0,0,0)
+                    surface=blend(fill.getRgb()[:3],paper,fill.alphaF())
+                    glyphs=[frame.pixelColor(x,y) for x in range(6,frame.width()-6) for y in range(4,frame.height()-4)]
+                    assert any(c.alpha()>245 and contrast(surface,c.name())>=4.5 for c in glyphs),(dark,button.text())
+                    frames[button]=frame
+                popup.edit_button.click();app.processEvents()
+                assert popup.edit_button.isChecked() and popup.reset_button.isVisible()
+                reset=control_image(popup.reset_button);assert reset.pixelColor(4,reset.height()//2).alpha()<255
+                assert control_image(popup.edit_button).pixelColor(4,popup.edit_button.height()//2)!=frames[popup.edit_button].pixelColor(4,popup.edit_button.height()//2)
+                popup.edit_button.click();popup.set_page(0)
+                assert not popup.prev_button.isEnabled() and control_image(popup.prev_button)!=frames[popup.prev_button]
+                popup.set_page(popup.pages.count()-1)
+                assert not popup.next_button.isEnabled()
+                popup.set_page(2)
+                # Composite the real transparent window on light and dark areas of a test backdrop.
+                snap=popup.grab()
+                preview=QImage(snap.size(),QImage.Format_RGB32)
+                preview.fill(QColor('#d9ddea'))
+                p=QPainter(preview);p.fillRect(preview.width()//2,0,preview.width(),preview.height(),QColor('#493b77'))
+                p.drawPixmap(preview.rect(),snap);p.end()
+                assert preview.save(str(output/('quick-controls-'+('dark' if dark else 'light')+'.png')))
+    finally:
+        apply_theme(app,app_light);popup.set_page(0);popup.refresh_surface()
+    checks.append('Quick Settings header and page controls render translucent fills and legible glyphs against opposite application themes. Edit, reset and page-boundary states remain distinct.')
 
 
 def run(api,runtime,root,output,checks):
@@ -114,6 +161,7 @@ def run(api,runtime,root,output,checks):
         from quick_actions import ACTIONS,PRODUCTIVITY_ACTIONS
         assert popup.isVisible() and len(popup.tiles)==len(ACTIONS) and popup.pages.count()==(len(ACTIONS)+8)//9
         assert all(tile.height()>=82 for tile in popup.tiles.values()),[tile.size() for tile in popup.tiles.values()]
+        check_quick_controls(popup,dock,output,checks)
         popup.tiles['search'].click();assert '暂不可用' in popup.status.text()
         productivity=SimpleNamespace(closed=False,message='已撤销测试整理',history=SimpleNamespace(entries=[{}],message='可撤销：测试整理'),
                                      open_search=MagicMock(),open_layouts=MagicMock(),open_references=MagicMock(),undo=MagicMock(return_value=True))

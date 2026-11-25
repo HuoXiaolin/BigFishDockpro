@@ -6,9 +6,10 @@ from ctypes import wintypes
 from PyQt5.QtCore import QEvent, QTimer
 from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QApplication, QMenu
+from ui_style import AlignedMenu
 
 
-class TrayContextMenu(QMenu):
+class TrayContextMenu(AlignedMenu):
     """Dismiss a Windows tray popup when input goes outside its menu tree."""
     def __init__(self):
         super().__init__()
@@ -96,25 +97,39 @@ def separator_actions(menu,tray,insert_at=None):
 
 def common_actions(menu,tray,dock_context=False,insert_at=None):
     runtime=getattr(tray,'runtime',None)
+    open_settings=lambda:runtime.show_settings() if runtime else tray.show_settings()
+    dock_actions=menu
     if not dock_context:
+        from settings_design import navigation_icon
+        primary=menu.addAction('设置…',open_settings)
+        primary.setIcon(navigation_icon('settings',menu.palette()))
         action=menu.addAction('显示 / 隐藏 Dock');action.setCheckable(True);action.setChecked(tray.dock.isVisible())
         action.triggered.connect(lambda:runtime.toggle_dock() if runtime else None)
-    menu.addAction('应用批量管理…').triggered.connect(lambda:runtime.show_batch() if runtime else tray.importer.show())
+        menu.addSeparator()
+        dock_actions=menu.addMenu('Dock 与应用')
+        dock_actions.setIcon(navigation_icon('apps',menu.palette()))
+    dock_actions.addAction('应用批量管理…').triggered.connect(lambda:runtime.show_batch() if runtime else tray.importer.show())
     if not dock_context and runtime and hasattr(runtime,'productivity'):
-        tools=menu.addMenu('查找与整理')
+        tools=dock_actions.addMenu('查找与整理')
         tools.addAction('统一搜索…').triggered.connect(runtime.productivity.open_search)
         undo=tools.addAction('撤销上次整理');undo.setEnabled(bool(runtime.productivity.history.entries));undo.triggered.connect(runtime.productivity.undo)
         tools.aboutToShow.connect(lambda:undo.setEnabled(bool(runtime.productivity.history.entries)))
         tools.addAction('桌面布局方案…').triggered.connect(runtime.productivity.open_layouts)
         tools.addAction('失效入口检查…').triggered.connect(runtime.productivity.open_references)
 
-    layout=menu.addMenu('Dock 布局');separator_actions(layout,tray,insert_at)
+    layout=dock_actions.addMenu('Dock 布局');separator_actions(layout,tray,insert_at)
     if getattr(tray.dock,'page_count',1)>1:
         layout.addSeparator();layout.addAction('上一页').triggered.connect(lambda:tray.dock.change_page(-1));layout.addAction('下一页').triggered.connect(lambda:tray.dock.change_page(1))
-    if not dock_context:
-        component_actions(menu,tray,runtime)
-    menu.addSeparator();menu.addAction('设置…').triggered.connect(lambda:runtime.show_settings() if runtime else tray.show_settings())
-    if not dock_context:
+    if dock_context:
+        menu.addSeparator();menu.addAction('设置…',open_settings)
+    else:
+        groups=[]
+        for title,symbol in (('桌面组件','panels'),('胶囊与监控','wave'),('系统外观','palette')):
+            group=menu.addMenu(title)
+            group.setIcon(navigation_icon(symbol,menu.palette()))
+            groups.append(group)
+        component_actions(*groups,tray,runtime)
+        menu.addSeparator()
         help_actions(menu,tray,runtime)
     menu.addSeparator()
     if dock_context:
@@ -122,8 +137,15 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
     menu.addAction('退出').triggered.connect(lambda:runtime.request_exit() if runtime else QApplication.instance().quit())
 
 
-def component_actions(menu,tray,runtime):
+def component_actions(menu,capsules,system,tray,runtime):
     panels=menu.addMenu('桌面卡片');panels.menuAction().setEnabled(runtime is not None)
+    if runtime:
+        windows=list(runtime.panels.windows.values())
+        if len(windows)==1:
+            panels.addAction('卡片外观设置…',windows[0].edit_options)
+        elif windows:
+            appearances=panels.addMenu('卡片外观设置')
+            for window in windows:appearances.addAction(window.model['name'],window.edit_options)
     visible=panels.addAction('显示 / 隐藏桌面卡片');visible.setCheckable(True)
     visible.setChecked(bool(runtime and any(window.isVisible() for window in runtime.panels.windows.values())))
     visible.triggered.connect(lambda:runtime.toggle_panels() if runtime else None)
@@ -132,34 +154,39 @@ def component_actions(menu,tray,runtime):
     panels.addAction('尺寸与文字…').triggered.connect(lambda:runtime.open_card_sizing() if runtime else None)
     panels.addAction('重新整理桌面').triggered.connect(lambda:runtime.panels.scan() if runtime else None)
     notes=menu.addMenu('便签');notes.menuAction().setEnabled(runtime is not None)
+    if runtime:
+        from component_preferences import open_preferences
+        notes.addAction('新便签默认外观…',lambda:open_preferences(runtime,'note'))
     notes.addAction('新建便签').triggered.connect(lambda:runtime.notes.new() if runtime else None)
     notes.addAction('管理与搜索…').triggered.connect(lambda:runtime.notes.manage() if runtime else None)
     action=notes.addAction('显示 / 隐藏便签');action.setCheckable(True)
     action.setChecked(bool(runtime and any(window.isVisible() for window in runtime.notes.windows.values())))
     action.triggered.connect(lambda:runtime.notes.toggle() if runtime else None)
     if runtime and hasattr(runtime,'flash'):
-        flash=menu.addMenu('闪念胶囊')
+        from component_preferences import open_preferences
+        flash=capsules.addMenu('闪念胶囊')
+        flash.addAction('闪念设置…',lambda:open_preferences(runtime,'flash'))
         flash.addAction('记一条闪念…').triggered.connect(lambda:runtime.flash.open(compose=True))
         flash.addAction('查看闪念…').triggered.connect(lambda:runtime.flash.open())
         edge=flash.addAction('显示贴边胶囊');edge.setCheckable(True);edge.setChecked(tray.cfg['flash_enabled'])
         edge.triggered.connect(runtime.flash.set_enabled)
     if runtime and hasattr(runtime,'resources'):
-        monitor=menu.addMenu('资源胶囊')
+        monitor=capsules.addMenu('灵动胶囊')
         monitor.addAction('打开资源详情…').triggered.connect(runtime.resources.open)
         monitor.addAction('显示与采样设置…').triggered.connect(runtime.resources.settings)
-        show=monitor.addAction('显示桌面资源胶囊');show.setCheckable(True);show.setChecked(tray.cfg['resource_enabled'])
+        show=monitor.addAction('显示桌面灵动胶囊');show.setCheckable(True);show.setChecked(tray.cfg['resource_enabled'])
         show.triggered.connect(lambda on:runtime.resources.set_options(resource_enabled=on))
         bt=monitor.addAction('显示外设电量托盘图标');bt.setCheckable(True);bt.setChecked(tray.cfg['resource_bt_tray'])
         bt.triggered.connect(lambda on:runtime.resources.set_options(resource_bt_tray=on))
         from taskbar_menu import add_menu as taskbar_actions
-        taskbar_actions(menu.addMenu('任务栏'),runtime)
+        taskbar_actions(system.addMenu('任务栏'),runtime)
         from shell_menu import add_menu as shell_actions
-        shell_actions(menu.addMenu('开始菜单'),runtime,'start')
-        shell_actions(menu.addMenu('通知与快捷面板'),runtime,'notifications')
+        shell_actions(system.addMenu('开始菜单'),runtime,'start')
+        shell_actions(system.addMenu('通知与快捷面板'),runtime,'notifications')
         from cursor_style_ui import add_tray_menu as cursor_actions
-        cursor_actions(menu.addMenu('鼠标样式'), runtime)
+        cursor_actions(system.addMenu('鼠标样式'), runtime)
         from component_passthrough import add_menu as passthrough_actions
-        passthrough_actions(menu.addMenu('鼠标穿透'),runtime)
+        passthrough_actions(system.addMenu('鼠标穿透'),runtime)
     clock_menu=menu.addMenu('桌面时钟');clock_menu.menuAction().setEnabled(runtime is not None)
     clock=clock_menu.addAction('显示 / 隐藏时钟');clock.setCheckable(True);clock.setChecked(bool(runtime and tray.cfg['clock_enabled']))
     clock.triggered.connect(lambda checked:runtime.clock.set_enabled(checked) if runtime else None)
@@ -171,7 +198,10 @@ def component_actions(menu,tray,runtime):
     calendar_menu.addAction('日历设置…').triggered.connect(lambda:runtime.calendar.open_settings() if runtime else None)
     if runtime:
         from settings_effects import save_changes
-        watermark = menu.addAction('桌面文字水印')
+        from component_preferences import open_preferences
+        marking=menu.addMenu('桌面文字水印')
+        marking.addAction('水印设置…',lambda:open_preferences(runtime,'watermark'))
+        watermark = marking.addAction('显示桌面文字水印')
         watermark.setCheckable(True)
         watermark.setChecked(tray.cfg['watermark_enabled'])
         def toggle_watermark(checked):

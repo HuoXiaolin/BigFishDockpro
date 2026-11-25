@@ -4,14 +4,19 @@ from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
 from panel_preferences import FOLD_SIZE_RANGE, CARD_FOLD_SIZE
 
-_SPECTRUM_COLOR_EFFECTS = (
-    ('立体彩环', 'crown'), ('渐变彩柱', 'peak_bars'), ('彩色粒子球', 'particle_sphere'),
-)
-SPECTRUM_FIXED_PALETTES = frozenset(style for _, style in _SPECTRUM_COLOR_EFFECTS)
 SPECTRUM_STYLES = (
     ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
-    *_SPECTRUM_COLOR_EFFECTS,
+    ('立体彩环', 'crown'), ('渐变彩柱', 'peak_bars'), ('彩色粒子球', 'particle_sphere'),
 )
+SPECTRUM_PALETTES = {
+    'colorful': ('经典炫彩', ('#4cdddf', '#639ffb', '#aa83fd', '#f38eba', '#ffd086')),
+    'aurora': ('薄荷极光', ('#96f4ad', '#38dabb', '#31b8ce', '#829dff', '#c996ff')),
+    'sunset': ('熔金落日', ('#ffdf77', '#ffac4c', '#ff704f', '#ee477e', '#a64692')),
+    'ocean': ('深海电光', ('#656af5', '#357ee8', '#189ed2', '#36dce4', '#bbf9ff')),
+    'orchid': ('樱莓霓虹', ('#9062ef', '#c74ade', '#f553b9', '#ff86a4', '#ffbcac')),
+    'forest': ('森林琥珀', ('#26ad84', '#63c567', '#adc94c', '#e3c750', '#ffac58')),
+}
+SPECTRUM_COLOR_MODES = tuple((title, key) for key, (title, _) in SPECTRUM_PALETTES.items()) + (('自定义单色', 'mono'),)
 RING_HEIGHT_MAX = 140
 STARTUP_ANIMATION_STYLES = (('流动描边', 'outline'), ('滚动文字', 'rolling'))
 DOCK_ICON_SHAPES = (('默认', 'default'), ('圆形', 'circle'))
@@ -28,7 +33,7 @@ DEFAULTS = {
     'flash_auto_hide':True, 'flash_edge_hide':True, 'flash_delay':2, 'flash_drop':True, 'flash_layout':{}, 'flash_entries':[], 'flash_draft':{},
     'taskbar_text_mode':'system', 'taskbar_text_auto':False, 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
-    'card_snap': True, 'card_snap_distance': 12,
+    'card_snap': True, 'card_snap_distance': 12, 'card_edge_hide': False,
     'passthrough_mode':'custom','component_passthrough':{},
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
@@ -108,6 +113,7 @@ def normalize(cfg):
     for key, value in DEFAULTS.items():
         result.setdefault(key, value.copy() if isinstance(value,(list,dict)) else value)
     if type(result['taskbar_text_auto']) is not bool:result['taskbar_text_auto'] = False
+    if type(result['card_edge_hide']) is not bool:result['card_edge_hide'] = False
     text = result['watermark_text']
     result['watermark_text'] = ' '.join(text.splitlines()).strip()[:WATERMARK_TEXT_LIMIT] if isinstance(text,str) else DEFAULTS['watermark_text']
     color = result['watermark_color']
@@ -215,7 +221,7 @@ def normalize(cfg):
     result['component_passthrough']={k:v for k,v in selection.items() if isinstance(k,str) and 0<len(k)<=104 and (v is True or v=='apps')} if isinstance(selection,dict) else {}
     if result['spectrum_style'] not in tuple(value for _, value in SPECTRUM_STYLES):
         result['spectrum_style'] = 'bars'
-    if result['spectrum_color_mode'] not in ('colorful','mono'):
+    if result['spectrum_color_mode'] not in tuple(value for _,value in SPECTRUM_COLOR_MODES):
         result['spectrum_color_mode']='colorful'
     height=result['spectrum_ring_height']
     result['spectrum_ring_height']=max(0,min(RING_HEIGHT_MAX,height)) if type(height) is int else 100

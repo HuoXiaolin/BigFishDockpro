@@ -3,7 +3,7 @@ import copy
 import uuid
 from screen_layout import normalize_layout,valid_record
 from fold_options import normalize as normalize_fold, panel_defaults, note_defaults
-from resource_options import DEFAULTS as RESOURCE_DEFAULTS, normalize as normalize_resources
+from resource_options import DEFAULTS as RESOURCE_DEFAULTS, DEVICE_ALERTS, normalize as normalize_resources
 TOP=('dock_visible','panels_visible','panel_enabled','notes_enabled','notes_visible','clock_enabled','calendar_enabled','spectrum_enabled','merged_panels',
      'merged_active','merged_geometry','merged_collapsed','merged_compact','position','custom_bottom','bottom_margin','icon_size','dock_page','disabled_categories')
 PANEL=('geometry','enabled','merged','merge_group','collapsed','compact','fold')
@@ -11,7 +11,7 @@ NOTE=('geometry','layout','visible','collapsed','fold')
 CARD=('layout','visible','locked')
 RECORDS=('clock_layout','calendar_layout','spectrum_layout','flash_layout','daily_picture_layout')
 SWITCHES=('clock_flipped','clock_locked','calendar_locked','daily_picture_enabled','daily_picture_locked','daily_picture_manual_size',
-          'spectrum_locked','spectrum_manual_size','flash_enabled','flash_edge_hide','flash_auto_hide',
+          'spectrum_locked','spectrum_manual_size','flash_enabled','flash_edge_hide','flash_auto_hide','card_edge_hide',
           'watermark_enabled','shell_start_enabled','shell_notifications_enabled',
           'shell_notifications_quick','shell_notifications_media','shell_notifications_toast','shell_notifications_calendar',
           'shell_notifications_tray_overflow','shell_notifications_taskbar_menu',
@@ -21,7 +21,8 @@ CHOICES={'calendar_style':('calendar_card','almanac'),'watermark_mode':('single'
          'panel_layer':('bottom','top'),'spectrum_layer':('bottom','top'),
          'flash_side':('left','right'),'shell_start_source':('app','custom','system'),'shell_notifications_source':('app','custom','system')}
 RESOURCE_FIELDS=tuple('resource_'+name for name in (
-    'enabled','layout','collapsed','fold','layer','edge','open_page','expand_mode',
+    'enabled','layout','collapsed','fold','layer','edge','edge_hide','open_page','expand_mode',
+    'alert_stopwatch','alert_alarm',*('alert_'+key for key in DEVICE_ALERTS),
     'compact_width','compact_height','compact_badge_height','compact_auto_width','compact_metrics','compact_order','compact_pinned',
     'compact_density','compact_rings','compact_rotate','compact_ai','compact_music','weather_compact','clock','clock_format',
     'expanded_width','expanded_height','component_locations','component_order','card_layouts',
