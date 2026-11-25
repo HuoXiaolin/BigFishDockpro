@@ -80,8 +80,9 @@ class SystemReadout(QWidget):
         tight=paired and battery_width<86
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         ink=battery_ink(level,state,c['light'],c['muted'])
+        track=QColor(c['muted']);track.setAlpha(65 if c['light'] else 84)
         circle=QRectF(1,2,22,22) if tight else QRectF(2,5,26,26)
-        ring(p,circle,level,ink,c['hover'])
+        ring(p,circle,level,ink,track)
         if level==0:ring(p,circle,None,ink,ink)
         battery_icon(p,circle.center(),state,ink)
         label=f'{level}%' if level is not None else ('AC' if state=='ac' else '—')
@@ -93,7 +94,7 @@ class SystemReadout(QWidget):
         for i,(label,value) in enumerate((('音量',volume_text),('亮度','—' if brightness is None else f'{brightness:.0f}%'))):
             top=(3 if paired else 35)+16*i
             level=brightness if i else volume[0] if volume and not volume[1] else None
-            ring(p,QRectF(split,top+2,10,10),level,c['muted'],c['hover'])
+            ring(p,QRectF(split,top+2,10,10),level,c['muted'],track)
             label_x=split+(13 if tight else 16)
             label_width=20 if tight else 24
             value_x=label_x+label_width+2
@@ -101,7 +102,7 @@ class SystemReadout(QWidget):
             text(p,QRectF(value_x,top,width-value_x,15),value,c['muted'] if value=='—' else c['ink'],
                  9 if tight else 11,True,Qt.AlignRight)
         bottom=self.height()-19
-        p.setPen(QPen(QColor(c['hover']),1))
+        p.setPen(QPen(track,1))
         p.drawLine(QPointF(0,bottom),QPointF(width,bottom))
         adapter,network=connection_labels(connection)
         font=p.font();font.setPixelSize(10);font.setWeight(font.Normal);p.setFont(font)

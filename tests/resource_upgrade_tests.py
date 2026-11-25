@@ -72,6 +72,10 @@ def content_column_checks(window,app,output,checks):
                     first,second=(layout.itemAt(index).widget().geometry() for index in (0,1))
                     assert (first.top()==second.top())==(columns==2),(key,width,first,second)
                     assert second.right()<scroll.content.width(),(key,width,second,scroll.content.width())
+                    if key=='pomodoro' and columns==2:
+                        assert first.height()<=124 and second.height()<=124,(width,first,second)
+                        for action in (scroll.content.toggle,scroll.content.drink):
+                            assert action.mapTo(scroll.viewport(),action.rect().bottomRight()).y()<scroll.viewport().height()
             assert scroll.widget().width()==scroll.viewport().width(),(key,width,scroll.widget().width(),scroll.viewport().width())
             assert abs(window.page_pager.geometry().center().x() - window.detail.rect().center().x()) <= 1, (
                 key, width, window.page_pager.geometry(), window.detail.rect())
@@ -245,6 +249,8 @@ def run(api,runtime,root,app,output,checks):
         dialog.grab().save(str(output/'upgrade-settings-halo.png'))
         speed.setCurrentIndex(speed.findData('fast'));dialog.tabs.setCurrentIndex(2)
         assert dialog.commit() and api.load_config()['resource_halo_speed']=='fast';dialog.reject()
+        from resource_halo_tests import run as check_halo
+        check_halo(api,service,app,output,checks)
         cfg.update(resource_task_metrics=['cpu','gpu','memory','network','traffic'],resource_taskbar=True)
         bar=dict(rect=QRect(0,740,1366,40),screen='test',hwnd=1,map=(0,0,0,0,1,1))
         with patch.object(Placement,'bars',return_value=[bar]),patch.object(Placement,'query',lambda p,b,r:p.accept(b,r,free_slot(b['rect'],[],r))):service.sync()
@@ -270,6 +276,8 @@ def run(api,runtime,root,app,output,checks):
         companion_ui(api,runtime,app,output,checks)
         from resource_runner_tests import run as runner_ui
         runner_ui(api,runtime,app,output,checks)
+        from quota_day_tests import run as quota_day_ui
+        quota_day_ui(api,runtime,app,output,checks)
         from resource_performance_tests import run as performance_ui
         performance_ui(api,runtime,app,output,checks)
         from resource_render_cache_tests import run as rendering_ui

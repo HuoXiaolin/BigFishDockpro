@@ -6,22 +6,24 @@ from ui_style import AlignedMenu
 from flash_view import palette_for
 from resource_options import AI_PROVIDER_NAMES, background
 from resource_pages import SCROLL_STYLE, reset_text
-from resource_quota import quota_color, tray_balance_text, tray_label, tray_readings
-from resource_status import TRAY_RING_SIZES, draw_tray_rings, ring_dimensions
+from resource_quota import daily_text, ring_ink, tray_balance_text, tray_label, tray_readings
+from resource_status import TRAY_RING_SIZES, draw_tray_rings, ring_dimensions, today_ring_ink
 from taskbar_text import foreground_ink, system_mode
 
 
-def quota_icon(levels, light):
+def quota_icon(levels, light, used_today=()):
     gray = '#566b7b' if light else '#a8bac8'
-    rings = [(value, gray if stale else quota_color(value, light), stale) for value, stale in levels]
+    rings = [(value, ring_ink(value,stale,light), stale) for value, stale in levels]
     # The diagonal meets the clockwise arc at three eighths of a turn.
     tail_ink = rings[0][1] if rings and (rings[0][0] or 0) >= 37.5 else gray
+    if rings and used_today and used_today[0] and rings[0][0] is not None and rings[0][0] < 37.5 <= rings[0][0]+used_today[0]:
+        tail_ink=today_ring_ink(not light)
     icon = QIcon()
     for size in TRAY_RING_SIZES:
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
-        draw_tray_rings(painter, QRectF(0, 0, size, size), rings, dark=not light)
+        draw_tray_rings(painter, QRectF(0, 0, size, size), rings, dark=not light,used_today=used_today)
         radius, stroke, _ = ring_dimensions(size, len(rings))
         # Keep the Q's diagonal tail within the outer ring's lane when there are inner rings.
         start = radius - stroke * .45 if len(rings) > 1 else radius * .39
@@ -79,6 +81,8 @@ def tooltip_line(reading):
         parts.append('上次读数')
     if reset := reset_text(reading.reset, compact=True):
         parts.append(reset)
+    if day := daily_text(reading.daily):
+        parts.append(day)
     return ' · '.join(parts)
 
 
@@ -161,9 +165,10 @@ class AiTray(QObject):
         else:
             self.taskbar_ink = None
             levels = tuple((row.remaining, row.stale) for row in self.readings if row.remaining is not None)
-            key = (light, levels)
+            portions=tuple(row.daily.in_window if row.daily else None for row in self.readings if row.remaining is not None)
+            key = (light, levels, portions)
         if key != self.key:
-            icon = amount_icon(self.balance, self.taskbar_ink) if self.balance else quota_icon(levels, light)
+            icon = amount_icon(self.balance, self.taskbar_ink) if self.balance else quota_icon(levels, light, portions)
             self.tray.setIcon(icon)
             self.key = key
 

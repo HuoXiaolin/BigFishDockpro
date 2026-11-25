@@ -15,7 +15,7 @@ from resource_options import (CAPSULE_PAGES,CAPSULE_TASKBAR_POSITIONS,COMPACT_BA
                               DESKTOP_COMPONENTS,FACE_SWITCH_RANGE,PLACED_COMPONENTS,REMINDER_OPTIONS,clean_weather_thresholds,component_location)
 from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_metric_options
 from resource_device_picker import DevicePicker
-from resource_options import DEVICE_ALERTS, DEVICE_SOURCES, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS
+from resource_options import DEVICE_ALERTS, DEVICE_SOURCES, HALO_COLOR_MODES, HALO_SPEEDS, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS, clean_halo_color
 from settings_design import NumericControl,SettingsNavigation
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
@@ -72,7 +72,7 @@ class ResourceOptions(QDialog):
            'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'} | {'resource_alert_'+key for key in DEVICE_ALERTS},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
-        {'resource_halo','resource_halo_speed','resource_background','resource_backdrop_mode','resource_palette','resource_card_transparency'},
+        {'resource_halo','resource_halo_speed','resource_halo_color_mode','resource_halo_mono_color','resource_background','resource_backdrop_mode','resource_palette','resource_card_transparency'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
         {'resource_edge_snap','resource_edge_hide','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
@@ -99,6 +99,8 @@ class ResourceOptions(QDialog):
                         widget.select_device(value)
                     elif isinstance(widget, ModernComboBox):
                         widget.setCurrentIndex(max(0, widget.findData(value)))
+                    elif isinstance(widget, QLineEdit):
+                        widget.setText(value)
                     elif isinstance(widget, ModernSpinBox):
                         widget.setValue(value)
                         widget.sync_steps()
@@ -110,6 +112,7 @@ class ResourceOptions(QDialog):
             if index == 4:
                 self.color.setText(draft['text'])
                 self.custom_box.setVisible(self.fields['resource_background'].currentData()=='custom')
+                self.sync_halo_fields()
             elif index == 2:
                 self.fields['resource_clock_format'].setEnabled(self.fields['resource_clock'].isChecked())
                 self.sync_runner_fields()
@@ -131,7 +134,7 @@ class ResourceOptions(QDialog):
         elif index == 3:
             self.sync_ai_tray_fields()
         if draft:
-            self.tabs.widget(index).findChild(QScrollArea).verticalScrollBar().setValue(draft['scroll'])
+            root.layout().itemAt(0).widget().verticalScrollBar().setValue(draft['scroll'])
 
     @staticmethod
     def value(widget):
@@ -139,6 +142,8 @@ class ResourceOptions(QDialog):
             return widget.currentData()
         if isinstance(widget, ModernSpinBox):
             return widget.value()
+        if isinstance(widget, QLineEdit):
+            return widget.text().strip()
         return widget.isChecked()
 
     def snapshot_page(self, index):
@@ -146,7 +151,7 @@ class ResourceOptions(QDialog):
         for name in self.page_stores.get(index, ()):
             stores[name] = {key: self.value(widget) for key, widget in dict.items(getattr(self, name))}
         text = self.color.text() if index == 4 else self.weather_cities.text() if index == 7 else ''
-        scroll = self.tabs.widget(index).findChild(QScrollArea).verticalScrollBar().value()
+        scroll = self.tabs.widget(index).layout().itemAt(0).widget().verticalScrollBar().value()
         self.drafts[index] = dict(stores=stores, text=text, scroll=scroll)
         if index == 7:
             self.drafts[index]['feeds'] = self.news_feeds.toPlainText()
@@ -384,7 +389,7 @@ class ResourceOptions(QDialog):
                        values['resource_ai_tray_mode'],self.fields)
             provider=combo(tray_form,'resource_ai_tray_provider','固定工具',[],'',self.fields)
             combo(tray_form,'resource_ai_tray_metric','固定额度',[],'',self.fields)
-            note=QLabel('自动优先显示最短周期的额度。没有可显示的额度环时，直接显示余额。')
+            note=QLabel('彩色表示剩余额度，浅灰表示本周期内今日已用。自动模式优先显示最短周期，仅有余额时显示金额。')
             note.setProperty('role','muted');note.setWordWrap(True);tray.addWidget(note)
             for key, checked in draft.get('ai_fields', {}).items():
                 self.ai_fields[key].setChecked(checked)
@@ -436,11 +441,27 @@ class ResourceOptions(QDialog):
             for key,title in [('cpu','CPU'),('memory','内存'),('network','网速'),('gpu','GPU')]:
                 b=QPushButton(title);b.clicked.connect(lambda checked=False,key=key:self.choose(key));colors.addWidget(b);self.swatches[key]=b
             self.color_preview()
-            from resource_options import HALO_SPEEDS
-            self.fields['resource_halo']=check('彩色流动光环',cfg['resource_halo'])
+            from resource_compact import HALO_RAINBOW, halo_default_color
+            from settings_field_editors import color_editor
+            from spectrum_effects import color_strip_icon, palette_icon
+            from spectrum_palettes import SPECTRUM_PALETTES
+            self.fields['resource_halo']=check('流动光环',cfg['resource_halo'])
             style.addWidget(self.fields['resource_halo'])
             halo=QFormLayout();style.addLayout(halo)
+            mode=combo(halo,'resource_halo_color_mode','光环配色',HALO_COLOR_MODES,cfg['resource_halo_color_mode'],self.fields)
+            mode.setItemIcon(mode.findData('rainbow'),color_strip_icon(tuple(c.name() for c in HALO_RAINBOW)))
+            for key in SPECTRUM_PALETTES:
+                mode.setItemIcon(mode.findData(key),palette_icon(key))
+            default=halo_default_color(cfg,self.service.runtime.dock.is_light())
+            editor,mono=color_editor(self,'光环单色',default)
+            mono.setText(cfg['resource_halo_mono_color'])
+            self.fields['resource_halo_mono_color']=mono
+            halo.addRow('光环单色',editor)
             combo(halo,'resource_halo_speed','光环流动速度',[(title,key) for key,(title,_) in HALO_SPEEDS.items()],cfg['resource_halo_speed'],self.fields)
+            self.fields['resource_halo'].toggled.connect(self.sync_halo_fields)
+            mode.currentIndexChanged.connect(self.sync_halo_fields)
+            mono.textChanged.connect(self.sync_halo_fields)
+            self.sync_halo_fields()
             layout.addStretch()
 
         def build_5():
@@ -810,6 +831,18 @@ class ResourceOptions(QDialog):
         color=QColorDialog.getColor(QColor(self.color.text() or '#8fbfe0'),self,'背景主题色')
         if color.isValid():self.color.setText(color.name())
 
+    def sync_halo_fields(self):
+        from resource_compact import halo_default_color
+        from spectrum_effects import color_strip_icon
+        enabled=self.fields['resource_halo'].isChecked()
+        mode=self.fields['resource_halo_color_mode']
+        mono=self.fields['resource_halo_mono_color']
+        mode.setEnabled(enabled)
+        self.fields['resource_halo_speed'].setEnabled(enabled)
+        mono.parentWidget().setEnabled(enabled and mode.currentData()=='mono')
+        color=clean_halo_color(mono.text().strip()) or halo_default_color(self.service.cfg,self.service.runtime.dock.is_light())
+        mode.setItemIcon(mode.findData('mono'),color_strip_icon((color,color)))
+
     def color_preview(self):
         for key,b in self.swatches.items():b.setStyleSheet('border-bottom:3px solid '+self.tints.get(key,TINTS[key])+';')
     def choose(self,key):
@@ -908,6 +941,8 @@ class ResourceOptions(QDialog):
                 self.status.setText('请选择固定显示的 AI 工具和额度。')
                 return False
         if 4 in self.drafts:
+            try:changes['resource_halo_mono_color']=clean_halo_color(changes['resource_halo_mono_color'],True)
+            except ValueError as error:self.status.setText(str(error));return False
             changes['resource_tints']=dict(self.tints)
             custom=dict(self.drafts[4]['stores']['custom_fields'], color=self.drafts[4]['text'].strip().lower())
             saved=self.baseline['resource_appearance'] or clean_background(background(self.baseline))

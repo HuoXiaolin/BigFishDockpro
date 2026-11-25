@@ -6,7 +6,7 @@ import sys
 from time import perf_counter
 
 from PyQt5.QtCore import QObject, QRect, QTimer, Qt
-from PyQt5.QtGui import QCursor, QIcon, QImage, QPixmap
+from PyQt5.QtGui import QCursor, QIcon, QImage, QImageReader, QPixmap
 from PyQt5.QtWidgets import QSystemTrayIcon, QToolTip
 
 from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS, RUNNER_SLOT
@@ -14,6 +14,32 @@ from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS,
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets' / 'runner'
 FRAMES = 8
+TILE_SIZE = 128
+
+
+def uptime_minutes():
+    import ctypes
+    try:
+        ticks=ctypes.windll.kernel32.GetTickCount64
+        ticks.argtypes=()
+        ticks.restype=ctypes.c_uint64
+        return ticks()//60_000
+    except (AttributeError, OSError):
+        return None
+
+
+def uptime_text(minutes):
+    if minutes is None:
+        return '暂不可用'
+    if minutes==0:
+        return '不足 1 分钟'
+    hours, minutes=divmod(minutes,60)
+    days, hours=divmod(hours,24)
+    if days:
+        return f'{days} 天 {hours} 小时 {minutes} 分钟'
+    if hours:
+        return f'{hours} 小时 {minutes} 分钟'
+    return f'{minutes} 分钟'
 
 
 def frame_rate(speed, percent):
@@ -29,12 +55,18 @@ def capsule_rect(window):
     return QRect(window.width() - inset - side, (window.height() - side) // 2, side, side)
 
 
+@lru_cache(maxsize=len(RUNNER_ANIMALS))
+def frame_count(animal):
+    size = QImageReader(str(ASSETS / (animal + '.png'))).size()
+    return max(1, size.width() // TILE_SIZE * (size.height() // TILE_SIZE))
+
+
 def _tiles(animal, *, tray=False):
     sheet = QImage(str(ASSETS / (animal + '.png'))).convertToFormat(QImage.Format_ARGB32_Premultiplied)
-    side = sheet.height() // 2
+    columns = max(1, sheet.width() // TILE_SIZE)
     inset = int(sheet.text('TrayInset') or 0) if tray else 0
-    for frame in range(FRAMES):
-        rect = QRect(frame % 4 * side, frame // 4 * side, side, side)
+    for frame in range(frame_count(animal)):
+        rect = QRect(frame % columns * TILE_SIZE, frame // columns * TILE_SIZE, TILE_SIZE, TILE_SIZE)
         yield sheet.copy(rect.adjusted(inset, inset, -inset, -inset))
 
 
@@ -67,6 +99,7 @@ class RunningAnimal(QObject):
         self.metric = None
         self.device = ''
         self.readout = ''
+        self.metric_text = ''
         self.frame = 0
         self.fps = 0
         self.next_frame = 0.0
@@ -118,16 +151,23 @@ class RunningAnimal(QObject):
         if self.device:
             name = self.service.hardware_name(self.metric, self.device)
             text += f' · {name}'
-        if text != self.readout:
-            self.readout = text
-            if self.tray is not None:
-                self.tray.setToolTip(text)
-            else:
-                window = self.service.window
-                if window.runner_hovered and QToolTip.isVisible() and capsule_rect(window).contains(window.mapFromGlobal(QCursor.pos())):
-                    self.show_reading(QCursor.pos())
+        self.metric_text = text
+        if self.refresh_readout() and self.tray is None:
+            window = self.service.window
+            if window.runner_hovered and QToolTip.isVisible() and capsule_rect(window).contains(window.mapFromGlobal(QCursor.pos())):
+                self.show_reading(QCursor.pos())
+
+    def refresh_readout(self):
+        text=f'{self.metric_text}\n本次开机时长　{uptime_text(uptime_minutes())}'
+        if text==self.readout:
+            return False
+        self.readout=text
+        if self.tray is not None:
+            self.tray.setToolTip(text)
+        return True
 
     def show_reading(self, point):
+        self.refresh_readout()
         if self.tray is not None:
             QToolTip.showText(point, self.readout)
         else:
@@ -151,7 +191,7 @@ class RunningAnimal(QObject):
         # Keep fractional deadlines. After a delayed event, paint only the current frame.
         steps = max(1, 1 + floor((now - self.next_frame) * self.fps))
         self.next_frame += steps / self.fps
-        self.frame = (self.frame + steps) % FRAMES
+        self.frame = (self.frame + steps) % frame_count(self.animal)
         self.schedule_frame(now)
         if self.tray is not None:
             self.tray.setIcon(tray_frame(self.animal, self.frame))

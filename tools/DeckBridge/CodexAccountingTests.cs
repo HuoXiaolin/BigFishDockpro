@@ -74,6 +74,22 @@ static class CodexAccountingTests
             Check(Read(reader).Entries.Count == 1, "narrowed range discards older entries");
             File.AppendAllText(file, Record(3, "current-day", u));
             s = Read(reader); Check(s.UsageComplete && s.Entries.Count == 1, "response index remains valid after date range changes");
+
+            string Quota(int second, int percent) => Line(second, "event_msg", new { type = "token_count", rate_limits = new {
+                limit_id = "codex", plan_type = "plus", secondary = new { used_percent = percent, window_minutes = 10080, resets_at = at.AddDays(3).ToUnixTimeSeconds() }
+            } });
+            File.WriteAllText(file, Quota(-86400, 12) + Quota(8, 52));
+            File.WriteAllText(Path.Combine(sessions, "other.jsonl"), Quota(7, 41) + Quota(2, 26));
+            reader = new LogReader();
+            s = Read(reader);
+            var first = JsonSerializer.Deserialize<JsonElement>(s.Details["quotaDayStart"]);
+            var metric = first.GetProperty("quotas")[0];
+            Check(first.GetProperty("at").GetDateTimeOffset() == at.AddSeconds(2) && first.GetProperty("plan").GetString() == "plus" &&
+                metric.GetProperty("window").GetInt32() == 10080 && metric.GetProperty("percent").GetDouble() == 26 &&
+                metric.GetProperty("reset").GetDateTimeOffset() == at.AddDays(3) && s.Quotas.Single().UsedPercent == 52,
+                "earliest local-day quota across files, with a separate latest reading");
+            Check(!reader.Read(ProviderId.Codex, root, at.AddDays(1), at.LocalDateTime.Date).Details.ContainsKey("quotaDayStart"),
+                "cached quota baseline expires at local midnight");
         }
         finally { Directory.Delete(root, recursive: true); }
     }

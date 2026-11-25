@@ -177,8 +177,9 @@ class Headline(QAbstractButton):
         self.accent=accent
         stamp=entry['stamp']
         when=time.strftime('%m/%d %H:%M',time.localtime(stamp)) if stamp is not None else ''
+        self.date_text=when
         self.metadata=' · '.join(value for value in (entry['source'],when) if value)
-        self.setFixedHeight(39)
+        self.setFixedHeight(44)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAccessibleName(entry['title'])
@@ -193,13 +194,18 @@ class Headline(QAbstractButton):
         if self.accent:
             from card_design import blend
             base=blend(QColor('#f9fbfd' if c['light'] else '#1a212d'),QColor(self.accent),.27 if c['light'] else .36)
-        paint_capsule_card(p,QRectF(self.rect()),c,'lavender',self.owner.background,radius=7,base=base,
+        paint_capsule_card(p,QRectF(self.rect()),c,'sky' if self.accent else 'paper',self.owner.background,radius=7,base=base,
                            active=self.isDown() or self.underMouse(),focused=self.hasFocus())
         if self.accent:
             p.setPen(Qt.NoPen);p.setBrush(QColor(self.accent))
-            p.drawRoundedRect(QRectF(4,8,3,self.height()-16),1.5,1.5)
-        text(p,QRectF(10,3,self.width()-37,17),self.entry['title'],c['ink'],12,True)
-        text(p,QRectF(10,21,self.width()-37,13),self.metadata,c['muted'],10)
+            p.drawEllipse(QRectF(9,28,5,5))
+        text(p,QRectF(10,4,self.width()-34,19),self.entry['title'],c['ink'],13,True)
+        inset=19 if self.accent else 10
+        if self.width()>=240 and self.date_text:
+            text(p,QRectF(inset,24,self.width()-inset-102,14),self.entry['source'],c['muted'],10)
+            text(p,QRectF(self.width()-96,24,73,14),self.date_text,c['muted'],10,False,Qt.AlignRight)
+        else:
+            text(p,QRectF(inset,24,self.width()-inset-23,14),self.metadata,c['muted'],10)
         p.setPen(QPen(QColor(c['muted']),1.3,Qt.SolidLine,Qt.RoundCap))
         x,y=self.width()-16,self.height()/2
         p.drawLine(QPointF(x-2,y-3),QPointF(x+1,y))
@@ -230,7 +236,7 @@ class ContentView(QWidget):
             self.wallpaper=self.control(head,'设为壁纸',lambda:self.save_original(True),
                                         '将当前原图设为所有屏幕的 Windows 桌面壁纸',symbol='wallpaper')
         else:
-            self.heading=label('新闻订阅');head.addWidget(self.heading,1)
+            self.heading=label('新闻订阅');self.heading.setObjectName('RankTitle');head.addWidget(self.heading,1)
             self.reload=self.control(head,'刷新',self.refresh_now)
         body.addLayout(head)
         self.status=label('','muted')

@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from math import isfinite
 import re
+from typing import NamedTuple
 
 from resource_status import band_ink
 
@@ -94,6 +95,12 @@ def quota_color(remaining, light=False):
     return band_ink(remaining, 10, 0, 'red', light)
 
 
+def ring_ink(remaining, stale, light):
+    if stale:
+        return '#566b7b' if light else '#a8bac8'
+    return quota_color(remaining,light)
+
+
 def quota_text(metric):
     amount = amount_text(metric)
     if amount is not None:
@@ -163,13 +170,40 @@ class TrayReading:
     amount: str | None
     reset: str | None
     stale: bool
+    daily: 'DailyQuota | None' = None
 
 
-def _tray_reading(row, metric):
+class DailyQuota(NamedTuple):
+    in_window: float
+    total: float
+    partial: bool
+
+
+def daily_text(daily):
+    if daily is None:return ''
+    if daily.partial and daily.total==0:return '今日用量待累计'
+    def percent(value):
+        return '<0.1%' if 0<value<.1 else f'{value:.1f}'.rstrip('0').rstrip('.')+'%'
+    text=('今日已记录 ' if daily.partial else '今日已用 ')+percent(daily.total)
+    if daily.total>daily.in_window+.05:
+        text+=f'（本周期 {percent(daily.in_window)}）'
+    return text
+
+
+def quota_reading(row, metric):
     name = ' '.join(filter(None, (row['name'], provider_plan_name(row))))
-    return TrayReading(row['id'], name, tray_metric_key(metric), metric.get('label') or '额度', quota_window(metric),
+    key,window=tray_metric_key(metric),quota_window(metric)
+    return TrayReading(row['id'], name, key, metric.get('label') or '额度', window,
                        remaining_percent(used_percent(metric)), _tray_balance(metric),
-                       metric.get('reset'), bool(row.get('stale')))
+                       metric.get('reset'), bool(row.get('stale')),row.get('_quota_today',{}).get((key,window)))
+
+
+def capsule_reading(row):
+    metrics = row.get('quotas', ())
+    metric = next((q for q in metrics if _tray_balance(q) not in (None, '—')), None)
+    if metric is None:
+        metric = max((q for q in metrics if used_percent(q) is not None), key=used_percent, default=None)
+    return quota_reading(row, metric) if metric is not None else None
 
 
 def _by_window(metric):
@@ -192,7 +226,7 @@ def tray_readings(rows, mode, provider, target):
     if mode == 'fixed':
         row = next((row for row in rows if row['id'] == provider), None)
         if row and (metric := _fixed_tray_metric(row.get('quotas', []), target)):
-            return (_tray_reading(row, metric),)
+            return (quota_reading(row, metric),)
         return ()
 
     readings, balances = [], []
@@ -200,9 +234,9 @@ def tray_readings(rows, mode, provider, target):
         metrics = row.get('quotas', [])
         metric = min((q for q in metrics if used_percent(q) is not None), key=_by_window, default=None)
         if metric:
-            readings.append(_tray_reading(row, metric))
+            readings.append(quota_reading(row, metric))
         elif (balance := _fixed_tray_metric(metrics, 'balance')):
-            balances.append(_tray_reading(row, balance))
+            balances.append(quota_reading(row, balance))
     if readings:
         return tuple(sorted(readings, key=lambda reading: (
             reading.stale, reading.window or float('inf'), reading.remaining, reading.provider))[:3])

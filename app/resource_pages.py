@@ -289,9 +289,7 @@ class TrafficReadout(QWidget):
 
     def fit_cards(self):
         self.columns=content_columns(self.owner.width())
-        pairs,unpaired=divmod(len(self.periods),2) if self.columns==2 else (0,len(self.periods))
-        rows=pairs+unpaired
-        self.setFixedHeight(pairs*83+unpaired*57+(rows-1)*self.gap)
+        self.setFixedHeight(65+self.gap+75 if self.columns==2 else 65+2*(53+self.gap))
 
     def resizeEvent(self,event):
         self.fit_cards()
@@ -303,20 +301,19 @@ class TrafficReadout(QWidget):
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         data=self.owner.service.latest.get('traffic') or {}
         for i,(key,label,tint) in enumerate(self.periods):
-            row,column=divmod(i,self.columns)
-            paired=self.columns==2 and (row+1)*self.columns<=len(self.periods)
+            paired=self.columns==2 and i>0
             width=(self.width()-self.gap)/2 if paired else self.width()
-            height=83 if paired else 57
-            x=column*(width+self.gap)
-            y=row*((83 if self.columns==2 else 57)+self.gap)
+            height=65 if i==0 else 75 if paired else 53
+            x=(i-1)*(width+self.gap) if paired else 0
+            y=0 if i==0 else 65+self.gap+(0 if paired else (i-1)*(53+self.gap))
             values=data.get(key)
             paint_capsule_card(p,QRectF(x,y,width,height),c,tint,self.owner.background)
-            text(p,QRectF(x+10,y+5,width-20,16),label,c['muted'],10)
+            text(p,QRectF(x+11,y+5,width-22,16),label,c['muted'],11,True)
             total=amount(sum(values)) if values is not None else '—'
-            text(p,QRectF(x+10,y+21,width-20 if paired else width/2-12,25),total,c['ink'],18,True)
+            text(p,QRectF(x+11,y+21,width-22 if paired else width/2-12,30),total,c['ink'],21 if i==0 else 17,True)
             detail_x=x+10 if paired else x+width/2
             detail_width=x+width-10-detail_x
-            detail_y=y+48 if paired else y+10
+            detail_y=y+44 if paired else y+(15 if i==0 else 10)
             for offset,(title,direction) in enumerate((('上传',1),('下载',0))):
                 top=detail_y+15*offset
                 text(p,QRectF(detail_x,top,detail_width,14),title,c['muted'],10)
@@ -467,9 +464,12 @@ class TransportButton(QToolButton):
         c=self.view.owner.colors
         if not c:return
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        if self.underMouse() or self.op=='PlayPause':
-            p.setPen(Qt.NoPen);p.setBrush(QColor(c['hover']));p.drawEllipse(QRectF(self.rect()).adjusted(1,1,-1,-1))
+        if self.underMouse() or self.hasFocus() or self.op=='PlayPause':
+            fill=c['ink'] if self.op=='PlayPause' and self.isEnabled() else c['hover']
+            p.setPen(QPen(QColor(c['muted']),1) if self.hasFocus() else Qt.NoPen)
+            p.setBrush(QColor(fill));p.drawEllipse(QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5))
         p.translate(self.width()/2,self.height()/2);p.scale(.8,.8);ink=QColor(c['ink'] if self.op in ('PlayPause','Previous','Next') or self.active else c['muted'])
+        if self.op=='PlayPause' and self.isEnabled():ink=QColor(c['field'])
         if not self.isEnabled():ink.setAlpha(70)
         p.setPen(QPen(ink,1.8,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin));p.setBrush(ink)
         def shape(points):
@@ -507,8 +507,14 @@ class CoverArt(QWidget):
             pix=bridge.cover;side=min(pix.width(),pix.height());p.drawPixmap(r,pix,QRectF((pix.width()-side)/2,(pix.height()-side)/2,side,side))
         else:
             p.fillRect(r,QColor(c['hover']));p.setPen(QPen(QColor(c['muted']),1.5));p.setBrush(Qt.NoBrush)
-            p.drawEllipse(r.center(), r.width() * .30, r.height() * .30)
-            p.drawEllipse(r.center(), 1.5, 1.5)
+            disc=QColor('#574d69' if c['light'] else '#bcb0cc')
+            p.setBrush(disc);p.setPen(Qt.NoPen);p.drawEllipse(r.center(),r.width()*.38,r.height()*.38)
+            groove=QColor('#e3d9ed' if c['light'] else '#4b4156');groove.setAlpha(112)
+            p.setBrush(Qt.NoBrush);p.setPen(QPen(groove,.8))
+            for scale in (.25,.31):
+                p.drawEllipse(r.center(),r.width()*scale,r.height()*scale)
+            p.setBrush(QColor(c['field']));p.setPen(Qt.NoPen);p.drawEllipse(r.center(),r.width()*.11,r.height()*.11)
+            p.setBrush(disc);p.drawEllipse(r.center(),1.4,1.4)
 
 
 class AudioMeter(QWidget):
@@ -564,8 +570,8 @@ class MusicView(CapsuleScrollArea):
     def __init__(self,window):
         super().__init__();self.owner=window;self.track_id='';self.seeking=False;self.route_ids=None
         body=QWidget();self.setWidget(body);outer=QVBoxLayout(body);outer.setContentsMargins(3,2,3,2);outer.setSpacing(0)
-        self.card=DashboardCard(window,'ice',body);outer.addWidget(self.card);outer.addStretch(1)
-        lay=QVBoxLayout(self.card);lay.setContentsMargins(9,7,9,8);lay.setSpacing(5)
+        self.card=DashboardCard(window,'amethyst',body);outer.addWidget(self.card);outer.addStretch(1)
+        lay=QVBoxLayout(self.card);lay.setContentsMargins(12,8,12,9);lay.setSpacing(6)
         head=QHBoxLayout();title=QLabel('媒体控制');title.setObjectName('RankTitle');head.addWidget(title,1)
         self.sources=ModernComboBox();self.sources.setMaximumWidth(224);self.sources.setMinimumWidth(60);self.sources.setFixedHeight(21);head.addWidget(self.sources)
         self.sources.setProperty('glassField',True)
@@ -585,14 +591,13 @@ class MusicView(CapsuleScrollArea):
         self.time=QLabel();self.duration=QLabel()
         for label in (self.time,QLabel('/'),self.duration):
             label.setObjectName('Subtle');progress.addWidget(label)
-        texts.addLayout(progress)
         controls=self.controls_layout=QHBoxLayout();controls.setSpacing(3);self.buttons={}
         for op,title in [('Previous','上一首'),('PlayPause','播放 / 暂停'),('Next','下一首'),('Shuffle','随机播放'),('Repeat','循环播放')]:
             btn=TransportButton(self,op,title);controls.addWidget(btn);self.buttons[op]=btn
         controls.addStretch(1)
-        texts.addLayout(controls)
         texts.addWidget(self.lyric)
         content.addLayout(texts,1);lay.addLayout(content)
+        lay.addLayout(progress);lay.addLayout(controls)
         self.status=QLabel();self.status.setObjectName('Subtle');self.status.setWordWrap(True);lay.addWidget(self.status)
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -601,7 +606,7 @@ class MusicView(CapsuleScrollArea):
         self.content_layout.setSpacing(7 if small else 12);self.controls_layout.setSpacing(1 if small else 5)
         self.fit_title()
     def fit_title(self):
-        size=11 if self.width()<350 else 13
+        size=12 if self.width()<350 else 15
         font=QFont(self.title.font());font.setPixelSize(size);font.setWeight(QFont.DemiBold)
         available=max(1,self.viewport().width()-self.cover.width()-self.content_layout.spacing()-24)
         self.title.lines=1 if QFontMetrics(font).horizontalAdvance(self.title.text())<=available else 2

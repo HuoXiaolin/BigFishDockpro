@@ -33,6 +33,72 @@ def check_coat(animal, image):
         assert any(min(r,g,b)>185 for r,g,b in fur)
 
 
+def check_penguin_waddle():
+    from resource_runner import frame_count, sprite, tray_frame
+
+    def center_x(points):
+        assert points
+        return sum(x for x, y in points) / len(points)
+
+    def center_y(points):
+        assert points
+        return sum(y for x, y in points) / len(points)
+
+    count = frame_count('penguin')
+    assert count == 48
+    for size in (16, 20, 24, 32):
+        capsule = [sprite('penguin', i, size).toImage() for i in range(count)]
+        tray = [tray_frame('penguin', i).pixmap(size, size).toImage() for i in range(count)]
+        for frames in (capsule, tray):
+            side = frames[0].width()
+            head = frames[0].copy(0, 0, side, round(.44 * side))
+            bill = [(x, y) for y in range(head.height()) for x in range(side)
+                    for r, g, b, a in [head.pixelColor(x, y).getRgb()]
+                    if a >= 65 and r > 86 and r - g > 25 and g - b > 24]
+            assert center_x(bill) > .69 * side
+            belly_edges, soles = [], []
+            for im in frames:
+                assert im.copy(head.rect()) == head, (size, 'moving head')
+                row = round(.80 * (side - 1))
+                cream = [x for x in range(side) for r, g, b, a in [im.pixelColor(x, row).getRgb()]
+                         if a > 185 and min(r, g, b) > 156 and r > b]
+                belly_edges.append(max(cream))
+                soles.append(max(y for y in range(side) for x in range(side) if im.pixel(x, y) >> 24 >= 64))
+            assert max(belly_edges) - min(belly_edges) <= 1 and max(soles) - min(soles) <= 1
+
+    near_feet, far_feet, near_wings, far_wings = {}, {}, {}, {}
+    for i in (0, 12, 18, 24, 36):
+        im = sprite('penguin', i, 128).toImage()
+        points = [(x, y, *im.pixelColor(x, y).getRgb()) for y in range(64, 128) for x in range(128)]
+        shoes = [(x, y, r) for x, y, r, g, b, a in points if y >= 103 and a > 225 and r - g > 64 and g - b > 60]
+        near_feet[i] = [(x, y) for x, y, r in shoes if r >= 240]
+        far_feet[i] = [(x, y) for x, y, r in shoes if 195 <= r <= 228]
+        if i in (0, 24):
+            near_wings[i] = [(x, y) for x, y, r, g, b, a in points if y < 108 and a > 215
+                             and 80 < r < 200 and r <= b < r + 40 and abs(r - g) < 8]
+            far_wings[i] = [(x, y) for x, y, r, g, b, a in points if y < 110 and a > 205
+                            and 14 < r < 100 and g >= r + 6 and b > g + 10]
+        if i in (0, 12, 24, 36):
+            # The light breast remains visible from the side, even when the
+            # nearer flipper crosses the flank. Its outline must stay fixed.
+            contour = tuple(max(x for x, y, r, g, b, a in points if y == row and a > 200
+                                and min(r, g, b) > 156 and r > b) for row in (88, 96, 101, 104, 106))
+            if i == 0:
+                reference = contour
+            else:
+                assert contour == reference
+    assert center_x(near_feet[0]) > center_x(far_feet[0]) + 8
+    assert center_x(near_feet[24]) + 12 < center_x(far_feet[24])
+    assert abs(center_y(near_feet[0]) - center_y(near_feet[12])) < 1.5
+    assert center_y(near_feet[36]) < center_y(near_feet[12]) - 4
+    assert max(y for x, y in far_feet[18] if x >= 64) < max(y for x, y in far_feet[24] if x >= 64)
+    # At near-foot contact the near flipper trails and the far one leads.
+    # After the opposite contact their fore/aft order has reversed.
+    assert center_x(near_wings[0]) + 7 < center_x(near_wings[24])
+    assert center_x(far_wings[0]) > center_x(near_wings[0]) + 28
+    assert center_x(far_wings[24]) + 24 < center_x(near_wings[24])
+
+
 def run(api, runtime, app, output, checks):
     from PyQt5.QtCore import QEvent, QEventLoop, QPointF, QRect, QTimer, Qt
     from PyQt5.QtGui import QHelpEvent, QImage, QMouseEvent
@@ -42,7 +108,7 @@ def run(api, runtime, app, output, checks):
     from resource_options import RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SLOT, RUNNER_SPEEDS
     from resource_devices import Device, device_key
     from resource_metrics import busiest_disk, disk_loads, gpu_loads, network_device_readings, network_utilization
-    from resource_runner import ASSETS, FRAMES, capsule_rect, frame_rate, sprite, tray_frame
+    from resource_runner import ASSETS, FRAMES, capsule_rect, frame_count, frame_rate, sprite, tray_frame, uptime_minutes, uptime_text
     from resource_settings import ResourceOptions
     from settings_catalog import TASKBAR
 
@@ -66,6 +132,11 @@ def run(api, runtime, app, output, checks):
         taskbar = action(action(tray.contextMenu(), '系统外观').menu(), '任务栏').menu()
         return action(taskbar, '托盘小动物').menu()
 
+    assert isinstance(uptime_minutes(),int) and uptime_minutes()>=0
+    assert [uptime_text(v) for v in (None,0,1,60,1440)]==['暂不可用','不足 1 分钟','1 分钟','1 小时 0 分钟','1 天 0 小时 0 分钟']
+    boot=patch('resource_runner.uptime_minutes',return_value=2*1440+3*60+4)
+    boot.start()
+    uptime='\n本次开机时长　2 天 3 小时 4 分钟'
     try:
         cfg.update(resource_runner_enabled=False, resource_runner_animal='cat', resource_runner_speed='adaptive',resource_runner_metric='cpu',
                    resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='adaptive',resource_tray_runner_metric='cpu',
@@ -145,10 +216,13 @@ def run(api, runtime, app, output, checks):
             service.accept_sample(dict(time=time.monotonic(), cpu=load))
             speeds.append(runner.fps)
             assert runner.timer.isActive() == (load > 0)
-            assert runner.tray.toolTip()==f'小狗 CPU {load}%'
+            assert runner.tray.toolTip()==f'小狗 CPU {load}%'+uptime
             if load==50:
                 runner.tray.activated.emit(QSystemTrayIcon.Trigger)
-                assert QToolTip.text()=='小狗 CPU 50%'
+                assert QToolTip.text()=='小狗 CPU 50%'+uptime
+                with patch('resource_runner.uptime_minutes',return_value=2*1440+3*60+5):
+                    runner.tray.activated.emit(QSystemTrayIcon.Trigger)
+                    assert QToolTip.text().endswith('3 小时 5 分钟') and runner.tray.toolTip()==QToolTip.text()
                 QToolTip.hideText()
         assert speeds == [0, 24, 48, 72, 96], speeds
         assert [frame_rate('adaptive', load) for load in (-1, None, float('nan'), 120)] == [0, 0, 0, 96]
@@ -163,14 +237,14 @@ def run(api, runtime, app, output, checks):
             assert key in service.active_keys() and api.load_config()['resource_tray_runner_metric']==key
             now=time.monotonic()
             service.accept_sample({'time':now,key:(50.,100,200) if key=='memory' else 50.})
-            assert runner.fps==48 and runner.tray.toolTip()==f'小狗 {label} 50%'
+            assert runner.fps==48 and runner.tray.toolTip()==f'小狗 {label} 50%'+uptime
             service.accept_sample({'time':now+20,key:None})
-            assert runner.fps==0 and not runner.timer.isActive() and runner.tray.toolTip()==f'小狗 {label} —'
+            assert runner.fps==0 and not runner.timer.isActive() and runner.tray.toolTip()==f'小狗 {label} —'+uptime
         for mode, fps in (('fixed_low',24), ('fixed_medium',48), ('fixed_high',96)):
             menu = pet_menu()
             action(action(menu, '奔跑速度').menu(), RUNNER_SPEEDS[mode]).trigger()
             service.accept_sample(dict(time=time.monotonic(),network_utilization=27))
-            assert runner.fps == fps and runner.tray.toolTip()=='小狗 网络 27%'
+            assert runner.fps == fps and runner.tray.toolTip()=='小狗 网络 27%'+uptime
         # Replay Qt's integer-millisecond wake-ups. Rounding every frame to
         # 10 ms would finish all 96 updates 40 ms early.
         first_deadline = runner.next_frame
@@ -192,13 +266,15 @@ def run(api, runtime, app, output, checks):
         assert runner.animal == 'cat' and api.load_config()['resource_runner_animal'] == 'rabbit'
         for animal in RUNNER_ANIMALS:
             sheet = QImage(str(ASSETS / (animal + '.png'))).convertToFormat(QImage.Format_ARGB32_Premultiplied)
-            assert sheet.width() == 512 and sheet.height() == 256
+            columns, rows = (8, 6) if animal == 'penguin' else (4, 2)
+            assert (sheet.width(), sheet.height()) == (columns * 128, rows * 128)
+            assert frame_count(animal) == columns * rows
             inset = int(sheet.text('TrayInset'))
             assert 0 <= inset < 64
             fills_slot = False
             frames = set()
-            for frame in range(FRAMES):
-                tile = sheet.copy(frame % 4 * 128, frame // 4 * 128, 128, 128)
+            for frame in range(frame_count(animal)):
+                tile = sheet.copy(frame % columns * 128, frame // columns * 128, 128, 128)
                 assert not any(visible_on_edge(tile, i) for i in range(inset)), (animal, frame)
                 fills_slot |= visible_on_edge(tile, inset)
                 tray_tile = tile.copy(tile.rect().adjusted(inset, inset, -inset, -inset))
@@ -217,13 +293,23 @@ def run(api, runtime, app, output, checks):
                     check_coat(animal, image)
                     check_coat(animal, tray_image)
                 frames.add(image.constBits().asstring(image.byteCount()))
-            assert len(frames) == 8 and fills_slot
+            assert len(frames) == frame_count(animal) and fills_slot
+        check_penguin_waddle()
+        checks.append('48 right-facing poses at 16/20/24/32 px on both Qt surfaces: head pixels and breast outline stay fixed while the two flippers swing in opposition to one another and to the stepping feet.')
         cfg.update(resource_enabled=True)
         service.sync()
         window = service.window
         capsule = service.runners['capsule']
         assert capsule.tray is None and capsule.animal == 'rabbit' and capsule.fps == 24
         assert runner.fps == 96 and runner.animal == 'cat'
+        assert service.set_options(resource_runner_animal='penguin', resource_tray_runner_animal='penguin')
+        for actor in (capsule, runner):
+            for index, after in ((7, 8), (47, 0)):
+                actor.frame = index
+                with patch('resource_runner.perf_counter', return_value=actor.next_frame):
+                    actor.advance()
+                assert actor.frame == after
+        assert service.set_options(resource_runner_animal='rabbit', resource_tray_runner_animal='cat')
         ticks = set()
         loop = QEventLoop()
         def tick(slot):
@@ -247,7 +333,7 @@ def run(api, runtime, app, output, checks):
         service.sync()
         service.accept_sample(dict(time=time.monotonic(), memory=(50,1,2),network_utilization=36))
         assert capsule.fps == 48 and runner.fps == 96
-        assert capsule.readout=='小兔 内存 50%' and runner.tray.toolTip()=='小猫 网络 36%'
+        assert capsule.readout=='小兔 内存 50%'+uptime and runner.tray.toolTip()=='小猫 网络 36%'+uptime
         for form in ('pill', 'bar', 'ball'):
             cfg['resource_fold'] = form
             service.sync()
@@ -290,6 +376,7 @@ def run(api, runtime, app, output, checks):
         assert not service.runners and 'cpu' not in service.needs()
         assert 'network_utilization' not in service.active_keys()
         checks.append('Running cat, dog and rabbit: independent 24/48/96 fps tiers, 0/24/48/72/96 fps at 0/25/50/75/100 percent, zero stops the timer and tiny positive loads keep a precise deadline.')
+        checks.append('Capsule and tray animals show Windows boot uptime on hover and click, including a minute rollover, multi-day uptime and an unavailable utilization reading.')
         checks.append('Five utilization sources: independent saved capsule/tray metrics, real Qt tooltip and mouse-click paths, measured percentages in fixed speed mode, absent data and demand release.')
         assert busiest_disk({'0 C:':80,'1 D:':12,'_Total':0})==88 and busiest_disk({'0':100})==0
         assert busiest_disk({'0':float('nan'),'_Total':20}) is None
@@ -304,7 +391,7 @@ def run(api, runtime, app, output, checks):
         assert gpu_loads({'luid_0x1_0x2_phys_0_eng_0':10,'luid_0x1_0x2_phys_0_eng_1':38,
                           'luid_0x1_0x3_phys_0_eng_0':116})=={0x100000002:38,0x100000003:100}
         checks.append('Disk activity excludes the aggregate instance. Network load uses negotiated per-direction rates and rejects counter resets, new links and speed changes.')
-        checks.append('Runner artwork: eight distinct poses per animal at 16/20/24/32 px, pure-white calico, black-and-white dog and apricot-gray rabbit on both Qt surfaces. One shared square fits the tray without losing a single nontransparent pixel.')
+        checks.append('Both Qt surfaces play the complete sprite sheet for each animal, including the 48-pose penguin. Transparent bounds, coats, tray cropping and animation wraparound are verified.')
 
         from resource_panel import display_values
         from taskbar_readout import columns
@@ -364,6 +451,7 @@ def run(api, runtime, app, output, checks):
         assert all(runner.fps == 0 for runner in service.runners.values())
         checks.append('Hardware sources: shared GPU/disk/NIC monitor, independent capsule/tray metrics, device dropdowns and tray menu, settings and layout persistence, missing devices and source-specific chart history.')
     finally:
+        boot.stop()
         if main is not None and main.isVisible():main.reject()
         if dialog is not None:dialog.deleteLater()
         cfg.clear()

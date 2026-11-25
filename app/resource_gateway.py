@@ -162,7 +162,7 @@ def quota(label,source):
 
 def windows(data):
     quotas=[]
-    for label,keys in (('每小时额度',('hourly','hour')),('5 小时额度',('rolling','fiveHour')),
+    for label,keys in (('每小时额度',('hourly','hour')),('5 小时额度',('rolling','fiveHour')),('每日额度',('daily','day')),
                        ('每周额度',('weekly','week')),('每月额度',('monthly','month'))):
         for key in keys:
             row=quota(label,data.get(key))
@@ -345,6 +345,7 @@ class GatewayUsage(QObject):
         if job is not self.job:return
         self.job=None
         previous={row['id']:row for row in self.rows if row.get('quotas') or row.get('usageAvailable')}
+        self.bridge.quota_history.observe(row for row in job.rows if not row.get('failed'))
         self.rows=[dict(previous[row['id']],status=row['status'],stale=True)
                    if row.get('failed') and row['id'] in previous else row for row in job.rows]
         job.deleteLater()

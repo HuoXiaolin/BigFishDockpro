@@ -4,7 +4,7 @@ from math import cos, pi, sin, tau
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QBrush, QColor, QConicalGradient, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient
-from feature_config import SPECTRUM_PALETTES
+from spectrum_palettes import SPECTRUM_PALETTES
 
 
 SPECTRUM_COLORS = SPECTRUM_PALETTES['colorful'][1]
@@ -17,14 +17,18 @@ def _palette(gradient, colors):
     return QBrush(gradient)
 
 
-@lru_cache(maxsize=len(SPECTRUM_PALETTES))
 def palette_icon(key):
+    return color_strip_icon(SPECTRUM_PALETTES[key][1])
+
+
+@lru_cache(maxsize=24)
+def color_strip_icon(colors):
     pixmap=QPixmap(48,48)
     pixmap.fill(Qt.transparent)
     painter=QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
     painter.setPen(Qt.NoPen)
-    painter.setBrush(_palette(QLinearGradient(1,0,47,0),SPECTRUM_PALETTES[key][1]))
+    painter.setBrush(_palette(QLinearGradient(1,0,47,0),colors))
     painter.drawRoundedRect(QRectF(1,8,46,32),8,8)
     painter.end()
     return QIcon(pixmap)

@@ -31,7 +31,11 @@ def ring_dimensions(diameter, count=1):
     return radius, stroke, pitch
 
 
-def draw_tray_rings(painter, rect, readings, dark=False):
+def today_ring_ink(dark):
+    return '#d6d8da' if dark else '#a1a6aa'
+
+
+def draw_tray_rings(painter, rect, readings, dark=False, *, used_today=(), compact=False):
     """Draw clockwise progress from twelve o'clock with a muted track."""
     from PyQt5.QtCore import QRectF, Qt
     from PyQt5.QtGui import QColor, QPainter, QPen
@@ -41,16 +45,27 @@ def draw_tray_rings(painter, rect, readings, dark=False):
     painter.setBrush(Qt.NoBrush)
     center = rect.center()
     radius, width, pitch = ring_dimensions(min(rect.width(), rect.height()), len(readings))
+    if compact:
+        width=max(1.25,min(2.25,rect.height()*.12))
+        radius=(min(rect.width(),rect.height())-width)/2-.45
     for index, (value, ink, stale) in enumerate(readings or [(None, '#8795a1', False)]):
         r = max(.55, radius - index * pitch)
         circle = QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r)
         track = QColor(ink if value == 0 else '#aab3bc' if dark else '#657581')
         track.setAlpha(210 if value == 0 else 105)
+        portion=used_today[index] if index<len(used_today) else None
+        if portion and value is not None:
+            portion=max(0.,min(portion,100-value))
+            track=QColor('#aab3bc' if dark else '#657581');track.setAlpha(52)
         painter.setPen(QPen(track, width, Qt.DotLine if value is None or stale else Qt.SolidLine, Qt.RoundCap))
         painter.drawEllipse(circle)
         if value is not None and value > 0:
-            painter.setPen(QPen(QColor(ink), width, Qt.SolidLine, Qt.RoundCap))
+            painter.setPen(QPen(QColor(ink), width, Qt.SolidLine, Qt.FlatCap if portion else Qt.RoundCap))
             painter.drawArc(circle, 90 * 16, -round(value * 360 * 16 / 100))
+        if portion and value is not None:
+            start=round(value*57.6);end=round((value+portion)*57.6)
+            painter.setPen(QPen(QColor(today_ring_ink(dark)),width,Qt.SolidLine,Qt.FlatCap))
+            painter.drawArc(circle,90*16-start,start-end)
     painter.restore()
 
 

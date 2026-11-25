@@ -444,11 +444,17 @@ def run(api,runtime,app,output,checks):
             page.toggle.click();assert model.focus()[1:3]==('running',1500)
             clock[0]+=53;model.sync()
             assert model.focus()[2]==1447 and read_state(model.path)['status']=='running'
-            from resource_pomodoro_view import reminder_icon
-            with patch('resource_pomodoro_view.reminder_icon',wraps=reminder_icon) as marks:
+            from resource_pomodoro_view import reminder_icon, ring
+            with patch('resource_pomodoro_view.reminder_icon',wraps=reminder_icon) as marks, \
+                 patch('resource_pomodoro_view.ring',wraps=ring) as circles:
                 page.focus_summary.grab();page.water_summary.grab()
-            focus_ring,water_ring=[call.args[1:3] for call in marks.call_args_list]
-            assert focus_ring[0].center()==water_ring[0].center() and water_ring[1]=='water'
+            assert [call.args[2] for call in marks.call_args_list]==['focus','water']
+            focus_ring,water_ring=[call.args[1] for call in circles.call_args_list]
+            assert focus_ring.center().y()==water_ring.center().y()
+            for summary,circle,mark in zip((page.focus_summary,page.water_summary),
+                                           (focus_ring,water_ring),marks.call_args_list):
+                assert circle.center()==mark.args[1].center()
+                assert summary.width()-circle.right()==3 and circle.left()>summary.width()/2
             assert service.set_options(resource_compact_metrics=[*previous_metrics,'pomodoro','water'],
                                        resource_compact_pinned=[*previous_pins,'pomodoro','water'],
                                        resource_alert_focus=False,resource_alert_water=False)

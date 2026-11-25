@@ -24,9 +24,11 @@ class CapsuleComponentView(CapsuleScrollArea):
             self.picker.setProperty('glassField',True)
             self.picker.currentIndexChanged.connect(self.selection_changed)
             layout.addWidget(self.picker)
-        self.host=DashboardCard(window,'sky' if key=='clock' else 'lavender') if key in ('clock','calendar') else QWidget()
+        tones={'clock':'sky','calendar':'mint','notes':'paper','picture':'lavender','custom':'ice'}
+        self.host=DashboardCard(window,tones[key])
         slot=QVBoxLayout(self.host)
-        slot.setContentsMargins(0,0,0,0)
+        inset=0 if key in ('clock','calendar') else 4
+        slot.setContentsMargins(inset,inset,inset,inset)
         layout.addWidget(self.host)
         layout.addStretch()
         self.setWidget(body)

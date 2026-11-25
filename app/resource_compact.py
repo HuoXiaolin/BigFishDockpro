@@ -1,17 +1,20 @@
 """Content-sized compact rows and an inexpensive perimeter-following halo."""
 from functools import lru_cache
+from math import atan2, degrees, tau
 import time
 from PyQt5.QtCore import Qt,QRectF,QPointF
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainterPathStroker,QPen,QPixmap,QConicalGradient,QBrush,QRegion,QTransform
 from resource_status import connection_labels,metric_ink,metric_number
 from resource_traffic import amount
-from resource_quota import amount_text, quota_color, remaining_percent, used_percent
+from resource_quota import capsule_reading, ring_ink
 from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RUNNER_SLOT,component_location
+from spectrum_palettes import SPECTRUM_PALETTES
 
 
 STATUS_STEP=23
 CLOCK_WIDTHS={'%H:%M':38,'%H:%M:%S':53,'%Y-%m-%d':64}
 AI_ICON_SIZE = 16
+AI_RING_SIZE = 18
 AI_PADDING = 4
 AI_GAP = 4
 AI_TEXT_SIZE = 11
@@ -33,19 +36,81 @@ def ring(p,rect,value,color,track,letter='',stroke=2.5):
     if letter:text(p,rect,letter,color,10,True,Qt.AlignCenter)
 
 
-@lru_cache(maxsize=1)
-def halo_brushes():
+HALO_RAINBOW = tuple(QColor.fromHsvF(i / 6, .64, .98) for i in range(6))
+
+
+def halo_default_color(cfg, light):
+    return cfg.get('theme_color') or ('#297bc9' if light else '#78c9ff')
+
+
+@lru_cache(maxsize=len(SPECTRUM_PALETTES) + 1)
+def halo_brushes(mode='rainbow'):
+    preset = SPECTRUM_PALETTES.get(mode)
+    colors = tuple(map(QColor, preset[1])) if preset else HALO_RAINBOW
     layers = []
     for width, alpha in ((7, 30), (4, 65), (1.5, 230)):
         gradient = QConicalGradient(QPointF(0, 0), 0)
-        for i in range(7):
-            gradient.setColorAt(i / 6, QColor.fromHsvF((i / 6) % 1, .64, .98, alpha / 255))
+        for i, color in enumerate((*colors, colors[0])):
+            ink = QColor(color)
+            ink.setAlpha(alpha)
+            gradient.setColorAt(i / len(colors), ink)
         layers.append((width, QBrush(gradient)))
     return tuple(layers)
 
 
+@lru_cache(maxsize=24)
+def mono_halo_inks(value, light):
+    from clock_legibility import blend, contrast
+    color = QColor(value)
+    surface = QColor('#eaf0f4' if light else '#24313b')
+    low_contrast = contrast(color, surface) < 2.8
+    relief = blend(color, QColor('black' if light else 'white'), .58) if low_contrast else color
+    tip = blend(color, QColor('white'), .24)
+
+    def opacity(ink, alpha):
+        ink = QColor(ink)
+        ink.setAlpha(alpha)
+        return ink
+
+    track = QPen(opacity(relief, 80), 1.25, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    layers = []
+    strengths = (0., .36, 1., .97, .72, .39, .13, 0., 0.)
+    for width, ink, highlight, alpha in ((7., relief, relief, 48), (3.8, relief, relief, 168 if low_contrast else 96),
+                                          (1.8, color, tip, 248)):
+        colors = tuple(opacity(blend(ink, highlight, strength**3), round(alpha * strength)) for strength in strengths)
+        layers.append((width, colors))
+    return track, tuple(layers)
+
+
+def paint_mono_halo(window, painter, rect, transform, color, light):
+    path, length = window.halo_path, window.halo_length
+    if length <= 0 or rect.isEmpty():return
+    track, layers = mono_halo_inks(color, light)
+    painter.setPen(track)
+    painter.drawPath(path)
+    # Locate the head and falloff by distance along the actual rounded outline.
+    # Map those points into one continuous gradient, including across the seam.
+    lead, tail = min(7., length*.025), min(170., length*.32)
+    head = (window.halo_phase % 1.) * length
+    center = rect.center()
+    angles = []
+    for offset in (lead, lead*.45, 0., -tail*.08, -tail*.23, -tail*.45, -tail*.72, -tail):
+        point = path.pointAtPercent(path.percentAtLength((head + offset) % length))
+        angles.append(atan2((center.y()-point.y())/rect.height(), (point.x()-center.x())/rect.width()))
+    start = angles[0]
+    positions = [0., *((angle-start) % tau / tau for angle in angles[1:]), 1.]
+    for width, colors in layers:
+        gradient = QConicalGradient(QPointF(0,0), degrees(start) % 360.)
+        gradient.setStops(list(zip(positions, colors)))
+        brush = QBrush(gradient)
+        brush.setTransform(transform)
+        painter.setPen(QPen(brush, width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPath(path)
+
+
 def paint_halo(window,p,damage=None):
-    if not window.service.cfg['resource_halo']:return
+    cfg = window.service.cfg
+    if not cfg['resource_halo']:return
     r=QRectF(window.rect()).adjusted(4.5,4.5,-4.5,-4.5)
     radius=(12 if window.service.cfg['resource_fold']=='bar' else r.height()/2) if window.service.compact else 17
     # Transform the colour field with the capsule's aspect ratio. Three path
@@ -53,6 +118,7 @@ def paint_halo(window,p,damage=None):
     key=(r.width(),r.height(),radius,window.liquid.radii(radius))
     if getattr(window,'halo_key',None)!=key:
         window.halo_path=window.liquid.shape(r,radius)
+        window.halo_length=window.halo_path.length()
         window.halo_key=key
         stroke=QPainterPathStroker();stroke.setWidth(10);stroke.setJoinStyle(Qt.RoundJoin)
         window.halo_region=QRegion(stroke.createStroke(window.halo_path).toFillPolygon().toPolygon())
@@ -60,8 +126,14 @@ def paint_halo(window,p,damage=None):
     p.setBrush(Qt.NoBrush)
     transform = QTransform.fromTranslate(r.center().x(), r.center().y())
     transform.scale(r.width() / 2, r.height() / 2)
+    mode = cfg.get('resource_halo_color_mode', 'rainbow')
+    if mode == 'mono':
+        light = window.colors['light']
+        color = cfg.get('resource_halo_mono_color') or halo_default_color(cfg, light)
+        paint_mono_halo(window,p,r,transform,color,light)
+        return
     transform.rotate(-window.halo_phase * 360)
-    for width, base in halo_brushes():
+    for width, base in halo_brushes(mode):
         brush = QBrush(base)
         brush.setTransform(transform)
         p.setPen(QPen(brush, width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
@@ -149,12 +221,9 @@ def compact_values(window):
             v=data.get(key);values.append(('traffic',label,amount(sum(v)) if v is not None else '—',''))
     if bridge and cfg['resource_ai'] and cfg['resource_compact_ai'] and component_location(cfg,'ai')=='capsule':
         for row in bridge.providers:
-            metrics = row.get('quotas', [])
-            quotas = [level for q in metrics if (level := used_percent(q)) is not None]
-            remaining = remaining_percent(max(quotas, default=None))
-            money = next((value for q in metrics if q.get('kind')!='spend' and (value := amount_text(q)) not in (None, '—')), None)
-            value = money or (f'{remaining:.0f}%' if remaining is not None else '—')
-            values.append(('ai',row['name'],value,dict(provider=row,remaining=remaining,money=bool(money))))
+            reading=capsule_reading(row)
+            value=(reading.amount or f'{reading.remaining:.0f}%') if reading else '—'
+            values.append(('ai',row['name'],value,dict(provider=row,reading=reading)))
     track=(bridge.media.get('track') or {}) if bridge and cfg['resource_music'] and cfg['resource_compact_music'] and component_location(cfg,'music')=='capsule' else {}
     if track:values.append(('music','音乐',track.get('lyric') or track.get('title','') if cfg['resource_music_text']=='lyrics' else track.get('title',''),track))
     extra=window.service.extras
@@ -168,7 +237,9 @@ def cell_width(row,dense=False):
     key=row[0]
     if key=='ai':
         value_width = QFontMetrics(ai_value_font()).horizontalAdvance(row[2])
-        return max(44, AI_ICON_SIZE + AI_PADDING * 2 + AI_GAP + value_width + 1)
+        reading=row[3]['reading']
+        icon_size=AI_RING_SIZE if reading and reading.remaining is not None else AI_ICON_SIZE
+        return max(44, icon_size + AI_PADDING * 2 + AI_GAP + value_width + 1)
     if key=='music':return 68 if dense else 96
     if key=='weather':return 60 if dense else 82
     if dense:
@@ -314,11 +385,21 @@ def ai_value_font():
     return font
 
 
+def paint_quota_ring(p, rect, reading, light):
+    from resource_status import draw_tray_rings
+    ink=ring_ink(reading.remaining,reading.stale,light)
+    portions=(reading.daily.in_window,) if reading.daily else ()
+    draw_tray_rings(p,rect,[(reading.remaining,ink,reading.stale)],dark=not light,used_today=portions,compact=True)
+    return ink
+
+
 def paint_ai_quota(p, rect, value, meta, colors):
     from resource_provider_icons import paint_provider_mark
 
     chip(p, rect, colors['ink'], colors['light'])
-    icon_size = min(AI_ICON_SIZE, rect.height() - 2)
+    reading=meta['reading']
+    has_ring=reading is not None and reading.remaining is not None
+    icon_size = min(AI_RING_SIZE if has_ring else AI_ICON_SIZE, rect.height() - 2)
     area = rect.adjusted(AI_PADDING + icon_size + AI_GAP, 0, -AI_PADDING, 0)
     font = ai_value_font()
     width = QFontMetrics(font).horizontalAdvance(value)
@@ -327,9 +408,13 @@ def paint_ai_quota(p, rect, value, meta, colors):
     show_value = QFontMetrics(font).horizontalAdvance(value) <= area.width()
     x = rect.x() + AI_PADDING if show_value else rect.center().x() - icon_size / 2
     icon = QRectF(x, rect.center().y() - icon_size / 2, icon_size, icon_size)
+    ink=colors['ink']
+    if has_ring:
+        ink=paint_quota_ring(p,icon,reading,colors['light'])
+        inset=icon_size*.175
+        icon=icon.adjusted(inset,inset,-inset,-inset)
     paint_provider_mark(p, icon, meta['provider'], colors['ink'])
     if show_value:
-        ink = colors['ink'] if meta['money'] else quota_color(meta['remaining'], colors['light'])
         p.setFont(font)
         text(p, area, value, ink, font.pixelSize(), True)
 
@@ -420,6 +505,7 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
             window.compact_shown.append(key)
             if key=='ai':
                 window.compact_providers.append(meta['provider']['id'])
+                if meta['reading'] is not None:window.compact_ai_hits.append((hit,meta['reading']))
             elif key=='music':
                 window.compact_media=True
         x+=width+gap;available-=width+gap
@@ -558,7 +644,7 @@ def paint_rolling_values(window,p,layout,rows,left,right,mid,scroll):
 def paint_compact_body(window,p,layout,scroll=None,overlays=None):
     cfg=window.service.cfg;c=window.colors;bridge=window.service.deck;mid=window.height()/2
     pages=layout['pages'];window.compact_pages=len(pages)
-    _,rows=pages[window.offset%len(pages)];window.compact_shown=[];window.compact_providers=[];window.compact_media=False
+    _,rows=pages[window.offset%len(pages)];window.compact_shown=[];window.compact_providers=[];window.compact_ai_hits=[];window.compact_media=False
     right=window.width()-8-layout['runner_width'];left=8.;window.compact_bounds=[]
     if layout['face']:
         left+=layout['face']+layout['face_gap']
@@ -629,7 +715,7 @@ def paint_compact(window,p,scroll=None,damage=None):
         if kind=='wave':paint_music_wave(window,p,area,*args)
         elif kind=='marquee':paint_marquee(window,p,area,*args)
         elif kind=='scroll':
-            window.compact_bounds=[];window.compact_shown=[];window.compact_providers=[];window.compact_media=False
+            window.compact_bounds=[];window.compact_shown=[];window.compact_providers=[];window.compact_ai_hits=[];window.compact_media=False
             paint_rolling_values(window,p,layout,args[0],area.left(),area.right(),window.height()/2,scroll)
     if layout['face']:
         window.liquid.paint_face(p,QPointF(8+layout['face']/2,window.height()/2),layout['face'])

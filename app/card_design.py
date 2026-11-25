@@ -13,13 +13,12 @@ SOFT_SURFACES={
     'rose':('#eac9dd','#503249'),
 }
 
-CAPSULE_GRADIENTS={
-    'sky':THEME_GRADIENTS['liquid'],
-    'lavender':THEME_GRADIENTS['vivid'],
-    'mint':THEME_GRADIENTS['clear'],
-    'peach':('#ffcf1b','#ff8818'),
-    'rose':('#f869d5','#5650de'),
-    'ice':('#6ee2f5','#6454f0'),
+# Each card family keeps its own hue when the surrounding capsule changes color.
+CAPSULE_TONES={
+    'sky':('#a9d5e5','#365b6d'), 'lavender':('#c2c9e6','#515374'),
+    'mint':('#b5dbca','#375e51'), 'peach':('#eacbaa','#6a5040'),
+    'rose':('#e5bdcf','#6a485c'), 'ice':('#acd9d9','#355e62'),
+    'amethyst':('#c8b8e0','#574969'), 'paper':('#dfd5be','#534d40'),
 }
 
 # Hue strength and opacity for the surface laid over the parent material.
@@ -61,28 +60,32 @@ def soft_surface(tone,light,appearance):
 
 def capsule_card_brush(tone,light,appearance,*,alpha,base=None,active=False):
     strength,_=SURFACE_MATERIALS.get(appearance['material'],(.86,241))
-    if base is None:
-        base=QColor('#f9fbfd' if light else '#1a212d')
-        tint=QColor(appearance['color'])
-        if tint.isValid():base=blend(base,tint,.10 if light else .07)
-        strength*=.30 if light else .24
+    ground=QColor(base or ('#fafbfd' if light else '#22272c'))
+    tint=QColor(CAPSULE_TONES[tone][0 if light else 1])
+    if active:ground=blend(ground,tint,.46)
+    # Paper is matte from top to bottom. Glass catches a soft off-center
+    # reflection; the violet media sleeve is brushed across its width.
+    if tone in ('paper','peach'):
+        gradient=QLinearGradient(0,0,0,1)
+        stops=((0,.34),(1,.95))
+    elif tone in ('amethyst','lavender','rose'):
+        gradient=QLinearGradient(0,.2,1,.75)
+        stops=((0,.30),(.58,.60),(1,1.0))
     else:
-        base=QColor(base)
-        strength*=.16
-    if active:base=blend(base,QColor('#c7d4e4' if light else '#52627b'),.24)
-    gradient=QLinearGradient(0,0,1,1)
+        gradient=QLinearGradient(0,0,1,1)
+        stops=((0,.38),(.32,.28),(1,.98))
     gradient.setCoordinateMode(QGradient.ObjectBoundingMode)
-    for position,value in enumerate(CAPSULE_GRADIENTS[tone]):
-        color=blend(base,QColor(value),strength)
+    for position,weight in stops:
+        color=blend(ground,tint,strength*weight)
         color.setAlpha(alpha)
         gradient.setColorAt(position,color)
     return QBrush(gradient)
 
 
-def paint_capsule_card(painter,rect,colors,tone,appearance,*,radius=9,base=None,active=False,focused=False):
+def paint_capsule_card(painter,rect,colors,tone,appearance,*,radius=8,base=None,active=False,focused=False):
     light=colors['light']
     edge=QColor(colors['muted'] if focused else colors['ink'])
-    if not focused:edge.setAlpha(23 if light else 37)
+    if not focused:edge.setAlpha(19 if light else 39)
     painter.setPen(QPen(edge,1))
     painter.setBrush(capsule_card_brush(tone,light,appearance,alpha=colors['card_alpha'],base=base,active=active))
     painter.drawRoundedRect(rect.adjusted(.5,.5,-.5,-.5),radius,radius)

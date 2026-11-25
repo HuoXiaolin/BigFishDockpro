@@ -47,4 +47,14 @@ def main():
     return 0 if result['passed'] else 1
 
 
-if __name__=='__main__':sys.exit(main())
+if __name__=='__main__':
+    # Like current_ui_tests, retire Qt fixture cycles after native windows have closed.
+    # Running SIP finalizers inside a nested widget callback can crash this test process.
+    import gc
+    gc.disable()
+    try:
+        result=main()
+    finally:
+        gc.set_debug(gc.get_debug() | gc.DEBUG_SAVEALL)
+        gc.collect()
+    sys.exit(result)

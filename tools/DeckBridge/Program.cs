@@ -228,8 +228,9 @@ internal static class Program
         var isCodex = c.Entry.Id == ProviderId.Codex;
         var plan = isCodex && !string.IsNullOrWhiteSpace(codexPlan) ? codexPlan : c.Quota.Plan;
         var stale = c.Quota.IsStale || (isCodex && !c.Quota.LiveQuota && c.Quota.Quotas.Count > 0);
+        JsonElement? quotaDayStart = isCodex && c.Usage.Details.TryGetValue("quotaDayStart", out var first) ? JsonSerializer.Deserialize<JsonElement>(first) : null;
         return new { id = c.Entry.Id.ToString(), name = c.Entry.Name, plan, status = c.Quota.StatusLabel, note = c.Quota.Status,
-            stale, source = c.Quota.Source, usageNote = c.Usage.UsageNote, usageAvailable = c.Usage.UsageAvailable, usageComplete = c.Usage.UsageComplete, historyStart = c.Usage.UsageStart?.ToString("yyyy-MM-dd"), allHistory = AllHistory,
+            stale, quotaAt = c.Quota.QuotaTime, quotaDayStart, source = c.Quota.Source, usageNote = c.Usage.UsageNote, usageAvailable = c.Usage.UsageAvailable, usageComplete = c.Usage.UsageComplete, historyStart = c.Usage.UsageStart?.ToString("yyyy-MM-dd"), allHistory = AllHistory,
             resetCredits = isCodex ? resetCredits : null,
             quotas = c.Quota.Metrics.Select(m => new { id = m.Id, label = m.Label, window = m.Window, kind = m.Kind.ToString().ToLowerInvariant(), percent = m.UsedPercent, value = m.ValueText, reset = m.ResetAt, detail = m.Description }),
             today = Summary(c.Usage.Entries.Where(t => t.Time.LocalDateTime.Date == today)), week = Summary(c.Usage.Entries.Where(t => t.Time.LocalDateTime.Date >= today.AddDays(-6))),

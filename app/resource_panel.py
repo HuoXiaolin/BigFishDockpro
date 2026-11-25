@@ -171,12 +171,11 @@ class CapsuleTab(QToolButton):
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         selected=self.isChecked()
         if selected or self.underMouse() or self.hasFocus():
-            fill=QColor(colors['hover']);fill.setAlpha(86 if selected else 48)
-            edge=self.palette().color(QPalette.Link) if self.hasFocus() else QColor(colors['ink'])
-            edge.setAlpha(185 if self.hasFocus() else 65)
+            fill=QColor(colors['field']);fill.setAlpha((209 if selected else 92) if colors['light'] else (231 if selected else 102))
+            edge=QColor(colors['ink']);edge.setAlpha(160 if self.hasFocus() else 26)
             painter.setPen(QPen(edge,1) if selected or self.hasFocus() else Qt.NoPen)
             painter.setBrush(fill)
-            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5),6,6)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5),7,7)
         font=QFont(self.font());font.setPixelSize(11);font.setWeight(QFont.DemiBold if selected else QFont.Medium)
         painter.setFont(font)
         painter.setPen(QColor(colors['ink'] if selected else colors['muted']))
@@ -218,7 +217,7 @@ class ResourceContentHost(QWidget):
         self.background=background(self.service.cfg)
         if self.dashboard is not None and previous!=self.background:self.dashboard.update()
         colors=palette_for(self.service,self.background)
-        if colors['light']:colors['muted']='#415266'
+        colors['muted']='#405361' if colors['light'] else '#bfccd4'
         colors['card_alpha']=round(255*(100-self.service.cfg['resource_card_transparency'])/100)
         if colors==self.colors:
             return False
@@ -235,17 +234,18 @@ class ResourceContentHost(QWidget):
     def init_style(self):
         from resource_pages import SCROLL_STYLE
         self.setStyleSheet("""
-            QWidget{background:transparent;color:palette(window-text)}
-            QLabel{font-size:10px}
-            QLabel#RankTitle{font-weight:600}
+            QWidget{background:transparent;color:palette(window-text);font-family:"Microsoft YaHei UI","Segoe UI"}
+            QLabel{font-size:11px}
+            QLabel#RankTitle{font-size:12px;font-weight:600}
             QLabel#RankMemory,QLabel#Subtle{color:palette(mid);font-size:10px}
             QToolButton{border:1px solid transparent;border-radius:6px;padding:2px 5px;color:palette(mid);background:transparent;font-size:10px}
             QToolButton:hover{background:rgba(123,145,161,46);color:palette(window-text)}
             QToolButton:checked{background:rgba(123,145,161,69);border-color:rgba(123,145,161,105);color:palette(window-text)}
+            QToolButton:focus{border:1px solid palette(mid)}
             QToolButton#RankSort{font-size:10px;padding:2px 5px}
             QScrollArea{border:0}
             QTableWidget{background:transparent;border:0;selection-background-color:palette(button);font-size:12px}
-            QHeaderView::section{background:palette(button);color:palette(mid);border:0;padding:5px;font-size:11px}
+            QHeaderView::section{background:transparent;color:palette(mid);border:0;border-bottom:1px solid palette(button);padding:4px;font-size:11px}
             QTableCornerButton::section{background:palette(button);border:0}
             QDateEdit{background:palette(button);color:palette(window-text);border:0;border-radius:5px;padding:4px}
             QSlider::groove:horizontal{background:palette(button);height:4px;border:0;border-radius:2px}
@@ -258,14 +258,14 @@ class ResourceContentHost(QWidget):
         self.dashboard=QWidget(page)
         self.columns=QGridLayout(self.dashboard)
         self.columns.setContentsMargins(0,0,0,0)
-        self.columns.setHorizontalSpacing(7);self.columns.setVerticalSpacing(7)
-        self.columns.setColumnStretch(0,3);self.columns.setColumnStretch(1,2)
+        self.columns.setHorizontalSpacing(8);self.columns.setVerticalSpacing(8)
+        self.columns.setColumnStretch(0,11);self.columns.setColumnStretch(1,9)
         self.dashboard_layout_key = None
         self.graph=MetricDisplay(self)
         self.graph.setParent(self.dashboard)
         self.rank_section=DashboardCard(self,'lavender',self.dashboard)
         rank_body=QVBoxLayout(self.rank_section)
-        rank_body.setContentsMargins(9,6,9,7);rank_body.setSpacing(3)
+        rank_body.setContentsMargins(10,7,10,8);rank_body.setSpacing(4)
         self.rank_head=QWidget();head=QHBoxLayout(self.rank_head)
         head.setContentsMargins(0,0,0,0);head.setSpacing(3)
         title=QLabel('进程排行');title.setObjectName('RankTitle');head.addWidget(title,1)
@@ -277,8 +277,9 @@ class ResourceContentHost(QWidget):
             control.setObjectName('RankSort');head.addWidget(control);self.rank_buttons[key]=control
         rank_body.addWidget(self.rank_head)
         self.rank_widget=QWidget()
+        self.rank_widget.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Maximum)
         grid=QGridLayout(self.rank_widget);grid.setContentsMargins(0,0,0,0)
-        grid.setHorizontalSpacing(6);grid.setVerticalSpacing(2);grid.setColumnStretch(1,1)
+        grid.setHorizontalSpacing(5);grid.setVerticalSpacing(3);grid.setColumnStretch(1,1)
         self.rank_labels=[];self.rank_icons={};self.rank_frame=None;self.rank_style=None
         for i in range(5):
             mark=QLabel();mark.setFixedSize(15,15);mark.setAlignment(Qt.AlignCenter)
@@ -298,7 +299,7 @@ class ResourceContentHost(QWidget):
         self.battery_refresh=QToolButton();self.battery_refresh.setAccessibleName('刷新外设电量')
         self.battery_refresh.setToolTip('刷新外设电量');self.battery_refresh.clicked.connect(self.service.refresh_batteries);row.addWidget(self.battery_refresh)
         self.battery_section=DashboardCard(self,'mint',self.dashboard);battery_layout=QVBoxLayout(self.battery_section)
-        battery_layout.setContentsMargins(9,6,9,7);battery_layout.setSpacing(1)
+        battery_layout.setContentsMargins(10,7,10,8);battery_layout.setSpacing(3)
         top=QHBoxLayout();top.setSpacing(4)
         self.battery_title=QLabel('电脑状态');self.battery_title.setObjectName('RankTitle');top.addWidget(self.battery_title,1)
         top.addWidget(self.battery_actions);battery_layout.addLayout(top)
@@ -1137,7 +1138,7 @@ class ResourceWindow(ResourceContentHost):
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
         paint_halo(self,p,event.region())
         if compact and (self.width()<70 or self.fold_shape()=='ball'):
-            self.reminder_bounds=[];self.reminder_kinds=[];self.status_bounds={}
+            self.reminder_bounds=[];self.reminder_kinds=[];self.status_bounds={};self.compact_ai_hits=[]
             runner=self.service.runners.get('capsule')
             if runner:
                 from resource_runner import capsule_rect
@@ -1148,6 +1149,13 @@ class ResourceWindow(ResourceContentHost):
                 if cells:self.service.indicators.paint(p,cells,38,self.height()/2,c)
                 if badges:paint_badges(self,p,badges,rect.right(),self.height()/2)
                 rect.setWidth(min(36,rect.width()))
+            reading=getattr(self.service.deck,'ball_quota',None)
+            if reading and cfg['resource_ai'] and cfg['resource_compact_ai'] and component_location(cfg,'ai')=='capsule':
+                from resource_compact import paint_quota_ring
+                side=min(rect.width(),rect.height())-2
+                ring_rect=QRectF(0,0,side,side);ring_rect.moveCenter(rect.center())
+                paint_quota_ring(p,ring_rect,reading,c['light'])
+                self.compact_ai_hits=[(ring_rect,reading)]
             if cfg['resource_face']:
                 self.liquid.paint_face(p,rect.center(),min(rect.width(),max(12,rect.width()-10)))
             else:
@@ -1232,6 +1240,11 @@ class ResourceWindow(ResourceContentHost):
                 if rect is not None and rect.contains(point):
                     QToolTip.showText(event.globalPos(),'有新邮件 · 点击查看' if self.service.mail and self.service.mail.unseen else '邮箱 · 点击查看',self)
                     return True
+                for rect,reading in getattr(self,'compact_ai_hits',()):
+                    if rect.contains(point):
+                        from resource_ai_tray import tooltip_line
+                        QToolTip.showText(event.globalPos(),tooltip_line(reading),self,rect.toAlignedRect())
+                        return True
         return super().event(event)
 
     def expand_from(self,point,automatic=False):

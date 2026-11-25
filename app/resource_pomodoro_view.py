@@ -109,19 +109,19 @@ class TimerSummary(QWidget):
     def __init__(self,window,model,water=False):
         super().__init__()
         self.owner=window;self.model=model;self.water=water
-        self.setFixedHeight(69)
+        self.setFixedHeight(54)
 
     def paintEvent(self,event):
         c=self.owner.colors;width=self.width()
         if not c:return
-        tight=width<180 or self.height()<60
-        diameter=40 if tight else 54
+        tight=width<180
+        diameter=35 if tight else 44
         top=(self.height()-diameter)/2-1
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
-        circle=QRectF(5,top,diameter,diameter)
-        start=diameter+15
-        value_rect=QRectF(start,0 if tight else 6,width-start,30 if tight else 36)
-        label_rect=QRectF(start+1,29 if tight else 42,width-start-1,12 if tight else 14)
+        circle=QRectF(width-diameter-3,top,diameter,diameter)
+        space=max(1,circle.left()-7)
+        value_rect=QRectF(1,0,space,29)
+        label_rect=QRectF(2,28,space-1,12)
         if self.water:
             enabled,ml,goal,next_at,due=self.model.water()
             percent=100*ml/goal
@@ -141,7 +141,7 @@ class TimerSummary(QWidget):
         ring(p,circle,percent,accent,c['hover'])
         half=8 if tight else 11
         reminder_icon(p,QRectF(circle.center().x()-half,circle.center().y()-half,2*half,2*half),mark,accent)
-        text(p,value_rect,value,c['ink'],25 if tight else 29,True)
+        text(p,value_rect,value,c['ink'],23 if tight else 25,True)
         text(p,label_rect,label,accent if emphasized else c['muted'],11,emphasized)
         if self.water:
             status=('今日目标已达成' if ml>=goal else '到喝水时间了' if due else
@@ -177,18 +177,16 @@ class PomodoroView(QWidget):
         row=QHBoxLayout();row.setSpacing(4)
         self.focus_button=self.control(row,'专注',lambda:self.model.select('focus'),True)
         self.toggle=self.control(row,'开始',self.model.toggle)
-        self.toggle.setStyleSheet('QToolButton{background:palette(highlight);color:palette(window-text);font-weight:600;}')
         self.rest_button=self.control(row,'休息',lambda:self.model.select('rest'),True)
         focus_body.addLayout(row)
 
-        water,water_head,water_body=self.card('喝水提醒','ice')
+        water,water_head,water_body=self.card('喝水提醒','mint')
         self.water_switch=QToolButton();self.water_switch.setCheckable(True)
         self.water_switch.setAccessibleName('开启或关闭喝水提醒')
         self.water_switch.clicked.connect(self.enable_water);water_head.addWidget(self.water_switch)
         self.water_summary=TimerSummary(window,self.model,water=True);water_body.addWidget(self.water_summary)
         row=QHBoxLayout();row.setSpacing(4)
         self.drink=self.control(row,'喝一口',self.model.drink)
-        self.drink.setStyleSheet('QToolButton{background:palette(highlight);color:palette(window-text);font-weight:600;}')
         self.undo=self.control(row,'撤销',self.model.undo)
         self.delay=self.control(row,'稍后',self.model.delay_water)
         water_body.addLayout(row)
@@ -217,11 +215,13 @@ class PomodoroView(QWidget):
         self.cancel=self.control(row,'取消',self.model.cancel_alarm)
         self.dismiss=self.control(row,'知道了',self.model.dismiss_alarm);body.addLayout(row)
         self.clock_cards.addWidget(watch,1);self.clock_cards.addWidget(alarm,1)
+        self.tools.currentChanged.connect(self.fit_page)
+        self.fit_page()
         self.refresh()
 
     def card(self,title,tone):
         card=DashboardCard(self.owner,tone)
-        body=QVBoxLayout(card);body.setContentsMargins(9,7,9,8);body.setSpacing(3)
+        body=QVBoxLayout(card);body.setContentsMargins(9,5,9,6);body.setSpacing(2)
         head=QHBoxLayout();head.setSpacing(3)
         heading=QLabel(title);heading.setObjectName('RankTitle');head.addWidget(heading,1)
         body.addLayout(head)
@@ -252,6 +252,11 @@ class PomodoroView(QWidget):
         if getattr(self,'timer_theme',None)!=signature:
             self.timer_theme=signature
             ink=colors['ink']
+            primary_fg='#ffffff' if colors['light'] else '#14202a'
+            for button,day,night in ((self.toggle,'#86462e','#f4b999'),(self.drink,'#226654','#a1d9c7')):
+                fill=day if colors['light'] else night
+                button.setStyleSheet(f'QToolButton{{background:{fill};color:{primary_fg};border:1px solid transparent;border-radius:6px;padding:3px 6px;font-weight:600;}}'
+                                     f'QToolButton:hover,QToolButton:focus{{border-color:{ink};}}')
             self.watch_value.setStyleSheet(f'QLabel{{background:transparent;color:{ink};font-size:27px;font-weight:650;}}')
             self.alarm_time.setStyleSheet('QTimeEdit{background:rgba(120,112,165,28);border:1px solid rgba(120,112,165,95);'
                                          f'border-radius:5px;padding:0 6px;font-size:21px;font-weight:600;color:{ink};}}')
@@ -287,18 +292,19 @@ class PomodoroView(QWidget):
         self.status.setText(self.model.error);self.status.setVisible(bool(self.model.error))
         self.focus_summary.update();self.water_summary.update()
 
+    def fit_page(self):
+        page=self.tools.currentWidget().layout()
+        page.invalidate()
+        height=page.sizeHint().height()
+        if height>0 and self.tools.minimumHeight()!=height:
+            self.tools.setFixedHeight(height)
+
     def resizeEvent(self,event):
         wide=content_columns(self.owner.width())==2
         direction=QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
         if self.cards.direction()!=direction:self.cards.setDirection(direction)
         if self.clock_cards.direction()!=direction:self.clock_cards.setDirection(direction)
-        height=69 if wide else 51
-        for summary in (self.focus_summary,self.water_summary):
-            if summary.height()!=height:summary.setFixedHeight(height)
-        layout=self.layout()
-        layout.invalidate()
-        minimum=layout.minimumSize().height()
-        if self.minimumHeight()!=minimum:self.setMinimumHeight(minimum)
+        self.fit_page()
         super().resizeEvent(event)
 
     def settings(self):

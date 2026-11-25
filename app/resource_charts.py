@@ -37,6 +37,7 @@ def reading_ink(service,key,colors,fallback):
 
 def text(p, area, label, ink, size=11, weight=QFont.Normal, align=Qt.AlignLeft):
     font = QFont(p.font())
+    font.setFamily('Segoe UI' if label.isascii() or label[:1].isdigit() else 'Microsoft YaHei UI')
     font.setPixelSize(size)
     font.setWeight(weight)
     p.setFont(font)
@@ -82,23 +83,22 @@ def trend(p, box, values, now, ink, ceiling):
         for y in (box.center().y(),box.bottom()):
             p.drawLine(QPointF(box.left(),y),QPointF(box.right(),y))
     path = QPainterPath(points[0])
-    for first,last in zip(points,points[1:]):
-        middle = (first.x()+last.x())/2
-        path.cubicTo(middle,first.y(),middle,last.y(),last.x(),last.y())
+    for point in points[1:]:
+        path.lineTo(point)
     if len(points)>1:
         area = QPainterPath(path)
         area.lineTo(points[-1].x(),box.bottom())
         area.lineTo(points[0].x(),box.bottom())
         area.closeSubpath()
         wash = QColor(ink)
-        wash.setAlpha(32)
+        wash.setAlpha(20)
         p.fillPath(area,wash)
     p.setBrush(Qt.NoBrush)
     p.setPen(QPen(ink,1.6,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
     p.drawPath(path)
     p.setPen(Qt.NoPen)
     p.setBrush(ink)
-    p.drawEllipse(points[-1],2,2)
+    p.drawEllipse(points[-1],1.6,1.6)
 
 
 def sync_card_controls(widget,colors):
@@ -143,7 +143,7 @@ class DashboardCard(QWidget):
 
 
 class MetricDisplay(DashboardCard):
-    inset = 9
+    inset = 11
     load_height = 71
 
     def __init__(self, window):
@@ -180,14 +180,14 @@ class MetricDisplay(DashboardCard):
 
     def processors(self,p,area,values,history,now,inks,colors,track):
         box = QRectF(area)
-        text(p,QRectF(box.x(),box.y(),30,21),'CPU',colors['ink'],11,QFont.DemiBold)
-        text(p,QRectF(box.x()+29,box.y(),52,21),self.rows['cpu'][1],inks['cpu'],15,QFont.Bold)
+        self.load_header(p,box,'CPU',self.rows['cpu'][1],inks['cpu'],colors)
         readings = series(history,'cpu')
-        plot = box.adjusted(0,25,0,-5)
+        plot = box.adjusted(1,42,-1,-5)
         if not values:
             trend(p,plot.adjusted(2,0,-2,0),readings,now,inks['cpu'],100)
             return
-        trend(p,QRectF(box.x()+77,box.y()+4,box.width()-80,13),readings,now,inks['cpu'],100)
+        value_width=p.fontMetrics().horizontalAdvance(self.rows['cpu'][1])+9
+        trend(p,QRectF(box.x()+value_width,box.y()+23,box.width()-value_width-2,13),readings,now,inks['cpu'],100)
         count = min(len(values),max(1,min(32,int(plot.width()//6))))
         step = plot.width()/count
         gap = min(3,step*.33)
@@ -206,10 +206,14 @@ class MetricDisplay(DashboardCard):
             color = threshold(level,100,colors['light']) if use_threshold else inks['cpu']
             fill(p,QRectF(x,plot.bottom()-height,width,height),QColor(color),min(2.5,width/2,height/2))
 
+    @staticmethod
+    def load_header(p,box,label,value,ink,colors):
+        text(p,QRectF(box.x(),box.y(),box.width(),14),label,colors['muted'],11,QFont.DemiBold)
+        text(p,QRectF(box.x(),box.y()+13,box.width(),27),value,colors['muted'] if value=='—' else ink,22,QFont.DemiBold)
+
     def gpu(self,p,box,history,now,colors,inks):
-        text(p,QRectF(box.x(),box.y(),30,21),'GPU',colors['ink'],11,QFont.DemiBold)
-        text(p,QRectF(box.x()+29,box.y(),box.width()-29,21),self.rows['gpu'][1],inks['gpu'],15,QFont.Bold)
-        trend(p,box.adjusted(2,25,-2,-5),series(history,'gpu'),now,inks['gpu'],100)
+        self.load_header(p,box,'GPU',self.rows['gpu'][1],inks['gpu'],colors)
+        trend(p,box.adjusted(2,42,-2,-5),series(history,'gpu'),now,inks['gpu'],100)
 
     def paintEvent(self,event):
         if not self.owner.colors:
@@ -231,7 +235,7 @@ class MetricDisplay(DashboardCard):
         if 'cpu' in self.rows or 'gpu' in self.rows:
             both = 'cpu' in self.rows and 'gpu' in self.rows
             paired = both and self.load_columns == 2
-            cpu_width = w-max(72,w*.30)-12 if paired else w
+            cpu_width = max(0,w*.58-6) if paired else w
             if 'cpu' in self.rows:
                 self.processors(p,QRectF(0,0,cpu_width,self.load_height),service.latest.get('cpu_cores') or (),history,now,inks,cfg,track)
             if 'gpu' in self.rows:
@@ -248,10 +252,9 @@ class MetricDisplay(DashboardCard):
             if record:
                 total = f'{record[2]/2**30:.1f}'.removesuffix('.0')
                 value = f'{record[1]/2**30:.1f} / {total} GB'
-            text(p,QRectF(0,y,w/2,20),'内存',cfg['ink'],11,QFont.DemiBold)
-            text(p,QRectF(32,y,w-32,20),value,inks['memory'],11,QFont.DemiBold)
-            track_x=32+p.fontMetrics().horizontalAdvance(value)+10
-            gauge = QRectF(track_x,y+8,max(0,w-track_x),4)
+            text(p,QRectF(0,y,30,17),'内存',cfg['muted'],11)
+            text(p,QRectF(34,y,w-34,17),value,cfg['ink'],12,QFont.DemiBold,Qt.AlignRight)
+            gauge = QRectF(0,y+18,w,3)
             fill(p,gauge,track,2)
             if record and record[0]>0:
                 fill(p,QRectF(gauge.x(),gauge.y(),gauge.width()*min(100,record[0])/100,4),QColor(inks['memory']),2)
@@ -284,7 +287,7 @@ class MetricDisplay(DashboardCard):
 class SensorColumns(DashboardCard):
     """Group sensor readings by hardware and share the capsule's column rule."""
     group_width = 36
-    row_height = 20
+    row_height = 21
     column_gap = 7
     inset = 9
 
@@ -301,24 +304,30 @@ class SensorColumns(DashboardCard):
     def fit_height(self):
         self.headings = []
         self.cells = []
-        font = QFont(self.font())
+        font = QFont('Microsoft YaHei UI')
         font.setPixelSize(11)
         labels = QFontMetrics(font)
         font.setWeight(QFont.DemiBold)
+        font.setFamily('Segoe UI')
         values = QFontMetrics(font)
         gap = self.column_gap
         columns = content_columns(self.owner.width())
-        span = max(1, (self.width() - self.group_width - 2*self.inset - (columns - 1)*gap) / columns)
+        available=self.width()-2*self.inset-(columns-1)*gap
+        longest=max((values.horizontalAdvance(value) for _,items in self.groups for _,_,value,_ in items),default=0)
+        inline_group=(available-self.group_width)/columns>=longest+2
+        gutter=self.group_width if inline_group else 0
+        span=max(1,(available-gutter)/columns)
         y = self.inset+20
         for title, readings in self.groups:
-            self.headings.append((QRectF(self.inset, y, self.group_width - 4, self.row_height), title))
+            self.headings.append((QRectF(self.inset,y,self.group_width-4 if inline_group else available,self.row_height), title))
+            if not inline_group:y+=self.row_height
             for start in range(0,len(readings),columns):
                 row = [(key,label.removeprefix('CPU ').removeprefix('GPU ').replace('帧率 FPS','实时帧率'),value)
                        for key,label,value,_ in readings[start:start+columns]]
                 stacked = any(labels.horizontalAdvance(label)+values.horizontalAdvance(value)+6>span
                               for _,label,value in row)
                 for column,(key,label,value) in enumerate(row):
-                    x = self.inset + self.group_width + column*(span+gap)
+                    x = self.inset + gutter + column*(span+gap)
                     if stacked:
                         label_area = QRectF(x,y,span,14)
                         value_area = QRectF(x,y+14,span,16)
@@ -338,9 +347,12 @@ class SensorColumns(DashboardCard):
         if not self.groups or not self.owner.colors:return
         p=QPainter(self);p.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing);c=self.owner.colors
         self.paint_surface(p)
-        text(p,QRectF(self.inset,self.inset-1,self.width()-2*self.inset,18),'硬件读数',c['ink'],11,QFont.DemiBold)
+        text(p,QRectF(self.inset,self.inset-1,self.width()-2*self.inset,18),'硬件读数',c['ink'],12,QFont.DemiBold)
         for area, title in self.headings:
-            text(p,area,title,c['ink'],12,QFont.DemiBold)
+            if area!=self.headings[0][0]:
+                rule=QColor(c['muted']);rule.setAlpha(40)
+                p.setPen(QPen(rule,1));p.drawLine(QPointF(self.inset,area.top()-2),QPointF(self.width()-self.inset,area.top()-2))
+            text(p,area,title,c['ink'],11,QFont.DemiBold)
         for key, label, value, label_area, value_area in self.cells:
             text(p,label_area,label,c['muted'],11)
             ink = c['muted'] if value == '—' else reading_ink(self.owner.service,key,c,c['ink'])

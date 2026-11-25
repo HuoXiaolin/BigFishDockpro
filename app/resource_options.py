@@ -2,6 +2,7 @@
 import re
 from content_sources import NEWS_FEED_PRESETS, clean_feeds
 from screen_layout import valid_record
+from spectrum_palettes import SPECTRUM_COLOR_MODES
 
 RUNNER_ANIMALS = {'cat': '小猫', 'dog': '小狗', 'rabbit': '小兔', 'bird':'小鸟', 'penguin':'小企鹅'}
 RUNNER_FIXED_RATES = {'fixed_low': ('低', 24), 'fixed_medium': ('中', 48), 'fixed_high': ('高', 96)}
@@ -73,6 +74,7 @@ CONTENT_COLUMN_BREAKPOINT=360
 TASKBAR_LAYERS={'bottom':'置底','top':'置顶'}
 CAPSULE_TASKBAR_POSITIONS={'left':'靠左','center':'居中','right':'靠右','custom':'记住拖放位置'}
 HALO_SPEEDS={'slow':('慢速',12), 'medium':('中速',8), 'fast':('快速',4)}
+HALO_COLOR_MODES = (('原版彩虹', 'rainbow'), *SPECTRUM_COLOR_MODES)
 TASK_MEDIA_PARTS={'cover':'封面图标','title':'曲名','controls':'播放按钮','wave':'声音律动 / 频谱','progress':'进度细线'}
 AI_PROVIDERS=('Claude','Codex','Cursor','Antigravity','ZCode','Dsh','Kimi','OpenCode','Pi','GrokBot')
 AI_PROVIDER_NAMES={'Dsh':'DeepSeek Harness','GrokBot':'Grok Bot'}
@@ -119,6 +121,7 @@ DEFAULTS.update(resource_runner_enabled=False, resource_runner_animal='cat', res
                 resource_tray_runner_enabled=False, resource_tray_runner_animal='cat', resource_tray_runner_speed='adaptive', resource_tray_runner_metric='cpu')
 DEFAULTS.update(dict.fromkeys((*MONITOR_DEVICES.values(), 'resource_runner_device', 'resource_tray_runner_device'), ''))
 DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_font=11,resource_task_threshold=False,resource_threshold=True,resource_halo=True,resource_halo_speed='medium',
+                resource_halo_color_mode='rainbow',resource_halo_mono_color='',
                 resource_liquid=True,resource_edge_snap=True,resource_peer_snap=True,resource_edge='free',resource_face=True,
                 resource_expand_mode='hover',resource_open_page='last',resource_face_interactive=True,resource_face_mood='random',resource_face_role='',resource_face_scale=100,
                 resource_face_auto_switch=False,resource_face_switch_minutes=FACE_SWITCH_DEFAULT,
@@ -228,7 +231,17 @@ def clean_weather_thresholds(raw,strict=False):
     return list(WEATHER_THRESHOLDS)
 
 
+def clean_halo_color(value, strict=False):
+    if isinstance(value, str) and (not value or re.fullmatch(r'#[0-9a-fA-F]{6}', value)):
+        return value.lower()
+    if strict:
+        raise ValueError('光环单色请输入 #RRGGBB，或点击「默认」。')
+    return ''
+
+
 def normalize(cfg,strict=False):
+    cfg.setdefault('resource_halo_color_mode', DEFAULTS['resource_halo_color_mode'])
+    cfg['resource_halo_mono_color'] = clean_halo_color(cfg.get('resource_halo_mono_color', ''), strict)
     profiles=cfg.get('resource_peripheral_profiles',[])
     if profiles!=[]:
         from resource_peripherals import normalize_profiles
@@ -318,6 +331,7 @@ def normalize(cfg,strict=False):
              'resource_capsule_taskbar_position':tuple(CAPSULE_TASKBAR_POSITIONS),
              'resource_taskbar_position':('left','center','right'),
              'resource_taskbar_layer':tuple(TASKBAR_LAYERS), 'resource_halo_speed':tuple(HALO_SPEEDS),
+             'resource_halo_color_mode':tuple(value for _, value in HALO_COLOR_MODES),
              'resource_edge':('free','top','bottom','left','right')}
     for key,allowed in options.items():
         if cfg.get(key) not in allowed:

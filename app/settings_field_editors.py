@@ -6,6 +6,31 @@ from PyQt5.QtWidgets import QColorDialog, QComboBox, QHBoxLayout, QLineEdit, QSp
 from ui_style import ModernCheckBox, ModernComboBox, ModernSpinBox, ThemeSwatches, button, label
 
 
+def color_editor(parent, title, default_color='#b8d9ef'):
+    wrapper = QWidget()
+    container = QVBoxLayout(wrapper)
+    container.setContentsMargins(0, 0, 0, 0)
+    container.setSpacing(4)
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    field = QLineEdit()
+    field.setPlaceholderText('默认色 / #RRGGBB')
+    field.setAccessibleName(title)
+    row.addWidget(field, 1)
+
+    def choose():
+        initial = QColor(field.text())
+        selected = QColorDialog.getColor(initial if initial.isValid() else QColor(default_color), parent, title)
+        if selected.isValid():
+            field.setText(selected.name())
+
+    row.addWidget(button('选择', choose))
+    row.addWidget(button('默认', field.clear))
+    container.addLayout(row)
+    container.addWidget(ThemeSwatches(field))
+    return wrapper, field
+
+
 class SettingsFieldEditors:
     @staticmethod
     def field_value(key, field):
@@ -81,24 +106,8 @@ class SettingsFieldEditors:
         form.addRow(self.field_label(title), field)
 
     def color(self, form, key, title):
-        wrapper = QWidget()
-        container = QVBoxLayout(wrapper)
-        container.setContentsMargins(0, 0, 0, 0)
-        container.setSpacing(4)
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        field = QLineEdit()
-        field.setPlaceholderText('默认色 / #RRGGBB')
-        field.setAccessibleName(title)
+        wrapper, field = color_editor(self, title)
         self.fields[key] = field
-        row.addWidget(field, 1)
-        def choose():
-            value = QColorDialog.getColor(QColor(field.text() or '#b8d9ef'), self, title)
-            if value.isValid(): field.setText(value.name())
-        row.addWidget(button('选择', choose))
-        row.addWidget(button('默认', field.clear))
-        container.addLayout(row)
-        container.addWidget(ThemeSwatches(field))
         form.addRow(self.field_label(title), wrapper)
 
     def check(self, form, key, title):

@@ -17,6 +17,8 @@ public sealed class LogReader
         public readonly List<TokenEntry> Entries = [];
         public JsonElement Quota;
         public DateTimeOffset? QuotaTime;
+        public JsonElement DayStartQuota;
+        public DateTimeOffset? DayStartTime;
         public int Errors;
         public CodexAccounting? Codex;
     }
@@ -51,6 +53,8 @@ public sealed class LogReader
         }
         int count = 0, errors = 0;
         JsonElement latestQuota = default;
+        DateTime today = now.LocalDateTime.Date;
+        CacheItem? firstToday = null;
         var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
         foreach (var folder in roots.SelectMany(dataRoot => folders.Select(name => Path.Combine(dataRoot, name))))
         {
@@ -72,8 +76,11 @@ public sealed class LogReader
                         cached.Entries.RemoveAll(entry => entry.Time < cutoff); cached.Codex?.Reindex();
                         cached.Cutoff = cutoff;
                     }
-                    if (info.Length != cached.Length || info.LastWriteTimeUtc != cached.Modified) { Parse(file, id, cached, info); changed = true; }
+                    if (cached.DayStartTime is { } old && old.LocalDateTime.Date != today)
+                    { cached.DayStartTime = null; cached.DayStartQuota = default; }
+                    if (info.Length != cached.Length || info.LastWriteTimeUtc != cached.Modified) { Parse(file, id, cached, info, today); changed = true; }
                     count++; errors += cached.Errors;
+                    if (cached.DayStartTime is { } first && (firstToday is null || first < firstToday.DayStartTime)) firstToday = cached;
                     if (cached.QuotaTime is { } time && (result.QuotaTime is null || time > result.QuotaTime))
                     { result.QuotaTime = time; latestQuota = cached.Quota; }
                 }
@@ -110,12 +117,19 @@ public sealed class LogReader
             result.Source = Loc.T("本地配额快照", "Local quota snapshot");
             result.Status = Loc.T("本地记录", "Local records");
         }
+        if (firstToday?.DayStartTime is { } firstAt)
+        {
+            var metrics = QuotaParser.Codex(firstToday.DayStartQuota, firstAt, false);
+            result.Details["quotaDayStart"] = JsonSerializer.Serialize(new { at = firstAt,
+                plan = firstToday.DayStartQuota.Get("plan_type").Text(),
+                quotas = metrics.Select(q => new { label = q.Label, window = q.Minutes, percent = q.UsedPercent, reset = q.ResetAt }) });
+        }
         return result;
     }
 
     // BigFishDockpro adaptation: skip non-accounting values while streaming.
     // A multi-megabyte tool result never becomes a large buffer or JSON DOM.
-    private void Parse(string file, ProviderId id, CacheItem item, FileInfo info)
+    private void Parse(string file, ProviderId id, CacheItem item, FileInfo info, DateTime today)
     {
         using var stream = SharedFile.Open(file);
         stream.Seek(item.Offset, SeekOrigin.Begin);
@@ -123,7 +137,7 @@ public sealed class LogReader
         while (lines.Next(out var json, out var invalid))
         {
             if (invalid) item.Errors++;
-            else if (json is not null) ParseLine(json, id, item);
+            else if (json is not null) ParseLine(json, id, item, today);
             item.Offset = lines.Position;
         }
         item.Length = info.Length; item.Modified = info.LastWriteTimeUtc;
@@ -178,7 +192,7 @@ public sealed class LogReader
         else item.Entries.Add(entry);
     }
 
-    private static void ParseLine(ReadOnlyMemory<byte> line, ProviderId id, CacheItem item)
+    private static void ParseLine(ReadOnlyMemory<byte> line, ProviderId id, CacheItem item, DateTime today)
     {
         if (line.Span.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) line = line[3..]; // UTF-8 byte order mark
         if (!HasUsageKey(line.Span)) return;
@@ -196,8 +210,14 @@ public sealed class LogReader
             {
                 var payload = obj.Get("payload");
                 var limits = payload.Get("rate_limits");
-                if (time is not null && limits.ValueKind == JsonValueKind.Object && (limits.Get("limit_id").Text() is "" or "codex") && (item.QuotaTime is null || time >= item.QuotaTime))
-                { item.Quota = limits.Clone(); item.QuotaTime = time; }
+                if (time is { } observed && limits.ValueKind == JsonValueKind.Object && (limits.Get("limit_id").Text() is "" or "codex"))
+                {
+                    if (item.QuotaTime is null || observed >= item.QuotaTime)
+                    { item.Quota = limits.Clone(); item.QuotaTime = observed; }
+                    if (observed.LocalDateTime.Date == today && (item.DayStartTime is null || observed < item.DayStartTime) &&
+                        (limits.Get("primary").Get("used_percent").Number() is not null || limits.Get("secondary").Get("used_percent").Number() is not null))
+                    { item.DayStartQuota = item.QuotaTime == observed ? item.Quota : limits.Clone(); item.DayStartTime = observed; }
+                }
                 item.Codex ??= new CodexAccounting(item.Entries);
                 if (!item.Codex.Read(obj, time, item.Cutoff)) item.Errors++;
             }

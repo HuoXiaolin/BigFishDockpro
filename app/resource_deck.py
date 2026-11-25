@@ -1,7 +1,8 @@
 """Opt-in JSON pipe to the BrimDeck-derived read-only provider/media helper."""
 import base64,ctypes,json,os,sys,time
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from PyQt5.QtCore import QObject,QProcess,QProcessEnvironment,QTimer
+from PyQt5.QtCore import QObject,QProcess,QProcessEnvironment,QTimer,Qt
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QApplication
 
@@ -29,7 +30,11 @@ class DeckBridge(QObject):
         super().__init__(owner);self.owner=owner;self.signature=None;self.closed=False;self.buffer=bytearray()
         self.providers=[];self.media={};self.cover=QPixmap();self.levels=[0.]*8;self.status='正在连接…'
         self.local_providers=[];self.gateway=None;self.magpie=None;self.idling=False
-        self.ai_revision=0
+        self.ai_revision=0;self.ball_quota=None
+        from resource_quota_day import QuotaDayHistory
+        self.quota_history=QuotaDayHistory(Path(owner.runtime.api.CONFIG_DIR)/'deck-data')
+        self.quota_midnight=QTimer(self);self.quota_midnight.setSingleShot(True);self.quota_midnight.setTimerType(Qt.PreciseTimer)
+        self.quota_midnight.timeout.connect(self.publish_ai)
         self.ai_status='正在读取…';self.alert='';self.alert_until=0.;self.previous_levels={}
         self.history_requested=False
         self.heatmap_since=None
@@ -66,7 +71,16 @@ class DeckBridge(QObject):
         if self.magpie and self.magpie.rows:
             from resource_magpie_usage import apply_session_history
             local = [apply_session_history(row, self.magpie.rows.get(row['id'])) for row in local]
-        self.providers = [*local, *(self.gateway.rows if self.gateway else ())]
+        now=time.time()
+        self.providers = [self.quota_history.decorate(row,now) for row in (*local, *(self.gateway.rows if self.gateway else ()))]
+        from resource_quota import capsule_reading
+        self.ball_quota=next((r for row in self.providers if (r:=capsule_reading(row)) and r.remaining is not None),None)
+        if any(row.get('_quota_today') for row in self.providers):
+            if not self.quota_midnight.isActive():
+                tomorrow=date.fromtimestamp(now)+timedelta(days=1)
+                midnight=datetime.combine(tomorrow,datetime.min.time()).timestamp()
+                self.quota_midnight.start(max(1,round((midnight-now)*1000)+50))
+        else:self.quota_midnight.stop()
         if check_alerts:
             self.check_quota_alerts()
         self.notify_ai()
@@ -217,6 +231,7 @@ class DeckBridge(QObject):
         if kind=='ai' and (cfg['resource_ai'] or cfg['resource_ai_tray']):
             if self.idling:return
             self.local_providers=data.get('providers',[])[:7];self.ai_status='更新于 '+str(data.get('at',''))[11:19]
+            self.quota_history.observe(self.local_providers)
             self.provider_rows_changed();return
         elif kind=='memory_error':
             self.memory_blocked=True;self.restart.stop();self.launch_watch.stop();self.status=self.ai_status=data.get('message','无法启用内存限制')
@@ -268,7 +283,7 @@ class DeckBridge(QObject):
         if spectrum:spectrum.set_levels([])
         self.restart.start(min(60000,5000*2**(self.failures-1)));self.stale_local_readings()
     def close(self):
-        self.closed=True;self.restart.stop();self.launch_watch.stop();p=self.process
+        self.closed=True;self.restart.stop();self.launch_watch.stop();self.quota_midnight.stop();p=self.process
         if self.gateway:self.gateway.cancel()
         if self.magpie:self.magpie.close()
         if p.state()!=QProcess.NotRunning:

@@ -9,7 +9,8 @@ from resource_charts import sync_note_controls
 from resource_options import content_columns
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,cost_label,reset_text
 from resource_usage import HEATMAP_WEEKS,aggregate,heatmap_days
-from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, remaining_percent, tray_metric_key, used_percent
+from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, quota_window, remaining_percent, tray_metric_key, used_percent
+from resource_status import today_ring_ink
 from resource_provider_icons import paint_provider_mark
 import reset_credits
 from card_design import blend,paint_capsule_card
@@ -200,7 +201,8 @@ class QuotaOverview(QWidget):
                      Qt.AlignRight if inline else Qt.AlignLeft)
                 if reset:text(p,QRectF(x,value_box.bottom(),cell_width,16),reset,colors['muted'],10)
             else:
-                self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64, stale=bool(row.get('stale')))
+                daily=row.get('_quota_today',{}).get((tray_metric_key(metric),quota_window(metric)))
+                self.paint_metric(p, colors, metric, x, y, cell_width, metric_height == 64, stale=bool(row.get('stale')),daily=daily)
 
         if footer_y is not None:
             line = QColor(colors['ink'])
@@ -209,7 +211,7 @@ class QuotaOverview(QWidget):
             p.drawLine(QPointF(left, footer_y), QPointF(right, footer_y))
 
     @staticmethod
-    def paint_metric(p, colors, metric, x, y, width, narrow, *, stale=False):
+    def paint_metric(p, colors, metric, x, y, width, narrow, *, stale=False, daily=None):
         money = amount_text(metric)
         value_y = y + 16 if narrow else y
         if money is not None:
@@ -243,6 +245,10 @@ class QuotaOverview(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(track_color)
         p.drawRoundedRect(track, 2, 2)
+        if daily and daily.in_window and remaining is not None:
+            part=QRectF(track.x()+width*remaining/100,track.y(),width*daily.in_window/100,track.height())
+            p.setBrush(QColor(today_ring_ink(not colors['light'])))
+            p.drawRoundedRect(part,2,2)
         if remaining:
             track.setWidth(width * remaining / 100)
             p.setBrush(QColor(ink))

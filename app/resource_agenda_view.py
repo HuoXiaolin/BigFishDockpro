@@ -120,16 +120,23 @@ class AgendaRows(QStyledItemDelegate):
             if selected:
                 p.setPen(Qt.NoPen);p.setBrush(color)
                 p.drawRoundedRect(QRectF(rect.left()+2,top+4,2,25),1,1)
-            text(p,QRectF(left,top,width,18),title,c['ink'],13,True)
             source_text=DISPLAY_SOURCES[source]
             font=QFont(p.font());font.setPixelSize(9);font.setWeight(QFont.Bold)
             source_width=10+QFontMetrics(font).horizontalAdvance(source_text)
+            stamp=start+' – '+end if end else start
+            # A time column on wide cards keeps meeting titles on one reading edge.
+            wide=width>=288 and bool(stamp)
+            title_left=left+84 if wide else left
+            text(p,QRectF(title_left,top,rect.right()-title_left-8,18),title,c['ink'],13,True)
             tag=QRectF(rect.right()-source_width-8,top+19,source_width,15)
             fill=QColor(color);fill.setAlpha(25 if c['light'] else 47)
             p.setPen(Qt.NoPen);p.setBrush(fill);p.drawRoundedRect(tag,5,5)
             text(p,tag,source_text,color,9,True,Qt.AlignCenter)
-            stamp=start+' – '+end if end else start
-            text(p,QRectF(left,top+18,tag.left()-left-5,17),stamp+notice,c['muted'],10)
+            if wide:
+                text(p,QRectF(left,top,79,18),stamp,color,11,True)
+                text(p,QRectF(title_left,top+18,tag.left()-title_left-4,17),notice.strip(),c['muted'],10)
+            else:
+                text(p,QRectF(left,top+18,tag.left()-left-5,17),stamp+notice,c['muted'],10)
         finally:p.restore()
 
 
@@ -140,7 +147,7 @@ class AgendaView(QWidget):
         self.layout_=QBoxLayout(QBoxLayout.LeftToRight,self)
         self.layout_.setContentsMargins(0,0,0,0);self.layout_.setSpacing(7)
         month=DashboardCard(window,'mint')
-        month_body=QVBoxLayout(month);month_body.setContentsMargins(8,6,8,7);month_body.setSpacing(3)
+        month_body=QVBoxLayout(month);month_body.setContentsMargins(9,7,9,8);month_body.setSpacing(4)
         self.calendar=AgendaCalendar(window)
         navigation = QHBoxLayout()
         navigation.setSpacing(3)
@@ -189,8 +196,8 @@ class AgendaView(QWidget):
         self.update_month(self.calendar.yearShown(), self.calendar.monthShown())
         self.layout_.addWidget(month,2)
 
-        listing=DashboardCard(window,'ice')
-        body=QVBoxLayout(listing);body.setContentsMargins(10,6,10,7);body.setSpacing(4)
+        listing=DashboardCard(window,'paper')
+        body=QVBoxLayout(listing);body.setContentsMargins(10,7,10,8);body.setSpacing(5)
         header=QHBoxLayout();header.setSpacing(4)
         self.day=QLabel();self.day.setObjectName('AgendaDay');self.day.setWordWrap(True);header.addWidget(self.day,1)
         self.add_button=QToolButton();self.add_button.setText('+ 新增');self.add_button.clicked.connect(lambda:self.edit())
