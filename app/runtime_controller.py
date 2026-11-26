@@ -289,7 +289,7 @@ class RuntimeController:
             if 'fullscreen_detection' in changed:self.configure_fullscreen_timer()
             elif 'game_mode' in changed:self.apply_visibility()
             if 'startup_priority' in changed:set_priority(self.dock.cfg['startup_priority'])
-            if policy_changed or changed&{'card_edge_hide','resource_edge_hide'} or 'apps' in cfg['component_passthrough'].values():self.click_policy.refresh()
+            if policy_changed or changed&{'card_edge_hide','resource_edge_hide','passthrough_alt_unlock'} or 'apps' in cfg['component_passthrough'].values():self.click_policy.refresh()
             return
         self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
         self.sync_tray_visibility()

@@ -325,9 +325,30 @@ class AlignedMenu(QMenu):
             return menu
         return super().addMenu(title)
 
-    def sizeHint(self):
-        size = super().sizeHint()
-        return QSize(max(compact_px(220), size.width()), size.height())
+    def showEvent(self, event):
+        super().showEvent(event)
+        parent = self.parentWidget()
+        if not isinstance(parent, QMenu) or parent.activeAction() is not self.menuAction():
+            return
+        bounds = parent.frameGeometry()
+        screen = QApplication.screenAt(parent.mapToGlobal(parent.actionGeometry(self.menuAction()).center()))
+        if screen is None:
+            return
+        work = screen.availableGeometry()
+        # Continue a cascade in the direction the parent actually opened. At
+        # a screen edge Qt can otherwise double back over the first menu.
+        grandparent = parent.parentWidget()
+        if isinstance(grandparent, QMenu) and grandparent.isVisible():
+            opens_right = bounds.center().x() >= grandparent.frameGeometry().center().x()
+        else:
+            opens_right = self.frameGeometry().center().x() >= bounds.center().x()
+        left, right = bounds.left() - self.width(), bounds.right() + 1
+        preferred, other = (right, left) if opens_right else (left, right)
+        last_x = max(work.left(), work.right() - self.width() + 1)
+        def on_screen(x):
+            return max(work.left(), min(x, last_x))
+        x = min((preferred, other), key=lambda position: abs(on_screen(position) - position))
+        self.move(on_screen(x), self.y())
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -343,7 +364,6 @@ class AlignedMenu(QMenu):
         for action in self.actions():
             if not action.isVisible(): continue
             rect = self.actionGeometry(action)
-            rect.setRight(self.width()-compact_px(6))
             if action.property('componentHeading'):
                 p.save()
                 heading=QFont(font);heading.setWeight(QFont.DemiBold);p.setFont(heading)
@@ -363,7 +383,7 @@ class AlignedMenu(QMenu):
                 p.drawRoundedRect(QRectF(rect).adjusted(3,1,-3,-1), 4, 4)
             ink = palette.color(QPalette.Text if action.isEnabled() else QPalette.Mid)
             p.setPen(ink)
-            p.drawText(rect.adjusted(compact_px(32),0,-compact_px(25),0), Qt.AlignVCenter, action.text().replace('&',''))
+            p.drawText(rect.adjusted(compact_px(30),0,-compact_px(20),0), Qt.AlignVCenter, action.text().replace('&',''))
             if action.isChecked():
                 path = QPainterPath(); y = rect.center().y()
                 path.moveTo(rect.left()+compact_px(11),y); path.lineTo(rect.left()+compact_px(14),y+compact_px(3)); path.lineTo(rect.left()+compact_px(20),y-compact_px(4))
@@ -833,8 +853,9 @@ def apply_theme(app, light):
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {width:0;}
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {background:transparent;}
         QMenu {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; padding:5px;}
-        QMenu[roundedPopup="true"] {background:transparent; border:0;}
+        QMenu[roundedPopup="true"] {background:transparent; border:0; padding:4px 2px;}
         QMenu::item {padding:7px 26px 7px 22px; border-radius:4px;}
+        QMenu[roundedPopup="true"]::item {padding:10px 21px 10px 30px;}
         QMenu::item:selected {background:%(selection)s;}
         QMenu::separator {height:1px; background:%(line)s; margin:5px 10px;}
         QToolTip {background:%(surface)s; color:%(text)s; border:1px solid %(line)s; padding:6px;}

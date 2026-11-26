@@ -49,6 +49,8 @@ def run(output):
         run_corner_stacking(app, output, checks)
         from startup_tests import early_logon
         early_logon(root.name,checks)
+        from menu_corner_tests import check_tray_rows
+        check_tray_rows(runtime,app,output,checks)
         from desktop_shortcut_tests import run as run_desktop_shortcut
         run_desktop_shortcut(app,api,runtime,root.name,checks)
         from update_source_tests import run as run_update_sources

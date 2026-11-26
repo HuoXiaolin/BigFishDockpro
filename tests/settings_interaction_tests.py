@@ -18,8 +18,9 @@ def wheel(widget, delta, modifiers=Qt.NoModifier, pixels=0):
 
 
 def click_at(widget, point):
+    global_pos = QPointF(widget.mapToGlobal(point))
     for kind, buttons in ((QEvent.MouseButtonPress,Qt.LeftButton),(QEvent.MouseButtonRelease,Qt.NoButton)):
-        QApplication.sendEvent(widget, QMouseEvent(kind, QPointF(point), Qt.LeftButton, buttons, Qt.NoModifier))
+        QApplication.sendEvent(widget, QMouseEvent(kind, QPointF(point), global_pos, Qt.LeftButton, buttons, Qt.NoModifier))
 
 
 def check_wheel(main, runtime, checks):

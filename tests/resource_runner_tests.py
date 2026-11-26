@@ -99,6 +99,68 @@ def check_penguin_waddle():
     assert center_x(far_wings[24]) + 24 < center_x(near_wings[24])
 
 
+def check_shared_pace(capsule, tray, service):
+    from resource_runner import FRAMES, frame_rate
+
+    original = [(pet.animal, pet.speed, pet.metric, pet.device) for pet in (capsule, tray)]
+    try:
+        with patch.object(service, 'runner_reading') as reading, patch('resource_runner.perf_counter') as clock:
+            for mode, load, other in (('fixed_low', 0, 'cat'), ('fixed_medium', 0, 'dog'),
+                                      ('fixed_high', 0, 'bird'), ('adaptive', 1, 'rabbit'),
+                                      ('adaptive', 5, 'cat'), ('adaptive', 25, 'dog'),
+                                      ('adaptive', 50, 'bird'), ('adaptive', 100, 'rabbit')):
+                penguin, reference = (tray, capsule) if other in ('cat', 'bird') else (capsule, tray)
+                start = clock.return_value = 100.
+                reading.return_value = load
+                for pet, animal in ((penguin, 'penguin'), (reference, other)):
+                    pet.configure('dog' if animal == 'cat' else 'cat', mode, 'cpu')
+                    pet.configure(animal, mode, 'cpu')
+                rate = frame_rate(mode, load)
+                assert penguin.fps == reference.fps == rate
+                if mode == 'adaptive' and load <= 5:
+                    assert 0 < penguin.timer.interval() < reference.timer.interval()
+                    clock.return_value = start + .55 / rate
+                    penguin.advance()
+                    reference.advance()
+                    assert 0 < penguin.frame < 6 and reference.frame == 0
+                # Check two whole cycles, then skip several deadlines in one wake-up.
+                for tick in (*range(1, 2 * FRAMES + 1), 37):
+                    clock.return_value = start + (tick + .00001) / rate
+                    reference.advance()
+                    penguin.advance()
+                    assert reference.frame == tick % FRAMES
+                    assert penguin.frame == 6 * reference.frame
+                if mode == 'adaptive' and load == 5:
+                    clock.return_value += .4 / rate
+                    reading.return_value = 50
+                    for pet in (penguin, reference):
+                        pet.update_reading()
+                    assert abs(penguin.next_frame - reference.next_frame) < 1e-7
+                    clock.return_value = max(penguin.next_frame, reference.next_frame) + 1e-7
+                    for pet in (penguin, reference):
+                        pet.advance()
+                    assert penguin.frame == 6 * reference.frame == 36
+                    for idle in (0, None):
+                        reading.return_value = idle
+                        for pet in (penguin, reference):
+                            pet.update_reading()
+                            assert not pet.timer.isActive()
+                        clock.return_value += 2
+                        penguin.advance()
+                        reference.advance()
+                        assert penguin.frame == 6 * reference.frame == 36
+                    reading.return_value = 10
+                    for pet in (penguin, reference):
+                        pet.update_reading()
+                    clock.return_value = max(penguin.next_frame, reference.next_frame) + 1e-7
+                    penguin.advance()
+                    reference.advance()
+                    assert penguin.frame == 6 * reference.frame == 42
+    finally:
+        for pet, options in zip((capsule, tray), original):
+            pet.configure(*options)
+
+
 def run(api, runtime, app, output, checks):
     from PyQt5.QtCore import QEvent, QEventLoop, QPointF, QRect, QTimer, Qt
     from PyQt5.QtGui import QHelpEvent, QImage, QMouseEvent
@@ -303,13 +365,10 @@ def run(api, runtime, app, output, checks):
         assert capsule.tray is None and capsule.animal == 'rabbit' and capsule.fps == 24
         assert runner.fps == 96 and runner.animal == 'cat'
         assert service.set_options(resource_runner_animal='penguin', resource_tray_runner_animal='penguin')
-        for actor in (capsule, runner):
-            for index, after in ((7, 8), (47, 0)):
-                actor.frame = index
-                with patch('resource_runner.perf_counter', return_value=actor.next_frame):
-                    actor.advance()
-                assert actor.frame == after
+        assert capsule.animal == runner.animal == 'penguin'
+        check_shared_pace(capsule, runner, service)
         assert service.set_options(resource_runner_animal='rabbit', resource_tray_runner_animal='cat')
+        checks.append('Penguin cycle timing matches the other pets on both surfaces at every fixed tier and at 1/5/25/50/100 percent load, including skipped deadlines, load changes, pause and resume.')
         ticks = set()
         loop = QEventLoop()
         def tick(slot):
@@ -391,7 +450,7 @@ def run(api, runtime, app, output, checks):
         assert gpu_loads({'luid_0x1_0x2_phys_0_eng_0':10,'luid_0x1_0x2_phys_0_eng_1':38,
                           'luid_0x1_0x3_phys_0_eng_0':116})=={0x100000002:38,0x100000003:100}
         checks.append('Disk activity excludes the aggregate instance. Network load uses negotiated per-direction rates and rejects counter resets, new links and speed changes.')
-        checks.append('Both Qt surfaces play the complete sprite sheet for each animal, including the 48-pose penguin. Transparent bounds, coats, tray cropping and animation wraparound are verified.')
+        checks.append('Both Qt surfaces render every source pose, including all 48 penguin drawings. Transparent bounds, coats, tray cropping and cycle wraparound are verified.')
 
         from resource_panel import display_values
         from taskbar_readout import columns

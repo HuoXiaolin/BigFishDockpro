@@ -113,7 +113,7 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
-        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','watermark_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection')
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','watermark_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection','passthrough_alt_unlock')
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = SettingsFields(self)
         self.import_candidate=None;self.import_path=None
@@ -381,6 +381,8 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.add_field(layout, 'custom_bottom')
         self.add_field(layout, 'bottom_margin')
         self.add_field(layout, 'layer')
+        self.add_field(layout, 'passthrough_alt_unlock')
+        self.fields['passthrough_alt_unlock'].setToolTip('按住左 Alt 或右 Alt 可以点击或拖动穿透中的组件，松开后恢复原模式。')
         self.add_field(layout, 'show_name')
         self.add_field(layout, 'sep_split')
         self.add_field(layout, 'lang')

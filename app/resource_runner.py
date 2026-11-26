@@ -13,7 +13,7 @@ from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS,
 
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets' / 'runner'
-FRAMES = 8
+FRAMES = 8  # Timing ticks per complete walk or wingbeat, independent of the artwork.
 TILE_SIZE = 128
 
 
@@ -101,6 +101,8 @@ class RunningAnimal(QObject):
         self.readout = ''
         self.metric_text = ''
         self.frame = 0
+        self.cycle_tick = 0
+        self.samples_per_tick = 1
         self.fps = 0
         self.next_frame = 0.0
         self.frame_remaining = 1.0
@@ -117,7 +119,10 @@ class RunningAnimal(QObject):
         if (animal, speed, metric, device) == (self.animal, self.speed, self.metric, self.device):
             return
         if self.animal != animal:
-            self.frame = 0
+            self.frame = self.cycle_tick = 0
+            self.frame_remaining = 1.0
+            self.fps = 0
+            self.timer.stop()
         self.animal, self.speed, self.metric, self.device = animal, speed, metric, device
         self.update_reading()
         if self.tray is not None:
@@ -134,16 +139,24 @@ class RunningAnimal(QObject):
         fps = frame_rate(self.speed, percent)
         if self.animal=='bird' and self.speed=='adaptive':
             fps=max(8.,fps)
-        if self.fps != fps:
+        # Between slow sensor-driven ticks, display intermediate drawings from
+        # denser sheets within the low-speed refresh budget. All pets still
+        # reach the same eight timing ticks per cycle.
+        samples = 1
+        if fps:
+            available = frame_count(self.animal) / FRAMES
+            samples = max(1, int(min(available, RUNNER_FIXED_RATES['fixed_low'][1] / fps)))
+        if (self.fps, self.samples_per_tick) != (fps, samples):
             now = perf_counter()
-            # Preserve the current frame's progress when the sensor reading changes.
+            # Carry the same point in the walk through load changes and pauses.
             if self.fps:
+                self.advance_ticks(now)
                 self.frame_remaining = (min(1., max(0., (self.next_frame - now) * self.fps))
                                         if isfinite(self.next_frame) else 1.)
-            self.fps = fps
+            self.fps, self.samples_per_tick = fps, samples
             if fps:
                 self.next_frame = now + self.frame_remaining / fps
-                self.schedule_frame(now)
+                self.present_frame(self.schedule_frame(now))
             else:
                 self.timer.stop()
         label = '—' if percent is None else f'{percent:.0f}%'
@@ -179,20 +192,34 @@ class RunningAnimal(QObject):
             self.show_reading(QCursor.pos())
 
     def schedule_frame(self, now):
-        self.timer.start(max(1, ceil(min(2_147_483_647, (self.next_frame - now) * 1000))))
+        remaining = self.next_frame - now
+        sample = 0
+        if self.samples_per_tick > 1 and isfinite(remaining):
+            progress = max(0., 1 - remaining * self.fps)
+            sample = min(self.samples_per_tick - 1, int(progress * self.samples_per_tick))
+            remaining -= (self.samples_per_tick - 1 - sample) / (self.samples_per_tick * self.fps)
+        self.timer.start(max(1, ceil(min(2_147_483_647, remaining * 1000))))
+        return sample
+
+    def advance_ticks(self, now):
+        if now >= self.next_frame:
+            ticks = 1 + floor((now - self.next_frame) * self.fps)
+            self.cycle_tick = (self.cycle_tick + ticks) % FRAMES
+            self.next_frame += ticks / self.fps
 
     def advance(self):
         if not self.fps:
             return
         now = perf_counter()
-        if now < self.next_frame:
-            self.schedule_frame(now)
+        self.advance_ticks(now)
+        self.present_frame(self.schedule_frame(now))
+
+    def present_frame(self, sample):
+        position = self.cycle_tick * self.samples_per_tick + sample
+        frame = position * frame_count(self.animal) // (FRAMES * self.samples_per_tick)
+        if self.frame == frame:
             return
-        # Keep fractional deadlines. After a delayed event, paint only the current frame.
-        steps = max(1, 1 + floor((now - self.next_frame) * self.fps))
-        self.next_frame += steps / self.fps
-        self.frame = (self.frame + steps) % frame_count(self.animal)
-        self.schedule_frame(now)
+        self.frame = frame
         if self.tray is not None:
             self.tray.setIcon(tray_frame(self.animal, self.frame))
         else:

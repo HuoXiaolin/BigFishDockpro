@@ -16,6 +16,9 @@ PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@cap
                 '@start': START_MENU, '@notifications': NOTIFICATIONS, '@cursors': CURSORS}
 
 
+ALT_PASSTHROUGH_LABEL = '按住 Alt 临时解除鼠标穿透'
+
+
 def field_catalog(api, cfg):
     from appearance_presets import APPEARANCE_SOURCES, BACKDROP_MODES, COLOR_MODES, MATERIALS, material_choices
     from card_design import DESIGNS
@@ -50,6 +53,7 @@ def field_catalog(api, cfg):
         'bottom_margin': (0, '边缘距离（像素）', 'number', (0, 200)),
         'layer': (0, '窗口层级', 'combo', api.LAYERS),
         'show_name': (0, '悬停时显示应用名称', 'check', None),
+        'passthrough_alt_unlock': (APPEARANCE, ALT_PASSTHROUGH_LABEL, 'check', None),
         'sep_split': (0, '分隔符切开玻璃背景', 'check', None),
         'lang': (0, '原 Dock 菜单语言', 'combo', [(name, key) for name, key in api.LANGS]),
         'screen_corners': (0, '启用屏幕圆角', 'check', None),

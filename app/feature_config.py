@@ -26,7 +26,7 @@ DEFAULTS = {
     'taskbar_text_mode':'system', 'taskbar_text_auto':False, 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
     'card_snap': True, 'card_snap_distance': 12, 'card_edge_hide': False,
-    'passthrough_mode':'custom','component_passthrough':{},
+    'passthrough_mode':'custom','component_passthrough':{},'passthrough_alt_unlock':True,
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_icon_shape':'default','dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,

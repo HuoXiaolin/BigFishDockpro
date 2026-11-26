@@ -2,6 +2,56 @@
 import sys,json
 from pathlib import Path
 
+
+def check_tray_rows(runtime, app, output, checks):
+    from unittest.mock import patch
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtGui import QColor, QImage, QPainter
+    from desktop_panel_tests import wait_for
+    from menu_paths import action_at
+    from settings_interaction_tests import click_at
+
+    screen = app.primaryScreen().availableGeometry()
+    root = runtime.tray.menu
+    points = (screen.topLeft() + QPoint(40, 45), screen.topRight() + QPoint(-3, 45))
+    with patch.object(runtime.productivity, 'open_layouts') as open_layouts:
+        for index, anchor in enumerate(points):
+            root.popup(anchor)
+            app.processEvents()
+            menus = [root]
+            try:
+                for title in ('Dock 与应用', '查找与整理', '桌面布局方案…'):
+                    parent = menus[-1]
+                    action = action_at(parent, title)
+                    row = parent.actionGeometry(action)
+                    left = QPoint(3, row.center().y()); right = QPoint(parent.width()-4, row.center().y())
+                    assert parent.actionAt(left) is action and parent.actionAt(right) is action, (title, parent.width(), row)
+                    assert row.height() >= parent.fontMetrics().height()+9
+                    if action.menu():
+                        click_at(parent, right if index==0 else left)
+                        child = action.menu()
+                        wait_for(app, child.isVisible)
+                        parent_box, child_box = parent.frameGeometry(), child.frameGeometry()
+                        assert screen.contains(child_box)
+                        if index == 0: assert child_box.left() == parent_box.right()+1, (parent_box,child_box)
+                        else: assert child_box.right()+1 == parent_box.left(), (parent_box,child_box)
+                        menus.append(child)
+                    else:
+                        assert parent.width() <= parent.fontMetrics().horizontalAdvance(title)+52
+                        if index:
+                            bounds = menus[0].frameGeometry()
+                            for popup in menus[1:]: bounds = bounds.united(popup.frameGeometry())
+                            image = QImage(bounds.size(), QImage.Format_ARGB32_Premultiplied)
+                            image.fill(QColor('#e5ebef')); painter = QPainter(image)
+                            for popup in menus:
+                                painter.drawPixmap(popup.pos()-bounds.topLeft(),popup.grab())
+                            painter.end(); image.save(str(Path(output)/'tray-menu-cascade.png'))
+                        click_at(parent, left if index==0 else right)
+                        assert open_layouts.call_count == index+1 and not root.isVisible()
+            finally:
+                root.close(); app.processEvents()
+    checks.append('Tray context menu: left and right row edges open two nested menus and trigger the leaf; compact content widths and outward cascades at both screen edges')
+
 def run(output):
     from run_isolated_test import assert_isolated
     assert_isolated()

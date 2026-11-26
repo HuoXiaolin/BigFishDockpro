@@ -9,6 +9,74 @@ from PyQt5.QtWidgets import QWidget
 from window_layers import TOPMOST, covers_above, desktop_layer, is_topmost, native, owner_of, restack
 
 
+def check_alt_unlock(api, runtime, app, capsule, strip, cover, center, hit, other_app, checks):
+    from component_passthrough import add_menu
+    from desktop_panel_tests import wait_for
+    from feature_config import normalize
+    from menu_paths import action_at
+    from settings_catalog import ALT_PASSTHROUGH_LABEL
+    from ui_style import AlignedMenu
+
+    cfg, policy, user = runtime.dock.cfg, runtime.click_policy, native()
+    key = 'passthrough_alt_unlock'
+    assert normalize({})[key] and normalize({key:'false'})[key] and not normalize({key:False})[key]
+    menu = AlignedMenu()
+    add_menu(menu, runtime)
+    switch = action_at(menu, ALT_PASSTHROUGH_LABEL)
+    assert switch.isChecked()
+    switch.trigger()
+    assert not cfg[key] and not api.load_config()[key]
+    switch.trigger()
+    assert cfg[key] and api.load_config()[key]
+    menu.deleteLater()
+
+    hwnd, bar = int(capsule.winId()), int(strip.winId())
+    down = set()
+    # Bit 0 alone only reports a previous press. Inject the high bit for a held
+    # modifier without sending any physical keys to the user's input desktop.
+    def key_state(vk):
+        return 0x8001 if vk in down else 1
+
+    def passes(window):
+        flag = bool(user.GetWindowLongW(int(window.winId()), -20) & 0x20)
+        assert flag == window.testAttribute(Qt.WA_TransparentForMouseEvents)
+        return flag
+
+    with patch.dict(cfg, passthrough_mode='all', component_passthrough={}, resource_click_through=False,
+                    resource_taskbar_click_through=False), patch.object(user, 'GetAsyncKeyState', side_effect=key_state), \
+         patch('window_layers.cursor_position', return_value=center(hwnd)), patch.object(user, 'GetWindowThreadProcessId',side_effect=other_app):
+        policy.apply(capsule);policy.apply(strip)
+        assert passes(capsule) and passes(strip) and hit(hwnd)==int(cover.winId())
+        down.add(0xA4)
+        wait_for(app, lambda: not passes(capsule) and not passes(strip))
+        assert hit(hwnd)==hwnd and hit(bar)==bar
+        down.add(0xA5);down.remove(0xA4)
+        policy.update_pointer()
+        assert not passes(capsule) and not passes(strip)
+        down.clear()
+        wait_for(app, lambda: passes(capsule) and passes(strip))
+        assert cfg['passthrough_mode']=='all' and not cfg['component_passthrough']
+
+        cfg['passthrough_mode']='custom';cfg['component_passthrough']={'resource':'apps'}
+        policy.apply(capsule,center(hwnd));policy.apply(strip)
+        assert passes(capsule) and not passes(strip)
+        down.add(0xA5);policy.update_pointer()
+        assert not passes(capsule) and hit(hwnd)==hwnd
+        cfg[key]=False;policy.apply(capsule)
+        assert passes(capsule)
+        cfg[key]=True;policy.apply(capsule)
+        assert not passes(capsule)
+        cover.hide();down.clear();policy.update_pointer()
+        assert not passes(capsule)  # Release over the desktop uses the current underlay.
+        cover.show();assert restack(int(cover.winId()),1)
+        policy.update_pointer()
+        assert passes(capsule) and cfg['component_passthrough']=={'resource':'apps'}
+        cfg['passthrough_mode']='none';policy.refresh()
+        assert not passes(capsule) and not policy.pointer_timer.isActive()
+    policy.refresh()
+    checks.append('Alt click-through: both modifier keys and last release, real Win32 hit targets and Qt flags, conditional underlay changes, disabled/interactive modes, idle timer and persisted default-on switch')
+
+
 def run(api,runtime,app,output,checks):
     dock=runtime.dock;cfg=dock.cfg;before=copy.deepcopy(cfg)
     service=runtime.resources
@@ -110,6 +178,7 @@ def run(api,runtime,app,output,checks):
                 thread=owner_pid(hwnd,pid)
                 if hwnd==cover_id:pid._obj.value+=1
                 return thread
+            check_alt_unlock(api,runtime,app,w,strip,cover,center,hit,other_app,checks)
             with patch.dict(cfg,component_passthrough={'resource':'apps'}):
                 policy=runtime.click_policy
                 point=center(capsule_id)

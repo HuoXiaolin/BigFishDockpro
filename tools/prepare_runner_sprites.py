@@ -25,6 +25,7 @@ POSES = {
 def penguin_walk(atlas, count):
     """Two alternating steps seen from the penguin's right-facing profile."""
     scale = 3
+    limb_scale = 1.20
     canvas = (CELL * scale,) * 2
     width, height = atlas.size
 
@@ -60,24 +61,29 @@ def penguin_walk(atlas, count):
                                     green.point(lambda v: min(255, round(v * 1.15))),
                                     blue.point(lambda v: min(255, round(v * 1.10))), alpha))
 
+    def resize_limb(drawing, width, height):
+        size = (round(width * limb_scale * scale), round(height * limb_scale * scale))
+        return drawing.resize(size, Image.Resampling.LANCZOS)
+
     def hinged_wing(side):
         near = side == -1
         size = (28, 37) if near else (39, 50)
-        wing = wings[side].resize((size[0] * scale, size[1] * scale), Image.Resampling.LANCZOS)
+        wing = resize_limb(wings[side], *size)
         # The original flippers point diagonally in opposite directions. Set
         # each one vertical before measuring its fore/aft swing at the joint.
-        shoulder = (60 if near else 63, 66 if near else 67)
+        # Keep the front of the belly visible throughout the near flipper's forward stroke.
+        shoulder = (50, 66) if near else (63, 65)
         joint = tuple(coord * scale for coord in shoulder)
-        socket_x = .84 if near else .16
+        # Tuck the far flipper's root into the shoulder so its longer tip
+        # clears the planted foot at the bottom of its swing.
+        socket_x, socket_y = (.84, .14) if near else (.16, .28)
         layer = Image.new('RGBA', canvas)
         layer.alpha_composite(wing, (joint[0] - round(wing.width * socket_x),
-                                     joint[1] - round(wing.height * .14)))
+                                     joint[1] - round(wing.height * socket_y)))
         return layer, joint, 35 if near else -36
 
     mounts = {side: hinged_wing(side) for side in (-1, 1)}
-    shoes = {side: feet[side].resize(((26 if side == -1 else 23) * scale,
-                                      (13 if side == -1 else 11) * scale), Image.Resampling.LANCZOS)
-             for side in (-1, 1)}
+    shoes = {-1: resize_limb(feet[-1], 26, 13), 1: resize_limb(feet[1], 23, 11)}
     for index in range(count):
         phase = tau * index / count
         stride, step = cos(phase), sin(phase)
@@ -92,11 +98,13 @@ def penguin_walk(atlas, count):
             forward = -side * stride
             lift = max(0., side * step)
             sole = 122 - 6.8 * lift * lift
-            center = (60 if near else 67) + 10.4 * forward
+            ankle_x = (55 if near else 62) + 10.4 * forward
             foot = shoes[side].rotate((13 * forward + 3) * lift, Image.Resampling.BICUBIC, expand=True)
             foot = foot.crop(foot.getchannel('A').getbbox())
+            # Enlarge the toe around the ankle while keeping the planted sole on the ground.
+            center = ankle_x + 5 * limb_scale
             pos = (round(center * scale - foot.width / 2), round(sole * scale - foot.height))
-            ankle = (round((center - 5) * scale), round((sole - 6) * scale))
+            ankle = (round(ankle_x * scale), round((sole - 6) * scale))
             return foot, pos, ankle
 
         far_foot, far_pos, far_ankle = foot_pose(1)

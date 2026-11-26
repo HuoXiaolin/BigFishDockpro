@@ -1,5 +1,5 @@
 """Effective pointer policy for desktop widgets and its recovery menu."""
-from weakref import WeakSet
+from weakref import WeakKeyDictionary
 from PyQt5.QtCore import QObject,QEvent,QTimer
 from PyQt5.QtWidgets import QActionGroup,QApplication,QWidget
 
@@ -44,16 +44,24 @@ def set_mode(runtime,mode):
 class ClickThroughPolicy(QObject):
     def __init__(self,runtime):
         super().__init__(runtime.dock);self.runtime=runtime;self.app=QApplication.instance();self.applying=False
-        self.conditional=WeakSet()
+        # Visible windows that need cursor hit-testing or a global Alt sample.
+        # Each value records (conditional hit-test, currently unlocked by Alt).
+        self.watched = WeakKeyDictionary()
+        self.closed = False
         self.pointer_timer=QTimer(self)
         self.pointer_timer.setInterval(24)
         self.pointer_timer.timeout.connect(self.update_pointer)
         self.app.installEventFilter(self)
 
-    def apply(self,window,point=None):
+    def sync_timer(self):
+        if self.watched:
+            if not self.pointer_timer.isActive():self.pointer_timer.start()
+        else:self.pointer_timer.stop()
+
+    def apply(self,window,point=None,alt_down=None):
         key=window.property('clickThroughKey')
-        if not key or self.applying:return
-        from window_layers import application_under,click_through,cursor_position,is_topmost
+        if not key or self.applying or self.closed:return
+        from window_layers import alt_pressed,application_under,click_through,cursor_position,is_topmost
         mode=pointer_mode(self.runtime.dock.cfg,key)
         edge=getattr(window,'edge_reveal',None)
         if edge or self.runtime.dock.cfg.get('resource_edge_hide') or self.runtime.dock.cfg.get('card_edge_hide'):
@@ -65,34 +73,45 @@ class ClickThroughPolicy(QObject):
             if edge:
                 edge.configure(enabled)
                 if edge.fraction<1.:mode=False
-        passthrough=mode is True
         self.applying=True
         try:
-            if mode=='apps' and window.isVisible() and is_topmost(int(window.winId())):
-                self.conditional.add(window)
-                if not self.pointer_timer.isActive():self.pointer_timer.start()
-                passthrough=application_under(int(window.winId()),point if point is not None else cursor_position())
+            visible = window.isVisible()
+            conditional = mode == 'apps' and visible and is_topmost(int(window.winId()))
+            can_unlock = visible and (mode is True or conditional) and self.runtime.dock.cfg['passthrough_alt_unlock']
+            unlocked = can_unlock and (alt_pressed() if alt_down is None else alt_down)
+            if conditional or can_unlock:
+                self.watched[window] = (conditional, unlocked)
             else:
-                self.conditional.discard(window)
-                if not self.conditional:self.pointer_timer.stop()
+                self.watched.pop(window, None)
+            self.sync_timer()
+            passthrough = mode is True and not unlocked
+            if conditional and not unlocked:
+                passthrough = application_under(int(window.winId()), point if point is not None else cursor_position())
             click_through(window,passthrough)
         finally:self.applying=False
 
     def update_pointer(self):
-        from window_layers import cursor_position
-        point=cursor_position()
-        for window in tuple(self.conditional):
-            try:self.apply(window,point)
-            except RuntimeError:self.conditional.discard(window)
-        if not self.conditional:self.pointer_timer.stop()
+        from window_layers import alt_pressed, cursor_position
+        watched = tuple(self.watched.items())
+        held = bool(watched) and self.runtime.dock.cfg['passthrough_alt_unlock'] and alt_pressed()
+        point = None
+        for window, (conditional, unlocked) in watched:
+            if held == unlocked and (held or not conditional):
+                continue
+            if conditional and not held and point is None:
+                point = cursor_position()
+            try:self.apply(window, point, held)
+            except RuntimeError:self.watched.pop(window, None)
+        self.sync_timer()
 
     def eventFilter(self,window,event):
         kind=event.type()
         if kind in (QEvent.Show,QEvent.Hide,QEvent.Enter,QEvent.WindowStateChange) and isinstance(window,QWidget) and window.isWindow():
-            if kind==QEvent.Hide and window in self.conditional:
-                self.conditional.discard(window)
-                if not self.conditional:self.pointer_timer.stop()
-            elif kind!=QEvent.Hide:self.apply(window)
+            if kind==QEvent.Hide:
+                if window in self.watched:
+                    self.watched.pop(window)
+                    self.sync_timer()
+            else:self.apply(window)
         return False
 
     def refresh(self):
@@ -100,8 +119,9 @@ class ClickThroughPolicy(QObject):
             if window.isVisible():self.apply(window)
 
     def close(self):
+        self.closed = True
         self.pointer_timer.stop()
-        self.conditional.clear()
+        self.watched.clear()
         self.app.removeEventFilter(self)
 
 
@@ -120,6 +140,15 @@ def add_menu(menu,runtime):
     for title,value in MODES:
         action=menu.addAction(title);action.setCheckable(True);action.setChecked(cfg['passthrough_mode']==value)
         group.addAction(action);action.triggered.connect(lambda _,mode=value:set_mode(runtime,mode))
+    menu.addSeparator()
+    from settings_catalog import ALT_PASSTHROUGH_LABEL
+    unlock = menu.addAction(ALT_PASSTHROUGH_LABEL)
+    unlock.setCheckable(True);unlock.setChecked(cfg['passthrough_alt_unlock'])
+    def set_unlock(checked):
+        from settings_effects import save_changes
+        if not save_changes(runtime.tray,runtime.api,{'passthrough_alt_unlock':checked}):
+            unlock.setChecked(cfg['passthrough_alt_unlock'])
+    unlock.triggered.connect(set_unlock)
     menu.addSeparator()
 
     def add(parent,key,title):

@@ -28,6 +28,8 @@ def native():
         user.GetForegroundWindow.restype = W.HWND
         user.GetCursorPos.argtypes = [C.POINTER(W.POINT)]
         user.GetCursorPos.restype = W.BOOL
+        user.GetAsyncKeyState.argtypes = [C.c_int]
+        user.GetAsyncKeyState.restype = C.c_short
         user.GetClassNameW.argtypes = [W.HWND, W.LPWSTR, C.c_int]
         user.GetClassNameW.restype = C.c_int
         user.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
@@ -85,6 +87,11 @@ DESKTOP_WINDOW_CLASSES=frozenset({'Progman','WorkerW','SHELLDLL_DefView','Shell_
 def cursor_position():
     point=W.POINT()
     return point if native().GetCursorPos(C.byref(point)) else None
+
+
+def alt_pressed():
+    pressed = native().GetAsyncKeyState
+    return bool((pressed(0xA4) | pressed(0xA5)) & 0x8000)  # VK_LMENU / VK_RMENU
 
 
 def application_under(hwnd,point):

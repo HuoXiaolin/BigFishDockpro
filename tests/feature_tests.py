@@ -384,7 +384,7 @@ def run(api, dock, tray, root, output, checks):
             assert not spin.plus.geometry().intersects(spin.minus.geometry())
             runtime.tray.rebuild();menu=runtime.tray.menu
             menu.popup(QPoint(40,40));app.processEvents()
-            assert menu.width()<=190 and menu.height()<=230,menu.size()
+            assert menu.width()<=190 and menu.screen().availableGeometry().contains(menu.frameGeometry()),menu.geometry()
             for action in menu.actions():
                 if action.isSeparator():continue
                 assert menu.actionGeometry(action).height()>=menu.fontMetrics().height()+4

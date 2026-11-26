@@ -36,6 +36,7 @@
   "card_design": "aurora",
   "card_snap": true,
   "card_edge_hide": false,
+  "passthrough_alt_unlock": true,
   "card_snap_distance": 12,
   "appearance_mode": "liquid",
   "appearance_custom": {
