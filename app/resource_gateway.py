@@ -10,11 +10,13 @@ from urllib.request import HTTPRedirectHandler,Request,build_opener
 from PyQt5.QtCore import QObject,Qt,QTimer,pyqtSlot
 
 from background_worker import BackgroundWorker
+from resource_gateway_balance import PRESETS, SERVICES, balance_metrics
 from resource_usage import FIELDS
 
 
-KINDS={'auto':'自动识别','opencode':'OpenCode Go','commandcode':'Command Code','json':'指定用量地址'}
-ENDPOINTS={'opencode':'https://opencode.ai/zen/go/v1/usage','commandcode':'https://api.commandcode.ai'}
+KINDS={'auto':'自动识别','deepseek':'DeepSeek','kimi':'Kimi','openrouter':'OpenRouter',
+       'opencode':'OpenCode Go','commandcode':'Command Code','json':'指定用量或余额地址'}
+ENDPOINTS={**PRESETS,'opencode':'https://opencode.ai/zen/go/v1/usage','commandcode':'https://api.commandcode.ai'}
 PERIODS=('today','yesterday','week','month','all')
 MAX_ACCOUNTS=5
 MAX_RESPONSE=1024*1024
@@ -50,6 +52,8 @@ def endpoint(value):
 
 
 def detected_kind(parts):
+    if parts.hostname in SERVICES:
+        return SERVICES[parts.hostname].kind
     if parts.hostname=='opencode.ai' and (parts.path in ('','/') or parts.path.startswith('/zen/go')):
         return 'opencode'
     if parts.hostname in ('api.commandcode.ai','commandcode.ai'):
@@ -69,7 +73,13 @@ def account_value(raw):
     identity=raw.get('id')
     if not isinstance(identity,str) or len(identity)!=32 or any(ch not in '0123456789abcdef' for ch in identity):
         raise UsageError('连接编号无效。')
-    url=endpoint(raw.get('url') or ENDPOINTS.get(kind,''))
+    balance_url=(raw.get('balance_url') or '').strip()
+    url=endpoint((raw.get('url') or '').strip() or ENDPOINTS.get(kind) or balance_url)
+    if balance_url:
+        if balance_url.startswith('/') and not balance_url.startswith('//'):
+            base=urlsplit(url)
+            balance_url=f'{base.scheme}://{base.netloc}{balance_url}'
+        balance_url=endpoint(balance_url)
     if kind=='opencode':
         if url.rstrip('/') in ('https://opencode.ai','https://opencode.ai/zen/go','https://opencode.ai/zen/go/v1'):
             url=ENDPOINTS[kind]
@@ -83,7 +93,9 @@ def account_value(raw):
         parts=urlsplit(url)
         name=KINDS.get(detected_kind(parts) if kind=='auto' else kind) if kind!='json' else None
         name=name or parts.hostname[:48]
-    return dict(id=identity,kind=kind,name=name,url=url,token=token)
+    account=dict(id=identity,kind=kind,name=name,url=url,token=token)
+    if balance_url:account['balance_url']=balance_url
+    return account
 
 
 def config_path(directory):
@@ -121,6 +133,9 @@ def fetch_json(url,token):
         if len(payload)>MAX_RESPONSE:raise UsageError('用量响应过大。')
         return json.loads(payload)
     except HTTPError as error:
+        parts=urlsplit(url)
+        if error.code==403 and parts.hostname=='openrouter.ai' and parts.path.rstrip('/')=='/api/v1/credits':
+            raise UsageError('OpenRouter 查询账户余额需要管理密钥。') from None
         raise UsageError('Token 无权限或已失效。' if error.code in (401,403) else f'用量接口 HTTP {error.code}') from None
     except (URLError,TimeoutError,OSError):
         raise UsageError('连接失败或超时。') from None
@@ -193,14 +208,14 @@ def provider(account,status='正在读取用量…',**values):
     kind = account['kind']
     url = urlsplit(account.get('url', ''))
     brand = kind if kind in ENDPOINTS else detected_kind(url)
-    brand = brand or {'api.deepseek.com': 'deepseek', 'openrouter.ai': 'openrouter'}.get(url.hostname)
     return dict({'id':'gateway-'+account['id'],'name':account['name'],'source':KINDS[kind],'brand':brand,
                  'status':status,'quotas':[],'days':[],'usageAvailable':False,'usageComplete':False},**values)
 
 
-def decode_gateway(account,data):
+def decode_gateway(account,data,url=None,*,balance_endpoint=False):
+    balances=balance_metrics(data,url or account['url'],balance_endpoint=balance_endpoint)
     data=result_object(data)
-    quotas=windows(object_(data.get('quotas') or data.get('limits') or data.get('usage') or data))
+    quotas=balances+windows(object_(data.get('quotas') or data.get('limits') or data.get('usage') or data))
     periods={}
     for key in PERIODS:
         value=summary(object_(data.get('periods')).get(key) or data.get(key))
@@ -215,37 +230,80 @@ def decode_gateway(account,data):
         except (TypeError,ValueError):continue
         value=summary(row.get('summary') or row)
         if value is not None:days.append(dict(date=stamp,model=str(row.get('model') or '网关汇总')[:96],summary=value))
-    if not quotas and not periods and not days:raise UsageError('接口未提供可识别的额度或用量字段。')
+    if not quotas and not periods and not days:raise UsageError('接口未提供可识别的余额、额度或用量字段。')
     plan = data.get('plan') or data.get('planType') or data.get('plan_type')
     plan = plan.strip()[:48] if isinstance(plan, str) else ''
     return provider(account,'已连接',plan=plan,quotas=quotas,periods=periods,days=days,usageAvailable=bool(periods or days),
                     usageComplete=bool(days))
 
 
-def read_gateway(account,fetch=fetch_json,cancelled=lambda:False):
-    url=account['url'];token=account['token'];kind=account['kind']
-    if kind=='auto':
-        return discover_gateway(account,fetch,cancelled)
-    if kind=='commandcode':
-        return read_command_code(account,fetch,cancelled)
-    return decode_gateway(account,fetch(url,token))
-
-
-def discover_gateway(account,fetch,cancelled):
-    url=account['url'];token=account['token'];parts=urlsplit(url)
-    if kind:=detected_kind(parts):
-        return read_gateway(dict(account,kind=kind,url=ENDPOINTS[kind]),fetch,cancelled)
+def gateway_base(parts):
     path=parts.path.rstrip('/')
     for ending in ('/chat/completions','/responses','/embeddings','/messages','/models'):
         if path.endswith(ending):
             path=path.removesuffix(ending);break
-    base=f'{parts.scheme}://{parts.netloc}{path}'
-    versioned=base if path.endswith('/v1') else base+'/v1'
-    candidates=[base+'/usage',versioned+'/usage']
-    if path.endswith(('/usage','/usage/summary')):candidates.insert(0,url)
+    return f'{parts.scheme}://{parts.netloc}{path}'
+
+
+def read_gateway(account,fetch=fetch_json,cancelled=lambda:False):
+    url=account['url'];parts=urlsplit(url);path=parts.path.rstrip('/')
+    service=SERVICES.get(parts.hostname)
+    kind=account['kind']
+    selected=detected_kind(parts) if kind=='auto' else kind
+    base=gateway_base(parts)
+    versioned=base if base.endswith('/v1') else base+'/v1'
+    api_root=urlsplit(base).path in ('','/v1','/api','/api/v1','/anthropic','/anthropic/v1')
+    if parts.hostname=='api.openai.com' and api_root:
+        raise UsageError('OpenAI 官方预付余额请在账单总览查看。')
+    if service and api_root and not parts.query:
+        url=f'{parts.scheme}://{parts.netloc}{service.path}'
+    explicit=account.get('balance_url')
+    direct_balance=path.endswith(('/balance','/credits','/credit_grants')) or bool(service and urlsplit(url).path==service.path)
+    discover=kind=='auto' and not selected and not direct_balance and explicit!=url
+    if path.endswith(('/usage','/usage/summary')):
+        versioned=base.removesuffix('/summary').removesuffix('/usage')
+    extra=explicit or (versioned+'/balance' if discover else None)
+
+    def primary():
+        if cancelled():raise UsageError('已取消')
+        if selected=='commandcode':
+            command=dict(account,kind=selected,url=ENDPOINTS[selected]) if kind=='auto' else account
+            return read_command_code(command,fetch,cancelled)
+        if discover:
+            return discover_gateway(account,fetch,cancelled,base,versioned)
+        target=ENDPOINTS['opencode'] if kind=='auto' and selected=='opencode' else url
+        return decode_gateway(account,fetch(target,account['token']),target,balance_endpoint=direct_balance or target==explicit)
+
+    primary_error=None
+    try:
+        row=primary()
+    except UsageError as error:
+        if not extra or extra==url or cancelled():raise
+        primary_error=error
+        row=provider(account,'仅余额可用')
+    has_balance=any(q.get('id','').startswith('account-balance:') for q in row['quotas'])
+    if not extra or extra==url or (not explicit and has_balance):
+        return row
+    if cancelled():raise UsageError('已取消')
+    try:
+        balances=balance_metrics(fetch(extra,account['token']),extra,balance_endpoint=True)
+        if not balances:raise UsageError('余额接口未返回可识别的账户余额。')
+    except UsageError as error:
+        if primary_error:
+            raise (error if explicit else primary_error)
+        if explicit and not has_balance:
+            row['balanceStatus']='余额暂不可用'
+        return row
+    row['quotas']=balances+[q for q in row['quotas'] if not q.get('id','').startswith('account-balance:')]
+    return row
+
+
+def discover_gateway(account,fetch,cancelled,base,versioned):
+    url=account['url'];token=account['token'];path=urlsplit(url).path.rstrip('/')
+    candidates=[url] if path.endswith(('/usage','/usage/summary')) else [base+'/usage',versioned+'/usage']
     for candidate in dict.fromkeys(candidates):
         if cancelled():raise UsageError('已取消')
-        try:return decode_gateway(account,fetch(candidate,token))
+        try:return decode_gateway(account,fetch(candidate,token),candidate)
         except UsageError:pass
     if cancelled():raise UsageError('已取消')
     try:

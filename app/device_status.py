@@ -100,28 +100,31 @@ class DeviceStatus:
             if hr >= 0:
                 self.com.CoUninitialize()
 
-    def volume(self,capture=False):
+    @contextmanager
+    def volume_endpoint(self,capture):
         with self.apartment() as ready:
-            if not ready:return None
             enum,device,endpoint=C.c_void_p(),C.c_void_p(),C.c_void_p()
             try:
-                if self.com.CoCreateInstance(C.byref(ENUMERATOR_CLASS),None,1,C.byref(ENUMERATOR),C.byref(enum))<0:
-                    return None
-                # Windows default multimedia endpoint: eCapture for the microphone.
-                if invoke(enum,4,C.c_long,(C.c_int,C.c_int,OUT_INTERFACE),int(capture),1,C.byref(device))<0:
-                    return None
-                if invoke(device,3,C.c_long,(C.POINTER(GUID),W.DWORD,C.c_void_p,OUT_INTERFACE),
-                          C.byref(ENDPOINT_VOLUME),23,None,C.byref(endpoint))<0:
-                    return None
-                level,muted=C.c_float(),W.BOOL()
-                if invoke(endpoint,9,C.c_long,(C.POINTER(C.c_float),),C.byref(level))<0:
-                    return None
-                if invoke(endpoint,15,C.c_long,(C.POINTER(W.BOOL),),C.byref(muted))<0:
-                    return None
-                if 0<=level.value<=1:
-                    return round(100*level.value),bool(muted.value)
+                if ready and self.com.CoCreateInstance(C.byref(ENUMERATOR_CLASS),None,1,C.byref(ENUMERATOR),C.byref(enum))>=0:
+                    if invoke(enum,4,C.c_long,(C.c_int,C.c_int,OUT_INTERFACE),int(capture),1,C.byref(device))>=0:
+                        invoke(device,3,C.c_long,(C.POINTER(GUID),W.DWORD,C.c_void_p,OUT_INTERFACE),
+                               C.byref(ENDPOINT_VOLUME),23,None,C.byref(endpoint))
+                yield endpoint
             finally:
                 release(endpoint,device,enum)
+
+    def microphone_enabled(self):
+        with self.volume_endpoint(True) as endpoint:
+            muted=W.BOOL()
+            if endpoint and invoke(endpoint,15,C.c_long,(C.POINTER(W.BOOL),),C.byref(muted))>=0:
+                return not muted.value
+
+    def volume(self,capture=False):
+        with self.volume_endpoint(capture) as endpoint:
+            level,muted=C.c_float(),W.BOOL()
+            if (endpoint and invoke(endpoint,9,C.c_long,(C.POINTER(C.c_float),),C.byref(level))>=0
+                    and invoke(endpoint,15,C.c_long,(C.POINTER(W.BOOL),),C.byref(muted))>=0 and 0<=level.value<=1):
+                return round(100*level.value),bool(muted.value)
 
     def connection_name(self,adapter,alias,now,wireless=False):
         if adapter is None:

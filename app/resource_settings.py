@@ -25,7 +25,7 @@ NAV_SYMBOLS = ('startup','position','size','wave','palette','monitor','corner','
 NAV_GROUPS = (('胶囊',(0,2,4,6,8)),('监控',(5,1)),('内容与接入',(9,7,3)))
 COMPACT_GROUPS = (
     ('性能与流量', ('cpu','gpu','memory','disk_activity','network','fps','traffic')),
-    ('电脑状态（右侧图标）', COMPACT_STATUS),
+    ('电脑状态', COMPACT_STATUS),
     ('专注与日程', tuple(COMPACT_ROUTINES)),
     ('内容', tuple(COMPACT_CONTENT)),
     ('CPU 传感器', ('cpu_temp','cpu_power','cpu_frequency','cpu_voltage','cpu_fan','cpu_pump')),
@@ -302,9 +302,9 @@ class ResourceOptions(QDialog):
             layout=page(2)
             readouts=section(layout,'收起时显示的项目')
             tools=QHBoxLayout()
-            hint=QLabel('排在前面的已勾选项目优先常驻。');hint.setWordWrap(True)
+            hint=QLabel('调整已开启项目在收起胶囊中的显示顺序。');hint.setWordWrap(True)
             tools.addWidget(hint,1)
-            tools.addWidget(button('读数排序…',lambda: self.edit_order('resource_compact_order',PINNABLE)))
+            tools.addWidget(button('显示顺序…',self.edit_compact_order))
             readouts.addLayout(tools)
             for title,keys in COMPACT_GROUPS:
                 heading=QLabel(title);heading.setProperty('role','group-title');readouts.addWidget(heading)
@@ -339,7 +339,7 @@ class ResourceOptions(QDialog):
             key='resource_mail_icon'
             self.fields[key]=check('收起时显示邮箱图标',cfg[key]);mail.addWidget(self.fields[key])
             running=section(layout,'跑步小动物')
-            show_runner = check('在收起胶囊右侧显示小动物', cfg['resource_runner_enabled'])
+            show_runner = check('在收起胶囊显示小动物', cfg['resource_runner_enabled'])
             self.fields['resource_runner_enabled'] = show_runner
             running.addWidget(show_runner)
             form=QFormLayout();running.addLayout(form)
@@ -850,16 +850,37 @@ class ResourceOptions(QDialog):
         if color.isValid():
             self.tints[key]=color.name();self.fields['resource_palette'].setCurrentIndex(self.fields['resource_palette'].findData('custom'));self.color_preview()
 
+    def edit_compact_order(self):
+        from capsule_order import configured_items, display_order, merge_visible
+        for index in self.loaded:
+            self.snapshot_page(index)
+        cfg = dict(self.service.cfg, **self.orders)
+        for draft in self.drafts.values():
+            stores = draft['stores']
+            cfg.update(stores['fields'])
+            if 'compact_fields' in stores:
+                cfg['resource_compact_metrics'] = [key for key,on in stores['compact_fields'].items() if on]
+            if 'location_fields' in stores:
+                cfg['resource_component_locations'] = stores['location_fields']
+        names = configured_items(cfg)
+        selected = self.order_dialog(names, list(names), compact=True)
+        if selected is not None and selected != list(names):
+            self.orders['resource_compact_order'] = merge_visible(display_order(cfg), selected)
+
     def edit_order(self, key, names):
-        order = self.orders.get(key, self.service.cfg[key])
-        if key == 'resource_compact_order' and not order:
-            order = self.service.cfg['resource_compact_pinned']
-        order = [item for item in dict.fromkeys([*order, *names]) if item in names]
+        saved = self.orders.get(key, self.service.cfg[key])
+        order = [item for item in dict.fromkeys([*saved, *names]) if item in names]
+        selected = self.order_dialog(names, order)
+        if selected is not None:
+            self.orders[key] = selected
+
+    def order_dialog(self, names, order, compact=False):
         dialog = QDialog(self)
         dialog.setWindowTitle('显示顺序')
         dialog.resize(380, 390)
         layout = QVBoxLayout(dialog)
-        hint = QLabel('拖动项目调整顺序，也可使用上移和下移。')
+        hint = QLabel('拖动已开启的项目，按从左到右排列。' if compact else '拖动项目调整顺序，也可使用上移和下移。')
+        if not order:hint.setText('尚未开启收起显示项目。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
         view = QListWidget()
@@ -869,7 +890,7 @@ class ResourceOptions(QDialog):
             row = QListWidgetItem(names[item])
             row.setData(Qt.UserRole, item)
             view.addItem(row)
-        view.setCurrentRow(0)
+        if order:view.setCurrentRow(0)
         layout.addWidget(view, 1)
 
         def move(delta):
@@ -880,17 +901,24 @@ class ResourceOptions(QDialog):
                 view.setCurrentItem(item)
 
         controls = QHBoxLayout()
-        controls.addWidget(button('上移', lambda: move(-1)))
-        controls.addWidget(button('下移', lambda: move(1)))
+        up = button('上移', lambda: move(-1))
+        down = button('下移', lambda: move(1))
+        controls.addWidget(up)
+        controls.addWidget(down)
+        def update_buttons():
+            row = view.currentRow()
+            up.setEnabled(row > 0)
+            down.setEnabled(0 <= row < view.count()-1)
+        view.currentRowChanged.connect(update_buttons)
+        view.model().rowsMoved.connect(update_buttons)
+        update_buttons()
         controls.addStretch()
         controls.addWidget(button('取消', dialog.reject))
         controls.addWidget(button('确定', dialog.accept, 'primary'))
         layout.addLayout(controls)
         try:
             if dialog.exec_() == QDialog.Accepted:
-                self.orders[key] = [view.item(i).data(Qt.UserRole) for i in range(view.count())]
-                if key == 'resource_compact_order':
-                    self.orders['resource_compact_pinned'] = list(self.orders[key])
+                return [view.item(i).data(Qt.UserRole) for i in range(view.count())]
         finally:
             dialog.deleteLater()
 

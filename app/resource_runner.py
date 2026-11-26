@@ -52,6 +52,23 @@ def frame_rate(speed, percent):
 def capsule_rect(window):
     side = min(RUNNER_SLOT - 2, window.height() - 6, max(1, window.width() // 2 - 3))
     inset = 4 if window.width() < 70 else 7
+    if window.service.compact and window.fold_shape()=='ball':
+        from capsule_order import has_component_order
+        if has_component_order(window.service.cfg):
+            from capsule_order_layout import ball_slots
+            placed=ball_slots(window,window.width()).get('runner')
+            if placed is None:return QRect()
+            return QRect(placed.x+(placed.width-side)//2,(window.height()-side)//2,side,side)
+    if window.width() >= 70 and window.service.compact and window.fold_shape() != 'ball':
+        from resource_compact import plan
+        layout = plan(window, window.width())
+        if not layout['runner_width']:
+            return QRect()
+        if 'positions' in layout:
+            placed=layout['positions']['runner']
+            side=min(side,placed.width)
+            return QRect(placed.x+(placed.width-side)//2,(window.height()-side)//2,side,side)
+        inset += layout['clock_width']
     return QRect(window.width() - inset - side, (window.height() - side) // 2, side, side)
 
 

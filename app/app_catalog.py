@@ -63,25 +63,25 @@ def launch_identity(path):
 def _launch_identity(path, stamp,extra=''):
     target, arguments, seen = path, extra, set()
     from shortcut_targets import lnk_details
+    from shortcut_mapping import is_reference, is_shortcut_file
     for _ in range(8):
         key = path_key(target)
         if key in seen: break
         seen.add(key)
-        if not target.lower().endswith('.lnk'): break
+        if not is_shortcut_file(target, '.lnk'): break
         details = lnk_details(target)
         if not details: break
         target, args = details
         arguments = (args+' '+arguments).strip()
     apps_folder = 'shell:::{4234d49b-0245-4df3-b780-3893943456e1}\\'
     if target.casefold().startswith(apps_folder): target = 'shell:AppsFolder\\'+target[len(apps_folder):]
-    from shortcut_mapping import is_reference
     if is_reference(target) and not target.casefold().startswith('shell:'):return ('url',target,arguments)
     tool = windows_tool_id(target)
     if Path(target).name.casefold() == 'mmc.exe':
         management = arguments.strip('"')
         if windows_tool_id(management) == 'hyperv': return ('windows','hyperv')
     if tool and not arguments: return ('windows', tool)
-    if target.lower().endswith('.url'):
+    if is_shortcut_file(target, '.url'):
         from configparser import ConfigParser, Error
         try:
             parser = ConfigParser(interpolation=None)
@@ -105,6 +105,8 @@ def unique_apps(rows):
             seen[identity]['_paths'].append(row['path'])
         else:
             item = dict(row, _paths=[row['path']])
+            if not item.get('name'):
+                item['name'] = entry_name(item['path'])
             seen[identity] = item
             result.append(item)
     return result
@@ -123,6 +125,19 @@ def path_key(path):
     if path.lower().startswith('shell:'):
         return path.casefold()
     return os.path.normcase(os.path.realpath(os.path.abspath(path))).casefold()
+
+
+def is_file_entry(path):
+    """Documents and real directories use the collection card's file artwork."""
+    from shortcut_mapping import is_reference
+    return bool(path) and not is_reference(path) and (
+        Path(path).suffix.casefold() not in EXTENSIONS or os.path.isdir(path))
+
+
+def entry_name(path):
+    target = Path(path)
+    name = target.name if is_file_entry(path) else target.stem
+    return name or target.anchor or path
 
 
 def merge_items(existing, candidates):
@@ -147,7 +162,7 @@ def merge_items(existing, candidates):
             continue
         seen.add(launch_identity(item))
         result.append({'path': path if store else os.path.abspath(path),
-                       'name': item.get('name') or os.path.splitext(os.path.basename(path))[0],
+                       'name': item.get('name') or entry_name(path),
                        'group': item.get('group') or ('Windows 工具' if item.get('column') == 'windows' else infer_group(path, item.get('name', ''))),
                        **metadata(item),**({'icon':item['icon']} if item.get('icon') else {})})
         added += 1

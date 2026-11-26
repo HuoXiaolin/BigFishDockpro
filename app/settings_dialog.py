@@ -625,7 +625,7 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         tray, api = self.tray, self.api
         from settings_design import section_marker
         section_marker(apps,'Dock 应用')
-        apps.addRow(label('添加应用、Windows 工具或正在运行的软件，管理 Dock 中的快捷入口。', 'muted'))
+        apps.addRow(label('把应用、文件或文件夹固定到 Dock。移除快捷入口时，原文件和文件夹保留在原处。', 'muted'))
         self.action_row(apps,'应用列表',button('批量管理…',self.open_batch))
         self.add_field(apps, 'reorder')
         self.add_field(apps, 'running_dots')

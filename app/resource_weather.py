@@ -24,6 +24,13 @@ def clean_cities(value,strict=False):
     return list(dict.fromkeys(n.strip() for n in value))
 
 
+def compact_place_name(row):
+    name = row['name']
+    # Only automatic locations use the city · district format. Manual entries
+    # are also forecast lookup keys and can contain punctuation of their own.
+    return name.rpartition(' · ')[2] if row.get('located') else name
+
+
 def fetch_json(url,headers=None):
     from urllib.request import Request,urlopen
     limit=256*1024

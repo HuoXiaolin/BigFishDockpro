@@ -198,9 +198,9 @@ def quota_reading(row, metric):
                        metric.get('reset'), bool(row.get('stale')),row.get('_quota_today',{}).get((key,window)))
 
 
-def capsule_reading(row):
+def capsule_reading(row, *, allow_balance=True):
     metrics = row.get('quotas', ())
-    metric = next((q for q in metrics if _tray_balance(q) not in (None, '—')), None)
+    metric = next((q for q in metrics if _tray_balance(q) not in (None, '—')), None) if allow_balance else None
     if metric is None:
         metric = max((q for q in metrics if used_percent(q) is not None), key=used_percent, default=None)
     return quota_reading(row, metric) if metric is not None else None

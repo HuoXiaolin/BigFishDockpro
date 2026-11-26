@@ -1,12 +1,12 @@
 """Native shell appearance pages in the existing Qt settings hierarchy."""
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QColor, QPainter, QPalette, QPen
+from PyQt5.QtGui import QColor, QFont, QPainter, QPalette, QPen
 from PyQt5.QtWidgets import QWidget
 from ui_style import label, button
 from settings_design import section_marker
 from background_contrast import blend
 from shell_appearance import system_appearance
-from shell_appearance_model import NOTIFICATION_PARTS, appearance, panel_ink
+from shell_appearance_model import NOTIFICATION_PARTS, START_INSET, START_GAP, appearance, panel_ink, start_layout
 
 
 class ShellPreview(QWidget):
@@ -15,8 +15,7 @@ class ShellPreview(QWidget):
         from weakref import proxy
         self.dialog = proxy(dialog)
         self.kind = kind
-        self.setMinimumHeight(138)
-        self.setMaximumHeight(138)
+        self.setFixedHeight(202 if kind == 'start' else 138)
         self.setAccessibleName('开始菜单外观示意' if kind == 'start' else '通知与快捷面板外观示意')
 
     def refresh(self, *args):
@@ -41,7 +40,8 @@ class ShellPreview(QWidget):
         style = appearance(cfg, self.kind, *system_appearance(self.dialog.api))
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = QRectF(1, 1, self.width()-2, self.height()-2)
+        width = min(self.width()-2, start_layout().width) if self.kind == 'start' else self.width()-2
+        rect = QRectF((self.width()-width)/2, 1, width, self.height()-2)
         tint = QColor(style['color'])
         tint.setAlpha(round(style['opacity'] * 255 / 100))
         painter.setBrush(tint)
@@ -56,13 +56,8 @@ class ShellPreview(QWidget):
         painter.setPen(QColor(panel_ink(style, blend(style['color'], backdrop, tint.alphaF()), system_text_light)))
         w = self.width()
         if self.kind == 'start':
-            painter.drawText(18, 26, '所有应用')
-            painter.drawText(int(w*.58), 26, '已固定')
-            for index, title in enumerate(('文件资源管理器', '设置', '计算器')):
-                painter.drawText(24, 55+26*index, title)
-            for row in range(2):
-                for col in range(3):
-                    painter.fillRect(int(w*.59)+col*int(w*.105), 43+row*39, 22, 22, QColor('#5cb8df'))
+            painter.translate(rect.topLeft())
+            self.draw_start(painter, width)
         else:
             painter.drawText(18, 26, '快速设置 · 媒体控制')
             painter.drawText(int(w*.56), 26, '通知 · 日历')
@@ -71,6 +66,49 @@ class ShellPreview(QWidget):
             painter.drawText(20, 102, '保留系统按钮与交互')
             painter.drawText(int(w*.56), 64, '在系统原位置弹出')
             painter.drawText(int(w*.56), 102, '统一材质与配色')
+
+    def draw_start(self, painter, width):
+        # A short sample of the same two columns and footer, at a readable size.
+        layout = start_layout((width + 24, 600))
+        pin_x = START_INSET + layout.apps_width + START_GAP
+        icon_x = START_INSET + 8
+        name_x = icon_x + 36
+        ink = painter.pen().color()
+        text_font = QFont(self.font())
+        symbol_font = QFont('Segoe MDL2 Assets')
+
+        def draw(value, x, y, w, h, size, *, center=False, bold=False, symbol=False):
+            font = QFont(symbol_font if symbol else text_font)
+            font.setPixelSize(size)
+            font.setWeight(QFont.DemiBold if bold else QFont.Normal)
+            painter.setFont(font)
+            align = Qt.AlignVCenter | (Qt.AlignHCenter if center else Qt.AlignLeft)
+            fitted = painter.fontMetrics().elidedText(value, Qt.ElideRight, max(1, int(w)))
+            painter.drawText(QRectF(x, y, w, h), align, fitted)
+
+        draw('全部', icon_x, 8, layout.apps_width-8, 24, 15, bold=True)
+        draw('已固定', pin_x+(layout.cell_width-28)/2, 8, 90, 24, 15, bold=True)
+        draw('W', icon_x, 39, 30, 20, 11, bold=True)
+        for i, (name, glyph) in enumerate((('Windows 终端', '\ue756'), ('Windows 安全中心', '\ue83d'))):
+            y = 63+32*i
+            draw(glyph, icon_x, y, 24, 26, 20, center=True, symbol=True)
+            draw(name, name_x, y, max(1, pin_x-START_GAP-name_x), 26, 12)
+        pins = (('设置','\ue713'), ('文件资源管理器','\ue8b7'), ('日历','\ue787'), ('照片','\ueb9f'),
+                ('计算器','\ue8ef'), ('时钟','\ue917'), ('画图','\ue790'), ('便笺','\ue70b'))
+        for i, (name, glyph) in enumerate(pins[:layout.columns*2]):
+            row, col = divmod(i, layout.columns)
+            x, y = pin_x+col*layout.cell_width, 41+row*56
+            draw(glyph, x, y, layout.cell_width, 26, 22, center=True, symbol=True)
+            draw(name, x+2, y+27, layout.cell_width-4, 19, 11, center=True)
+        edge = QColor(ink)
+        edge.setAlpha(32)
+        painter.setPen(QPen(edge, 1))
+        painter.drawLine(START_INSET, 157, int(width)-START_INSET, 157)
+        painter.setPen(ink)
+        draw('\ue77b', icon_x, 160, 28, 36, 20, center=True, symbol=True)
+        draw('桌面用户', name_x, 160, layout.apps_width-44, 36, 12, bold=True)
+        for i, glyph in enumerate(('\ue721', '\ue713', '\ue7e8')):
+            draw(glyph, width-START_INSET-(3-i)*32, 160, 32, 36, 16, center=True, symbol=True)
 
 
 def build_page(dialog, form, kind):

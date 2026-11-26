@@ -35,6 +35,25 @@ static void BF_SaveLayoutBitmap(const FrameworkElement& root,const std::filesyst
     BF_WriteProbeBitmap(path,bitmap.PixelWidth(),bitmap.PixelHeight(),pixels.data());
 }
 
+// Use the project's existing public demo icons in the visual fixture.
+static Media::ImageSource BF_ProbeAppIcon(PCWSTR name) {
+    using namespace winrt::Windows::Storage::Streams;
+    const auto directory=BF_Setting(L"probe_icon_directory");
+    if (directory.empty() || !name) return nullptr;
+    std::ifstream file(std::filesystem::path(directory)/name,std::ios::binary);
+    if (!file) return nullptr;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),{});
+    InMemoryRandomAccessStream stream;
+    DataWriter writer(stream);writer.WriteBytes(bytes);
+    auto store=writer.StoreAsync();
+    const auto timeout=GetTickCount64()+1000;
+    while (store.Status()==wf::AsyncStatus::Started && GetTickCount64()<timeout) {BF_ProbePump();Sleep(1);}
+    if (store.Status()!=wf::AsyncStatus::Completed) return nullptr;
+    store.GetResults();writer.DetachStream();stream.Seek(0);
+    Media::Imaging::BitmapImage bitmap;bitmap.SetSource(stream);
+    return bitmap;
+}
+
 // Recreate the classic Shell's independent content roots, inherited view model,
 // nested account/power controls, and differently sized native item containers.
 // The 63-DIP header margin, 32-DIP root padding, 52-DIP items-panel margin and
@@ -52,7 +71,11 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     Hosting::DesktopWindowXamlSource source;
     auto native=source.as<IDesktopWindowXamlSourceNative>();winrt::check_hresult(native->AttachToWindow(window));
     HWND child=nullptr;native->get_WindowHandle(&child);SetWindowPos(child,nullptr,0,0,760,850,SWP_NOZORDER|SWP_SHOWWINDOW);
-    auto root=Markup::XamlReader::Load(LR"(<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Name="RootContent" Width="563" Height="625" Background="#FFEAF3F9">
+    const auto width=BF_StartDimension(L"bigfish_start_width",608,300,800);
+    const auto height=BF_StartDimension(L"bigfish_start_height",552,260,900);
+    const auto columnsCount=BF_StartDimension(L"bigfish_pin_columns",4,1,6);
+    const auto cell=BF_StartDimension(L"bigfish_pin_cell_width",88,48,110);
+    auto root=Markup::XamlReader::Load(LR"(<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Name="RootContent" Background="#FFEAF3F9">
       <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="ContentStates"><VisualState x:Name="Undocked">
         <Storyboard><DoubleAnimationUsingKeyFrames Storyboard.TargetName="AllAppsRoot" Storyboard.TargetProperty="Opacity">
             <DiscreteDoubleKeyFrame KeyTime="0" Value="1"/><LinearDoubleKeyFrame KeyTime="0:0:0.06" Value="0"/>
@@ -96,16 +119,21 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
           </Grid>
         </Grid>
       </Grid>
-      <Grid Name="NavigationPane" Width="543" Height="56" VerticalAlignment="Bottom">
-        <Grid Name="RootPanel" FlowDirection="RightToLeft">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition/><ColumnDefinition Width="40"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Grid Name="MainContent" Height="64" VerticalAlignment="Bottom"><Grid Name="NavigationPane" Height="48" Margin="16,0,16,0" VerticalAlignment="Center">
+        <Grid Name="RootPanel">
+          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition Width="40"/><ColumnDefinition Width="40"/></Grid.ColumnDefinitions>
           <Grid.RowDefinitions><RowDefinition/></Grid.RowDefinitions>
-          <Grid Name="UserTileView" Grid.Column="3" Width="140"><Button Name="UserTileButton" Content="示例账户" Width="125" Height="36"/></Grid>
-          <Grid Name="PowerButton" Grid.Column="2"><Button Name="PowerCommand" Width="36" Height="36" Padding="0" Background="Transparent"><FontIcon Glyph="&#xE7E8;" FontSize="18"/></Button></Grid>
-          <ListView Name="NavigationPanePlacesListView" Width="40" Height="40" Padding="0" BorderThickness="0" VerticalContentAlignment="Center"><ListViewItem Width="40" Height="40" MinWidth="0" MinHeight="0" Margin="0" Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"><FontIcon Glyph="&#xE713;" FontSize="18"/></ListViewItem></ListView>
+          <Grid Name="UserTileView"><Button Name="UserTileButton" Background="Transparent" Padding="11,0,11,0">
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+              <Grid Name="UserTileIcon" Width="32" Height="32"><Ellipse Fill="#FF688396"/><FontIcon Glyph="&#xE77B;" FontSize="16" Foreground="White"/></Grid>
+              <TextBlock Grid.Column="1" Name="UserTileNameText" Text="桌面用户" Margin="12,0,0,0" VerticalAlignment="Center"/>
+            </Grid></Button></Grid>
+          <Grid Name="PowerButton" Grid.Column="3"><Button Name="PowerCommand" Width="36" Height="36" Padding="0" Background="Transparent"><FontIcon Glyph="&#xE7E8;" FontSize="18"/></Button></Grid>
+          <ListView Grid.Column="2" Name="NavigationPanePlacesListView" Width="40" Height="40" Padding="0" BorderThickness="0" VerticalContentAlignment="Center"><ListViewItem Width="40" Height="40" MinWidth="0" MinHeight="0" Margin="0" Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"><FontIcon Glyph="&#xE713;" FontSize="18"/></ListViewItem></ListView>
         </Grid>
-      </Grid>
+      </Grid></Grid>
     </Grid>)").as<Controls::Grid>();
+    root.Width(width);root.Height(height);
     BF_FindLayoutElement(root,L"StartMenuPinnedList").as<Controls::Control>().ApplyTemplate();
     auto apps=BF_FindLayoutElement(root,L"AppsList").as<Controls::ListViewBase>();
     const bool coreApps=BF_Setting(L"probe_core_apps")==L"1";
@@ -128,31 +156,55 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
         wrapper.Children().Append(apps);parent.Children().InsertAt(index,wrapper);
         apps.ItemsPanel(Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsStackPanel/></ItemsPanelTemplate>)").as<Controls::ItemsPanelTemplate>());
     }
-    for (auto text:{L"A",L"应用列表：长名称显示测试",L"B",L"本地文件与文件夹",L"C",L"日历",L"图片",L"音乐"}) {
+    const wchar_t* names[]={L"设置",L"文件资源管理器",L"Firefox",L"Git",L"计算器",L"Visual Studio Code",L"文件夹",L"日历",L"Telegram",L"VLC",L"KeePassXC",L"时钟"};
+    const wchar_t* files[]={nullptr,nullptr,L"firefox.png",L"git.png",nullptr,L"vscode.png",nullptr,nullptr,L"telegram.png",L"vlc.png",L"keepassxc.png",nullptr};
+    std::vector<Media::ImageSource> pictures;
+    for (auto name:files) pictures.push_back(BF_ProbeAppIcon(name));
+    const wchar_t glyphs[]={0xe713,0xe8b7,0xe756,0xeb9f,0xe8ef,0xe943,0xe838,0xe787,0xe790,0xe8d6,0xe70b,0xe917};
+    auto glyphFor=[&](unsigned i) {
+        Controls::FontIcon glyph;glyph.Glyph(winrt::hstring(std::wstring(1,glyphs[i%12])));glyph.FontSize(20);
+        return glyph;
+    };
+    auto iconFor=[&](unsigned i)->UIElement {
+        if (!pictures[i]) return glyphFor(i);
+        Controls::Image image;image.Source(pictures[i]);return image;
+    };
+    for (auto text:{L"F",L"Firefox",L"G",L"Git",L"K",L"KeePassXC",L"T",L"Telegram",L"V",L"Visual Studio Code",L"VLC",L"W",L"Windows 终端"}) {
         auto item=coreApps?Controls::GridViewItem().as<Controls::ContentControl>():Controls::ListViewItem().as<Controls::ContentControl>();
         item.HorizontalContentAlignment(HorizontalAlignment::Stretch);item.Padding({});
         item.Background(Media::SolidColorBrush(winrt::Windows::UI::Color{}));
         if (wcslen(text)==1) {
-            auto button=Markup::XamlReader::Load(LR"(<Button xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Name="Header" Padding="10,0,0,0" BorderThickness="0" HorizontalContentAlignment="Left">
-              <Button.Template><ControlTemplate TargetType="Button"><Border Padding="{TemplateBinding Padding}"><TextBlock Name="Text" Text="{TemplateBinding Content}"/></Border></ControlTemplate></Button.Template>
+            auto button=Markup::XamlReader::Load(LR"(<Button xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Name="Header" Height="40" Padding="10,0,0,0" BorderThickness="0" HorizontalContentAlignment="Left">
+              <Button.Template><ControlTemplate TargetType="Button"><Border Name="Border" Padding="{TemplateBinding Padding}"><TextBlock Name="Text" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Text="{TemplateBinding Content}"/></Border></ControlTemplate></Button.Template>
             </Button>)").as<Controls::Button>();
             button.Content(winrt::box_value(text));item.Content(button);
         } else {
-            Controls::StackPanel line;line.Orientation(Controls::Orientation::Horizontal);line.Margin({8,0,0,0});
-            Controls::Border logo;logo.Name(L"AppListItemLogo");logo.Width(24);logo.Height(24);
-            Controls::TextBlock label;label.Text(text);line.Children().Append(logo);line.Children().Append(label);item.Content(line);
+            auto line=Markup::XamlReader::Load(LR"(<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Name="ContentRoot"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <Border Name="LogoBackgroundPlate"><Grid Name="AppListItemLogo" Width="24" Height="24" VerticalAlignment="Center"/></Border>
+                <TextBlock Name="AppDisplayName" Grid.Column="1" VerticalAlignment="Center"/></Grid>)").as<Controls::Grid>();
+            auto found=std::find_if(std::begin(names),std::end(names),[&](PCWSTR name){return std::wstring_view(name)==text;});
+            auto index=found==std::end(names)?2u:unsigned(found-std::begin(names));
+            BF_FindLayoutElement(line,L"AppListItemLogo").as<Controls::Grid>().Children().Append(iconFor(index));
+            BF_FindLayoutElement(line,L"AppDisplayName").as<Controls::TextBlock>().Text(text);item.Content(line);
         }
         apps.Items().Append(item);
     }
     auto pinned=BF_FindLayoutElement(root,L"PinnedList").as<Controls::GridView>();
     std::vector<Controls::GridViewItem> tiles;
-    for (int i=0;i<15;++i) {
+    for (int i=0;i<12;++i) {
         Controls::GridViewItem item;item.MinWidth(96);item.MinHeight(96);item.Padding({8,8,8,8});
         item.Template(Markup::XamlReader::Load(LR"(<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="GridViewItem"><Border Name="ContentBorder" Background="Transparent"><Grid><ContentPresenter Name="ContentPresenter" Content="{TemplateBinding Content}"/></Grid></Border></ControlTemplate>)").as<Controls::ControlTemplate>());
-        auto tile=Markup::XamlReader::Load(LR"(<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Name="NativeTileContent" Width="96" Height="84"><StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-            <Border Name="LogoContainer" Width="28" Height="28" Background="#487D9E" CornerRadius="6" HorizontalAlignment="Center"/>
-            <TextBlock Name="DisplayName" Text="应用" Margin="0,6,0,0" HorizontalAlignment="Center"/>
-        </StackPanel></Grid>)").as<Controls::Grid>();
+        auto tile=Markup::XamlReader::Load(LR"(<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Name="NativeTileContent" Width="96" Height="84" Padding="0,8,0,0">
+            <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/></Grid.RowDefinitions>
+            <Border Name="LogoContainer" Width="32" Height="32" CornerRadius="7" HorizontalAlignment="Center"/>
+            <TextBlock Name="DisplayName" FontSize="12" Grid.Row="1" Margin="2,4,2,0" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" TextAlignment="Center" VerticalAlignment="Top"/>
+        </Grid>)").as<Controls::Grid>();
+        auto logo=BF_FindLayoutElement(tile,L"LogoContainer").as<Controls::Border>();
+        const uint32_t colors[]={0x61768d,0xca8c30,0x3d4d60,0x477fab,0x427c78,0x237caf,0x7287ad,0x527899,0x847aa2,0xa26c71,0x9b8141,0x527e83};
+        auto color=colors[i%12];
+        if (!pictures[i%12]) logo.Background(Media::SolidColorBrush({255,uint8_t(color>>16),uint8_t(color>>8),uint8_t(color)}));
+        logo.Child(iconFor(i%12));
+        BF_FindLayoutElement(tile,L"DisplayName").as<Controls::TextBlock>().Text(names[i%12]);
         item.Content(tile);pinned.Items().Append(item);tiles.push_back(item);
     }
     auto originalParent=BF_FindLayoutElement(root,L"NativeInnerContent").as<Controls::Grid>();
@@ -177,8 +229,11 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     // A private panel's ArrangeOverride can reserve 52 DIPs on both sides even
     // though its public Margin and Padding have both been cleared. Reproduce
     // that slot geometry with Grid columns instead of another removable margin.
-    if (!coreApps) for (unsigned i=0;i<apps.Items().Size();++i) {
+    if (auto grid=apps.ItemsPanelRoot().try_as<Controls::Grid>()) for (unsigned i=0;i<apps.Items().Size();++i) {
         auto item=apps.ContainerFromIndex(i).as<FrameworkElement>();
+        if (i>=grid.RowDefinitions().Size()) {
+            Controls::RowDefinition row;row.Height({40,GridUnitType::Pixel});grid.RowDefinitions().Append(row);
+        }
         Controls::Grid::SetColumn(item,1);Controls::Grid::SetRow(item,i);
     }
     root.UpdateLayout();
@@ -193,13 +248,12 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     // Preserve the failure geometry as an explicit regression precondition.
     auto before=BF_FooterBounds(appsRoot,root);
     const bool oldOverflow=before.X<16;
-    const bool oldTileOverflow=tiles[0].ActualWidth()>76;
+    const bool oldTileOverflow=tiles[0].ActualWidth()>cell;
     auto user=BF_FindLayoutElement(footer,L"UserTileButton");
     auto power=BF_FindLayoutElement(footer,L"PowerCommand");
     auto settingsList=BF_FindLayoutElement(footer,L"NavigationPanePlacesListView").as<Controls::ListView>();
     auto settingsItem=settingsList.ContainerFromIndex(0).as<Controls::ListViewItem>();
-    const auto originalUser=BF_FooterBounds(user,footer),originalPower=BF_FooterBounds(power,footer),
-               originalPlaces=BF_FooterBounds(settingsItem,footer);
+    const auto originalPower=BF_FooterBounds(power,footer),originalPlaces=BF_FooterBounds(settingsItem,footer);
     const auto nativeColumn=footer.ColumnDefinitions().GetAt(2);
     const auto nativeRow=footer.RowDefinitions().GetAt(0);
     if (!observed) BF_ArrangeStartColumns(root);
@@ -296,8 +350,8 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     const bool inkAligned=std::abs(headingInk-appLogo.X)<1 && std::abs(letter.X-appLogo.X)<1;
     const bool rowEdgesHit=hitAt(appItem,{left.X+2,appItemBox.Y+appItemBox.Height/2})&&
         hitAt(appItem,{left.X+left.Width-2,appItemBox.Y+appItemBox.Height/2});
-    bool columns=std::abs(left.X-18)<1 && std::abs(right.X-left.X-left.Width-10)<1 &&
-        std::abs(right.X+right.Width-root.ActualWidth()+10)<1 &&
+    bool columns=std::abs(left.X-16)<1 && std::abs(right.X-left.X-left.Width-16)<1 &&
+        std::abs(right.X+right.Width-root.ActualWidth()+16)<1 &&
         std::abs(firstHeading.Y-secondHeading.Y)<1 && std::abs(firstHeading.X-appsBox.X)<1 &&
         secondHeading.X>=right.X-1 && std::abs(appItemBox.X-firstHeading.X)<1 && inkAligned && hierarchy &&
         std::abs(appItemBox.Width-left.Width)<1&&appItemBox.X+appItemBox.Width<=right.X-9&&rowEdgesHit;
@@ -310,20 +364,22 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
         iconError=std::max<double>(iconError,std::abs(icon.X+icon.Width/2-box.X-box.Width/2));
         labelError=std::max<double>(labelError,std::abs(label.X+label.Width/2-box.X-box.Width/2));
         hitboxes=hitboxes && std::abs(label.X+label.Width/2-box.X-box.Width/2)<1;
-        hitboxes=hitboxes&&std::abs(box.Width-76)<1&&std::abs(box.Height-84)<1&&
-            std::abs(icon.Width-28)<1&&std::abs(icon.Height-28)<1&&
+        hitboxes=hitboxes&&std::abs(box.Width-cell)<1&&std::abs(box.Height-84)<1&&
+            std::abs(icon.Width-32)<1&&std::abs(icon.Height-32)<1&&
             std::abs((icon.X+icon.Width/2)-(box.X+box.Width/2))<1&&box.X>=right.X&&box.X+box.Width<=right.X+right.Width+1;
         for(auto previous:bounds) if (std::min(box.X+box.Width,previous.X+previous.Width)-std::max(box.X,previous.X)>.5 &&
                                      std::min(box.Y+box.Height,previous.Y+previous.Height)-std::max(box.Y,previous.Y)>.5) hitboxes=false;
         bounds.push_back(box);
     }
     hitboxes=hitboxes&&std::abs(bounds[0].X-right.X)<1&&
-        std::abs(bounds[3].Y-bounds[0].Y)<1&&std::abs(bounds[4].X-bounds[0].X)<1&&
-        std::abs(bounds[4].Y-bounds[0].Y-84)<1;
+        std::abs(bounds[columnsCount-1].Y-bounds[0].Y)<1&&std::abs(bounds[columnsCount].X-bounds[0].X)<1&&
+        std::abs(bounds[columnsCount].Y-bounds[0].Y-84)<1;
     const auto pinHeading=BF_FindLayoutElement(root,L"PinnedListHeaderText").as<Controls::TextBlock>();
     const auto headingAlignment=static_cast<int>(pinHeading.TextAlignment());
-    hitboxes=hitboxes && std::abs(secondHeading.X+secondHeading.Width/2-bounds[0].X-bounds[0].Width/2)<1;
-    const bool pinnedEdgeHit=hitAt(tiles[3],{bounds[3].X+bounds[3].Width-2,bounds[3].Y+bounds[3].Height/2});
+    const auto firstIcon=BF_FooterBounds(BF_FindLayoutElement(tiles[0],L"LogoContainer"),root);
+    hitboxes=hitboxes && std::abs(secondHeading.X-firstIcon.X)<1;
+    const auto lastCol=columnsCount-1;
+    const bool pinnedEdgeHit=hitAt(tiles[lastCol],{bounds[lastCol].X+bounds[lastCol].Width-2,bounds[lastCol].Y+bounds[lastCol].Height/2});
     hitboxes=hitboxes&&pinnedEdgeHit;
     auto search=BF_FindLayoutElement(footer,L"BigFishNativeSearchButton");
     auto searchBox=BF_FooterBounds(search,root),userBox=BF_FooterBounds(user,root),powerBox=BF_FooterBounds(power,root);
@@ -331,13 +387,29 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     auto settingsIcon=BF_FooterBounds(settingsItem.Content().as<FrameworkElement>(),root);
     const bool nativeCommandsIntact=footer.ColumnDefinitions().Size()==4 && footer.ColumnDefinitions().GetAt(2)==nativeColumn &&
         footer.RowDefinitions().Size()==1 && footer.RowDefinitions().GetAt(0)==nativeRow &&
-        BF_FooterBounds(user,footer)==originalUser && BF_FooterBounds(power,footer)==originalPower &&
-        BF_FooterBounds(settingsItem,footer)==originalPlaces;
-    const bool footerFits=nativeCommandsIntact&&search.IsHitTestVisible()&&searchBox.X>powerBox.X+powerBox.Width&&
-        searchBox.X+searchBox.Width<=settingsBox.X&&
-        powerBox.X>=userBox.X+userBox.Width&&std::abs(searchBox.Y+searchBox.Height/2-userBox.Y-userBox.Height/2)<1&&bf_search_button_ready;
+        BF_FindLayoutElement(footer,L"UserTileButton")==user && std::abs(BF_FooterBounds(power,footer).X-originalPower.X)<1 &&
+        std::abs(BF_FooterBounds(settingsItem,footer).X-originalPlaces.X)<1;
+    const auto avatar=BF_FooterBounds(BF_FindLayoutElement(user,L"UserTileIcon"),root);
+    const auto username=BF_FindLayoutElement(user,L"UserTileNameText").as<Controls::TextBlock>();
+    const auto accountName=BF_FooterBounds(username,root);
+    const auto appName=BF_FooterBounds(BF_FindLayoutElement(appItem,L"AppDisplayName"),root);
+    const bool accountAligned=std::abs(avatar.X-appLogo.X)<1.5 && std::abs(accountName.X-appName.X)<1.5 &&
+        std::abs(avatar.Y+avatar.Height/2-accountName.Y-accountName.Height/2)<1.5;
+    const bool footerFits=nativeCommandsIntact&&accountAligned&&search.IsHitTestVisible()&&searchBox.X>=userBox.X+userBox.Width&&
+        searchBox.X+searchBox.Width<=settingsBox.X&&powerBox.X>=settingsBox.X+settingsBox.Width&&
+        std::abs(searchBox.Y+searchBox.Height/2-userBox.Y-userBox.Height/2)<1.5&&bf_search_button_ready;
     const bool settingsCentered=std::abs(settingsIcon.X+settingsIcon.Width/2-settingsBox.X-settingsBox.Width/2)<1&&
         std::abs(settingsIcon.Y+settingsIcon.Height/2-searchBox.Y-searchBox.Height/2)<1&&settingsBox.X+settingsBox.Width<=root.ActualWidth()-9;
+    username.Text(L"桌面工作账户 · A deliberately long account display name");
+    root.UpdateLayout();BF_ProbePump();
+    auto longName=BF_FooterBounds(username,root);
+    const bool accountFits=username.IsTextTrimmed() && longName.X+longName.Width<=left.X+left.Width+1 &&
+        hitAt(user,{avatar.X+avatar.Width/2,avatar.Y+avatar.Height/2});
+    footer.FlowDirection(FlowDirection::RightToLeft);root.UpdateLayout();BF_ProbePump();root.UpdateLayout();
+    auto rtlSearch=BF_FooterBounds(search,root),rtlPlaces=BF_FooterBounds(settingsItem,root),rtlUser=BF_FooterBounds(user,root);
+    const bool rtlFits=search.IsHitTestVisible() && rtlSearch.X>=rtlPlaces.X+rtlPlaces.Width-1 &&
+        rtlSearch.X+rtlSearch.Width<=rtlUser.X+1;
+    footer.FlowDirection(FlowDirection::LeftToRight);username.Text(L"桌面用户");root.UpdateLayout();BF_ProbePump();
     pinned.SelectedIndex(4);root.UpdateLayout();
     for(auto until=GetTickCount64()+250;GetTickCount64()<until;) {BF_ProbePump();Sleep(1);}
     BF_SaveLayoutBitmap(root,output/L"start-layout.bmp");
@@ -426,9 +498,10 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     const auto surfaceBox=BF_FooterBounds(folderSurface,root),titleBox=BF_FooterBounds(folderTitle,root);
     // With the real observer, creation already applies the folder rules. Only
     // the direct-style fixture can measure the unstyled overflow beforehand.
-    bool folderFits=(observed||folderOverflow)&&std::abs(folderBox.X-right.X)<1&&std::abs(folderBox.Width-right.Width)<1&&
-        surfaceBox.X>=right.X-1&&surfaceBox.X+surfaceBox.Width<=right.X+right.Width+1&&
-        titleBox.X>=right.X&&titleBox.X+titleBox.Width<=right.X+right.Width+1&&root.Width()==563&&root.Height()==625;
+    bool folderFits=(observed||folderOverflow)&&std::abs(folderBox.X+folderBox.Width-right.X-right.Width)<1&&
+        std::abs(folderBox.Width-std::max(264.f,right.Width))<1 && folderBox.X>=15 &&
+        surfaceBox.X>=folderBox.X-1&&surfaceBox.X+surfaceBox.Width<=folderBox.X+folderBox.Width+1&&
+        titleBox.X>=folderBox.X&&titleBox.X+titleBox.Width<=folderBox.X+folderBox.Width+1&&root.Width()==width&&root.Height()==height;
     folderFits=folderFits && smallFolder.Height+160<=surfaceBox.Height && surfaceBox.Width<=265 &&
         surfaceBox.Height<=325 && folderList.ActualHeight()==252;
     std::vector<wf::Rect> folderBoxes;
@@ -437,7 +510,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
         auto box=BF_FooterBounds(item,root);
         auto icon=item.Content().as<Controls::StackPanel>().Children().GetAt(0).as<FrameworkElement>();
         folderFits=folderFits&&std::abs(box.Width-76)<1&&std::abs(box.Height-84)<1&&icon.Width()==28&&icon.Height()==28&&
-            box.X>=right.X-.5&&box.X+box.Width<=right.X+right.Width+.5;
+            box.X>=folderBox.X-.5&&box.X+box.Width<=folderBox.X+folderBox.Width+.5;
         folderBoxes.push_back(box);
     }
     folderFits=folderFits&&std::abs(folderBoxes[2].Y-folderBoxes[0].Y)<1&&
@@ -518,7 +591,7 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
     const auto priorErrors=bf_errors.load();rejected.restore();
     const bool restoreContinued=target.Margin().Left==8&&rejected.values.empty()&&bf_errors==priorErrors+1;
     bf_errors=priorErrors;
-    const bool passed=oldOverflow&&oldTileOverflow&&columns&&hitboxes&&footerFits&&settingsCentered&&restored&&deferred&&hierarchy&&commands&&folderFits&&folderAppearance&&lateInsets&&restoreContinued&&nativeAnimation&&stableDuringMotion&&bothColumnsVisible&&scrollFits;
+    const bool passed=oldOverflow&&oldTileOverflow&&columns&&hitboxes&&footerFits&&accountFits&&rtlFits&&settingsCentered&&restored&&deferred&&hierarchy&&commands&&folderFits&&folderAppearance&&lateInsets&&restoreContinued&&nativeAnimation&&stableDuringMotion&&bothColumnsVisible&&scrollFits;
     std::ofstream report(output/L"start-layout.json");
     report<<"{\"passed\":"<<passed<<",\"title_letter_icon_aligned\":"<<inkAligned
           <<",\"page_switch_keeps_columns_visible\":"<<bothColumnsVisible
@@ -526,12 +599,13 @@ static bool BF_ProbeStartLayout(const std::filesystem::path& output) {
           <<",\"pinned_center_error_dip\":["<<iconError<<","<<labelError<<"]"
           <<",\"apps_ink_edges\":["<<headingInk<<","<<letter.X<<","<<appLogo.X<<"],\"apps_edge_hit\":"<<rowEdgesHit
           <<",\"stable_during_motion\":"<<stableDuringMotion<<",\"old_column_overflow\":"<<oldOverflow<<",\"old_hover_overflow\":"<<oldTileOverflow
-          <<",\"columns\":"<<columns<<",\"hitboxes\":"<<hitboxes<<",\"footer\":"<<footerFits<<",\"native_commands_intact\":"<<nativeCommandsIntact<<",\"settings_centered\":"<<settingsCentered<<",\"restored\":"<<restored
+          <<",\"columns\":"<<columns<<",\"hitboxes\":"<<hitboxes<<",\"footer\":"<<footerFits<<",\"account_aligned\":"<<accountAligned<<",\"long_account\":"<<accountFits<<",\"rtl_footer\":"<<rtlFits
+          <<",\"avatar_name_edges\":["<<avatar.X<<","<<accountName.X<<","<<appName.X<<"],\"native_commands_intact\":"<<nativeCommandsIntact<<",\"settings_centered\":"<<settingsCentered<<",\"restored\":"<<restored
           <<",\"construction_deferred\":"<<deferred<<",\"native_hierarchy\":"<<hierarchy
           <<",\"real_observer\":"<<observed<<",\"rejected_restore_continued\":"<<restoreContinued<<",\"native_animation\":"<<nativeAnimation
            <<",\"inner_templates_restored\":"<<innerRestored<<",\"core_apps_grid\":"<<coreApps<<",\"late_insets_corrected\":"<<lateInsets
           <<",\"footer_and_popup_commands\":"<<commands
-          <<",\"four_columns_unchanged_icons\":"<<hitboxes<<",\"folder_fits\":"<<folderFits<<",\"folder_appearance\":"<<folderAppearance
+          <<",\"pinned_columns\":"<<columnsCount<<",\"pin_cell_width\":"<<cell<<",\"native_icon_sizes\":"<<hitboxes<<",\"folder_fits\":"<<folderFits<<",\"folder_appearance\":"<<folderAppearance
           <<",\"folder_paging\":"<<folderPages<<",\"pinned_edge_hit\":"<<pinnedEdgeHit<<",\"folder_edge_hit\":"<<folderEdgeHit
           <<",\"folder_rect\":["<<folderBox.X<<","<<folderBox.Y<<","<<folderBox.Width<<","<<folderBox.Height<<"]"
           <<",\"folder_surface\":["<<surfaceBox.X<<","<<surfaceBox.Y<<","<<surfaceBox.Width<<","<<surfaceBox.Height<<"]"

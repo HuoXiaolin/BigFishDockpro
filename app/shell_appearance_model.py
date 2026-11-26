@@ -1,8 +1,9 @@
 """Bounded preferences and native XAML rules for the existing Windows flyouts."""
 import re
 from functools import lru_cache
+from typing import NamedTuple
 from appearance_presets import APPEARANCE_SOURCES, DEFAULT_PANEL_STYLE, dock_appearance
-from background_contrast import foreground
+from background_contrast import blend, foreground, rgb
 
 KINDS = ('start', 'notifications')
 NOTIFICATION_PARTS = (('quick', '快速设置'), ('media', '媒体控制'), ('toast', '通知弹窗'),
@@ -11,11 +12,55 @@ SOURCES = [APPEARANCE_SOURCES[0], ('跟随系统', 'system'), APPEARANCE_SOURCES
 TEXT_MODES = [('自动调整', 'auto'), ('跟随系统', 'system'), ('自定义 · 白色', 'white'), ('自定义 · 黑色', 'black')]
 START_STYLES = [('系统默认', False), ('Windows 11 · 玻璃网格', True)]
 START_SHADOWS = ('DropShadow', 'StartDropShadow', 'RootGridDropShadow', 'RightCompanionDropShadow')
-# The two glass panels use 80% of the original 640 × 710 layout.
-START_MENU_SIZE = (563, 625)
+START_MENU_SIZE = (608, 552)
 START_PIN_COLUMNS = 4
-START_PIN_CELL = (76, 84)
+START_PIN_CELL = (88, 84)
+START_INSET = 16
+START_GAP = 16
+START_PAGER = 10
 START_FOLDER_COLUMNS = 3
+START_FOLDER_CELL = (76, 84)
+
+
+class StartLayout(NamedTuple):
+    width: int
+    height: int
+    columns: int
+    cell_width: int
+
+    @property
+    def apps_width(self):
+        return self.width - 2 * START_INSET - START_GAP - self.columns * self.cell_width - START_PAGER
+
+
+def start_layout(work_area=None):
+    width, height = START_MENU_SIZE
+    if work_area is not None:
+        # The native frame keeps an additional 12 DIPs on each edge.
+        width = min(width, max(1, work_area[0] - 24))
+        height = min(height, max(1, work_area[1] - 24))
+    pin_space = width - 2 * START_INSET - START_GAP - START_PAGER - 176
+    columns = max(1, min(START_PIN_COLUMNS, pin_space // 76))
+    cell_width = max(76, min(START_PIN_CELL[0], pin_space // columns))
+    return StartLayout(width, height, columns, cell_width)
+
+
+def _display_start_layout():
+    from PyQt5.QtGui import QGuiApplication
+    if not isinstance(QGuiApplication.instance(), QGuiApplication):
+        return start_layout()
+    # Start and Search share one frame. A display can disappear between Qt's
+    # screen enumeration and geometry query, including during sign-in.
+    try:
+        areas = [screen.availableGeometry() for screen in QGuiApplication.screens()]
+    except RuntimeError:
+        return start_layout()
+    areas = [area for area in areas if area.isValid()]
+    if not areas:
+        return start_layout()
+    return start_layout((min(area.width() for area in areas), min(area.height() for area in areas)))
+
+
 DEFAULTS = {}
 for _kind in KINDS:
     DEFAULTS.update({f'shell_{_kind}_{key}': value for key, value in dict(
@@ -164,7 +209,7 @@ def panel_highlight(style):
     return round(style['highlight'] * 1.6)
 
 
-def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, system_text_light=None):
+def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, system_text_light=None, layout=None):
     cfg = normalize(dict(cfg))
     style = appearance(cfg, kind, system_light, transparent)
     ink = panel_ink(style, surface_color, system_text_light)
@@ -217,7 +262,8 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
             'BorderBrush=Transparent', 'CornerRadius=18', 'Margin=0', 'Visibility=Collapsed')
         for shadow in START_SHADOWS:
             add(f'Border#{shadow}', 'Visibility=Collapsed')
-        width, height = START_MENU_SIZE
+        layout = layout or start_layout()
+        width, height = layout.width, layout.height
         panel_size = ('MinWidth=0', 'MinHeight=0', f'MaxWidth={width}', f'MaxHeight={height}',
                       f'Width={width}', f'Height={height}')
         classic_roots = ('StartDocked.LauncherFrame > Grid#RootGrid',
@@ -234,9 +280,16 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
         add('Grid#FrameRoot', f'RequestedTheme={theme}', 'Background=Transparent', 'CornerRadius=18')
         for target in ('Grid#AllAppsRoot', 'Grid#UndockedRoot', 'Grid#SideBySidePinnedWrapper'):
             add(target, f'RequestedTheme={theme}')
-        add('Grid#NavPanePlaceholder', 'Margin=10,0,10,0')
+        # The two generations of Start host the footer in different templates.
+        # Draw a single inset rule above the commands, in the current text colour.
+        footer = (f'Margin={START_INSET},0,{START_INSET},0', 'Height=48', 'BorderThickness=0,1,0,0',
+                  f'BorderBrush:=<SolidColorBrush Color="#20{ink[1:]}"/>')
+        add('Grid#NavPanePlaceholder', *footer)
+        add('Grid#MainContent > StartDocked.NavigationPaneView#NavigationPane', *footer)
         add('Grid#AllAppsPaneHeader', 'Margin=0', 'Height=36', 'VerticalAlignment=Top')
         add('TextBlock#AllAppsHeading', 'Margin=0,8,0,8', 'HorizontalAlignment=Left')
+        for heading in ('AllAppsHeading', 'AllListHeadingText', 'PinnedListHeaderText'):
+            add('TextBlock#' + heading, 'FontSize=16', 'FontWeight=SemiBold')
         # The measured viewport adapter owns horizontal margins and widths.
         # A property watcher forcing Margin=0 would undo its compensation.
         add('StartDocked.AppListView', 'Padding=0')
@@ -244,8 +297,24 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
             'HorizontalContentAlignment=Stretch')
         add('StartDocked.AllAppsGridListViewItem', 'Margin=0', 'Padding=0', 'HorizontalContentAlignment=Stretch')
         add('StartDocked.AllAppsGridListViewItem > Grid#ContentBorder', 'Margin=0', 'Padding=0')
+        # BF_AlignStartLetters measures Header.Padding against the first app
+        # icon. A watched Padding setter here causes a native XAML layout cycle
+        # as soon as a real group and its first app have different origins.
         add('StartDocked.AllAppsGridListViewItem > StackPanel#RootPanel > Button#Header',
-            'HorizontalContentAlignment=Left', 'BorderThickness=0')
+            'HorizontalContentAlignment=Left', 'VerticalContentAlignment=Bottom',
+            'BorderThickness=0', 'FontSize=12', 'FontWeight=SemiBold')
+        add('StartDocked.AllAppsGridListViewItem > StackPanel#RootPanel > Button#Header > Border#Border > TextBlock#Text',
+            'Opacity=0.82')
+        # Keep the logo, app name and native "new"/download badges in their own columns.
+        add('Border#LogoBackgroundPlate', 'Width=24', 'Height=24', 'Margin=8,0,0,0',
+            'HorizontalAlignment=Left', 'VerticalAlignment=Center')
+        add('Grid#ContentRoot > Rectangle#LogoBorder', 'Width=24', 'Height=24', 'Margin=8,0,0,0',
+            'HorizontalAlignment=Left', 'VerticalAlignment=Center')
+        app_name = ('FontSize=13', 'TextWrapping=NoWrap', 'TextTrimming=CharacterEllipsis', 'VerticalAlignment=Center')
+        add('Grid#ContentRoot > TextBlock#AppDisplayName', 'Margin=12,0,6,0', *app_name)
+        add('Grid#ContentRoot > Grid#DownloadIconAndDisplayNameContainer', 'Margin=12,0,6,0')
+        add('Grid#DownloadIconAndDisplayNameContainer > TextBlock#AppDisplayName', 'Margin=0', *app_name)
+        add('Grid > Grid > TextBlock#AppDisplayName', *app_name)
         add('Grid#AllAppsRoot > * > GridView#AllAppsGrid > * > ItemsWrapGrid > GridViewItem',
             'MinWidth=0', 'Width=Auto', 'Margin=0', 'Padding=0', 'HorizontalAlignment=Stretch', 'HorizontalContentAlignment=Stretch')
         add('StartMenu.PinnedList > Grid#Root', 'Padding=0',
@@ -254,17 +323,23 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
             'MinWidth=0', 'Width=10', 'Padding=0', 'Margin=0')
         add('GridView#PinnedList', 'Padding=0', 'Margin=0', 'HorizontalAlignment=Stretch')
         add('StartDocked.UserTileView', 'Visibility=Visible', f'RequestedTheme={theme}')
-        add('TextBlock#UserTileNameText', 'TextTrimming=CharacterEllipsis', 'MaxWidth=112')
-        add('StartDocked.NavigationPaneView', 'Margin=10,0,10,0')
+        for control in ('StartDocked.NavigationPaneButton', 'Button'):
+            add(control + '#UserTileButton', 'HorizontalAlignment=Left', 'HorizontalContentAlignment=Left',
+                'VerticalAlignment=Center', 'VerticalContentAlignment=Center', 'Height=40', 'MinWidth=0',
+                f'MaxWidth={max(80, layout.apps_width)}', 'Padding=8,0,12,0', 'BorderThickness=0', 'CornerRadius=8')
+        add('Grid#UserTileIcon', 'Width=28', 'Height=28', 'VerticalAlignment=Center')
+        add('TextBlock#UserTileNameText', 'Margin=8,0,0,0', 'FontSize=13', 'FontWeight=SemiBold',
+            'VerticalAlignment=Center', 'TextWrapping=NoWrap', 'TextTrimming=CharacterEllipsis',
+            f'MaxWidth={max(36, layout.apps_width-56)}')
         # Both native lists set local Foreground values; changing their parent
         # theme alone leaves all-apps white and pinned names black.
         for target in ('TextBlock', 'FontIcon', 'SymbolIcon'):
             add(target, f'Foreground={ink}')
-        # Native popups own a second visual tree with a separate template brush.
-        for presenter in ('MenuFlyoutPresenter', 'FlyoutPresenter'):
-            # Let the native template paint the brush and handle pointer input.
-            add(presenter, f'Background:={brush}', 'CornerRadius=12', 'BorderThickness=1',
-                f'BorderBrush:={edge_brush}', f'Foreground={ink}')
+        # Cascading Windows menus share the same presenter template at every depth.
+        add('MenuFlyoutPresenter', f'Background:={brush}', 'CornerRadius=12', 'BorderThickness=0',
+            'BorderBrush=Transparent', f'Foreground={ink}')
+        add('FlyoutPresenter', f'Background:={brush}', 'CornerRadius=12', 'BorderThickness=1',
+            f'BorderBrush:={edge_brush}', f'Foreground={ink}')
         search = 'Cortana.UI.Views.TaskbarSearchPage'
         search_root = search + ' > Grid#RootGrid'
         search_frame = 'Grid#OuterBorderGrid > Grid#BorderGrid'
@@ -284,14 +359,23 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
             'CornerRadius=12', f'RequestedTheme={theme}')
         add('Cortana.UI.Views.CortanaRichSearchBox#SearchTextBox', f'Foreground={ink}', f'RequestedTheme={theme}')
         add('Grid#WebViewGrid', 'MinWidth=0', 'Background=Transparent', 'CornerRadius=0,0,18,18')
-        tile_width, tile_height = START_PIN_CELL
-        pinned_tiles = (f'MaximumRowsOrColumns={START_PIN_COLUMNS}', f'ItemWidth={tile_width}', f'ItemHeight={tile_height}', 'Margin=0')
+        tile_width, tile_height = layout.cell_width, START_PIN_CELL[1]
+        pinned_tiles = (f'MaximumRowsOrColumns={layout.columns}', f'ItemWidth={tile_width}', f'ItemHeight={tile_height}', 'Margin=0')
         add('GridView#PinnedList > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid', *pinned_tiles)
         folder = 'StartMenu.ExpandedFolderList'
+        # A folder is a second reading surface over other labels. Keep its
+        # material and hue, with enough backing to separate the two layers.
+        folder_style = dict(style, opacity=max(92, style['opacity']))
+        if 'tint_alpha' in style:
+            folder_style['tint_alpha'] = max(235, style['tint_alpha'])
+        if foreground(style['color']) != ink:
+            color = blend(style['color'], rgb(menu_color(ink)), .2)
+            folder_style['color'] = '#%02x%02x%02x' % tuple(round(channel) for channel in color)
+        folder_surface = [f'Background:={background(folder_style)}', *surface[1:]]
         for frame in (folder, 'StartMenu.FolderModal'):
             add(frame, f'RequestedTheme={theme}')
             add(frame + ' > Grid', 'Margin=0', 'MinWidth=0', 'HorizontalAlignment=Stretch')
-            add(frame + ' > Grid > Border', *surface, 'Margin=0', 'Width=Auto', 'MinWidth=0',
+            add(frame + ' > Grid > Border', *folder_surface, 'Margin=0', 'Width=Auto', 'MinWidth=0',
                 'HorizontalAlignment=Stretch')
             add(frame + ' > Grid > Grid', 'Margin=0', 'Padding=0', 'Width=Auto', 'MinWidth=0',
                 'HorizontalAlignment=Stretch', 'CornerRadius=12')
@@ -313,18 +397,20 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
         folder_lists = ('GridView#FolderList', *(container + ' > Grid > GridView#' + name
                                                 for name in ('LevelOneGridView', 'LevelTwoGridView')))
         tile_path = folder_tiles.removeprefix('GridView#FolderList')
+        folder_width, folder_height = START_FOLDER_CELL
         for grid in folder_lists:
-            add(grid, 'Margin=0', 'Padding=0', 'MinWidth=0', f'Width={tile_width * START_FOLDER_COLUMNS}',
+            add(grid, 'Margin=0', 'Padding=0', 'MinWidth=0', f'Width={folder_width * START_FOLDER_COLUMNS}',
                 'HorizontalAlignment=Left', 'ScrollViewer.VerticalScrollMode=Enabled',
                 'ScrollViewer.VerticalScrollBarVisibility=Hidden', 'ScrollViewer.HorizontalScrollMode=Disabled',
                 'ScrollViewer.HorizontalScrollBarVisibility=Disabled', 'ScrollViewer.BringIntoViewOnFocusChange=True')
             add(grid + tile_path, f'MaximumRowsOrColumns={START_FOLDER_COLUMNS}', 'Orientation=Horizontal',
-                f'ItemWidth={tile_width}', f'ItemHeight={tile_height}', 'Margin=0')
+                f'ItemWidth={folder_width}', f'ItemHeight={folder_height}', 'Margin=0')
         # Resize cell/hover geometry only. Native icon and glyph sizes stay intact.
-        for base in ('GridView#PinnedList > Border > ScrollViewer > Border > Grid > ScrollContentPresenter > ItemsPresenter > ItemsWrapGrid',
-                     *(grid + tile_path for grid in folder_lists)):
-            add(base + ' > GridViewItem', 'MinWidth=0', 'MinHeight=0', f'Width={tile_width}', f'Height={tile_height}',
-                f'MaxWidth={tile_width}', f'MaxHeight={tile_height}', 'Margin=0', 'Padding=0',
+        for grid, w, h in [('GridView#PinnedList', tile_width, tile_height),
+                           *((grid, folder_width, folder_height) for grid in folder_lists)]:
+            base = grid + tile_path
+            add(base + ' > GridViewItem', 'MinWidth=0', 'MinHeight=0', f'Width={w}', f'Height={h}',
+                f'MaxWidth={w}', f'MaxHeight={h}', 'Margin=0', 'Padding=0',
                 'HorizontalContentAlignment=Stretch', 'VerticalContentAlignment=Stretch')
             add(base + ' > GridViewItem > Border#ContentBorder', 'MinWidth=0', 'MinHeight=0', 'Margin=0', 'Padding=0')
             # The app and folder data templates both give this inner Grid a
@@ -337,6 +423,12 @@ def rules(cfg, kind, system_light=True, transparent=True, surface_color=None, sy
                     'Width=Auto', 'MinWidth=0', 'HorizontalAlignment=Stretch')
         add('StartMenu.PinnedListTile, StartMenu.PinnedListTile > Grid#Root',
             'Width=Auto', 'MinWidth=0', 'HorizontalAlignment=Stretch')
+        for tile in ('PinnedListTile', 'PinnedListCollapsedFolder'):
+            owner = 'StartMenu.' + tile + ' > Grid#Root'
+            label_parent = owner + ' > Grid#DisplayNameAndDownloadIconContainer' if tile == 'PinnedListTile' else owner
+            add(label_parent + ' > TextBlock#DisplayName', 'Margin=2,4,2,0', 'FontSize=12',
+                'MaxLines=2', 'TextWrapping=Wrap', 'TextTrimming=CharacterEllipsis', 'TextAlignment=Center',
+                'HorizontalAlignment=Center')
     return result
 
 
@@ -394,7 +486,7 @@ def search_content_styles(ink, style=None):
     )
 
 
-def settings(cfg, kind, owner_pid, system_light=True, transparent=True, surface_color=None, system_text_light=None):
+def settings(cfg, kind, owner_pid, system_light=True, transparent=True, surface_color=None, system_text_light=None, layout=None):
     cfg = normalize(dict(cfg))
     style = appearance(cfg, kind, system_light, transparent)
     ink = panel_ink(style, surface_color, system_text_light)
@@ -405,13 +497,15 @@ def settings(cfg, kind, owner_pid, system_light=True, transparent=True, surface_
             'bigfish_theme': 'Light' if ink == '#000000' else 'Dark'}
     if kind == 'start' and style['text_mode'] == 'auto' and shows_backdrop(style):
         data['bigfish_live_ink'] = ink
-    for index, (target, properties) in enumerate(rules(cfg, kind, system_light, transparent, surface_color, system_text_light)):
+    if kind == 'start':
+        layout = layout or _display_start_layout()
+    for index, (target, properties) in enumerate(rules(cfg, kind, system_light, transparent, surface_color, system_text_light, layout)):
         data[f'controlStyles[{index}].target'] = target
         for part, value in enumerate(properties):
             data[f'controlStyles[{index}].styles[{part}]'] = value
     if kind == 'start':
-        data.update(bigfish_start_width=str(START_MENU_SIZE[0]), bigfish_start_height=str(START_MENU_SIZE[1]),
-                    bigfish_pin_columns=str(START_PIN_COLUMNS), bigfish_pin_cell_width=str(START_PIN_CELL[0]),
+        data.update(bigfish_start_width=str(layout.width), bigfish_start_height=str(layout.height),
+                    bigfish_pin_columns=str(layout.columns), bigfish_pin_cell_width=str(layout.cell_width),
                     bigfish_pin_cell_height=str(START_PIN_CELL[1]))
         surface = surface_color if surface_color is not None and shows_backdrop(style) else style['color']
         data['bigfish_footer_surface'] = surface if isinstance(surface,str) else '#%02x%02x%02x'%tuple(round(v) for v in surface)

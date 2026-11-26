@@ -74,7 +74,7 @@ class DeckBridge(QObject):
         now=time.time()
         self.providers = [self.quota_history.decorate(row,now) for row in (*local, *(self.gateway.rows if self.gateway else ()))]
         from resource_quota import capsule_reading
-        self.ball_quota=next((r for row in self.providers if (r:=capsule_reading(row)) and r.remaining is not None),None)
+        self.ball_quota=next((r for row in self.providers if (r:=capsule_reading(row,allow_balance=False))),None)
         if any(row.get('_quota_today') for row in self.providers):
             if not self.quota_midnight.isActive():
                 tomorrow=date.fromtimestamp(now)+timedelta(days=1)

@@ -150,37 +150,26 @@ class ResourceCapsule(QObject):
         self.calendar_sync=None;self.calendar_checked=False
         self.desktop_cards={}
         self.dependency_prompts=None
-        self.main_settings = False
-        self.settings_depth = 0
-        self.preview_detail = False
+        self.options_dialog = None
 
     @property
     def cfg(self):return self.runtime.dock.cfg
 
     @property
     def compact(self):
-        if self.editing and not self.preview_detail:
-            return True
         return self.cfg['resource_collapsed'] if self.auto_compact is None else self.auto_compact
 
     @property
     def editing(self):
-        return self.main_settings or self.settings_depth > 0
-
-    def set_main_settings(self, open_):
-        if self.main_settings == open_:
-            return
-        self.main_settings = open_
-        self.settings_focus_changed()
-
-    def settings_focus_changed(self):
-        if not self.editing:
-            self.preview_detail = False
-        self.sync()
-        if self.editing and self.window is not None:
-            self.window.release_inactive_views()
+        return self.runtime.settings_open or self.options_dialog is not None
 
     def set_options(self,**changes):
+        if 'resource_collapsed' in changes and bool(changes['resource_collapsed']) != self.compact:
+            with self.fold_transition():
+                return self._save_options(changes)
+        return self._save_options(changes)
+
+    def _save_options(self,changes):
         from settings_effects import save_changes
         if 'resource_component_order' in changes:
             changes['resource_component_order']=list(dict.fromkeys([*changes['resource_component_order'],*CAPSULE_PAGES]))
@@ -191,10 +180,17 @@ class ResourceCapsule(QObject):
         elif old is not None and self.auto_compact is None:self.sync()
         return ok
 
+    def fold_transition(self, *, content_change=False):
+        from fold_transition import transition
+        w = self.window
+        enabled = (self.cfg.get('motion_enabled', True) and not self.runtime.game_active
+                   and w and w.press is None and not w.liquid.landing)
+        return transition(w, enabled, lambda: w.glass_shape()[2], content_change=content_change,
+                          target_rect=None if content_change else lambda: w.target_rect(not self.compact))
+
     def open(self):
         if self.runtime.game_active:return
         was_expanded = self.window and self.window.isVisible() and not self.compact
-        self.preview_detail = self.editing
         saved = self.set_options(resource_enabled=True,resource_collapsed=False)
         if self.window:
             self.window.sync_window()
@@ -204,17 +200,10 @@ class ResourceCapsule(QObject):
                 record(self.runtime, 'resource_open')
 
     def fold(self,compact,automatic=False):
-        if self.editing and not compact and not self.preview_detail:
-            if automatic:
-                return True
-            self.preview_detail = True
-            if self.cfg['resource_collapsed'] is False:
-                self.auto_compact = None
-                self.sync()
-                return True
         if automatic:
             if self.compact!=bool(compact):
-                self.auto_compact=bool(compact);self.sync()
+                with self.fold_transition():
+                    self.auto_compact=bool(compact);self.sync()
             return True
         return self.set_options(resource_collapsed=bool(compact))
     def settings(self,page=None):
@@ -223,16 +212,14 @@ class ResourceCapsule(QObject):
         from ui_style import exec_dialog
         main = getattr(self.runtime.tray, 'settings_dialog', None)
         scope = main.suspend_page() if main is not None and main.isVisible() else nullcontext()
-        self.settings_depth += 1
-        self.settings_focus_changed()
-        try:
-            with scope:
-                options=ResourceOptions(self)
+        with scope:
+            previous = self.options_dialog
+            options = self.options_dialog = ResourceOptions(self)
+            try:
                 if type(page) is int and 0<=page<options.tabs.count():options.tabs.setCurrentIndex(page)
                 exec_dialog(options)
-        finally:
-            self.settings_depth -= 1
-            self.settings_focus_changed()
+            finally:
+                self.options_dialog = previous
 
     def detached(self,key):
         return self.desktop_cards.get(key)
@@ -323,14 +310,16 @@ class ResourceCapsule(QObject):
         if self.window and not self.closed:self.window.refresh()
 
     def open_component(self,key,identity=None):
+        from contextlib import nullcontext
         card=self.detached(key)
         if card:
             card.show();card.raise_()
             return
-        self.open()
-        if self.window and self.window.page_enabled(key):
-            self.window.select_page(key)
-            if identity:self.window.view(key).select(identity)
+        with self.fold_transition() if self.compact else nullcontext():
+            self.open()
+            if self.window and self.window.page_enabled(key):
+                self.window.select_page(key)
+                if identity:self.window.view(key).select(identity)
 
     def get_pomodoro(self):
         if self.pomodoro is None:
@@ -383,12 +372,19 @@ class ResourceCapsule(QObject):
             if card and card.isVisible():card.refresh()
 
     def peek_reminder(self,notice=None):
-        edge=getattr(self.window,'edge_reveal',None)
-        if edge and not (self.closed or self.runtime.session_ending or self.runtime.game_active):edge.notify(notice)
+        window=self.window
+        if (window is None or not window.isVisible() or self.closed
+                or self.runtime.session_ending or self.runtime.game_active):return
+        edge=getattr(window,'edge_reveal',None)
+        if edge and edge.notify(notice):return
+        if notice and self.compact:window.present_notice(notice)
 
     def play_reminder_sound(self,kind):
         quota=getattr(self.deck,'alert','') if kind=='quota' else ''
-        self.peek_reminder(('quota_notice',quota) if quota else None)
+        badge_kind={'weather':'weather_notice','alarm':'alarm_due'}.get(kind,kind)
+        notice=(('quota_notice',quota) if quota else
+                next((item for item in self.reminders() if item[0]==badge_kind),None))
+        self.peek_reminder(notice)
         if (self.closed or self.runtime.session_ending or not self.cfg['resource_reminder_sound']
                 or self.runtime.dock.preview or self.runtime.game_active):return
         if kind=='weather' and not self.cfg['resource_weather_alert_sound']:return
@@ -400,7 +396,8 @@ class ResourceCapsule(QObject):
     def reminders(self):
         badges=[]
         edge=getattr(self.window,'edge_reveal',None)
-        if edge and edge.notice and edge.peek_until>time.monotonic():badges.append(edge.notice)
+        notice=(edge.notice if edge and edge.notice and edge.peek_until>time.monotonic()
+                else getattr(self.window,'compact_notice',None))
         code=self.mail.current_code() if self.compact and self.mail else None
         if code:badges.append(('mail_code',code.value))
         due=self.agenda.due() if self.agenda else ()
@@ -411,7 +408,7 @@ class ResourceCapsule(QObject):
         level=self.low_battery()
         if level is not None:badges.append(('battery',f'{level}%'))
         if self.pomodoro:badges.extend(self.pomodoro.badges())
-        if self.compact and (weather:=self.weather_alert()):
+        if self.compact and (weather:=self.weather_alert(compact=True)):
             city,label=weather
             badges.append(('weather_notice',f'{label} · {city}'))
         if self.cfg['resource_alert_almanac']:
@@ -419,11 +416,19 @@ class ResourceCapsule(QObject):
             from calendar_almanac import almanac
             day=almanac(date.today())
             if day and (day.term_today or day.festival):badges.append(('almanac',day.badge()))
+        if notice:
+            if notice[0] in ('mail_new','quota_notice'):
+                badges.insert(0,notice)
+            else:
+                # Copying a code or dismissing an alarm also clears its live chip.
+                live=next((item for item in badges if item[0]==notice[0]),None)
+                if live:
+                    badges.remove(live);badges.insert(0,live)
         return tuple(badges)
 
-    def weather_alert(self):
+    def weather_alert(self, *, compact=False):
         if self.extras and self.cfg['resource_weather'] and self.cfg['resource_alert_weather']:
-            return self.extras.weather_alert()
+            return self.extras.weather_alert(compact=compact)
         return None
 
     def low_battery(self):
@@ -570,7 +575,7 @@ class ResourceCapsule(QObject):
         if self.feature_visible('traffic'):desktop.add('traffic')
         if self.window and self.window.isVisible() and self.cfg['resource_alert_battery']:desktop.add('battery')
         if self.indicators:
-            if 'microphone' in self.indicators.selected:desktop.add('microphone')
+            if 'brightness' in self.indicators.selected:desktop.add('brightness')
             if 'network_link' in self.indicators.selected:desktop.add('network_links')
         if self.strip and self.strip.isVisible():desktop.update(self.cfg['resource_task_metrics'])
         custom=getattr(self.runtime,'custom_cards',None)
@@ -624,10 +629,11 @@ class ResourceCapsule(QObject):
             window,self.window=self.window,None;window.dispose()
         from resource_options import DEVICE_ALERTS
         selected=[key for key in DEVICE_ALERTS if visible and self.compact and self.cfg.get('resource_alert_'+key)]
-        if selected and self.indicators is None:
+        watch_touchpad=visible and self.cfg.get('resource_alert_touchpad',False)
+        if (selected or watch_touchpad) and self.indicators is None:
             from capsule_indicators import Indicators
             self.indicators=Indicators(self)
-        if self.indicators:self.indicators.configure(selected)
+        if self.indicators:self.indicators.configure(selected,watch_touchpad)
         self.sync_desktop_cards()
         if not self.runtime.game_active and resource_page_active(self.cfg,'weather'):
             if self.extras is None:
@@ -816,9 +822,7 @@ class ResourceCapsule(QObject):
             if key in ('connection','system_status') and data.get('connection_device', network_device) != network_device:continue
             device = self.monitor_sources.get(key)
             value = device_reading(self.device_readings, key, device) if device else data.get(key)
-            if self.indicators and key=='microphone':
-                self.indicators.observe('microphone',value)
-            elif self.indicators and key=='network_links':
+            if self.indicators and key=='network_links':
                 self.indicators.observe('network_link',value)
             if value is not None and (key!='cpu_cores' or value):
                 self.latest[key]=value;self.observed[key]=now

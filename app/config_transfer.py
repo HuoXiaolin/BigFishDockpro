@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from app_catalog import entry_name
 
 MAX_BYTES=8*1024*1024
 
@@ -84,7 +85,7 @@ def normalize(data,api):
             continue
         path=item.get('path')
         if not isinstance(path,str) or not path.strip() or '\x00' in path or len(path)>32768:raise ValueError('应用路径格式不正确。')
-        row={'path':path,'name':item.get('name') or Path(path).stem,'group':item.get('group') or '未分类'}
+        row={'path':path,'name':item.get('name') or entry_name(path),'group':item.get('group') or '未分类'}
         for key in ('name','group','icon'):
             if key in item and not isinstance(item[key],str):raise ValueError('应用文字或图标字段格式不正确。')
         if any('\x00' in item.get(key,'') or len(item.get(key,''))>32768 for key in ('icon','name','group')):raise ValueError('应用字段包含无效字符或内容过长。')

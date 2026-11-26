@@ -196,9 +196,16 @@ EN = {
     "打开配置文件夹": "Open Config Folder",
     "退出": "Quit",
     # 对话框与提示
+    "快捷映射 · 原文件保留": "Shortcuts only · Originals stay in place",
+    "添加应用…": "Add application…",
+    "添加文件…": "Add files…",
+    "添加文件夹…": "Add folder…",
     "选择要固定到 Dock 的程序（可多选）": "Choose programs to pin (multi-select)",
-    "程序与快捷方式 (*.exe *.lnk *.bat *.cmd *.url *.msc *.ps1);;所有文件 (*.*)":
-        "Programs & shortcuts (*.exe *.lnk *.bat *.cmd *.url *.msc *.ps1);;All files (*.*)",
+    "选择要固定到 Dock 的文件（可多选）": "Choose files to pin (multi-select)",
+    "选择要固定到 Dock 的文件夹": "Choose a folder to pin",
+    "所有文件 (*)": "All files (*)",
+    "程序与快捷方式 (*.exe *.lnk *.url *.appref-ms *.bat *.cmd *.msc *.ps1)":
+        "Programs and shortcuts (*.exe *.lnk *.url *.appref-ms *.bat *.cmd *.msc *.ps1)",
     "已添加 %d 个图标到 Dock": "Added %d icon(s) to the dock",
     "毛玻璃模糊强度：\n（0 ~ 30，0 为不模糊）":
         "Blur strength:\n(0 ~ 30, 0 = no blur)",
@@ -309,6 +316,7 @@ def initial_defaults():
 
 
 def load_config():
+    from app_catalog import entry_name
     from default_settings import upgrade_defaults
     from resource_options import migrate_docked
     preset = initial_defaults()
@@ -331,7 +339,7 @@ def load_config():
         elif isinstance(it.get("path"),str) and it['path']:
             from shortcut_mapping import metadata
             clean.append({"path": it["path"],
-                          "name": it.get("name") or os.path.splitext(os.path.basename(it["path"]))[0],
+                          "name": it.get("name") or entry_name(it["path"]),
                           "group": str(it.get('group') or '未分类')[:40],
                           **({'icon': it['icon']} if isinstance(it.get('icon'), str) and it['icon'].strip() else {}),**metadata(it)})
     cfg["items"] = clean
@@ -672,7 +680,7 @@ from PyQt5.QtGui import (QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap,
                          QLinearGradient, QRadialGradient, QPen, QBrush, QFont,
                          QFontMetrics, QGuiApplication, QCursor)
 from PyQt5.QtWidgets import (QApplication, QWidget, QSystemTrayIcon, QMenu,
-                             QAction, QActionGroup, QFileDialog, QMessageBox,
+                             QAction, QActionGroup, QMessageBox,
                              QFileIconProvider, QToolTip, QInputDialog)
 
 
@@ -685,6 +693,17 @@ class IconProvider(object):
         self.cache_bytes = 0
         self.max_cache_bytes = 6*1024*1024
         self.max_cache_entries = 128
+
+    def for_entry(self, entry, px):
+        from app_catalog import is_file_entry
+        path = entry['path']
+        icon = entry.get('icon')
+        if icon and (icon.lower().startswith('shell:') or os.path.isfile(icon)):
+            return self.get(icon, px, True, icon_index=entry.get('icon_index', 0))
+        if is_file_entry(path):
+            from card_file_ui import file_item_pixmap
+            return file_item_pixmap(self, path, px)
+        return self.get(path, px)
 
     def get(self, path, px, custom=False, shell_state=False, hide_shortcut=False, icon_index=0):
         state=None
@@ -718,11 +737,11 @@ class IconProvider(object):
             pm=QPixmap.fromImage(reader.read())
         # 1) exe / dll / ico：直接抠出大图标，最清晰
         real = path
-        if path.lower().endswith(".lnk"):
+        if (pm is None or pm.isNull()) and path.lower().endswith(".lnk") and not os.path.isdir(path):
             t = resolve_lnk_target(path)
             if t:
                 real = t
-        if (pm is None or pm.isNull()) and real.lower().endswith((".exe", ".dll", ".ico")) and os.path.exists(real):
+        if (pm is None or pm.isNull()) and real.lower().endswith((".exe", ".dll", ".ico")) and os.path.isfile(real):
             hicon = extract_hicon(real, max(64, int(px)),icon_index) if icon_index else extract_hicon(real, max(64, int(px)))
             if hicon:
                 img = hicon_to_qimage(hicon)
@@ -1076,6 +1095,7 @@ class Dock(QWidget):
         return QSize(min(area.width(),w+self.side_room()*2+self.extras.width()),min(area.height(),h))
 
     def _build_items(self):
+        from app_catalog import entry_name
         previous={it["path"]:it for it in self.items if not it.get("sep")}
         self.items = []
         self.running = set()
@@ -1095,14 +1115,12 @@ class Dock(QWidget):
                 self.items.append(dict(it, pixmap=folder_icon(self, it), exe=''))
                 continue
             from shortcut_mapping import metadata
-            icon=it.get('icon')
-            if icon and not (os.path.isfile(icon) or icon.lower().startswith('shell:')):icon=None
             try:path_stamp=os.stat(path).st_mtime_ns
             except OSError:path_stamp=None
             loaded={
                 "path": path,"_path_stamp":path_stamp,
-                "name": it.get("name") or os.path.splitext(os.path.basename(path))[0],
-                "pixmap": self.icons.get(icon or path, max(96, int(self.icon_size * 2.0)), bool(icon),**({'icon_index':it['icon_index']} if icon and it.get('icon_index') else {})),
+                "name": it.get("name") or entry_name(path),
+                "pixmap": self.icons.for_entry(it, max(96, int(self.icon_size * 2.0))),
                 "exe": previous[path]['exe'] if path in previous and previous[path].get('_path_stamp')==path_stamp else self._exe_name(path),
                 **metadata(it),
             }
@@ -1125,7 +1143,7 @@ class Dock(QWidget):
     @staticmethod
     def _exe_name(path):
         real = path
-        if path.lower().endswith(".lnk"):
+        if path.lower().endswith(".lnk") and not os.path.isdir(path):
             real = resolve_lnk_target(path) or path
         base = os.path.basename(real)
         return base.lower()
@@ -2410,8 +2428,6 @@ class DockTray(QSystemTrayIcon):
         record(self.dock,'settings_open')
         budget = getattr(getattr(self, 'runtime', None), 'memory_budget', None)
         dialog = getattr(self, 'settings_dialog', None)
-        if hasattr(self, 'runtime'):
-            self.runtime.resources.set_main_settings(True)
         if budget and (dialog is None or not dialog.isVisible()):
             budget.prepare_settings()
         if hasattr(self, 'runtime'):
@@ -2430,19 +2446,26 @@ class DockTray(QSystemTrayIcon):
             self.settings_dialog.reveal()
 
     def add_icons(self):
-        start = ""
-        dirs = start_menu_dirs()
-        if dirs:
-            start = dirs[0]
-        files, _ = QFileDialog.getOpenFileNames(
-            None,
-            T("选择要固定到 Dock 的程序（可多选）"),
-            start,
-            T("程序与快捷方式 (*.exe *.lnk *.bat *.cmd *.url *.msc *.ps1);;所有文件 (*.*)"))
+        from batch_import import choose_pin_paths
+        from ui_style import menu_heading
+        menu = QMenu(self.dock)
+        menu_heading(menu, T('快捷映射 · 原文件保留'))
+        for kind, title in [('app', '添加应用…'), ('file', '添加文件…'), ('folder', '添加文件夹…')]:
+            menu.addAction(T(title)).setData(kind)
+        selected = menu.exec_(QCursor.pos())
+        kind = selected.data() if selected else None
+        menu.deleteLater()
+        if not kind:
+            return
+        importer = getattr(self, 'importer', None)
+        start = next(iter(start_menu_dirs()), '') if kind == 'app' else getattr(importer, 'last_directory', '')
+        files = choose_pin_paths(self.dock, kind, start, T)
         if not files:
             return
-        if hasattr(self, 'importer'):
-            self.importer.pin([{'path': f} for f in files])
+        if importer:
+            if kind != 'app':
+                importer.last_directory = os.path.dirname(files[0])
+            importer.pin([{'path': f} for f in files])
             self.runtime.set_dock_visible(True) if hasattr(self,'runtime') else self._show_dock()
             return
         from app_catalog import merge_items

@@ -98,7 +98,12 @@ class SensorRead(QObject):
                 row['source'] += ' · ' + scope[1].name
         self.values={k:v for k,v in self.values.items() if k not in matched}
         self.values.update(readings)
+        indicators=getattr(self.owner,'indicators',None)
+        if 'brightness' in matched and indicators:
+            indicators.sensor_brightness(readings.get('brightness'))
         interval=(15000 if 'brightness' in self.values else 60000) if self.keys=={'brightness'} else 10000
+        if self.keys=={'brightness'} and 'brightness' in self.values and indicators and 'brightness' in indicators.selected and not indicators.power_reading:
+            interval=2000
         self.owner.display()
         keys, _ = self.targets()
         if keys - matched.keys():self.read()

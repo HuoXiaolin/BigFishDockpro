@@ -156,6 +156,8 @@ def prepare_date(field):
 
 def prepare_popup(dialog):
     """An opaque dialog gets its own palette; glass parents must not leak in."""
+    if dialog.property('ownsPopupStyle'):
+        return
     if not dialog.property('compactDialog'):
         if not dialog.property('themedPopup'):
             dialog.setProperty('popupOriginalStyle',dialog.styleSheet())

@@ -8,6 +8,11 @@ from PyQt5.QtWidgets import QApplication, QWidget
 from card_snap import touching_edge
 
 
+def popup_blocks_folding(settings_dialog=None):
+    modal = QApplication.activeModalWidget()
+    return QApplication.activePopupWidget() is not None or (modal is not None and modal is not settings_dialog)
+
+
 def option(key):
     if key=='resource':return 'resource_edge_hide'
     if key in ('clock','calendar','picture','spectrum') or str(key).split(':')[0] in ('panel','custom','note','resource'):
@@ -62,7 +67,7 @@ class EdgeReveal(QObject):
     def find_edge(self):
         w=self.window
         if not w.isWindow() or not w.isVisible() or w.isMinimized():return 'free'
-        if self.capsule and (w.taskbar_slot() is not None or w.service.editing):return 'free'
+        if self.capsule and w.taskbar_slot() is not None:return 'free'
         screen=QApplication.screenAt(w.geometry().center())
         if not screen:return 'free'
         preferred=w.service.cfg['resource_edge'] if self.capsule else self.edge
@@ -77,7 +82,8 @@ class EdgeReveal(QObject):
         wait=self.peek_until-time.monotonic()
         if wait>0:
             self.idle.start(max(1,round(wait*1000)));return
-        if QApplication.activePopupWidget() or QApplication.activeModalWidget() or QApplication.mouseButtons():
+        settings_dialog = w.service.options_dialog if self.capsule else None
+        if popup_blocks_folding(settings_dialog) or QApplication.mouseButtons():
             self.idle.start(650);return
         automatic_peek=bool(self.peek_until)
         self.peek_until=0.
@@ -86,6 +92,10 @@ class EdgeReveal(QObject):
         if self.capsule and not w.service.compact:
             w.service.fold(True,automatic=True)
             if self.find_edge()=='free':return
+        surface=getattr(w,'_fold_surface',None)
+        if surface:
+            self.idle.start(max(1,surface.animation.duration()-surface.animation.currentTime()+1))
+            return
         self.move_to(0.)
 
     def visible_at_cursor(self):
@@ -95,12 +105,15 @@ class EdgeReveal(QObject):
 
     def notify(self,notice=None):
         if not self.capsule or not self.enabled or self.find_edge()=='free':return
-        if self.fraction>=1. and self.target==1. and not self.peek_until:return
         w=self.window
+        if self.fraction>=1. and self.target==1. and not w.service.compact:return
         if not w.service.compact:w.service.fold(True,automatic=True)
-        self.peek_until=time.monotonic()+5.;self.manual_hover=False;self.as_pill=True;self.notice=notice
-        w.enter_timer.stop();self.move_to(1.)
-        w._compact_cache=None;w.reposition();w.update();self.idle.start(5000)
+        with w.service.fold_transition(content_change=bool(notice)):
+            self.peek_until=time.monotonic()+5.;self.manual_hover=False;self.as_pill=True;self.notice=notice
+            w.clear_notice();w.enter_timer.stop()
+            w._compact_cache=None;w.reposition();self.move_to(1.);w.update()
+        self.idle.start(5000)
+        return True
 
     def move_to(self,value):
         if self.target==value:return

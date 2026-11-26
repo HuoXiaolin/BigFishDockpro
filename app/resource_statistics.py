@@ -161,6 +161,8 @@ class QuotaOverview(QWidget):
         plan = provider_plan_name(row)
         if row.get('stale'):
             plan = f'{plan} · 上次读数' if plan else '上次读数'
+        elif row.get('balanceStatus'):
+            plan = f'{plan} · {row["balanceStatus"]}' if plan else row['balanceStatus']
         elif not plan and quotas:
             plan = row.get('status') or ''
         mark=QRectF(left,rect.top()+9,16,16)

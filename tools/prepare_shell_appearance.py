@@ -275,7 +275,7 @@ def build(toolchain):
                               '\n    BF_QueueStartColumns(element);\n    BF_QueueStartFolder(element);\n    BF_QueueStartSearchButton(element);')
             remove='void CleanupCustomizations(ElementId elementId) {'
             assert code.count(remove)==1
-            code=code.replace(remove,remove+'\n    if (bf_traceMenuInput) bf_menuInputWatches.erase(elementId);')
+            code=code.replace(remove,remove+'\n    bf_menuInputWatches.erase(elementId);')
             code=code.replace(cleanup, cleanup+'\n    bf_menuInputWatches.clear();\n    BF_SuspendStartColumns();\n    BF_SuspendModernStart();\n    BF_ClearSearchStylesStatus();\n    BF_ClearStartFrames();\n    BF_ClearSearchFrames();\n    BF_ClearStartSearchButtons();')
             # Upstream property watchers must be removed before original column
             # values are restored; otherwise they enforce the styled values

@@ -355,7 +355,7 @@ def run(api,runtime,app,output,checks):
         from datetime import datetime,timedelta,timezone
         from resource_weather import active_weather_notice,forecast_rain_end,hourly_rainfall
         from resource_weather_style import weather_accent
-        from resource_compact import compact_badges
+        from resource_compact import compact_badges,compact_values
         zone=timezone(timedelta(hours=8))
         now=datetime.now(zone).replace(second=0,microsecond=0)
         first_hour=now.replace(minute=0)+timedelta(hours=1)
@@ -444,6 +444,12 @@ def run(api,runtime,app,output,checks):
         ]})
         assert address_name(district_address)==district_name
         assert address_name(county_address)=='苏州市 · 昆山市'
+        tianjin=dict(countryCode='CN',city='滨海新区',localityInfo={'administrative':[
+            dict(name='天津市',chinaAdminCode='120000'),dict(name='市辖区',chinaAdminCode='120100'),
+            dict(name='滨海新区',chinaAdminCode='120116')]})
+        tianjin_name=address_name(tianjin)
+        assert tianjin_name=='天津市 · 滨海新区'
+        assert address_name(dict(tianjin,city='天津市',localityInfo={}))=='天津市'
         assert address_name(dict(district_address,localityInfo={'administrative':[None,{'adminLevel':8,'name':'斜土路街道'}]}))=='上海市'
         assert address_name(dict(district_address,lookupSource='ip-geolocation'))=='当前位置'
         with TemporaryDirectory(dir=output) as directory:
@@ -542,6 +548,30 @@ def run(api,runtime,app,output,checks):
             w.weather_view.refresh()
             assert w.weather_view.city.count()==1 and w.weather_view.city.currentText()==district_name
             assert w.weather_view.city.toolTip()==district_name
+        with patch.dict(cfg,resource_weather_cities=['天津市'],resource_weather_compact=True,
+                        resource_alert_weather=True,resource_weather_alert_sound=False), \
+                patch.object(extra,'location_name',tianjin_name),patch.object(extra,'location_status','ready'):
+            # A short notice label must still open the forecast keyed by its full location.
+            service.sync()
+            extra.location_name=tianjin_name
+            extra.location_status='ready'
+            extra.weather=[]
+            weather_badge=('weather_notice','雨 · 滨海新区')
+            with patch.object(service,'peek_reminder') as peek:
+                extra.receive_weather([dict(alert_row,name=tianjin_name,located=True),dict(local_row,name='天津市',located=False)])
+                peek.assert_called_once_with(weather_badge)
+            assert [(label,value) for key,label,value,_ in compact_values(w) if key=='weather']==[('滨海新区','7℃'),('天津市','16℃')]
+            assert weather_badge in compact_badges(service)[0]
+            assert w.grab().save(str(output/'weather-district-compact.png'))
+            point=w.reminder_bounds[w.reminder_kinds.index('weather_notice')].center().toPoint()
+            event(w,QEvent.MouseButtonPress,point,w.mapToGlobal(point))
+            event(w,QEvent.MouseButtonRelease,point,w.mapToGlobal(point))
+            assert not service.compact and w.page_key=='weather'
+            assert w.weather_view.city.currentText()==w.weather_view.cards.selected_row()['name']==tianjin_name
+            assert w.grab().save(str(output/'weather-district-expanded.png'))
+            service.fold(True)
+            extra.weather=[dict(local_row,name='天津市',located=True)]
+            assert [label for key,label,*_ in compact_values(w) if key=='weather']==['天津市']
         extra.weather=[local_row,*manual_rows]
         w.weather_view.refresh()
         assert w.weather_view.city.itemText(0)==w.weather_view.city.currentText()==district_name
@@ -553,6 +583,7 @@ def run(api,runtime,app,output,checks):
         checks.append('Weather locates at startup even while hidden, once per launch and local date change, and refreshes the position and forecast on demand. A midnight-spanning request covers the new day.')
         checks.append('Weather district location: the reported county boundary outranks street names, legacy cached labels are upgraded, and the district forecast uses the rounded device coordinates.')
         checks.append('Weather shows the last saved district while locating and retains it across timeouts, denied access, and restarts. The location result is emitted before the forecast request.')
+        checks.append('Compact weather readings and notices show the district or fall back to the city. Clicking the district notice opens the full city then district forecast.')
         checks.append('Weather defaults and audio: the located city appears first, manual cities stay selectable, and the opt-in cue plays once for a new condition.')
         # A real PNG exercises the wallpaper crop and material cache even with motion off.
         import wallpaper_source as wallpaper

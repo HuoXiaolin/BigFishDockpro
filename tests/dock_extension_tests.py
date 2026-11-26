@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch,MagicMock
 from PyQt5.QtCore import Qt,QPointF,QEvent,QPoint
 from PyQt5.QtGui import QPixmap,QPainter,QColor,QFont,QMouseEvent,QWheelEvent,QImage,QRegion
-from PyQt5.QtWidgets import QApplication,QWidget
+from PyQt5.QtWidgets import QApplication,QWidget,QStyle,QStyleOptionButton
 from dock_extras import REFLECTION_BUDGET,DockQuickSettings
 
 
@@ -14,17 +14,42 @@ def check_quick_controls(popup,dock,output,checks):
     from ui_style import apply_theme
     app=QApplication.instance()
     app_light=app.palette().window().color().lightness()>128
+    def check_footer():
+        pager = popup.next_button.geometry()
+        assert popup.status.text()=='滚轮翻页' and pager.center().y()==popup.status.geometry().center().y()
+        assert popup.height()-pager.bottom()-1==popup.layout().contentsMargins().bottom()
+        assert popup.layout().count()==3  # Header, tiles, pagination.
     def control_image(button):
         image=QImage(button.size(),QImage.Format_ARGB32_Premultiplied)
         image.fill(Qt.transparent)
         button.render(image,QPoint(),QRegion(),QWidget.DrawChildren)
         return image
+    def check_buttons():
+        for button in (popup.edit_button,popup.reset_button,popup.close_button,popup.prev_button,popup.next_button):
+            if not button.isVisible():continue
+            opt=QStyleOptionButton();button.initStyleOption(opt)
+            area=button.style().subElementRect(QStyle.SE_PushButtonContents,opt,button)
+            if button.text():
+                assert area.width()>=button.fontMetrics().horizontalAdvance(button.text()), (button.text(),area)
+                assert area.height()>=button.fontMetrics().boundingRect(button.text()).height(), (button.text(),area)
+            else:
+                assert not button.icon().isNull() and button.iconSize().boundedTo(area.size())==button.iconSize()
+            fill=control_image(button).pixelColor(4,button.height()//2)
+            assert 90<fill.alpha()<255, (button.text(),fill.getRgb())
     try:
         for dark in (True,False):
             apply_theme(app,dark)
             with patch.dict(dock.cfg,theme='dark' if dark else 'light',theme_color='#7450ca',clear_background=True):
                 popup.set_page(2);popup.refresh_surface()
                 app.processEvents()
+                check_footer()
+                popup.close();app.processEvents()
+                dock.extras.activate('quick');app.processEvents()
+                assert dock.extras.popup is popup and popup.isVisible() and popup.pages.currentIndex()==2, (dark,'reopen',popup.isVisible())
+                check_buttons()
+                apply_theme(app,not dark);app.processEvents()
+                assert popup.isVisible(), (dark,'palette change')
+                check_buttons()
                 frames={}
                 for button in (popup.edit_button,popup.close_button,popup.prev_button,popup.next_button):
                     frame=control_image(button);fill=frame.pixelColor(4,frame.height()//2)
@@ -36,7 +61,9 @@ def check_quick_controls(popup,dock,output,checks):
                     assert any(c.alpha()>245 and contrast(surface,c.name())>=4.5 for c in glyphs),(dark,button.text())
                     frames[button]=frame
                 popup.edit_button.click();app.processEvents()
-                assert popup.edit_button.isChecked() and popup.reset_button.isVisible()
+                assert popup.edit_button.isChecked() and popup.reset_button.isVisible(), (dark,popup.editing,popup.isVisible(),popup.reset_button.isHidden())
+                check_footer()
+                check_buttons()
                 reset=control_image(popup.reset_button);assert reset.pixelColor(4,reset.height()//2).alpha()<255
                 assert control_image(popup.edit_button).pixelColor(4,popup.edit_button.height()//2)!=frames[popup.edit_button].pixelColor(4,popup.edit_button.height()//2)
                 popup.edit_button.click();popup.set_page(0)
@@ -53,6 +80,15 @@ def check_quick_controls(popup,dock,output,checks):
                 assert preview.save(str(output/('quick-controls-'+('dark' if dark else 'light')+'.png')))
     finally:
         apply_theme(app,app_light);popup.set_page(0);popup.refresh_surface()
+    popup.show_feedback('保存失败。'*10,'测试写入错误')
+    app.processEvents()
+    assert popup.status.geometry().right()<popup.prev_button.x() and popup.rect().contains(popup.next_button.geometry())
+    assert popup.status.toolTip()=='测试写入错误'
+    popup.status_timer.timeout.emit()
+    app.processEvents()
+    check_footer()
+    checks.append('Quick Settings ends with a single pagination row in normal and sort modes; temporary feedback shares the row without moving the buttons.')
+    checks.append('Reopening the third Quick Settings page and changing the application theme keep Dock-tinted translucent buttons with space for the full sort/reset labels and all three navigation glyphs.')
     checks.append('Quick Settings header and page controls render translucent fills and legible glyphs against opposite application themes. Edit, reset and page-boundary states remain distinct.')
 
 

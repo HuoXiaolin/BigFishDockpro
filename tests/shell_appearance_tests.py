@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 
 def run(api, runtime, root, app, output, checks):
-    from shell_appearance_model import normalize, appearance, background, panel_ink, settings, encode_ini, rules, KINDS
+    from shell_appearance_model import normalize, appearance, background, panel_ink, settings, encode_ini, rules, KINDS, start_layout
     from shell_appearance import ShellAppearance, verify_payload, stage_payload, payload_root
     from settings_dialog import SettingsDialog
     from settings_catalog import START_MENU, NOTIFICATIONS, TASKBAR
@@ -20,6 +20,12 @@ def run(api, runtime, root, app, output, checks):
     assert not normalize({'shell_start_enabled': 'yes'})['shell_start_enabled']
     assert normalize({'shell_start_color': '#fff\nowner_pid=7'})['shell_start_color'] == '#deedf9'
     saved = copy.deepcopy(cfg)
+    for area, cols, cell in (((1280,800),4,88), ((584,550),4,81), ((552,512),3,88)):
+        layout=start_layout(area)
+        assert (layout.columns,layout.cell_width)==(cols,cell)
+        assert layout.apps_width>=176 and layout.width+24<=area[0] and layout.height+24<=area[1]
+        native=settings(cfg,'start',1,layout=layout)
+        assert int(native['bigfish_start_width'])==layout.width and int(native['bigfish_pin_columns'])==cols
     cfg['shell_start_source'] = 'system'
     assert appearance(cfg, 'start', False, False)['material'] == 'solid'
     assert cfg['shell_start_color'] == '#123456'
@@ -164,6 +170,12 @@ def run(api, runtime, root, app, output, checks):
         timestamp = file.stat().st_mtime_ns
         signal.reset_mock();controller.sync()
         assert file.stat().st_mtime_ns == timestamp and not signal.called and attach == [(1234, 'start')]
+        from PyQt5.QtGui import QGuiApplication
+        with patch.object(QGuiApplication, 'screens', side_effect=RuntimeError('display removed')):
+            controller.sync()
+            persisted = file.read_text(encoding='utf-16').splitlines()
+            assert 'enabled=1' in persisted and f'bigfish_start_width={start_layout().width}' in persisted
+        controller.sync()
         dock.cfg.update(theme='dark');controller.sync()
         notification = file.with_name(f'notifications.{manifest["build"]}.ini')
         assert all('bigfish_theme=Dark' in path.read_text(encoding='utf-16') for path in (file, notification))
@@ -321,7 +333,9 @@ def run(api, runtime, root, app, output, checks):
         upgraded.attached.add(1234)
         upgraded.sync()
         limits = (upgraded.root / f'start.{manifest["build"]}.ini').read_text(encoding='utf-16')
-        assert 'Width=563' in limits and 'Height=625' in limits
+        areas=[screen.availableGeometry() for screen in app.screens()]
+        expected=start_layout((min(a.width() for a in areas),min(a.height() for a in areas)))
+        assert f'Width={expected.width}' in limits and f'Height={expected.height}' in limits
         assert 'BigFishSearchWidth=382' not in limits and 'panel_geometry_1234=201' in limits
         upgraded.close()
     notice = ShellAppearance(dock, Api)

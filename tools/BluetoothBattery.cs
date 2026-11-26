@@ -158,6 +158,7 @@ internal static class BluetoothBattery {
     static int Main(string[] args) {
         try {
             if(args.Length==1 && args[0]=="--app-traffic") return AppTraffic.Run();
+            if(args.Length==1 && args[0]=="--touchpad-events") return TouchpadEvents.Watch();
             object result;
             if(args.Length==2 && args[0]=="--taskbar") result=TaskbarSpace.Read(Int64.Parse(args[1]));
             else if(args.Length==1 && args[0]=="--weather-location") result=WeatherLocation.Read();

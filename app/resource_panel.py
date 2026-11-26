@@ -16,6 +16,8 @@ from flash_view import palette_for,icon
 
 from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
+from desktop_edge_reveal import popup_blocks_folding
+from fold_transition import Foldable
 from window_backdrop import component_backdrop, uses_wallpaper
 
 
@@ -434,7 +436,7 @@ class ResourceContentHost(QWidget):
         if self.page.minimumHeight()!=wanted:self.page.setMinimumHeight(wanted)
 
 
-class ResourceWindow(ResourceContentHost):
+class ResourceWindow(Foldable,ResourceContentHost):
     def __init__(self,service):
         super().__init__(service)
         self.setProperty('clickThroughKey','resource')
@@ -452,6 +454,11 @@ class ResourceWindow(ResourceContentHost):
         self._traffic_view=self._weather_view=None
         self._news_view=self._pomodoro_view=self._agenda_view=self._mail_view=None
         self._reminder_key=();self.reminder_bounds=();self.reminder_kinds=()
+        self.compact_notice = None
+        self.notice_timer = QTimer(self)
+        self.notice_timer.setSingleShot(True)
+        self.notice_timer.setTimerType(Qt.PreciseTimer)
+        self.notice_timer.timeout.connect(lambda: self.present_notice(None))
         self.status_bounds={};self.marquee_title='';self.marquee_since=0.;self.marquee_span=0
         for key in DESKTOP_COMPONENTS:setattr(self,'_'+key+'_view',None)
         self.empty_page=QLabel('把桌面组件拖回胶囊，或在「组件布局」中选择栏目。')
@@ -684,6 +691,33 @@ class ResourceWindow(ResourceContentHost):
     def traffic(self):return self.view('traffic').content
     @property
     def weather_view(self):return self.view('weather').content
+    def present_notice(self, notice):
+        if notice != self.compact_notice:
+            with self.service.fold_transition(content_change=True):
+                self.compact_notice = notice
+                self.enter_timer.stop()
+                self._compact_cache = None
+                self.reposition()
+                self.refresh_reminders()
+                if self.taskbar_slot() is not None and self.service.cfg['resource_fold']=='ball':
+                    self.taskbar_placement.schedule_check()
+        if notice:
+            self.notice_timer.start(5000)
+        else:
+            self.notice_timer.stop()
+
+    def clear_notice(self):
+        self.notice_timer.stop()
+        self.compact_notice = None
+
+    def ball_notice(self):
+        if self.service.cfg['resource_fold']!='ball':return None
+        edge=getattr(self,'edge_reveal',None)
+        notice=edge.notice if edge and edge.as_pill and edge.notice else self.compact_notice
+        if notice and notice[0] not in ('mail_new','quota_notice'):
+            return next((row for row in self.service.reminders() if row[0]==notice[0]),None)
+        return notice
+
     def refresh_reminders(self):
         if not self.isVisible():return
         if self.service.compact:
@@ -855,6 +889,7 @@ class ResourceWindow(ResourceContentHost):
 
     def sync_window(self):
         self.liquid.prepare()
+        self._compact_cache=None
         cfg=self.service.cfg
         previous=getattr(self,'background',None)
         palette_changed=self.sync_palette()
@@ -863,16 +898,14 @@ class ResourceWindow(ResourceContentHost):
             for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
             self.page_pager.sync_appearance(self.colors['ink'])
         compact = self.service.compact
+        if not compact:self.clear_notice()
         if not compact or cfg['resource_fold']=='ball':
             self._compact_surface=None
-        opening = False
-        # Temporarily folding the card while settings are open is not a new visit.
-        if not self.service.editing or self.service.preview_detail:
-            opening = not compact and self._displayed_compact is not False
-            self._displayed_compact = compact
-            preferred = cfg['resource_open_page']
-            if opening and preferred != 'last':
-                self.page_key = preferred if self.page_enabled(preferred) else self.first_page()
+        opening = not compact and self._displayed_compact is not False
+        self._displayed_compact = compact
+        preferred = cfg['resource_open_page']
+        if opening and preferred != 'last':
+            self.page_key = preferred if self.page_enabled(preferred) else self.first_page()
         self.detail.setVisible(not compact)
         self.settings_button.setVisible(not compact);self.fold_button.setVisible(not compact)
         if compact or not cfg['resource_rank']:
@@ -908,14 +941,18 @@ class ResourceWindow(ResourceContentHost):
 
     def reposition(self):
         if self.press is not None or self.liquid.landing:return
-        cfg=self.service.cfg;compact=self.service.compact
-        slot=self.taskbar_slot()
-        if slot is not None and self.taskbar_placement.suppressed():
+        rect=self.target_rect(self.service.compact)
+        if rect.isEmpty():
             self.hide();return
-        rect=self.taskbar_rect(slot) if slot is not None else self.floating_rect(compact)
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
         self.service.runtime.click_policy.apply(self)
+
+    def target_rect(self,compact):
+        slot=self.taskbar_slot()
+        if slot is None:return self.floating_rect(compact)
+        if self.taskbar_placement.suppressed():return QRect()
+        return self.taskbar_rect(slot,compact)
 
     def floating_rect(self,compact):
         cfg=self.service.cfg
@@ -930,8 +967,11 @@ class ResourceWindow(ResourceContentHost):
                 rect.setWidth(min(area.width(),rect.width()+self.ball_extra(min(area.width(),cfg['resource_compact_width']))))
             else:
                 center=rect.x()+rect.width()/2;screen=QApplication.screenAt(rect.center()) or QApplication.primaryScreen();area=screen.availableGeometry()
-                from resource_compact import natural_width
-                rect.setWidth(natural_width(self,min(cfg['resource_compact_width'],area.width())));rect.setHeight(cfg['resource_compact_height'])
+                from resource_compact import natural_width,notice_width
+                limit=min(cfg['resource_compact_width'],area.width())
+                notice=self.ball_notice()
+                rect.setWidth(notice_width(self,notice,limit) if notice else natural_width(self,limit))
+                rect.setHeight(cfg['resource_compact_height'])
                 rect.moveLeft(max(area.left(),min(round(center-rect.width()/2),area.right()-rect.width()+1)))
         from resource_liquid import attached
         area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
@@ -941,9 +981,14 @@ class ResourceWindow(ResourceContentHost):
     def fold_shape(self):
         edge=getattr(self,'edge_reveal',None)
         if edge and edge.as_pill:return 'pill'
+        if self.compact_notice and self.service.cfg['resource_fold']=='ball' and self.taskbar_slot() is None:return 'pill'
         return self.service.cfg['resource_fold']
 
     def ball_extra(self,limit):
+        from capsule_order import has_component_order
+        if has_component_order(self.service.cfg):
+            from capsule_order_layout import ball_slots
+            return max(0,sum(item.width for item in ball_slots(self,limit).values())-38)
         from resource_compact import ball_details
         return ball_details(self,limit)[2]+(RUNNER_SLOT if self.service.cfg['resource_runner_enabled'] else 0)
 
@@ -977,13 +1022,17 @@ class ResourceWindow(ResourceContentHost):
         if cfg['resource_fold']=='ball' or vertical:
             thickness=rect.width() if vertical else rect.height()
             diameter=min(thickness-4,38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
+            notice=self.ball_notice()
+            if notice and not vertical:
+                from resource_compact import notice_width
+                return notice_width(self,notice,cfg['resource_compact_width'])
             return diameter if vertical else diameter+self.ball_extra(cfg['resource_compact_width'])
         return cfg['resource_compact_width']
 
-    def taskbar_rect(self,slot):
+    def taskbar_rect(self,slot,compact):
         cfg=self.service.cfg;bar=self.taskbar_placement.slot_bar['rect']
         vertical=bar.height()>bar.width()
-        if self.service.compact:
+        if compact:
             if vertical or cfg['resource_fold']=='ball':
                 width=min(slot.width(),self.taskbar_width(self.taskbar_placement.slot_bar))
                 height=min(width,slot.height(),38 if cfg['resource_fold']=='ball' else cfg['resource_compact_height'])
@@ -1125,7 +1174,7 @@ class ResourceWindow(ResourceContentHost):
         cfg=self.service.cfg
         radius=max(0,(self.height()-2)/2)
         if not self.service.compact:radius=min(17,radius)
-        elif cfg['resource_fold']=='bar':radius=min(12,radius)
+        elif self.fold_shape()=='bar':radius=min(12,radius)
         return radius,4 if cfg['resource_halo'] else 0,self.liquid.radii(radius)
 
     def paintEvent(self,event):
@@ -1136,14 +1185,24 @@ class ResourceWindow(ResourceContentHost):
         self.glass.paint(p,self,self.service.runtime.dock,radius,self.press is not None,self.background,inset,
                          corners,backdrop_mode=component_backdrop(cfg,'resource'))
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
-        paint_halo(self,p,event.region())
+        paint_halo(self,p,event.region(),self.fold_shape())
+        notice=self.ball_notice() if compact else None
+        if notice and self.width()>=70:
+            from resource_compact import paint_notice
+            paint_notice(self,p,notice)
+            return
         if compact and (self.width()<70 or self.fold_shape()=='ball'):
             self.reminder_bounds=[];self.reminder_kinds=[];self.status_bounds={};self.compact_ai_hits=[]
+            from capsule_order import has_component_order
+            if self.fold_shape()=='ball' and has_component_order(cfg):
+                from capsule_order_layout import paint_ball
+                paint_ball(self,p)
+                return
             runner=self.service.runners.get('capsule')
             if runner:
                 from resource_runner import capsule_rect
                 rect.setRight(capsule_rect(self).left()-1)
-            if cfg['resource_fold']=='ball' and rect.width()>38:
+            if self.fold_shape()=='ball' and rect.width()>38:
                 from resource_compact import ball_details,paint_badges
                 cells,badges,_=ball_details(self,self.width())
                 if cells:self.service.indicators.paint(p,cells,38,self.height()/2,c)
@@ -1212,12 +1271,13 @@ class ResourceWindow(ResourceContentHost):
         super().enterEvent(event)
     def expand_hover(self):
         edge=getattr(self,'edge_reveal',None)
-        if edge and (edge.peek_until or edge.fraction<1.):return
+        if self.compact_notice or edge and (edge.peek_until or edge.fraction<1.):return
         cursor=QCursor.pos()
         if self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
             self.expand_from(self.mapFromGlobal(cursor),automatic=True)
 
     def runner_at(self,point):
+        if self.service.compact and self.width()>=70 and self.ball_notice():return None
         runner=self.service.runners.get('capsule') if self.service.compact else None
         if runner:
             from resource_runner import capsule_rect
@@ -1259,7 +1319,9 @@ class ResourceWindow(ResourceContentHost):
             if not automatic:self.service.open_component('mail')
             return
         kind=next((kind for kind,rect in zip(self.reminder_kinds,self.reminder_bounds) if rect.contains(QPointF(point))),None)
-        if not kind and badges and icon_only and badges[0][0]!='mail_code':
+        from capsule_order import has_component_order
+        ordered_ball = self.fold_shape()=='ball' and has_component_order(self.service.cfg)
+        if not kind and badges and icon_only and not ordered_ball and badges[0][0]!='mail_code':
             kind=badges[0][0]
         if kind=='mail_code':
             if not automatic and self.service.mail and self.service.mail.copy_code():
@@ -1273,6 +1335,7 @@ class ResourceWindow(ResourceContentHost):
                       if rect.contains(QPointF(point))),None) if not icon_only else None
             if row is None and not icon_only:
                 row=next((key for key,rect in self.status_bounds.items() if rect.contains(QPointF(point))),None)
+            if ordered_ball and any(rect.contains(QPointF(point)) for rect,_ in self.compact_ai_hits):row='ai'
             target=COMPACT_PAGES.get(row)
         weather=self.service.weather_alert() if kind=='weather_notice' else None
         card=self.service.detached(target) if target else None
@@ -1283,14 +1346,15 @@ class ResourceWindow(ResourceContentHost):
                 if target=='pomodoro' and kind:card.content.content.show_timer(kind)
             return
         was_compact = self.service.compact
-        if self.service.fold(False,automatic=automatic) and not self.service.compact:
-            if was_compact and not automatic:
-                from usage_stats import record
-                record(self.service.runtime, 'resource_open')
-            if target and self.page_enabled(target):
-                self.select_page(target)
-                if weather:self.weather_view.select_city(weather[0])
-                if target=='pomodoro' and kind:self.view('pomodoro').content.show_timer(kind)
+        with self.service.fold_transition():
+            if self.service.fold(False,automatic=automatic) and not self.service.compact:
+                if was_compact and not automatic:
+                    from usage_stats import record
+                    record(self.service.runtime, 'resource_open')
+                if target and self.page_enabled(target):
+                    self.select_page(target)
+                    if weather:self.weather_view.select_city(weather[0])
+                    if target=='pomodoro' and kind:self.view('pomodoro').content.show_timer(kind)
     def leaveEvent(self,event):
         self.runner_hovered=False
         self.enter_timer.stop()
@@ -1300,7 +1364,7 @@ class ResourceWindow(ResourceContentHost):
         cursor=QCursor.pos();slot=self.taskbar_slot()
         if (self.press is not None or self.tab_drag is not None or self.liquid.landing or self.geometry().contains(cursor)
                 or (slot is not None and slot.contains(cursor))
-                or QApplication.activePopupWidget() or QApplication.activeModalWidget()):
+                or popup_blocks_folding(self.service.options_dialog)):
             self.outside_since = None
             return
         now = time.monotonic()
@@ -1396,6 +1460,7 @@ class ResourceWindow(ResourceContentHost):
     def closeEvent(self,event):
         event.ignore();self.service.set_options(resource_enabled=False)
     def hideEvent(self,event):
+        self.clear_notice()
         self._compact_surface=None
         self.clear_tab_drop()
         self.settle_compact_scroll()

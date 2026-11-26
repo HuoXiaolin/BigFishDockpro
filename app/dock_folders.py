@@ -102,7 +102,7 @@ def show_folder(dock, folder, save):
     title.setMaxLength(40); title.setAccessibleName('文件夹名称')
     title.setToolTip('编辑名称后按 Enter 保存'); title.setStyleSheet('font-weight:600;')
     search = QLineEdit(popup)
-    search.setPlaceholderText('搜索文件夹中的应用'); search.setAccessibleName('搜索文件夹中的应用')
+    search.setPlaceholderText('搜索组内入口'); search.setAccessibleName('搜索组内入口')
     layout.addWidget(title); layout.addWidget(search); layout.addWidget(area)
     popup.folder_title = title; popup.folder_search = search
 
@@ -158,9 +158,7 @@ def show_folder(dock, folder, save):
             name = str(child.get('name') or child['path'])
             self.setText(self.fontMetrics().elidedText(name, Qt.ElideRight, tile_width - 8))
             self.setToolTip(name + '\n拖出文件夹可放回 Dock')
-            icon = child.get('icon')
-            pixmap = dock.icons.get(icon or child['path'], icon_size * 2, bool(icon),
-                                    icon_index=child.get('icon_index', 0))
+            pixmap = dock.icons.for_entry(child, icon_size * 2)
             if dock.cfg.get('dock_icon_shape') == 'circle':
                 from dock_icon_shape import circular_icon
                 pixmap = circular_icon(pixmap, icon_size * 2)
@@ -286,9 +284,7 @@ def folder_icon(dock, folder):
     painter.setBrush(QColor('#c8e0f2'))
     painter.drawRoundedRect(QRectF(3, 3, 122, 122), 26, 26)
     for index, child in enumerate(folder['folder'][:9]):
-        icon = child.get('icon')
-        preview = dock.icons.get(icon or child['path'], 32, bool(icon),
-                                 icon_index=child.get('icon_index', 0))
+        preview = dock.icons.for_entry(child, 32)
         if preview and not preview.isNull():
             painter.drawPixmap(15 + index % 3 * 34, 15 + index // 3 * 34, 30, 30, preview)
     painter.end()

@@ -67,6 +67,138 @@ def check_installer_shortcut(api,dock,folder,ordinary,mapped,checks):
     checks.append('Installer shortcut fixture: preserves original .lnk through import and config migration, keeps separate identity, and sends the link to both Shell routes without overriding its launch details.')
 
 
+def check_file_pins(api, root, output, checks):
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtWidgets import QApplication, QFileDialog
+    from batch_import import BatchImporter
+    from app_catalog import merge_items
+    from calendar_almanac import ASSETS
+    from card_file_ui import file_item_pixmap
+    from desktop_panel_tests import wait_for
+    from dock_folders import combine, show_folder
+    from icon_settings import IconSettings
+
+    output = Path(output)
+    sources = Path(root) / 'pin-sources'
+    sources.mkdir()
+    photo = sources / '夏日风景.jpg'
+    photo.write_bytes((ASSETS / 'pictures' / 'summer-5.jpg').read_bytes())
+    document = sources / '会议记录.txt'
+    document.write_text('会议记录', encoding='utf-8')
+    folder = sources / '项目资料.v2'
+    folder.mkdir()
+    (folder / 'README').write_bytes(b'folder contents')
+    dotted_folder = sources / '会议资料.lnk'
+    dotted_folder.mkdir()
+    damaged = sources / '损坏的图片.png'
+    damaged.write_bytes(b'not a picture')
+
+    def originals():
+        return {p.relative_to(sources): p.read_bytes() if p.is_file() else None for p in sources.rglob('*')}
+
+    baseline = originals()
+    app = QApplication.instance()
+    cfg = api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG))
+    cfg.update(items=[], icon_size=58, glass=False, running_dots=False, dock_clock=False)
+    dock = api.Dock(cfg, preview=True)
+    tray = dock.tray = api.DockTray(dock)
+    importer = tray.importer = BatchImporter(dock, tray, api.save_config)
+
+    def plus(kind):
+        def select(menu, point):
+            actions = {a.data(): a for a in menu.actions() if a.isEnabled()}
+            assert set(actions) == {'app', 'file', 'folder'}
+            if kind == 'file':
+                menu.popup(point)
+                app.processEvents()
+                assert menu.grab().save(str(output / 'dock-pin-menu.png'))
+                menu.hide()
+            return actions[kind]
+        with patch.object(api.QMenu, 'exec_', new=select):
+            dock.extras.activate('add')
+
+    try:
+        with (patch.object(api, 'CONFIG_PATH', str(Path(root) / 'file-pins.json')),
+              patch('batch_import.discover_apps', return_value=[]), patch.object(tray, 'showMessage'),
+              patch.object(tray, '_show_dock')):
+            with patch.object(QFileDialog, 'getOpenFileNames', return_value=([str(photo), str(document)], '')) as picker:
+                plus('file')
+                assert picker.call_args.args[3].split(';;')[0] == api.T('所有文件 (*)')
+            with patch.object(QFileDialog, 'getExistingDirectory', return_value=str(folder)) as picker:
+                plus('folder')
+                assert picker.call_args.args[3] & QFileDialog.ShowDirsOnly
+            with patch.object(QFileDialog, 'getOpenFileNames', return_value=([], '')) as picker:
+                plus('app')
+                assert '*.exe' in picker.call_args.args[3].split(';;')[0]
+            assert [i['name'] for i in api.load_config()['items']] == [p.name for p in (photo, document, folder)]
+            assert all('folder' not in i for i in cfg['items'])
+            assert merge_items(cfg['items'], [{'path': str(folder)}, {'path': str(photo)}])[1:] == (0, 2, 0)
+            with patch('explorer_launch.launch') as shell, patch('usage_stats.record'):
+                for item in dock.items:
+                    dock.launch(item)
+                assert [c.args[0] for c in shell.call_args_list] == [str(photo), str(document), str(folder)]
+            dock.show()
+            app.processEvents()
+            actual = dock.items[0]['pixmap']
+            expected = file_item_pixmap(dock.icons, str(photo), actual.width())
+            assert actual.toImage() == expected.toImage()
+            assert actual.toImage().pixelColor(actual.width() // 2, 0).alpha() == 0
+            assert actual.toImage().pixelColor(actual.width() // 2, actual.height() // 2).alpha() == 255
+            assert dock.grab().save(str(output / 'dock-file-previews.png'))
+            for path in (document, folder, dotted_folder, damaged):
+                with patch.object(dock.icons, 'get', wraps=dock.icons.get) as system_icon:
+                    icon = dock.icons.for_entry({'path': str(path)}, 56)
+                    system_icon.assert_called_once_with(str(path), 56, shell_state=True, hide_shortcut=True)
+                    assert not icon.isNull()
+            override = {'path': str(document), 'icon': str(photo)}
+            assert dock.icons.for_entry(override, 56).cacheKey() == dock.icons.get(str(photo), 56, True).cacheKey()
+            editor = IconSettings(dock, 0)
+            assert editor.preview.source.toImage() == file_item_pixmap(dock.icons, str(photo), 88).toImage()
+            editor.deleteLater()
+            individual = cfg['items']
+            with patch.object(dock.icons, 'for_entry', wraps=dock.icons.for_entry) as art:
+                assert importer.apply_items(combine(individual, 1, 0))
+                assert any(c.args[0]['path'] == str(photo) and c.args[1] == 32 for c in art.call_args_list)
+            popup = show_folder(dock, cfg['items'][0], api.save_config)
+            tile = next(tile for tile in popup.filtered_tiles if tile.child['path'] == str(photo))
+            px = tile.iconSize().width() * 2
+            assert tile.icon().pixmap(px, px).toImage() == file_item_pixmap(dock.icons, str(photo), px).toImage()
+            popup.close()
+            assert importer.apply_items(individual)
+            checks.append('Dock plus pins multiple files and a directory as path references, reopens their exact Shell targets, and keeps the program picker and duplicate detection.')
+            checks.append('Dock and card photo pixels match including aspect-ratio padding, group thumbnails and tiles. Directories, documents and unreadable images use Shell artwork, and explicit icon overrides take precedence.')
+
+            importer.show()
+            dialog = importer.dialog
+            wait_for(app, lambda: not dialog.worker.isRunning())
+            dialog.tabs.setCurrentIndex(1)
+            assert dialog.pick.isVisible() and dialog.pick_folder.isVisible()
+            assert dialog.list.item(0).icon().pixmap(56, 56).toImage() == file_item_pixmap(dock.icons, str(photo), 56).toImage()
+            assert dialog.grab().save(str(output / 'dock-pinned-entries.png'))
+            with patch.object(QFileDialog, 'getOpenFileNames', return_value=([str(folder / 'README')], '')):
+                dialog.pick.click()
+            assert len(dialog.pending_add) == 1 and len(cfg['items']) == 3
+            dialog.reject()
+            assert not dialog.pending_add and len(api.load_config()['items']) == 3
+            dialog.reveal()
+            with patch.object(QFileDialog, 'getExistingDirectory', return_value=str(dotted_folder)):
+                dialog.pick_folder.click()
+            dialog.save_button.click()
+            assert api.load_config()['items'][-1]['name'] == dotted_folder.name
+            dialog.select_visible()
+            dialog.action.click()
+            assert len(cfg['items']) == 4
+            dialog.save_button.click()
+            assert api.load_config()['items'] == [] and originals() == baseline
+            checks.append('Batch file and folder picks stage changes, Cancel discards them, Save persists them and removal leaves original paths, contents and directory trees intact.')
+    finally:
+        importer.close()
+        dock.hide()
+        dock.extras.close()
+        dock.deleteLater()
+        app.processEvents()
+
+
 def run(api,runtime,root,output,checks):
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtCore import Qt
@@ -78,6 +210,7 @@ def run(api,runtime,root,output,checks):
     from ui_style import compact_dialog
     import window_activation as activation
     app=QApplication.instance();folder=Path(root)/'launch-mapping';folder.mkdir()
+    check_file_pins(api, folder, output, checks)
     program=folder/'real.exe';program.write_bytes(b'synthetic reference')
     cwd=folder/'Working Folder';cwd.mkdir()
     link=folder/'Desktop Shortcut.lnk';normal=folder/'Normal.lnk'

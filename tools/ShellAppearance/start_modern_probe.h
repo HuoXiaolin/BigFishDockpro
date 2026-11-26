@@ -4,6 +4,10 @@
 // redesigned StartHome controls and slots present in the Windows templates.
 static bool BF_ProbeModernStart(const std::filesystem::path& output,bool namedHeader) {
     const auto close=[](double a,double b){return std::abs(a-b)<1.5;};
+    const auto width=BF_StartDimension(L"bigfish_start_width",608,300,800);
+    const auto height=BF_StartDimension(L"bigfish_start_height",552,260,900);
+    const auto cols=BF_StartDimension(L"bigfish_pin_columns",4,1,6);
+    const auto cell=BF_StartDimension(L"bigfish_pin_cell_width",88,48,110);
     WNDCLASSW type{};type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);
     type.lpszClassName=L"Windows.UI.Core.CoreWindow";RegisterClassW(&type);
     auto window=CreateWindowExW(0,type.lpszClassName,L"Redesigned Start layout",WS_POPUP,30,30,800,850,
@@ -105,8 +109,8 @@ static bool BF_ProbeModernStart(const std::filesystem::path& output,bool namedHe
     const auto appBox=BF_FooterBounds(original,menu),pinBox=BF_FooterBounds(pinScroll,menu);
     const auto appRow=apps.ContainerFromIndex(0).try_as<Controls::GridViewItem>();
     auto first=pinList.ContainerFromIndex(0).try_as<FrameworkElement>();
-    auto fourth=pinList.ContainerFromIndex(3).try_as<FrameworkElement>();
-    auto fifth=pinList.ContainerFromIndex(4).try_as<FrameworkElement>();
+    auto fourth=pinList.ContainerFromIndex(cols-1).try_as<FrameworkElement>();
+    auto fifth=pinList.ContainerFromIndex(cols).try_as<FrameworkElement>();
     const auto title=BF_FooterBounds(BF_FindLayoutElement(pinHeading,L"PinnedListHeaderText"),menu);
     const auto firstPin=BF_FooterBounds(first,menu),lastPin=BF_FooterBounds(fourth,menu),nextPin=BF_FooterBounds(fifth,menu);
     const auto rowBox=BF_FooterBounds(appRow,menu);
@@ -118,15 +122,15 @@ static bool BF_ProbeModernStart(const std::filesystem::path& output,bool namedHe
     };
     const bool lanes=pinContent && Media::VisualTreeHelper::GetParent(pinHeading)==pinContent &&
         Media::VisualTreeHelper::GetParent(showMore)==pinContent && Media::VisualTreeHelper::GetParent(pins)==pinContent &&
-        Media::VisualTreeHelper::GetParent(appsHeading)==header && appBox.X>=18 && close(appBox.X+appBox.Width+10,pinBox.X) &&
+        Media::VisualTreeHelper::GetParent(appsHeading)==header && close(appBox.X,17) && close(appBox.X+appBox.Width+16,pinBox.X) &&
         close(appBox.Y,pinBox.Y) && pinBox.X+pinBox.Width<=menu.ActualWidth() &&
         Media::VisualTreeHelper::GetParent(recommendations)==pinContent && recommendations.Visibility()==Visibility::Visible;
     const bool appsFit=appPanel && appPanel.MaximumRowsOrColumns()==1 && rowBox.Width>=appBox.Width-20 &&
         rowBox.X>=appBox.X-1 && rowBox.X+rowBox.Width<=appBox.X+appBox.Width+1;
-    const bool four=pinnedPanel && pinnedPanel.MaximumRowsOrColumns()==4 && firstPin.Width>0 && lastPin.Width>0 &&
-        close(firstPin.Y,lastPin.Y) && close(lastPin.X-firstPin.X,3*76) && close(nextPin.X,firstPin.X) && nextPin.Y>firstPin.Y &&
-        lastPin.X+lastPin.Width<=pinBox.X+pinBox.Width+1 && close(title.X+title.Width/2,firstPin.X+firstPin.Width/2);
-    const bool frameFits=close(menu.ActualWidth(),563) && close(menu.ActualHeight(),625) && close(root.ActualHeight(),649) &&
+    const bool gridFits=pinnedPanel && pinnedPanel.MaximumRowsOrColumns()==cols && firstPin.Width>0 && lastPin.Width>0 &&
+        close(firstPin.Y,lastPin.Y) && close(lastPin.X-firstPin.X,(cols-1)*cell) && close(nextPin.X,firstPin.X) && nextPin.Y>firstPin.Y &&
+        lastPin.X+lastPin.Width<=pinBox.X+pinBox.Width+1 && close(title.X,firstPin.X+(firstPin.Width-32)/2);
+    const bool frameFits=close(menu.ActualWidth(),width) && close(menu.ActualHeight(),height) && close(root.ActualHeight(),height+24) &&
         nav.ActualWidth()>0 && BF_FooterBounds(nav,menu).Y+nav.ActualHeight()<=menu.ActualHeight();
     const bool scrolls=pinList.Items().Size()==36 && original.ScrollableHeight()>0 && pinScroll && pinScroll.ScrollableHeight()>0;
     const bool hitTargets=appRow && fourth && hit(appRow,rowBox) && hit(fourth,lastPin);
@@ -152,9 +156,9 @@ static bool BF_ProbeModernStart(const std::filesystem::path& output,bool namedHe
         header.Children().GetAt(1)==showMore && header.Children().GetAt(2)==pins && recommendations.Visibility()==Visibility::Visible &&
         menu.Width()==640 && search.Height()==40 && Controls::Grid::GetRow(page)==1;
     auto report=std::ofstream(output/L"start-redesigned.json");
-    const bool passed=waited && lanes && appsFit && four && frameFits && scrolls && hitTargets && bound && clicks==1 && searchFits && viewChanged && restored;
+    const bool passed=waited && lanes && appsFit && gridFits && frameFits && scrolls && hitTargets && bound && clicks==1 && searchFits && viewChanged && restored;
     report<<std::boolalpha<<"{\"passed\":"<<passed<<",\"waited\":"<<waited<<",\"lanes\":"<<lanes<<",\"app_rows\":"<<appsFit
-          <<",\"four_pins\":"<<four<<",\"frame\":"<<frameFits<<",\"scrolls\":"<<scrolls<<",\"clicks\":"<<clicks
+          <<",\"pinned_columns\":"<<cols<<",\"grid_fits\":"<<gridFits<<",\"frame\":"<<frameFits<<",\"scrolls\":"<<scrolls<<",\"clicks\":"<<clicks
           <<",\"search\":"<<searchFits<<",\"view_changed\":"<<viewChanged<<",\"restored\":"<<restored<<",\"heading_binding\":"<<bound<<",\"hit_targets\":"<<hitTargets
           <<",\"app_width\":"<<appBox.Width<<",\"app_row_width\":"<<rowBox.Width
           <<",\"first_pin\":["<<firstPin.X<<","<<firstPin.Y<<","<<firstPin.Width<<"],\"fourth_pin\":["<<lastPin.X<<","<<lastPin.Y<<","<<lastPin.Width<<"]"

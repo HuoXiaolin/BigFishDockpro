@@ -65,6 +65,8 @@ static void BF_HideStartContext(const FrameworkElement& source,const Controls::M
     if (popup.IsOpen()) popup.IsOpen(false);
 }
 
+static void BF_FitOriginalStartMenu(const Controls::MenuFlyoutPresenter& presenter);
+
 static bool BF_TryStartContextMenu(const FrameworkElement& source,HWND window,POINT pointer) {
     auto root=source.XamlRoot();
     if (!root || !source.IsLoaded() || !IsWindow(window)) return true;
@@ -79,10 +81,19 @@ static bool BF_TryStartContextMenu(const FrameworkElement& source,HWND window,PO
         const double margin=16*root.RasterizationScale();
         const bool atPointer=pointer.x>=face.X-margin && pointer.x<=face.X+face.Width+margin &&
                              pointer.y>=face.Y-margin && pointer.y<=face.Y+face.Height+margin;
-        if (atPointer && BF_ReachableMenuRows(presenter,face)) return true;
+        // An embedded parent may fit while its not-yet-open child extends
+        // beyond Start. Track the whole cascade with the same menu window system.
+        bool cascade=false;
+        for (const auto& value:presenter.Items()) if (auto sub=value.try_as<Controls::MenuFlyoutSubItem>();
+            sub && sub.IsEnabled() && sub.Visibility()==Visibility::Visible) {cascade=true;break;}
+        if (!cascade && atPointer && BF_ReachableMenuRows(presenter,face)) return true;
 
         auto menu=BF_CopyStartMenu(presenter,source,window);
-        if (!menu) return true;
+        if (!menu) {
+            BF_StopContextRequest();
+            BF_FitOriginalStartMenu(presenter);
+            return true;
+        }
         BF_MaskFlyout(popup.Child(),bf_contextPreview);
         auto preview=std::move(bf_contextPreview);
         // Keep the source masked through close and any outgoing animation.
@@ -105,8 +116,11 @@ static bool BF_TryStartContextMenu(const FrameworkElement& source,HWND window,PO
 }
 
 static void BF_QueueStartContextMenu(const FrameworkElement& source,POINT pointer) {
-    const auto window=BF_LayoutWindow();
+    const auto panel=bf_startFrame ? bf_startFrame->panel.get() : nullptr;
+    const auto window=panel && panel.XamlRoot()==source.XamlRoot() && bf_startFrame->window ?
+        bf_startFrame->window : BF_LayoutWindow();
     if (!window || bf_activeFooter || bf_openingFooter.get()) return;
+    if (bf_contextTimer && bf_contextSource.get()==source) return;
     BF_ArmContextPreview(source);
     if (auto timer=std::exchange(bf_contextTimer,nullptr)) timer.Stop();
     const auto generation=++bf_contextRequest;
@@ -130,10 +144,11 @@ static void BF_QueueStartContextMenu(const FrameworkElement& source,POINT pointe
 
 struct BF_StartContextWatch {
     winrt::weak_ref<FrameworkElement> root;
-    wf::IInspectable pressed{nullptr},tapped{nullptr};
+    wf::IInspectable pressed{nullptr},released{nullptr},tapped{nullptr};
     ~BF_StartContextWatch() {
         if (auto live=root.get()) try {
             if (pressed) live.RemoveHandler(UIElement::PointerPressedEvent(),pressed);
+            if (released) live.RemoveHandler(UIElement::PointerReleasedEvent(),released);
             if (tapped) live.RemoveHandler(UIElement::RightTappedEvent(),tapped);
         } catch (const winrt::hresult_error&) {}
     }
@@ -153,16 +168,26 @@ static void BF_WatchStartContext(const XamlRoot& xaml) {
             point.Properties().PointerUpdateKind()!=winrt::Windows::UI::Input::PointerUpdateKind::RightButtonPressed) return;
         try {BF_ArmContextPreview(live);} catch (const winrt::hresult_error&) {BF_StopContextRequest();}
     }));
-    watch->tapped=winrt::box_value(Input::RightTappedEventHandler([weak=watch->root](auto&&,const Input::RightTappedRoutedEventArgs& args) {
-        if (args.PointerDeviceType()!=winrt::Windows::Devices::Input::PointerDeviceType::Mouse) return;
+    auto open=[weak=watch->root](const wf::IInspectable& origin) {
         POINT point{};
         if (!GetCursorPos(&point)) return;
-        auto source=args.OriginalSource().try_as<FrameworkElement>();
+        auto source=origin.try_as<FrameworkElement>();
         if (!source) source=weak.get();
         if (source) try {BF_QueueStartContextMenu(source,point);}
         catch (const winrt::hresult_error&) {BF_StopContextRequest();}
+    };
+    // Some item templates consume RightTapped after handling the button release.
+    watch->released=winrt::box_value(Input::PointerEventHandler([open](auto&&,const Input::PointerRoutedEventArgs& args) {
+        const auto point=args.GetCurrentPoint(nullptr);
+        if (point.PointerDevice().PointerDeviceType()==winrt::Windows::Devices::Input::PointerDeviceType::Mouse &&
+            point.Properties().PointerUpdateKind()==winrt::Windows::UI::Input::PointerUpdateKind::RightButtonReleased)
+            open(args.OriginalSource());
+    }));
+    watch->tapped=winrt::box_value(Input::RightTappedEventHandler([open](auto&&,const Input::RightTappedRoutedEventArgs& args) {
+        if (args.PointerDeviceType()==winrt::Windows::Devices::Input::PointerDeviceType::Mouse) open(args.OriginalSource());
     }));
     root.AddHandler(UIElement::PointerPressedEvent(),watch->pressed,true);
+    root.AddHandler(UIElement::PointerReleasedEvent(),watch->released,true);
     root.AddHandler(UIElement::RightTappedEvent(),watch->tapped,true);
     bf_startContextWatch=std::move(watch);
 }

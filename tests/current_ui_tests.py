@@ -482,6 +482,8 @@ def run(output):
         check_pomodoro(api,runtime,app,output,checks)
         from capsule_interaction_tests import run as check_capsule_interactions
         check_capsule_interactions(api,runtime,app,output,checks)
+        from capsule_order_tests import run as check_capsule_order
+        check_capsule_order(api,runtime,app,output,checks)
         from resource_calendar_tests import run as check_calendar_sync
         check_calendar_sync(app,output,checks)
         from mail_tests import run as check_mail

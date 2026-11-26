@@ -1,6 +1,8 @@
+"""Staged batch additions/removals: cancel never changes the saved Dock."""
+import os
+
 from dock_folders import application_entries, remove_applications
 from ui_style import compact_dialog, compact_px
-"""Staged batch additions/removals: cancel never changes the saved Dock."""
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QEvent, QPoint
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
@@ -11,6 +13,24 @@ from ui_style import label, button, SettingsHeader, SettingsGrip
 
 
 from background_worker import BackgroundWorker
+
+
+def choose_pin_paths(parent, kind, directory='', translate=str):
+    options = QFileDialog.DontResolveSymlinks
+    if kind == 'folder':
+        path = QFileDialog.getExistingDirectory(parent, translate('选择要固定到 Dock 的文件夹'),
+                                                directory, QFileDialog.ShowDirsOnly | options)
+        return [path] if path else []
+    programs = translate('程序与快捷方式 (*.exe *.lnk *.url *.appref-ms *.bat *.cmd *.msc *.ps1)')
+    all_files = translate('所有文件 (*)')
+    if kind == 'app':
+        title = translate('选择要固定到 Dock 的程序（可多选）')
+        filters = [programs, all_files]
+    else:
+        title = translate('选择要固定到 Dock 的文件（可多选）')
+        filters = [all_files, programs]
+    paths, _ = QFileDialog.getOpenFileNames(parent, title, directory, ';;'.join(filters), options=options)
+    return paths
 
 
 class Discovery(BackgroundWorker):
@@ -59,17 +79,17 @@ class BatchDialog(QDialog):
         body.setSpacing(10)
         self.header = SettingsHeader(self, '应用批量管理')
         body.addWidget(self.header)
-        body.addWidget(label('添加常用应用，或从 Dock 移除固定入口。原文件始终保留。', 'muted'))
+        body.addWidget(label('Dock 只保存快捷映射。添加或移除入口，原文件和文件夹都保留在原处。', 'muted'))
         self.tabs = QTabBar()
-        self.tabs.addTab('添加应用')
-        self.tabs.addTab('已固定应用')
+        self.tabs.addTab('添加入口')
+        self.tabs.addTab('已固定入口')
         self.tabs.addTab('Windows 应用')
         self.tabs.addTab('正在运行')
         self.tabs.setExpanding(False)
         body.addWidget(self.tabs)
         self.query = QLineEdit()
-        self.query.setPlaceholderText('搜索应用名称或路径')
-        self.query.setAccessibleName('搜索应用名称或路径')
+        self.query.setPlaceholderText('搜索名称或路径')
+        self.query.setAccessibleName('搜索名称或路径')
         body.addWidget(self.query)
         tools = QHBoxLayout()
         tools.setSpacing(8)
@@ -79,8 +99,10 @@ class BatchDialog(QDialog):
         self.refresh_running_button=button('刷新运行列表',self.refresh_running)
         self.refresh_running_button.setVisible(False)
         tools.addWidget(self.refresh_running_button)
-        self.pick = button('从文件添加…', self.pick_files)
+        self.pick = button('添加文件…', lambda: self.pick_paths('file'))
+        self.pick_folder = button('添加文件夹…', lambda: self.pick_paths('folder'))
         tools.addWidget(self.pick)
+        tools.addWidget(self.pick_folder)
         body.addLayout(tools)
         self.list = QListWidget()
         self.list.setIconSize(QSize(28, 28))
@@ -217,7 +239,8 @@ class BatchDialog(QDialog):
         self.query.blockSignals(True)
         self.query.setText(self.queries[mode])
         self.query.blockSignals(False)
-        self.pick.setVisible(mode == 0)
+        self.pick.setVisible(mode in (0, 1))
+        self.pick_folder.setVisible(mode in (0, 1))
         self.refresh_running_button.setVisible(mode==3)
         self.action.setText('移除所选' if mode == 1 else '添加所选')
         self.action.setProperty('role', 'danger' if mode == 1 else '')
@@ -267,7 +290,7 @@ class BatchDialog(QDialog):
         self.icon_timer.start()
         self.empty.setVisible(self.list.count() == 0)
         self.empty.setText(('正在读取运行应用…' if self.running_worker and self.running_worker.isRunning() else (self.running_error or '未找到匹配的运行应用，可点击刷新。')) if self.mode==3 else '正在扫描应用…' if self.mode != 1 and self.worker.isRunning() else
-                           ('没有匹配的已固定应用。' if self.mode == 1 else '没有匹配的应用，可更换关键词。'))
+                           ('没有匹配的已固定入口。' if self.mode == 1 else '没有匹配的应用，可更换关键词。'))
         self.update_status()
 
     def eventFilter(self, watched, event):
@@ -290,7 +313,7 @@ class BatchDialog(QDialog):
             item = self.list.item(index)
             if item.icon().isNull():
                 app = item.data(Qt.UserRole)
-                item.setIcon(QIcon(self.importer.dock.icons.get(app.get('icon') or app['path'],56,bool(app.get('icon')))))
+                item.setIcon(QIcon(self.importer.dock.icons.for_entry(app, 56)))
         self.icon_rows = wanted
         self.list.blockSignals(False)
 
@@ -336,13 +359,11 @@ class BatchDialog(QDialog):
         self.pending_add = [i for i in application_entries(draft) if i.get('path') and launch_identity(i) not in baseline]
         return '已暂存 %d 个 · 重复 %d 个 · 无效 %d 个' % (added, duplicates, invalid)
 
-    def pick_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, '批量添加应用', self.importer.last_directory,
-            '程序和快捷方式 (*.exe *.lnk *.url *.appref-ms *.bat *.cmd *.msc *.ps1);;所有文件 (*)')
-        if files:
-            import os
-            self.importer.last_directory = os.path.dirname(files[0])
-            report = self.stage_add([{'path': f} for f in files])
+    def pick_paths(self, kind):
+        paths = choose_pin_paths(self, kind, self.importer.last_directory)
+        if paths:
+            self.importer.last_directory = os.path.dirname(paths[0])
+            report = self.stage_add([{'path': path} for path in paths])
             self.render()
             self.status.setText(report)
 
@@ -356,7 +377,7 @@ class BatchDialog(QDialog):
             self.pending_add = [i for i in self.pending_add if launch_identity(i) not in keys]
             baseline = {launch_identity(i) for i in application_entries(self.importer.dock.cfg['items']) if i.get('path')}
             self.pending_remove.update(keys & baseline)
-            report = '已暂存移除 %d 个入口，原文件不会删除。' % len(keys)
+            report = '已暂存移除 %d 个入口，原文件和文件夹保留在原处。' % len(keys)
         self.selected[self.mode] -= keys
         self.render()
         self.status.setText(report)
@@ -368,7 +389,7 @@ class BatchDialog(QDialog):
             self.pending_add.clear()
             self.pending_remove.clear()
             self.render()
-            self.pending.setText('更改已保存，可继续添加或移除应用。')
+            self.pending.setText('更改已保存，可继续添加或移除入口。')
 
     def reject(self):
         self.running_generation+=1;self.running_rescan=False;self.running_apps=[]
@@ -418,9 +439,9 @@ class BatchImporter:
     def pin(self, candidates):
         items, added, duplicates, invalid = merge_items(self.dock.cfg['items'], candidates)
         if added and not self.apply_items(items):
-            return '保存失败，未添加应用。'
+            return '保存失败，未添加入口。'
         report = '添加 %d 个 · 重复 %d 个 · 无效 %d 个' % (added, duplicates, invalid)
-        self.tray.showMessage('添加应用', report, self.tray.icon(), 2500)
+        self.tray.showMessage('添加 Dock 快捷入口', report, self.tray.icon(), 2500)
         return report
 
     def release_memory(self):

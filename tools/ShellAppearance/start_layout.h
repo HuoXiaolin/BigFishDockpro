@@ -50,6 +50,17 @@ static FrameworkElement BF_DirectLayoutChild(const Controls::Grid& parent,Framew
     return nullptr;
 }
 
+// Shared grid for the classic and redesigned native Start templates, in DIPs.
+namespace BF_StartSpacing {
+    constexpr double inset=16, gutter=16, top=16, heading=36, footer=64;
+    constexpr double pager=10, icon=32;
+}
+
+static int BF_StartDimension(PCWSTR key,int fallback,int low,int high) {
+    const auto setting=BF_Setting(key);
+    return setting.empty() ? fallback : std::clamp(static_cast<int>(wcstol(setting.c_str(),nullptr,10)),low,high);
+}
+
 struct BF_StartColumns {
     struct ItemInsets {
         winrt::weak_ref<Controls::Panel> panel;
@@ -73,6 +84,7 @@ struct BF_StartColumns {
     std::vector<StateValue> pageAnimations;
     FrameworkElement::LayoutUpdated_revoker layout;
     bool arranging=false;
+    double pinnedWidth=0;
 };
 static thread_local std::vector<std::shared_ptr<BF_StartColumns>> bf_startColumns;
 static thread_local unsigned bf_startLayoutGeneration=0;
@@ -287,7 +299,7 @@ static void BF_FitPinnedContent(BF_StartColumns& state,const FrameworkElement& i
         auto grid=Media::VisualTreeHelper::GetChild(presenter,0).try_as<Controls::Grid>();
         if (grid && grid.Width()>item.ActualWidth()+.5 && grid.Width()<=128) {
             // PinnedListItemDataTemplate and PinnedListFolderDataTemplate both
-            // carry their own 96-DIP width inside the 76-DIP pointer target.
+            // carry their own 96-DIP width inside the responsive pointer target.
             BF_StartContentState(state,grid).set(grid,FrameworkElement::WidthProperty(),winrt::box_value(item.ActualWidth()));
         }
     }
@@ -301,11 +313,12 @@ static void BF_FitPinnedContent(BF_StartColumns& state,const FrameworkElement& i
             wf::Point tile{},title{},parent{};
             if (wrapper && heading.ActualWidth()>0 && BF_StartLayoutOrigin(item,column,tile) &&
                 BF_StartLayoutOrigin(wrapper,column,parent) && BF_StartLayoutOrigin(heading,column,title)) {
-                const double inset=std::max(0.0,tile.X-parent.X+(item.ActualWidth()-heading.ActualWidth())*.5);
+                const double iconLeft=tile.X+(item.ActualWidth()-BF_StartSpacing::icon)*.5;
+                const double inset=std::max(0.0,iconLeft-parent.X);
                 const Thickness margin{inset,8,0,8};
                 if (std::abs(heading.Margin().Left-inset)>.5 || heading.Margin().Top!=8 || heading.Margin().Bottom!=8)
                     BF_StartContentState(state,heading).set(heading,FrameworkElement::MarginProperty(),winrt::box_value(margin));
-                BF_RecordStartDip(bf_start_pin_title_delta,title.X-tile.X+(heading.ActualWidth()-item.ActualWidth())*.5);
+                BF_RecordStartDip(bf_start_pin_title_delta,title.X-iconLeft);
             }
         }
     }
@@ -420,8 +433,8 @@ static void BF_CompactStartContents(BF_StartColumns& state,const FrameworkElemen
             auto& saved=BF_StartContentState(state,wrapper);
             if (wrapper.Margin().Top!=0 || wrapper.Margin().Bottom!=0)
                 saved.set(wrapper,FrameworkElement::MarginProperty(),winrt::box_value(Thickness{}));
-            if (wrapper.Height()!=36)
-                saved.set(wrapper,FrameworkElement::HeightProperty(),winrt::box_value(36.0));
+            if (wrapper.Height()!=BF_StartSpacing::heading)
+                saved.set(wrapper,FrameworkElement::HeightProperty(),winrt::box_value(BF_StartSpacing::heading));
             if (wrapper.VerticalAlignment()!=VerticalAlignment::Top)
                 saved.set(wrapper,FrameworkElement::VerticalAlignmentProperty(),winrt::box_value(VerticalAlignment::Top));
             BF_CompactStartPath(state,wrapper,column);
@@ -572,9 +585,12 @@ static void BF_UpdateStartColumns(const std::shared_ptr<BF_StartColumns>& state)
     state->arranging=true;
     struct Guard {bool& value;~Guard(){value=false;}} guard{state->arranging};
     BF_PrepareStartPage(*state,apps,root);
-    const double leftEdge=18,rightEdge=10,inner=root.ActualWidth()-leftEdge-rightEdge,gap=10,left=(inner-gap)*.4;
-    BF_PositionStartColumn(state->apps,apps,root,leftEdge,14,left,root.ActualHeight()-78);
-    BF_PositionStartColumn(state->pinned,pinned,root,leftEdge+left+gap,14,inner-left-gap,root.ActualHeight()-78);
+    using namespace BF_StartSpacing;
+    const double lanes=root.ActualWidth()-2*inset-gutter;
+    const double left=std::max(1.,lanes-state->pinnedWidth), right=lanes-left;
+    const double pinX=inset+left+gutter, body=root.ActualHeight()-top-footer;
+    BF_PositionStartColumn(state->apps,apps,root,inset,top,left,body);
+    BF_PositionStartColumn(state->pinned,pinned,root,pinX,top,right,body);
     BF_CompactStartContents(*state,apps,false);
     BF_CompactStartContainers(*state,apps,apps);
     BF_CompactStartContents(*state,pinned,true);
@@ -583,7 +599,10 @@ static void BF_UpdateStartColumns(const std::shared_ptr<BF_StartColumns>& state)
     BF_AlignStartItems(*state,pinned,true);
     for (auto& folder:state->folders) if (auto panel=folder.element.get();panel && panel.IsLoaded()) {
         const bool first=folder.values.empty();
-        BF_PositionStartColumn(folder,panel,root,leftEdge+left+gap,50,inner-left-gap,root.ActualHeight()-114);
+        // A narrow pinned rail can show two columns. Its three-column folder
+        // may extend towards the apps while staying inside the same outer frame.
+        const double folderWidth=std::min(root.ActualWidth()-2*inset,std::max(264.,right));
+        BF_PositionStartColumn(folder,panel,root,pinX+right-folderWidth,top+heading,folderWidth,body-heading);
         if (first) {
             if (auto parent=Media::VisualTreeHelper::GetParent(panel).try_as<Controls::Grid>()) {
                 folder.set(panel,Controls::Grid::RowProperty(),winrt::box_value(0));
@@ -604,6 +623,8 @@ static bool BF_ArrangeStartColumns(const Controls::Grid& root) {
     // RootContent is observed before x:Load creates AllAppsRoot. Register now
     // and let LayoutUpdated handle the later arrival of either native column.
     auto state=std::make_shared<BF_StartColumns>();state->root=winrt::make_weak(root);
+    state->pinnedWidth=BF_StartDimension(L"bigfish_pin_columns",4,1,6)*
+        BF_StartDimension(L"bigfish_pin_cell_width",88,48,110)+BF_StartSpacing::pager;
     state->layout=root.LayoutUpdated(winrt::auto_revoke,[weak=std::weak_ptr(state)](auto&&,auto&&) {
         if (auto live=weak.lock()) try {
             if (auto root=live->root.get();root && !BF_StartMenuFlyoutOpen(root)) BF_UpdateStartColumns(live);

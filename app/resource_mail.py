@@ -262,7 +262,9 @@ class MailInbox(QObject):
                 recent.append(item)
         self.codes = self.codes[-5:]
         self.expire_codes(announce=False)
-        if has_code:self.service.peek_reminder()
+        if has_code:
+            code=self.current_code()
+            if code:self.service.peek_reminder(('mail_code',code.value))
         elif recent and self.cfg['resource_mail_notifications']:
             self.service.peek_reminder(('mail_new',f'{len(recent)} 封新邮件'))
         if recent and self.cfg['resource_mail_notifications'] and not runtime.dock.preview:

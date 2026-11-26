@@ -46,7 +46,7 @@ class IconSettings(QDialog):
         self.icon = QLineEdit(self.original.get('icon', ''))
         self.arguments=QLineEdit(self.original.get('arguments',''))
         self.working_directory=QLineEdit(self.original.get('working_directory',''))
-        self.icon.setPlaceholderText('留空使用应用原图标')
+        self.icon.setPlaceholderText('留空使用默认图标或图片缩略图')
         for field in (self.name, self.path, self.icon,self.arguments,self.working_directory): field.setCursorPosition(0)
         for title, field in [('名称', self.name), ('启动链接', self.path), ('图标文件', self.icon)]:
             field.setAccessibleName(title)
@@ -63,7 +63,7 @@ class IconSettings(QDialog):
         self.preview = IconPreview()
         self.preview.setFixedSize(44, 44)
         preview.addWidget(self.preview)
-        preview.addWidget(label('支持程序、快捷方式、文件夹、网页或 Windows 应用链接。', 'muted'), 1)
+        preview.addWidget(label('图片显示缩略图，文件和文件夹使用系统图标。可为此入口单独选择图标。', 'muted'), 1)
         form.addRow(preview)
         self.status = label('关闭会放弃尚未保存的修改。', 'muted')
         settings_footer(self,body,self.status,self.commit)
@@ -74,7 +74,10 @@ class IconSettings(QDialog):
 
     def refresh_preview(self):
         custom = self.icon.text().strip()
-        self.preview.set_source(self.dock.icons.get(custom or self.path.text().strip(), 88, bool(custom),**({'icon_index':self.original['icon_index']} if custom and custom==self.original.get('icon') and self.original.get('icon_index') else {})))
+        entry = {'path': self.path.text().strip(), 'icon': custom}
+        if custom == self.original.get('icon'):
+            entry['icon_index'] = self.original.get('icon_index', 0)
+        self.preview.set_source(self.dock.icons.for_entry(entry, 88))
 
     def choose(self, field):
         filters = '图标或图片 (*.ico *.png *.jpg *.jpeg *.bmp *.webp *.exe *.dll *.lnk)' if field is self.icon else '所有文件 (*)'

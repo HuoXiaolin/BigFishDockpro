@@ -129,7 +129,6 @@ class RuntimeController:
 
     def settings_closed(self):
         self.settings_open = False
-        self.resources.set_main_settings(False)
         self.check_fullscreen()
 
     def show_batch(self):

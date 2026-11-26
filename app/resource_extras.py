@@ -33,11 +33,11 @@ class ResourceExtras(QObject):
         cities=self.service.cfg['resource_weather_cities']
         return tuple(dict.fromkeys(([located] if located else [])+cities))
 
-    def weather_alert(self):
-        from resource_weather import active_weather_notice
+    def weather_alert(self, *, compact=False):
+        from resource_weather import active_weather_notice, compact_place_name
         for row in self.weather:
             if notice:=active_weather_notice(row):
-                return row['name'],notice['label']
+                return (compact_place_name(row) if compact else row['name']),notice['label']
         return None
     def cancel(self):
         job,self.weather_job=self.weather_job,None
@@ -78,7 +78,8 @@ class ResourceExtras(QObject):
         if new_condition and self.service.cfg['resource_weather_alert_sound']:
             self.service.play_reminder_sound('weather')
         elif new_condition and self.service.cfg['resource_alert_weather']:
-            self.service.peek_reminder()
+            alert=self.weather_alert(compact=True)
+            if alert:self.service.peek_reminder(('weather_notice',f'{alert[1]} · {alert[0]}'))
     def finished(self):
         job=self.sender()
         if job is None or job is not self.weather_job:return

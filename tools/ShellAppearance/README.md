@@ -102,12 +102,13 @@ same root Margin/Width/RenderTransform are removed rather than competing with
 the layout adapter and causing a XAML layout loop. The native footer gets
 dedicated grid slots for its existing controls and Search; a PowerOptionsView
 wrapper is not mistaken for the nested PowerButton. Pinned item containers and
-wrap cells use matching 76 × 84 DIP slots in four columns, while native icon
-sizes stay unchanged. The app-list inset is 18 DIPs; the right inset and column
-gap are 10 DIPs, keeping the 563 × 625
-DIP panel size unchanged. Expanded folders align to the pinned column, reuse
-the material/text colors and four-column cell sizing, and restore native values
-when disabled. Positive offsets have compensating trailing margins so the
+wrap cells use up to four 88 × 84 DIP slots. The preferred frame measures
+608 × 552 DIPs with 16-DIP outer margins and column spacing. A smaller work
+area reduces the cell width or column count. The account avatar aligns with
+the list icons, and the name aligns with the app labels. A folder uses its own
+three-column grid of 76 × 84 DIP cells. It expands toward the left if the
+pinned column is narrower than its 264-DIP surface. Positive offsets have
+compensating trailing margins so the
 original parent's available size does not implicitly clip their right edge.
 Column alignment also includes the native template's inner containers, not just
 the two outer roots. The loaded Windows resources contain a 63-DIP pinned-header

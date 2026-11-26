@@ -129,9 +129,9 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         menuItem.Text(L"睡眠");menuItem.Foreground(white);
         menu.Items().Append(menuItem);
         menu.Height(100);menu.Width(160);menu.HorizontalAlignment(HorizontalAlignment::Left);
-        menu.Background(original);
+        menu.Background(original);menu.BorderBrush(white);menu.BorderThickness({1,1,1,1});
         menu.Template(Markup::XamlReader::Load(LR"(<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-            TargetType="MenuFlyoutPresenter"><Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}"><ItemsPresenter/></Border></ControlTemplate>)").as<Controls::ControlTemplate>());
+            TargetType="MenuFlyoutPresenter"><Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"><ItemsPresenter/></Border></ControlTemplate>)").as<Controls::ControlTemplate>());
         root.Children().Append(menu);
         Controls::Grid searchPage, searchRoot, searchOuter, searchFrame;
         Controls::Border searchBorder, searchInput;
@@ -302,6 +302,8 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         for (auto shadow : shadows) applied=applied&&shadow.Visibility()==Visibility::Collapsed;
         auto menuInk=menu.Foreground().try_as<Media::SolidColorBrush>();
         auto menuSurface=menuBorder.Background();
+        auto menuStroke=menuBorder.BorderBrush().try_as<Media::SolidColorBrush>();
+        applied=applied && menuBorder.BorderThickness()==Thickness{} && menuStroke && menuStroke.Color().A==0;
         applied=applied&&menuInk&&menuInk.Color().R==expectedInk&&menuSurface!=original&&menuSurface==menu.Background()&&
             menuItem.Foreground()==white&&menuBorder.IsHitTestVisible()&&menuItem.IsHitTestVisible()&&menuBorder.CornerRadius().TopLeft==12;
         applied=applied&&searchBorder.Background()!=original&&searchBorder.CornerRadius().TopLeft==18&&
@@ -406,6 +408,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         unsigned popupHitRows=0;
         unsigned privateHitRows=0;
         unsigned contextHitRows=0;
+        bool lazyFits=true;
         if (testRows) {
             // The search positioning checks used a second owned window.
             ShowWindow(searchWindow,SW_HIDE);
@@ -416,8 +419,9 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
             Controls::MenuFlyout privateMenu;
             privateHitRows=BF_ProbeFlyoutRows(privateMenu,power,child,{L"示例设置"},pump,true);
             Controls::MenuFlyout appMenu,settingsMenu;
-            contextHitRows=BF_ProbeFlyoutRows(appMenu,user,child,{L"固定到“开始”屏幕",L"更多",L"卸载"},pump,false,true);
+            contextHitRows=BF_ProbeFlyoutRows(appMenu,user,child,{L"固定到“开始”屏幕",L"移动到应用文件夹",L"卸载"},pump,false,true);
             contextHitRows+=BF_ProbeFlyoutRows(settingsMenu,gear,child,{L"“开始”菜单设置"},pump,false,true);
+            lazyFits=BF_ProbeLazyStartMenu(gear,child,pump);
         }
         const auto searchGlyph=shortcut.Content().as<Controls::FontIcon>();
         bool liveInk=true;
@@ -429,7 +433,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
                     liveInk=liveInk && brush==bf_startTextBrush && brush.as<Media::SolidColorBrush>().Color().R==tone;
             }
         }
-        applied=applied&&liveInk&&nativePolicy&&(!testRows || (popupHitRows==7 && privateHitRows==1 && contextHitRows==4));
+        applied=applied&&liveInk&&nativePolicy&&(!testRows || (popupHitRows==7 && privateHitRows==1 && contextHitRows==4 && lazyFits));
         applied=applied&&footerAligned&&nativePlacement&&navigation.Children().Size()==4&&shortcut.Visibility()==Visibility::Visible&&
             shortcutBounds.X+shortcutBounds.Width<=gearBounds.X&&
             shortcut.Content().as<Controls::FontIcon>().Foreground().as<Media::SolidColorBrush>().Color().R==expectedInk&&
@@ -466,7 +470,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
         BF_ClearStartSearchButtons();
         restored=restored&&!accountMenu.ShouldConstrainToRootBounds()&&!powerMenu.ShouldConstrainToRootBounds()&&
             accountMenu.Placement()==accountPlacement&&powerMenu.Placement()==Placement::Top&&
-            navigation.Children().Size()==3&&menuBorder.Background()==original&&
+            navigation.Children().Size()==3&&menuBorder.Background()==original&&menu.BorderThickness().Left==1&&menu.BorderBrush()==white&&
             menuItem.Foreground()==white&&searchBorder.Background()==original&&searchInput.Background()==original&&
             std::isinf(searchFrame.MaxWidth())&&std::isinf(searchFrame.MaxHeight());
         auto originalColumns=wrapper.ColumnDefinitions();
@@ -498,7 +502,7 @@ extern "C" __declspec(dllexport) int WINAPI BigFishShellProbe(PCWSTR directory) 
               <<",\"footer_xw\":["<<navigation.ActualWidth()<<","<<userBounds.X<<","<<userBounds.Width<<","<<powerBounds.X<<","<<powerBounds.Width
               <<","<<shortcutBounds.X<<","<<shortcutBounds.Width<<","<<gearBounds.X<<","<<gearBounds.Width<<"]"
               <<",\"popup_screen_hit_rows\":"<<popupHitRows<<",\"private_menu_hit_rows\":"<<privateHitRows<<",\"live_start_ink\":"<<liveInk
-              <<",\"context_menu_hit_rows\":"<<contextHitRows
+              <<",\"context_menu_hit_rows\":"<<contextHitRows<<",\"lazy_menu_fits\":"<<lazyFits
               <<",\"search_position_restored\":"<<positionRestored;
         report<<",\"search_stable\":"<<searchStable<<",\"complete_layout\":"<<fullLayout;
         if (startRect && alignedRect) {

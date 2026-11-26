@@ -2,7 +2,7 @@ from ui_style import compact_dialog
 """Floating desktop collection windows using the original Dock liquid glass."""
 import os
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer, QSize, QRectF, QMimeData, QUrl, QItemSelectionModel
+from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer, QSize, QRect, QRectF, QMimeData, QUrl, QItemSelectionModel
 from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QAbstractItemView, QApplication,
@@ -16,6 +16,7 @@ from dpi_support import metric, minimum, panel_css
 from window_edges import edges_at, paint_edge_targets, resize_cursor, resized_rect
 from window_backdrop import BACKDROP_HINT, component_backdrop, uses_wallpaper
 from panel_preferences import ICON_ALIGNMENTS
+from fold_transition import Foldable
 
 
 CATEGORY_COLORS={
@@ -212,7 +213,7 @@ class PanelTabs(QTabBar):
             self.panel.update_tabs(self.panel.manager.merged_models(self.panel.identity))
 
 
-class DesktopPanel(QDialog):
+class DesktopPanel(Foldable,QDialog):
     def __init__(self, manager, identity, geometry):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint)
         self.manager, self.runtime, self.dock = manager, manager.runtime, manager.dock
@@ -564,7 +565,7 @@ class DesktopPanel(QDialog):
         self._idle_state=None
         selected = self.selected_keys() | getattr(self, '_released_selection', set())
         self._released_selection = set()
-        from card_file_ui import card_display_name,picture_thumbnail
+        from card_file_ui import card_display_name, file_item_pixmap
         icon_view=self.list.viewMode()==QListWidget.IconMode
         pixels=max(24,self.list.iconSize().width())
         metadata=self.manager.file_metadata
@@ -592,8 +593,8 @@ class DesktopPanel(QDialog):
                     self.list.takeItem(self.list.row(item));self.list.insertItem(index,item)
                 icon_signature=(row['path'],pixels,icon_view,state)
                 if force or item.data(Qt.UserRole+1)!=icon_signature:
-                    thumbnail=picture_thumbnail(row['path'],pixels,state)
-                    item.setIcon(QIcon(thumbnail if thumbnail is not None else self.dock.icons.get(row['path'],pixels,shell_state=True,hide_shortcut=icon_view)))
+                    item.setIcon(QIcon(file_item_pixmap(self.dock.icons, row['path'], pixels,
+                                                       state=state, hide_shortcut=icon_view)))
                     item.setData(Qt.UserRole+1,icon_signature)
                 item.setText(card_display_name(row,icon_view,state))
                 item.setToolTip(('已置顶 · ' if row.get('pinned') else '')+row['path'])
@@ -939,17 +940,21 @@ class DesktopPanel(QDialog):
         self.update()
 
     def collapse(self):
-        layout=getattr(self.runtime,'layout',None)
-        if layout and layout.pending:return
-        if self.disposed or self.collapsed: return
-        self.store_geometry()
-        if self.manager.update_panel(self.identity, collapsed=True): self.set_collapsed_geometry(True)
+        self.change_fold(True)
 
     def expand(self):
+        self.change_fold(False)
+
+    def change_fold(self, collapsed):
+        from fold_transition import transition
         layout=getattr(self.runtime,'layout',None)
         if layout and layout.pending:return
-        if self.disposed or not self.collapsed: return
-        if self.manager.update_panel(self.identity, collapsed=False): self.set_collapsed_geometry(False)
+        if self.disposed or self.collapsed == collapsed:return
+        if collapsed:self.store_geometry()
+        with transition(self, self.dock.cfg.get('motion_enabled', True), self.surface_radius,
+                        target_rect=lambda: QRect(*self.bounds())):
+            if self.manager.update_panel(self.identity, collapsed=collapsed):
+                self.set_collapsed_geometry(collapsed)
 
     def toggle_collapse(self):
         if self.collapsed: self.expand()

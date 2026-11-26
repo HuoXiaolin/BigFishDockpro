@@ -83,6 +83,7 @@ def icon(name,ink,side=17):
     elif name=='collapse':line([(6,14),(12,8),(18,14)])
     elif name=='fold':line([(8,5),(15,12),(8,19)])
     elif name=='back':line([(15,5),(8,12),(15,19)])
+    elif name=='close':line([(6,6),(18,18)]);line([(18,6),(6,18)])
     elif name=='refresh':
         painter.drawArc(QRectF(4,4,16,16),25*16,305*16)
         line([(20,4),(20,9),(15,9)])

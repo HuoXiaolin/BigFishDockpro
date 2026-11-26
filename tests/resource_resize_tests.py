@@ -1,9 +1,115 @@
 """Native resize persistence, unified AI and collapsed remarks."""
 import copy
 from unittest.mock import patch
-from PyQt5.QtCore import Qt,QPoint,QPointF,QEvent
+from PyQt5.QtCore import Qt,QPoint,QPointF,QEvent,QObject,QTimer
 from PyQt5.QtGui import QCursor,QMouseEvent
 from PyQt5.QtWidgets import QApplication
+
+
+def visit_options(open_dialog, inspect):
+    from resource_settings import ResourceOptions
+    outcomes = []
+    def inspect_open_dialog():
+        dialog = QApplication.activeModalWidget()
+        try:
+            assert isinstance(dialog, ResourceOptions)
+            inspect(dialog)
+            outcomes.append(None)
+        except Exception as error:
+            outcomes.append(error)
+        finally:
+            if dialog is not None:dialog.reject()
+    QTimer.singleShot(0, inspect_open_dialog)
+    open_dialog()
+    assert len(outcomes)==1, 'The settings dialog did not open'
+    if outcomes[0] is not None:raise outcomes[0]
+
+
+def check_settings_on_every_page(runtime, app, checks):
+    from custom_card_data import normalize_cards
+    from resource_options import CAPSULE_PAGES, DESKTOP_COMPONENTS, RESOURCE_PAGES
+    from sticky_notes_store import normalize_notes
+
+    service = runtime.resources
+    w = service.window
+    cfg = service.cfg
+    overrides = {'resource_'+key:True for key in RESOURCE_PAGES if key != 'resources'}
+    overrides.update(resource_component_locations=dict.fromkeys(DESKTOP_COMPONENTS, 'capsule'),
+                     resource_expanded_width=640, resource_expanded_height=310, resource_auto_hide=False,
+                     notes_enabled=True, notes_visible=True, clock_enabled=True, calendar_enabled=True,
+                     daily_picture_enabled=True, sticky_notes=normalize_notes([dict(id='settings', text='测试')]),
+                     custom_cards=normalize_cards([dict(id='settings', title='测试', rows=[dict(kind='text')])]))
+    events = []
+    class FormEvents(QObject):
+        def eventFilter(self, obj, event):
+            if (obj is w.detail and event.type()==QEvent.Hide) or (obj is w and event.type()==QEvent.Resize):
+                events.append((w.page_key, event.type(), w.size()))
+            return False
+
+    with patch.dict(cfg, overrides):
+        service.sync()
+        if w._fold_surface:w._fold_surface.animation.setCurrentTime(w._fold_surface.animation.duration())
+        probe = FormEvents()
+        w.installEventFilter(probe)
+        w.detail.installEventFilter(probe)
+        try:
+            for key in CAPSULE_PAGES:
+                assert w.page_enabled(key), key
+                w.page_buttons[key].click()
+                app.processEvents()
+                page = w.dashboard if key=='resources' else w.view(key)
+                scroll = w.scroll if key=='resources' else page
+                if key=='ai':scroll = page.statistics.scroll
+                bar = scroll.verticalScrollBar()
+                bar.setValue(min(4, bar.maximum()))
+                position = bar.value()
+                geometry = w.geometry()
+                fold_state = (cfg['resource_collapsed'], service.auto_compact)
+                events.clear()
+                def check_page():
+                    current = w.dashboard if key=='resources' else getattr(w, '_'+key+'_view')
+                    assert current is page and page.isVisible() and w.detail.isVisible(), key
+                    assert w.page_key==key and w.geometry()==geometry and not service.compact, key
+                    assert bar.value()==position and w._fold_surface is None, key
+                    assert (cfg['resource_collapsed'], service.auto_compact)==fold_state
+                def inspect(dialog):
+                    check_page()
+                    if key=='weather':
+                        dialog.fields['resource_delay'].setValue(4)
+                        assert dialog.commit()
+                        check_page()
+                visit_options(w.settings_button.click, inspect)
+                if key=='traffic':
+                    runtime.tray.show_settings()
+                    try:
+                        check_page()
+                        visit_options(lambda:service.settings(page=1), inspect)
+                        check_page()
+                    finally:runtime.tray.settings_dialog.reject()
+                app.processEvents()
+                check_page()
+                assert not events, events
+        finally:
+            w.detail.removeEventFilter(probe)
+            w.removeEventFilter(probe)
+            w.select_page('weather')
+
+        cfg['resource_auto_hide'] = True
+        w.sync_auto_fold()
+        def leave_during_settings(dialog):
+            with patch.object(QCursor, 'pos', return_value=w.geometry().topLeft()-QPoint(40,40)):
+                w.outside_since = None
+                w.fold_idle()
+                assert not service.compact and w.outside_since is not None
+                w.outside_since -= cfg['resource_delay'] + 1
+                w.fold_idle()
+                assert service.compact
+        visit_options(w.settings_button.click, leave_during_settings)
+        assert service.compact and not w.detail.isVisible()
+        service.fold(False, automatic=True)
+    service.sync()
+    checks.append(f'All {len(CAPSULE_PAGES)} capsule pages keep their geometry, visible widgets and scroll position through the actual Settings button. Main and nested settings and an unrelated save keep the active page. The usual pointer leave delay can still fold the capsule while editing.')
+
 
 def run(api,runtime,app,output,checks):
     from resource_options import DEFAULTS
@@ -56,13 +162,10 @@ def run(api,runtime,app,output,checks):
         with patch.object(QCursor, 'pos', return_value=w.geometry().center()):
             w.expand_hover()
         assert not service.compact and w.page_key == 'weather' and w.weather_view.isVisible()
+        check_settings_on_every_page(runtime, app, checks)
         w.select_page('traffic')
         service.sync()
         assert w.page_key == 'traffic'
-        service.set_main_settings(True)
-        assert service.compact
-        service.set_main_settings(False)
-        assert not service.compact and w.page_key == 'traffic'
         assert service.set_options(resource_expand_mode='click') and service.fold(True)
         point = QPointF(w.rect().center())
         screen_point = QPointF(w.mapToGlobal(point.toPoint()))
@@ -83,5 +186,5 @@ def run(api,runtime,app,output,checks):
         assert migrated['resource_compact_pinned'] == ['cpu','weather']
         assert migrated['resource_compact_order'] == ['weather','cpu']
         checks.append('Capsule resize: sampling does not reset drag; single save, screen/min/max bounds, page geometry stable, manual compact size survives recreation, failed save restores. Unified AI, single-provider filter hidden, remarks collapsed.')
-        checks.append('Capsule opening page: weather preference persists, hover and click open it, normal refresh and temporary settings fold preserve the selected page, disabled preference falls back to resources, and old reminder settings and pins migrate away.')
+        checks.append('Capsule opening page: weather preference persists, hover and click open it, normal refresh preserves the selected page, disabled preference falls back to resources, and old reminder settings and pins migrate away.')
     finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

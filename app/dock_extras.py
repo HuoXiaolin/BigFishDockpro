@@ -2,7 +2,7 @@
 import math,datetime
 from PyQt5.QtCore import QObject,QTimer,Qt,QRectF,QPointF,QSize,QPoint,QMimeData,QEvent
 from PyQt5.QtGui import QPixmap,QPainter,QColor,QLinearGradient,QFont,QPen,QDrag,QPainterPath
-from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QApplication,QStackedWidget,QWidget,QFrame
+from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QApplication,QStackedWidget,QWidget,QFrame,QToolTip
 
 from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,TILE_TINTS,WIDGET_SWITCHES,normalize_order
 from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
@@ -199,8 +199,8 @@ class QuickTile(QPushButton):
 
 
 class PageTurnButton(QPushButton):
-    def __init__(self,popup,direction,text):
-        super().__init__(text,popup);self.popup=popup;self.direction=direction
+    def __init__(self,popup,direction):
+        super().__init__(popup);self.popup=popup;self.direction=direction
         self.setObjectName('QuickNav');self.setFixedSize(26,24);self.setAcceptDrops(True)
         self.setAccessibleName('上一页' if direction < 0 else '下一页')
         self.clicked.connect(lambda:popup.set_page(popup.pages.currentIndex()+direction))
@@ -222,7 +222,8 @@ class DockQuickSettings(QDialog):
     def __init__(self,extras):
         super().__init__(extras.dock,Qt.Popup|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
         self.extras=extras;self.dock=extras.dock;self.setObjectName('DockQuickSettings');self.setWindowTitle('Dock 快捷设置')
-        self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_NoMouseReplay);self.setFixedSize(320,402)
+        self.setProperty('ownsPopupStyle',True)
+        self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_NoMouseReplay);self.setFixedSize(320,378)
         self.editing=False;self._wheel_delta=0;self._bound_taskbar=None
         self.backdrop=None;self._backdrop_key=None;self.spec_alpha=0.0
         self._light_ink=None;self._control_palette=None
@@ -231,7 +232,8 @@ class DockQuickSettings(QDialog):
         header.addWidget(self.title,0,Qt.AlignVCenter);header.addStretch()
         self.reset_button=QPushButton('重置');self.reset_button.setFixedSize(38,26);self.reset_button.clicked.connect(self.reset_order);header.addWidget(self.reset_button);self.reset_button.hide()
         self.edit_button=QPushButton('排序');self.edit_button.setFixedSize(38,26);self.edit_button.setCheckable(True);self.edit_button.clicked.connect(self.toggle_edit);header.addWidget(self.edit_button)
-        self.close_button=QPushButton('×');self.close_button.setObjectName('QuickClose');self.close_button.setAccessibleName('关闭快捷设置')
+        self.edit_button.setToolTip('拖动按钮可交换位置。拖到翻页按钮或右键可跨页移动。')
+        self.close_button=QPushButton(self);self.close_button.setObjectName('QuickClose');self.close_button.setAccessibleName('关闭快捷设置')
         self.close_button.setFixedSize(26,26);self.close_button.clicked.connect(self.close);header.addWidget(self.close_button);body.addLayout(header)
         self.pages=QStackedWidget();self.pages.setObjectName('QuickPages');self.pages.setFrameShape(QFrame.NoFrame);self.pages.setAutoFillBackground(False)
         self.pages.setStyleSheet('QStackedWidget#QuickPages,QWidget#QuickPage {background:transparent;border:0;}')
@@ -243,11 +245,14 @@ class DockQuickSettings(QDialog):
             self.pages.addWidget(page);self.page_grids.append(grid)
         self.tiles={key:QuickTile(self,key,title,kind) for key,title,kind in ACTIONS}
         body.addWidget(self.pages,1)
-        footer=QHBoxLayout();hint=QLabel('滚轮翻页');footer.addWidget(hint,0,Qt.AlignVCenter);footer.addStretch()
-        self.prev_button=PageTurnButton(self,-1,'‹');self.next_button=PageTurnButton(self,1,'›');self.page_label=QLabel();self.page_label.setAlignment(Qt.AlignCenter);self.page_label.setObjectName('QuickCounter')
+        footer=QHBoxLayout()
+        self.status=QLabel('滚轮翻页');self.status.setMinimumWidth(1)
+        footer.addWidget(self.status,0,Qt.AlignVCenter);footer.addStretch()
+        self.status_timer=QTimer(self);self.status_timer.setSingleShot(True)
+        self.status_timer.timeout.connect(self.clear_feedback)
+        self.prev_button=PageTurnButton(self,-1);self.next_button=PageTurnButton(self,1);self.page_label=QLabel();self.page_label.setAlignment(Qt.AlignCenter);self.page_label.setObjectName('QuickCounter')
         footer.addWidget(self.prev_button);footer.addWidget(self.page_label,0,Qt.AlignVCenter);footer.addWidget(self.next_button);body.addLayout(footer)
-        self.status=QLabel('更改即保存 · 点击「排序」可调整按钮位置');body.addWidget(self.status,0,Qt.AlignLeft)
-        for label in (self.title,hint,self.page_label,self.status):
+        for label in (self.title,self.page_label,self.status):
             label.setProperty('quickCaption',True)
         for button in (self.reset_button,self.edit_button,self.close_button,self.prev_button,self.next_button):
             button.setProperty('quickControl',True)
@@ -263,7 +268,19 @@ class DockQuickSettings(QDialog):
         return True
     def eventFilter(self,watched,event):
         if event.type()==QEvent.Wheel:self.wheelEvent(event);return True
+        if (watched is self.status and event.type()==QEvent.ToolTip and not watched.toolTip()
+                and watched.sizeHint().width()>watched.width()):
+            QToolTip.showText(event.globalPos(),watched.text(),watched)
+            return True
         return super().eventFilter(watched,event)
+    def show_feedback(self,message,detail=''):
+        self.status.setText(message)
+        self.status.setToolTip(detail)
+        self.status_timer.start(5000)
+    def clear_feedback(self):
+        self.status_timer.stop()
+        self.status.setText('滚轮翻页')
+        self.status.setToolTip('')
     def order(self):return normalize_order(self.dock.cfg.get('dock_quick_order'))
     def rebuild_pages(self):
         current=self.pages.currentIndex()
@@ -288,8 +305,7 @@ class DockQuickSettings(QDialog):
     def toggle_edit(self):
         self.editing=not self.editing;self.edit_button.setText('完成' if self.editing else '排序');self.reset_button.setVisible(self.editing)
         self.edit_button.setChecked(self.editing)
-        self.status.setText('拖动交换位置 · 拖到翻页按钮切页，或右键跨页移动' if self.editing else '更改即保存 · 点击「排序」可调整按钮位置')
-        self.status.setWordWrap(self.editing)
+        self.clear_feedback()
         for tile in self.tiles.values():tile.setCursor(Qt.OpenHandCursor if self.editing else Qt.PointingHandCursor)
         self.refresh()
     def valid_drag(self,event):
@@ -298,7 +314,7 @@ class DockQuickSettings(QDialog):
     def save_order(self,order):
         import sys
         from settings_effects import save_changes
-        if not save_changes(self.dock.tray,sys.modules[self.dock.__class__.__module__],{'dock_quick_order':order}):self.status.setText('顺序保存失败，原顺序未改变。');return False
+        if not save_changes(self.dock.tray,sys.modules[self.dock.__class__.__module__],{'dock_quick_order':order}):self.show_feedback('顺序保存失败，原顺序未改变。');return False
         self.rebuild_pages();return True
     def move_action(self,source,target):
         order=self.order()
@@ -349,6 +365,10 @@ class DockQuickSettings(QDialog):
         self._control_palette=key
         light=colors['light']
         ink=colors['ink']
+        from flash_view import icon
+        for button, glyph in ((self.close_button,'close'),(self.prev_button,'back'),(self.next_button,'fold')):
+            button.setIcon(icon(glyph,ink,18))
+            button.setIconSize(QSize(18,18))
         base=blend(tint.getRgb()[:3],(231,238,244) if light else (23,31,44),.18)
         def rgba(rgb,alpha):
             r,g,b=map(round,rgb)
@@ -363,9 +383,7 @@ class DockQuickSettings(QDialog):
         caption='QLabel[quickCaption="true"]'
         self.setStyleSheet(f"""
             {control} {{color:{ink.name()}; background:{rgba(base,196)}; border:1px solid {rgba(ink_rgb,90)};
-                        border-radius:6px; min-height:0; padding:0;}}
-            QPushButton#QuickNav {{font-size:18px;}}
-            QPushButton#QuickClose {{font-size:18px;}}
+                        border-radius:6px; font-size:12px; min-height:0; padding:0;}}
             {control}:hover {{background:{rgba(hover,220)}; border-color:{rgba(ink_rgb,162)};}}
             {control}:checked {{background:{rgba(active,222)}; border-color:{rgba(ink_rgb,190)};}}
             {control}:checked:hover {{background:{rgba(active,244)};}}
@@ -390,7 +408,7 @@ class DockQuickSettings(QDialog):
         cfg=self.dock.cfg;runtime=getattr(self.dock.tray,'runtime',None)
         current=selected_mode(cfg)
         preset=next(name for name,mode in PROFILE_MODES if mode==current)
-        values={'settings':'完整选项','add':'应用 / 快捷方式','manage':'批量添加 / 移除','appearance':preset,
+        values={'settings':'完整选项','add':'应用、文件、文件夹','manage':'批量添加 / 移除','appearance':preset,
                 'size':str(cfg['icon_size'])+' 像素','position':{'bottom':'底部','top':'顶部','custom':'自定义'}.get(cfg['position'],'底部'),
                 'panels':'已开启' if cfg['panel_enabled'] else '已关闭','magnify':'已开启' if cfg['magnify'] else '已关闭',
                 'notes':'已开启' if cfg['notes_enabled'] and cfg['notes_visible'] else '已关闭',
@@ -494,6 +512,7 @@ class DockQuickSettings(QDialog):
         if self.isVisible():self.refresh_surface()
     def showEvent(self, event):
         super().showEvent(event)
+        self.clear_feedback()
         self.refresh_surface()
         taskbar = self._bound_taskbar
         if hasattr(taskbar, 'reconcile_status'):
@@ -502,8 +521,7 @@ class DockQuickSettings(QDialog):
     def taskbar_status_changed(self,message):
         self.refresh()
         error=getattr(self._bound_taskbar,'error','')
-        self.status.setText('任务栏效果应用失败，请查看提示。' if error else str(message))
-        self.status.setToolTip(str(error) if error else '')
+        self.show_feedback('任务栏效果应用失败，请查看提示。' if error else str(message),str(error) if error else '')
 
     def moveEvent(self,event):
         super().moveEvent(event)
@@ -520,7 +538,7 @@ class DockQuickSettings(QDialog):
         if self.editing:return
         tray=self.dock.tray;runtime=getattr(tray,'runtime',None)
         if not tray:return
-        self.status.setToolTip('')
+        self.clear_feedback()
         if key == 'cursor_styles':
             from cursor_styles import PACK_ERRORS
             cursors = getattr(runtime, 'cursor_styles', None)
@@ -528,11 +546,10 @@ class DockQuickSettings(QDialog):
                 try:
                     title = cursors.cycle()
                 except PACK_ERRORS as error:
-                    self.status.setText('鼠标样式应用失败')
-                    self.status.setToolTip(str(error))
+                    self.show_feedback('鼠标样式应用失败',str(error))
                 else:
                     self.refresh()
-                    self.status.setText('已应用 · ' + title)
+                    self.show_feedback('已应用 · ' + title)
             return
         if key=='taskbar_monitor':
             if runtime:runtime.resources.set_options(resource_taskbar=not runtime.dock.cfg['resource_taskbar'])
@@ -546,15 +563,15 @@ class DockQuickSettings(QDialog):
             if runtime and runtime.flash.set_enabled(not runtime.dock.cfg['flash_enabled']):
                 self.refresh()
             else:
-                self.status.setText('闪念胶囊设置保存失败。')
+                self.show_feedback('闪念胶囊设置保存失败。')
             return
         if key in ('search','undo','layouts','references'):
             service=getattr(runtime,'productivity',None)
             if service is None or getattr(service,'closed',False):
-                self.status.setText('整理工具暂不可用，请重新打开设置。');return
+                self.show_feedback('整理工具暂不可用，请重新打开设置。');return
             if key=='undo':
                 service.undo();self.refresh();self.reanchor()
-                self.status.setText(service.message);self.status.setToolTip(service.message);return
+                self.show_feedback(service.message,service.message);return
             method={'search':'open_search','layouts':'open_layouts','references':'open_references'}[key]
             self.close();getattr(service,method)();return
         if key in ('settings','add','manage'):
@@ -567,7 +584,7 @@ class DockQuickSettings(QDialog):
         if key in ('appearance','size','position'):
             notes = getattr(runtime, 'notes', None)
             if key == 'appearance' and notes and not notes.flush():
-                self.status.setText('便签保存失败，外观切换已取消。');return
+                self.show_feedback('便签保存失败，外观切换已取消。');return
             changes=next_cycle(cfg,key)
         elif key in WIDGET_SWITCHES:
             field=WIDGET_SWITCHES[key][2]
@@ -610,25 +627,24 @@ class DockQuickSettings(QDialog):
         if changes:
             from settings_effects import save_changes
             import sys
-            if not save_changes(tray,sys.modules[self.dock.__class__.__module__],changes):self.status.setText('保存失败，未应用更改。');return
+            if not save_changes(tray,sys.modules[self.dock.__class__.__module__],changes):self.show_feedback('保存失败，未应用更改。');return
         if key=='notes' and changes.get('notes_enabled') and runtime:
             notes=getattr(runtime,'notes',None)
-            if notes and not notes.rows() and notes.new() is None:self.status.setText('便签已启用，但新建失败，请在便签管理中重试。')
+            if notes and not notes.rows() and notes.new() is None:self.show_feedback('便签已启用，但新建失败，请在便签管理中重试。')
         self.refresh();self.reanchor()
         if key in SHELL_ACTIONS:
-            self.status.setText(f'{self.tiles[key].title}样式已保存。')
+            self.show_feedback(f'{self.tiles[key].title}样式已保存。')
         if key=='taskbar':
             taskbar=getattr(runtime,'taskbar',None)
             self.taskbar_status_changed(getattr(taskbar,'status','任务栏效果配置已保存。'))
         if key=='taskbar_text':
             error = getattr(getattr(getattr(runtime,'taskbar',None),'text',None),'error','')
-            self.status.setText('任务栏文字应用失败，请查看提示。' if error else '文字颜色已保存 · 联动 Windows 明暗模式')
-            self.status.setToolTip(str(error) if error else '')
+            self.show_feedback('任务栏文字应用失败，请查看提示。' if error else '文字颜色已保存 · 联动 Windows 明暗模式',str(error) if error else '')
 
 
     def enable_taskbar_component(self, tray, taskbar):
         if not getattr(taskbar, 'payload', None):
-            self.status.setText(getattr(taskbar, 'status', '任务栏组件未就绪。'))
+            self.show_feedback(getattr(taskbar, 'status', '任务栏组件未就绪。'))
             return
         if taskbar.install_process is not None:
             return
@@ -647,11 +663,11 @@ class DockQuickSettings(QDialog):
                     message = '组件已安装，但效果应用失败：'+str(error) if error else getattr(taskbar,'status','组件已启动，已切换到全透明。')
             if not sip.isdeleted(self):
                 self.refresh()
-                self.status.setText(message)
+                self.show_feedback(message)
 
         if taskbar.install_offline(installed):
             self.refresh()
-            self.status.setText('正在离线安装任务栏组件…')
+            self.show_feedback('正在离线安装任务栏组件…')
 
 
 class DockExtras(QObject):

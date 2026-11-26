@@ -17,6 +17,7 @@ LOCATION=ROOT/'tools'/'WeatherLocation.cs'
 MODULES=[ROOT/'assets'/'pawnio'/(name+'.bin') for name in ('AMDFamily17','IntelMSR')]
 TASKBAR=ROOT/'tools'/'TaskbarSpace.cs'
 APP_TRAFFIC=ROOT/'tools'/'AppTraffic.cs'
+TOUCHPAD=ROOT/'tools'/'TouchpadEvents.cs'
 TARGET=ROOT/'artifacts'/'generated'/'DesktopResourceProbe.exe'
 SHARED_DOTNET=Path(r'D:\Agant\toolchain\dotnet\dotnet.exe')
 
@@ -25,7 +26,7 @@ def prepare(dotnet: Path = SHARED_DOTNET):
     import prepare_fan_monitor
     libraries=prepare_fan_monitor.prepare()
     fan_monitor=next(p for p in libraries if p.name=='LibreHardwareMonitorLib.dll')
-    sources=(SOURCE,PERIPHERALS,CUSTOM_PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC,LOCATION)
+    sources=(SOURCE,PERIPHERALS,CUSTOM_PERIPHERALS,SENSORS,CPU,EXTENDED,FANS,TASKBAR,APP_TRAFFIC,LOCATION,TOUCHPAD)
     inputs=(*sources,*MODULES,*libraries,Path(__file__),Path(prepare_fan_monitor.__file__))
     if TARGET.is_file() and TARGET.stat().st_mtime_ns>=max(p.stat().st_mtime_ns for p in inputs):return TARGET
     dotnet=dotnet.resolve()

@@ -87,6 +87,7 @@ TIMER_RANGES={
 DEVICE_ALERTS = {
     'caps_lock': '大小写锁定', 'input_mode': '中英文输入', 'num_lock': '数字小键盘',
     'microphone': '麦克风静音状态', 'touchpad': '触控板开关',
+    'volume': '系统音量', 'brightness': '屏幕亮度',
     'bluetooth_link': '蓝牙设备连接', 'network_link': '网络连接',
 }
 REMINDER_OPTIONS={
@@ -380,11 +381,14 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('任务栏监控项目无效。')
         items=TASK_DEFAULT
     cfg['resource_task_metrics']=[k for k in TASK_METRICS if k in items]
+    from capsule_order import NAMES as compact_order_names
     for key,choices in [('resource_compact_metrics',COMPACT_ITEMS),('resource_compact_pinned',PINNABLE),('resource_ai_providers',AI_PROVIDERS),('resource_task_media_parts',TASK_MEDIA_PARTS),
-                        ('resource_task_order',TASK_COLUMN_NAMES),('resource_compact_order',PINNABLE)]:
+                        ('resource_task_order',TASK_COLUMN_NAMES),('resource_compact_order',compact_order_names)]:
         value=cfg.get(key,DEFAULTS[key])
-        if key in ('resource_compact_pinned', 'resource_compact_order') and isinstance(value, list):
+        if key=='resource_compact_pinned' and isinstance(value,list):
             value = [item for item in value if item not in (*COMPACT_STATUS,'peripherals','notifications')]
+        if key=='resource_compact_order' and isinstance(value,list):
+            value = ['bluetooth' if item=='peripherals' else item for item in value if item!='notifications']
         if key=='resource_compact_metrics' and isinstance(value,list):
             value=['bluetooth' if item=='peripherals' else item for item in value]
         if not isinstance(value,list) or any(not isinstance(k,str) or k not in choices for k in value):

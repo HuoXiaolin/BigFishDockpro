@@ -84,6 +84,7 @@ def run(api,runtime,app,output,checks):
     shell=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowDoesNotAcceptFocus)
     user=native()
     user.WindowFromPoint.argtypes=[W.POINT];user.WindowFromPoint.restype=W.HWND
+    user.GetAncestor.argtypes=[W.HWND,W.UINT];user.GetAncestor.restype=W.HWND
     def center(hwnd):
         rect=W.RECT()
         assert user.GetWindowRect(hwnd,C.byref(rect))
@@ -241,12 +242,14 @@ def run(api,runtime,app,output,checks):
                 with patch.dict(cfg,component_passthrough={panel_key:'apps'}):
                     with patch.object(user,'GetWindowThreadProcessId',side_effect=other_app):
                         policy.apply(panel,center(panel_id));assert hit(panel_id)==cover_id
-                        cover.hide();policy.apply(panel,center(panel_id));assert hit(panel_id)==panel_id
+                        cover.hide();policy.apply(panel,center(panel_id))
+                        # A compact card can receive this click through a native child.
+                        assert user.GetAncestor(hit(panel_id),2)==panel_id  # GA_ROOT excludes owned popups.
                         cover.show();assert restack(panel_id,TOPMOST)
                     cfg['component_passthrough']={panel_key:True};policy.apply(panel)
                     assert user.GetWindowLongW(panel_id,-20)&0x20
                     cfg['component_passthrough']={};policy.apply(panel)
-                    assert hit(panel_id)==panel_id
+                    assert user.GetAncestor(hit(panel_id),2)==panel_id
             cfg.update(panel_layer='bottom',resource_layer='bottom')
             with patch('capsule_glass.capture',side_effect=wallpaper_sample) as wallpaper, \
                  patch('glass_capture.capture_behind',side_effect=lambda window,*_:wallpaper_sample(window)) as card_wallpaper:

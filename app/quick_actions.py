@@ -9,7 +9,7 @@ ACTIONS=[('settings','全部设置','grid'),('taskbar','任务栏效果','positi
          ('notes','便签组件','notes'),('clock','时钟组件','clock'),('calendar','日历组件','calendar'),
          ('watermark','桌面水印','watermark'),
          ('reflections','图标倒影','reflection'),('dock_time','Dock 时间','clock'),('color_mode','明暗模式','palette'),
-         ('blur','背景模糊','blur'),('panel_auto_hide','卡片收起','panels'),('corners','屏幕圆角','corner'),('add','添加应用','plus'),
+         ('blur','背景模糊','blur'),('panel_auto_hide','卡片收起','panels'),('corners','屏幕圆角','corner'),('add','添加入口','plus'),
          ('search','统一搜索','search'),('undo','撤销整理','undo'),
          ('layouts','布局方案','layouts'),('references','入口修复','repair'),('flash','闪念胶囊','flash'),('resources','灵动胶囊','monitor'),('taskbar_monitor','任务栏监控','monitor')]
 PREVIOUS_ORDER = [key for key, _, _ in ACTIONS if key not in SYSTEM_ACTIONS]

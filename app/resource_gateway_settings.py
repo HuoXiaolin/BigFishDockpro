@@ -1,5 +1,6 @@
 """Manage opt-in AI usage sources. Credentials stay in the local protected store."""
 from uuid import uuid4
+from urllib.parse import urlsplit
 from PyQt5.QtCore import Qt
 
 from PyQt5.QtWidgets import QDialog,QFormLayout,QHBoxLayout,QLabel,QLineEdit,QVBoxLayout
@@ -14,7 +15,7 @@ class GatewaySettings(QDialog):
         super().__init__(parent,Qt.Dialog|Qt.FramelessWindowHint)
         self.service=service
         self.directory=service.runtime.api.CONFIG_DIR
-        self.setWindowTitle('自定义用量接口');self.resize(670,385)
+        self.setWindowTitle('自定义用量接口');self.resize(670,420)
         layout=QVBoxLayout(self);layout.addWidget(SettingsHeader(self,self.windowTitle()))
         self.tabs=ComponentPages(self,layout,'用量接口')
         form=self.tabs.form('连接与服务','monitor','接口配置')
@@ -23,16 +24,20 @@ class GatewaySettings(QDialog):
         self.name=QLineEdit();self.name.setMaxLength(48);self.name.setPlaceholderText('可留空')
         self.url=QLineEdit();self.url.setMaxLength(2048)
         self.url.setPlaceholderText('https://供应商地址/v1')
+        self.balance_url=QLineEdit();self.balance_url.setMaxLength(2048)
+        self.balance_url.setPlaceholderText('选填，余额接口单独提供时填写')
         self.token=QLineEdit();self.token.setMaxLength(4096);self.token.setEchoMode(QLineEdit.Password)
-        for label,field in (('连接',self.saved),('供应商',self.kind),('显示名称',self.name),('API 地址',self.url),('Token',self.token)):
+        for label,field in (('连接',self.saved),('供应商',self.kind),('显示名称',self.name),
+                            ('API 地址',self.url),('余额地址',self.balance_url),('Token',self.token)):
             field.setAccessibleName(label);form.addRow(label,field)
-        self.hint=QLabel('自动识别可填写常用 API 地址。也可以指定完整用量地址。Token 使用 Windows 加密保存在本机。')
+        self.hint=QLabel();self.hint.setOpenExternalLinks(True)
         self.hint.setWordWrap(True);form.addRow(self.hint)
         self.remove_button=button('移除连接',self.remove);form.addRow('',self.remove_button)
         self.status=QLabel()
         settings_footer(self,layout,self.status,self.save)
         self.saved.currentIndexChanged.connect(self.select)
         self.kind.currentIndexChanged.connect(self.preset)
+        self.url.textChanged.connect(self.update_hint)
         try:self.accounts=load_accounts(self.directory)
         except (ValueError,OSError):
             self.accounts=[];self.status.setText('旧连接文件读取失败，请重新添加。')
@@ -52,12 +57,33 @@ class GatewaySettings(QDialog):
         self.kind.blockSignals(False)
         self.name.setText(row['name'] if row else '')
         self.url.setText(row['url'] if row else '')
+        self.balance_url.setText(row.get('balance_url','') if row else '')
         self.token.setText(row['token'] if row else '')
         self.remove_button.setEnabled(row is not None)
+        self.update_hint()
 
     def preset(self):
         value=self.kind.currentData()
-        if value in ENDPOINTS:self.url.setText(ENDPOINTS[value])
+        if value in ENDPOINTS:
+            if self.url.text() and self.url_host()!=urlsplit(ENDPOINTS[value]).hostname:
+                self.token.clear()
+            self.url.setText(ENDPOINTS[value])
+            self.balance_url.clear()
+        self.update_hint()
+
+    def url_host(self):
+        try:return urlsplit(self.url.text().strip()).hostname
+        except ValueError:return None
+
+    def update_hint(self):
+        host=self.url_host()
+        if host=='api.openai.com':
+            note='OpenAI 官方预付余额请到<a href="https://platform.openai.com/settings/organization/billing/overview">账单总览</a>查看。'
+        elif host=='openrouter.ai':
+            note='OpenRouter 的账户余额查询需要管理密钥。'
+        else:
+            note='服务返回的账户余额会显示在 AI 用量卡片上。'
+        self.hint.setText(note+' 两个地址共用此 Token，凭据由 Windows 在本机加密保存。')
 
     def apply_accounts(self,rows,identity):
         try:save_accounts(self.directory,rows)
@@ -74,7 +100,7 @@ class GatewaySettings(QDialog):
             self.status.setText(f'最多保存 {MAX_ACCOUNTS} 个用量连接。');return False
         try:
             row=account_value(dict(id=identity or uuid4().hex,kind=self.kind.currentData(),name=self.name.text(),
-                                   url=self.url.text(),token=self.token.text()))
+                                   url=self.url.text(),balance_url=self.balance_url.text(),token=self.token.text()))
         except UsageError as error:
             self.status.setText(str(error));return False
         rows=[row if item['id']==identity else item for item in self.accounts]

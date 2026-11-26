@@ -78,11 +78,6 @@ static void BF_ClearModernStart() {
     g_separatePinnedListFocusedIndexes.clear();
 }
 
-static int BF_ModernStartDimension(PCWSTR key,int min,int max) {
-    auto setting=BF_Setting(key);
-    return std::clamp(static_cast<int>(wcstol(setting.c_str(),nullptr,10)),min,max);
-}
-
 static void BF_FitModernSearch(BF_ModernStartLayout& state) {
     if (!bf_search_button_ready) {
         if (!state.pageSlot.values.empty()) {
@@ -130,6 +125,16 @@ static void BF_FitModernApps(BF_ModernStartLayout& state,const Controls::GridVie
             content=inner.ContentTemplateRoot().try_as<FrameworkElement>();
         }
         if (content && (content.MinWidth()>width || content.Width()>width)) stretch(content);
+        if (auto grid=content.try_as<Controls::Grid>()) {
+            // The native list puts the name and optional download badge either
+            // directly in the second column or in a nested Grid in that column.
+            auto label=BF_FindLayoutElement(grid,L"AppDisplayName",3);
+            if (auto cell=label ? BF_DirectLayoutChild(grid,label) : nullptr;
+                cell && Controls::Grid::GetColumn(cell)==1) {
+                BF_SetModernStart(state,cell,FE::MarginProperty(),Thickness{12,0,6,0});
+                if (cell!=label) BF_SetModernStart(state,label,FE::MarginProperty(),Thickness{});
+            }
+        }
     }
 }
 
@@ -171,11 +176,11 @@ static bool BF_ApplyModernStart(BF_ModernStartLayout& state,const Controls::Grid
     if (more==pinHeading || more==appsTitle || more==pins) more=nullptr;
     auto recommended=BF_FindLayoutElement(header,L"TopLevelSuggestionsRoot",1);
 
-    const auto width=BF_ModernStartDimension(L"bigfish_start_width",480,800);
-    const auto height=BF_ModernStartDimension(L"bigfish_start_height",400,900);
-    const auto columns=BF_ModernStartDimension(L"bigfish_pin_columns",1,6);
-    const auto cellWidth=BF_ModernStartDimension(L"bigfish_pin_cell_width",48,110);
-    const auto cellHeight=BF_ModernStartDimension(L"bigfish_pin_cell_height",48,110);
+    const auto width=BF_StartDimension(L"bigfish_start_width",608,300,800);
+    const auto height=BF_StartDimension(L"bigfish_start_height",552,260,900);
+    const auto columns=BF_StartDimension(L"bigfish_pin_columns",4,1,6);
+    const auto cellWidth=BF_StartDimension(L"bigfish_pin_cell_width",88,48,110);
+    const auto cellHeight=BF_StartDimension(L"bigfish_pin_cell_height",84,48,110);
     auto xamlRoot=menu.XamlRoot();
     auto padding=frame.Padding();
     if (!xamlRoot || xamlRoot.Size().Width<width+padding.Left+padding.Right ||
@@ -202,16 +207,17 @@ static bool BF_ApplyModernStart(BF_ModernStartLayout& state,const Controls::Grid
     state.wrapper=winrt::make_weak(wrapper);
     auto pinScroll=Media::VisualTreeHelper::GetParent(pinContent).try_as<Scroll>();
     if (!pinScroll) pinScroll=BF_FindLayoutElement(wrapper,kSeparatePinnedScrollName,1).as<Scroll>();
-    wrapper.Padding({18,10,10,6});wrapper.ColumnSpacing(10);
+    using namespace BF_StartSpacing;
+    wrapper.Padding({inset,top,inset,0});wrapper.ColumnSpacing(gutter);
     wrapper.ColumnDefinitions().GetAt(0).Width({1,GridUnitType::Star});
-    wrapper.ColumnDefinitions().GetAt(1).Width({columns*cellWidth+24.0,GridUnitType::Pixel});
+    wrapper.ColumnDefinitions().GetAt(1).Width({columns*cellWidth+pager,GridUnitType::Pixel});
     Grid::SetColumn(original,0);Grid::SetColumn(pinScroll,1);
     BF_SetModernStart(state,apps,Controls::Control::PaddingProperty(),Thickness{});
     Data::Binding context;
     context.Source(header);context.Path(PropertyPath(L"DataContext"));
     pinContent.SetBinding(FE::DataContextProperty(),context);
     Controls::RowDefinition titleRow, pinsRow, recommendedRow;
-    titleRow.Height({36,GridUnitType::Pixel});pinsRow.Height({1,GridUnitType::Auto});
+    titleRow.Height({heading,GridUnitType::Pixel});pinsRow.Height({1,GridUnitType::Auto});
     recommendedRow.Height({1,GridUnitType::Auto});
     pinContent.RowDefinitions().Append(titleRow);pinContent.RowDefinitions().Append(pinsRow);
     pinContent.RowDefinitions().Append(recommendedRow);
@@ -224,7 +230,6 @@ static bool BF_ApplyModernStart(BF_ModernStartLayout& state,const Controls::Grid
         BF_SetModernStart(state,part,FE::HorizontalAlignmentProperty(),alignment);
     };
     place(pinHeading,0,HorizontalAlignment::Left);
-    BF_SetModernStart(state,pinHeading,FE::WidthProperty(),static_cast<double>(cellWidth));
     if (more) {
         place(more,0,HorizontalAlignment::Right);
         if (auto button=BF_FindLayoutElement(more,L"ShowMorePinnedButton",4);button)
@@ -238,14 +243,14 @@ static bool BF_ApplyModernStart(BF_ModernStartLayout& state,const Controls::Grid
             if (auto part=BF_FindLayoutElement(recommended,name,5))
                 BF_SetModernStart(state,part,FE::MarginProperty(),Thickness{});
     }
-    BF_SetModernStart(state,pinTitle,FE::MarginProperty(),Thickness{});
-    BF_SetModernStart(state,pinTitle,FE::HorizontalAlignmentProperty(),HorizontalAlignment::Center);
+    BF_SetModernStart(state,pinTitle,FE::MarginProperty(),Thickness{(cellWidth-icon)/2,0,0,0});
+    BF_SetModernStart(state,pinTitle,FE::HorizontalAlignmentProperty(),HorizontalAlignment::Left);
     BF_SetModernStart(state,pinTitle,FE::VerticalAlignmentProperty(),VerticalAlignment::Center);
-    BF_SetModernStart(state,pinTitle,Controls::TextBlock::TextAlignmentProperty(),TextAlignment::Center);
+    BF_SetModernStart(state,pinTitle,Controls::TextBlock::TextAlignmentProperty(),TextAlignment::Left);
     BF_SetModernStart(state,appsTitle,FE::MarginProperty(),Thickness{});
-    BF_SetModernStart(state,appsTitle,FE::HeightProperty(),36.0);
+    BF_SetModernStart(state,appsTitle,FE::HeightProperty(),heading);
     if (auto title=BF_FindLayoutElement(appsTitle,L"AllListHeadingText",3))
-        BF_SetModernStart(state,title,FE::MarginProperty(),Thickness{4,0,8,0});
+        BF_SetModernStart(state,title,FE::MarginProperty(),Thickness{8,0,8,0});
     if (auto choice=BF_FindLayoutElement(appsTitle,L"ViewSelectionButton",3))
         BF_SetModernStart(state,choice,FE::MarginProperty(),Thickness{0,0,10,0});
     const auto automatic=std::numeric_limits<double>::quiet_NaN();

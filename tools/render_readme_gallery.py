@@ -79,6 +79,16 @@ def run(output):
         settings['_now']=now
         p=QPainter(image);draw_clock(p,QRectF(x,y,width,height),dock,settings,style,backdrop(image,x,y,width,height));p.end()
     def shell_preview(search=False):
+        if not search:
+            case = ROOT/'artifacts/shell-native-test/start-crystal-light-72-auto'
+            report = case/'start-layout.json'
+            verified = json.loads(report.read_text()) if report.exists() else {}
+            scene = case/'start-layout.bmp' if verified.get('passed') and verified.get('account_aligned') else ROOT/'docs/screenshots/readme-start-menu.png'
+            image = QImage(str(scene))
+            if image.isNull():
+                raise ValueError('Missing verified native Start screenshot: '+str(scene))
+            save(image, 'readme-start-menu.png')
+            return
         from shell_appearance_model import START_MENU_SIZE
         width, height = START_MENU_SIZE
         image=background(width+52,height+48)
@@ -101,42 +111,17 @@ def run(output):
 
         glass_tint = f'#{round(DEMO_OPACITY*255/100):02x}f0faff'
         box(26,24,width,height,18,glass_tint,'#aaffffff')
-        if search:
-            box(46,44,width-40,42,12,glass_tint,'#7aa2bf')
-            ink('\ue721',56,44,30,42,18,True,True)
-            ink('搜索应用、设置和文档',92,44,width-138,42,14,color='#36536a')
-            ink('推荐',48,108,280,34,16,weight=QFont.DemiBold)
-            for index,(glyph,title) in enumerate((('\ue737','检查更新'),('\ue713','显示设置'),
-                ('\ue702','网络和 Internet'),('\ue702','蓝牙和其他设备'),('\ue70b','主题和相关设置'))):
-                top=155+61*index
-                app_tile(glyph,'#2877a9',52,top+4,35)
-                ink(title,101,top,375,43,14)
-        else:
-            ink('全部',42,36,170,34,18,weight=QFont.DemiBold)
-            ink('已固定',261,36,255,34,18,weight=QFont.DemiBold)
-            box(239,79,1,height-125,0,'#b5cedf')
-            entries=[('B','便签','\ue70b','#277fae'),('D','地图','\ue707','#30888a'),
-                     ('D','电子书','\ue82d','#6b6ab0'),('J','计算器','\ue8ef','#537da7'),
-                     ('R','日历','\ue787','#5360a9'),('W','文件','\ue8b7','#aa742c')]
-            last='';top=77
-            for group,name,glyph,color in entries:
-                if group!=last:
-                    ink(group,45,top,195,22,12,color='#496579');top+=24;last=group
-                app_tile(glyph,color,41,top+4,29);ink(name,81,top,144,37);top+=40
-            pins=[('设置','\ue713','#506882'),('文件','\ue8b7','#aa742c'),('便签','\ue70b','#277fae'),
-                  ('地图','\ue707','#30888a'),('日历','\ue787','#5360a9'),('电子书','\ue82d','#6b6ab0'),
-                  ('时钟','\ue823','#388a9f'),('计算器','\ue8ef','#537da7'),('照片','\ue91b','#677ca3')]
-            for index,(name,glyph,color) in enumerate(pins):
-                x=249+104*(index%3);y=87+93*(index//3)
-                app_tile(glyph,color,x+32,y,40);ink(name,x,y+45,104,26,13,True)
-            box(38,height-32,width-24,1,0,'#afc9db')
-            app_tile('\ue77b','#3f7998',40,height-17,26)
-            ink('示例用户',75,height-21,76,34,13)
-            ink('\ue7e8',151,height-21,36,34,18,True,True)
-            ink('\ue721',width-62,height-21,36,34,18,True,True)
-            ink('\ue713',width-22,height-21,36,34,18,True,True)
+        box(46,44,width-40,42,12,glass_tint,'#7aa2bf')
+        ink('\ue721',56,44,30,42,18,True,True)
+        ink('搜索应用、设置和文档',92,44,width-138,42,14,color='#36536a')
+        ink('推荐',48,108,280,34,16,weight=QFont.DemiBold)
+        for index,(glyph,title) in enumerate((('\ue737','检查更新'),('\ue713','显示设置'),
+            ('\ue702','网络和 Internet'),('\ue702','蓝牙和其他设备'),('\ue70b','主题和相关设置'))):
+            top=155+61*index
+            app_tile(glyph,'#2877a9',52,top+4,35)
+            ink(title,101,top,375,43,14)
         painter.end()
-        save(image,'readme-windows-search.png' if search else 'readme-start-menu.png')
+        save(image,'readme-windows-search.png')
 
     def component_previews(runtime, artwork):
         from daily_picture_card import DailyPictureCard

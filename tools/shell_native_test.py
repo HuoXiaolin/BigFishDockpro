@@ -10,6 +10,28 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'app'), str(ROOT / 'tools')]
 
 
+def start_fixture(cfg, layout=None):
+    from shell_appearance_model import settings
+    data = settings(cfg, 'start', os.getpid(), layout=layout)
+    data['probe_icon_directory'] = str(ROOT / 'docs/demo-assets')
+    assert 'StartDocked.StartSizingFrame' in data.values() and 'Cortana.UI.Views.TaskbarSearchPage' in data.values()
+    # Only private shell class names differ in the isolated native control tree.
+    types = {'StartDocked.StartSizingFrame':'Grid#StartSizingFrame',
+             'Cortana.UI.Views.TaskbarSearchPage':'Grid#TaskbarSearchPage',
+             'StartDocked.AllAppsGridListView#AppsList':'ListView#AppsList',
+             'StartDocked.AllAppsGridListViewItem > StackPanel#RootPanel > Button#Header':'Button#Header',
+             'StartDocked.AllAppsGridListViewItem':'ListViewItem',
+             'StartDocked.NavigationPaneView#NavigationPane':'Grid#NavigationPane',
+             'StartMenu.ExpandedFolderList':'ContentControl#ExpandedFolderList',
+             'StartMenu.PinnedList >':'ContentControl#StartMenuPinnedList >'}
+    for key, value in data.items():
+        if key.endswith('.target'):
+            for original, fixture in types.items():
+                value = value.replace(original, fixture)
+            data[key] = value
+    return data
+
+
 def check_probe(executable, library, case, report_name, timeout, timeout_retries):
     report = case / report_name
     for attempt in range(2):
@@ -30,7 +52,7 @@ def check_probe(executable, library, case, report_name, timeout, timeout_retries
 
 def main(output):
     from run_isolated_test import assert_isolated
-    from shell_appearance_model import START_MENU_SIZE, settings, encode_ini, normalize
+    from shell_appearance_model import START_MENU_SIZE, settings, encode_ini, normalize, start_layout
     output = Path(output).resolve()
     checks = []
     timeout_retries = []
@@ -68,7 +90,7 @@ def main(output):
                     colors = dock_theme_colors({**DEFAULT_DOCK_STYLE, **cfg}, True)
                     tint, layer = dock_tint_layers(colors, 100 - opacity)
                     alpha = 0 if material == 'clear' else round(material_alpha(tint, material) * layer)
-                data = settings(cfg, kind, os.getpid())
+                data = start_fixture(cfg) if kind == 'start' else settings(cfg, kind, os.getpid())
                 data.update(probe_tint_percent=str(expected), probe_tint_alpha=str(alpha))
                 if kind == 'start':
                     data['probe_core_apps'] = '1' if material == 'crystal' and theme == 'dark' else '0'
@@ -77,17 +99,6 @@ def main(output):
                     data['probe_footer_hit_test'] = '1' if (material, theme, opacity, text_mode) in (
                         ('crystal', 'light', 72, 'auto'), ('crystal', 'dark', 0, 'auto'), ('liquid', 'light', 0, 'auto')) else '0'
                     data['trace_menu_input'] = data['probe_footer_hit_test']
-                    assert 'StartDocked.StartSizingFrame' in data.values()
-                    assert 'Cortana.UI.Views.TaskbarSearchPage' in data.values()
-                    # Recreate these private classes with real Grid layout in the fixture.
-                    for key, value in tuple(data.items()):
-                        if key.endswith('.target'):
-                            data[key] = value.replace('StartDocked.StartSizingFrame', 'Grid#StartSizingFrame').replace(
-                                'Cortana.UI.Views.TaskbarSearchPage', 'Grid#TaskbarSearchPage').replace(
-                                'StartDocked.AllAppsGridListView#AppsList', 'ListView#AppsList').replace(
-                                'StartDocked.AllAppsGridListViewItem', 'ListViewItem').replace(
-                                'StartMenu.ExpandedFolderList', 'ContentControl#ExpandedFolderList').replace(
-                                'StartMenu.PinnedList', 'ContentControl#StartMenuPinnedList')
                     data.update(probe_start_width=str(START_MENU_SIZE[0]), probe_start_height=str(START_MENU_SIZE[1]))
                 else:
                     for key, value in tuple(data.items()):
@@ -98,34 +109,37 @@ def main(output):
                 check_probe(executable, payload / filename, case, kind + '-probe.json', 20, timeout_retries)
                 checks.append(case.name + ': verified tint and ' + inspected)
                 if kind == 'start' and material == 'crystal' and theme == 'light':
-                    data = settings(cfg, kind, os.getpid())
-                    # Reuse the private-type mappings from the standard fixture.
-                    for key, value in tuple(data.items()):
-                        if key.endswith('.target'):
-                            data[key] = value.replace('StartDocked.StartSizingFrame', 'Grid#StartSizingFrame').replace(
-                                'Cortana.UI.Views.TaskbarSearchPage', 'Grid#TaskbarSearchPage').replace(
-                                'StartDocked.AllAppsGridListView#AppsList', 'ListView#AppsList').replace(
-                                'StartDocked.AllAppsGridListViewItem', 'ListViewItem').replace(
-                                'StartMenu.ExpandedFolderList', 'ContentControl#ExpandedFolderList').replace(
-                                'StartMenu.PinnedList', 'ContentControl#StartMenuPinnedList')
+                    data = start_fixture(cfg)
                     data['probe_observer_layout'] = '1'
                     data['probe_outer_inset'] = '1'
+                    # A real group button and its first app row can have different
+                    # native origins (three physical pixels at 125% scaling).
+                    # Exercise the production rules with that offset during loading.
+                    index = sum(k.startswith('controlStyles[') and k.endswith('.target') for k in data)
+                    data[f'controlStyles[{index}].target'] = 'Button#Header'
+                    data[f'controlStyles[{index}].styles[0]'] = 'Margin=-2.4,0,0,0'
                     observed = output / 'start-observer-layout'
                     observed.mkdir(parents=True, exist_ok=True)
                     (observed / f'{kind}.{build}.ini').write_bytes(encode_ini(data))
                     check_probe(executable, payload / filename, observed, 'start-layout.json', 15, timeout_retries)
-                    checks.append('start-observer-layout: complete layout through real TAP, refresh and production teardown')
-                    for header in ('unnamed', 'named'):
-                        modern = output / f'start-redesigned-{header}-header'
+                    checks.append('start-observer-layout: native group and app rows with different origins align through opening, refresh and teardown')
+                    compact = start_layout((552, 512))
+                    for sample in (compact, start_layout((470, 512))):
+                        compact_cfg = start_fixture(cfg, sample)
+                        compact_cfg.update(probe_observer_layout='1', probe_outer_inset='1')
+                        small = output / f'start-compact-{sample.columns}-columns'
+                        small.mkdir(parents=True, exist_ok=True)
+                        (small / f'{kind}.{build}.ini').write_bytes(encode_ini(compact_cfg))
+                        check_probe(executable, payload / filename, small, 'start-layout.json', 15, timeout_retries)
+                        checks.append(f'{small.name}: aligned account, visible 3x3 folder and page hit targets')
+                    for header, layout in (('unnamed', None), ('named', None), ('named', compact)):
+                        modern = output / (f'start-redesigned-{header}-header' + ('-compact' if layout else ''))
                         modern.mkdir(parents=True, exist_ok=True)
-                        config = settings(cfg, kind, os.getpid())
-                        for key, value in tuple(config.items()):
-                            if key.endswith('.target'):
-                                config[key] = value.replace('StartMenu.PinnedList >', 'ContentControl#StartMenuPinnedList >')
+                        config = start_fixture(cfg, layout)
                         config['probe_redesigned_start'] = header
                         (modern / f'{kind}.{build}.ini').write_bytes(encode_ini(config))
                         check_probe(executable, payload / filename, modern, 'start-redesigned.json', 15, timeout_retries)
-                        checks.append(f'{modern.name}: deferred discovery, full rows, four pins, footer and complete native restore')
+                        checks.append(f'{modern.name}: deferred discovery, aligned grid, footer and native restore')
         result = {'passed': True, 'scope': 'native-xaml-isolated', 'desktop': desktop, 'checks': checks,
                   'profile': 'layout' if focused else 'full',
                   'limits': ['Synthetic native XAML; no injection into the user shell or live Windows start/notification interaction.']}

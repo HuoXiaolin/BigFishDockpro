@@ -227,6 +227,9 @@ static bool BF_AddFooterItem(BF_FooterMenu& menu,HMENU parent,const Controls::Me
     auto action=item.try_as<Controls::MenuFlyoutItem>();
     auto sub=item.try_as<Controls::MenuFlyoutSubItem>();
     if (!action && !sub) return false;
+    // Some Shell extensions populate a submenu only when it opens. Leave the
+    // original flyout in charge instead of presenting an empty replacement.
+    if (sub && sub.IsEnabled() && !sub.Items().Size()) return false;
     std::wstring label(action ? action.Text() : sub.Text());
     if (label.empty()) label=winrt::Windows::UI::Xaml::Automation::AutomationProperties::GetName(item);
     if (label.empty()) return false;
@@ -340,11 +343,27 @@ static std::optional<RECT> BF_PointerAnchor(const BF_FooterCommandButton& button
     return RECT{left,top,left+static_cast<LONG>(std::lround(width*scale)),top+static_cast<LONG>(std::lround(height*scale))};
 }
 
+static std::optional<RECT> BF_StartFlyoutBounds(const XamlRoot& root) {
+    auto panel=bf_startFrame ? bf_startFrame->panel.get() : nullptr;
+    if (!panel || !root || panel.XamlRoot()!=root) return {};
+    return BF_PanelScreenRect(panel,bf_startFrame->window);
+}
+
 static bool BF_ReachableMenuRows(const Controls::MenuFlyoutPresenter& presenter,const wf::Rect& face) {
     const auto root=presenter.XamlRoot();
     if (!root || !presenter.IsHitTestVisible() || face.Width<1 || face.Height<1) return false;
     const auto scale=root.RasterizationScale();
-    const auto layoutWindow=BF_LayoutWindow();
+    // Automation reports clipped extents on some builds. The part drawn beyond
+    // those extents still needs a menu window of its own to receive input.
+    if (presenter.ActualWidth()*scale>face.Width+1.5 || presenter.ActualHeight()*scale>face.Height+1.5) return false;
+    const auto layoutWindow=bf_startFrame && bf_startFrame->window ? bf_startFrame->window : BF_LayoutWindow();
+    if (const auto bounds=BF_StartFlyoutBounds(root)) {
+        const RECT surface{LONG(std::floor(face.X)),LONG(std::floor(face.Y)),
+            LONG(std::ceil(face.X+face.Width)),LONG(std::ceil(face.Y+face.Height))};
+        // The shell can dismiss a menu outside its visible panel even if
+        // its larger compositor window reports an XAML hit there.
+        if (!BF_ContainsPanel(*bounds,surface)) return false;
+    }
     unsigned rows=0;
     for (const auto& value:presenter.Items()) {
         auto item=value.try_as<Controls::MenuFlyoutItemBase>();
@@ -353,20 +372,24 @@ static bool BF_ReachableMenuRows(const Controls::MenuFlyoutPresenter& presenter,
         auto peer=BF_FooterPeers::FrameworkElementAutomationPeer::CreatePeerForElement(item);
         if (!peer) return false;
         auto bounds=peer.GetBoundingRectangle();
-        if (bounds.Width<1 || bounds.Height<1 || bounds.Y<face.Y-1 || bounds.Y+bounds.Height>face.Y+face.Height+1) return false;
-        POINT center{LONG(bounds.X+bounds.Width/2),LONG(bounds.Y+bounds.Height/2)};
-        DWORD pid=0;wchar_t name[32]{};
-        auto hit=WindowFromPoint(center);
-        GetWindowThreadProcessId(hit,&pid);GetClassNameW(hit,name,std::size(name));
-        if (pid!=GetCurrentProcessId()) return false;
-        if (std::wstring_view(name)==L"Xaml_WindowedPopupClass") {
-            RECT popup{};
-            if (!GetWindowRect(hit,&popup) || bounds.X<popup.left-1 || bounds.X+bounds.Width>popup.right+1 ||
-                bounds.Y<popup.top-1 || bounds.Y+bounds.Height>popup.bottom+1) return false;
-        } else {
+        if (bounds.Width<1 || bounds.Height<1 || bounds.X<face.X-1 || bounds.X+bounds.Width>face.X+face.Width+1 ||
+            bounds.Y<face.Y-1 || bounds.Y+bounds.Height>face.Y+face.Height+1) return false;
+        const double half=bounds.Width*.5, edge=std::min(half,4*scale);
+        for (double offset:{edge,half,bounds.Width-edge}) {
+            POINT point{LONG(bounds.X+offset),LONG(bounds.Y+bounds.Height/2)};
+            DWORD pid=0;wchar_t name[32]{};
+            auto hit=WindowFromPoint(point);
+            GetWindowThreadProcessId(hit,&pid);GetClassNameW(hit,name,std::size(name));
+            if (pid!=GetCurrentProcessId()) return false;
+            if (std::wstring_view(name)==L"Xaml_WindowedPopupClass") {
+                RECT popup{};
+                if (!GetWindowRect(hit,&popup) || bounds.X<popup.left-1 || bounds.X+bounds.Width>popup.right+1 ||
+                    bounds.Y<popup.top-1 || bounds.Y+bounds.Height>popup.bottom+1) return false;
+                continue;
+            }
             if (!layoutWindow || GetAncestor(hit,GA_ROOT)!=GetAncestor(layoutWindow,GA_ROOT) ||
-                !ScreenToClient(layoutWindow,&center)) return false;
-            wf::Point position{float(center.x/scale),float(center.y/scale)};
+                !ScreenToClient(layoutWindow,&point)) return false;
+            wf::Point position{float(point.x/scale),float(point.y/scale)};
             auto top=Media::VisualTreeHelper::FindElementsInHostCoordinates(position,root.Content(),false).First();
             DependencyObject leaf=top.HasCurrent() ? top.Current() : nullptr;
             while (leaf && leaf!=item) leaf=Media::VisualTreeHelper::GetParent(leaf);

@@ -1,6 +1,7 @@
 """Shell-composed state icons and bounded file-name layout for collection cards."""
 import ctypes
 import os
+from stat import S_ISDIR
 from ctypes import wintypes
 from PyQt5.QtCore import Qt, QRect, QSize
 from PyQt5.QtGui import QIcon, QPalette, QTextLayout, QTextOption, QFontMetrics
@@ -111,13 +112,24 @@ class FileNameDelegate(QStyledItemDelegate):
         return super().sizeHint(option,index)
 
 
+def file_item_pixmap(provider, path, pixels, *, state=None, hide_shortcut=True):
+    thumbnail = picture_thumbnail(path, pixels, state)
+    if thumbnail is not None:
+        return thumbnail
+    return provider.get(path, pixels, shell_state=True, hide_shortcut=hide_shortcut)
+
+
 def picture_thumbnail(path,pixels,state=None):
     # Most collection entries are not images: never stat them for a thumbnail.
     if os.path.splitext(path)[1].lower() not in PICTURE_SUFFIXES:return None
     try:
         if state is None:
-            info=os.stat(path);stamp,length=info.st_mtime_ns,info.st_size
-        else:stamp,length=state[:2]
+            info=os.stat(path)
+            if S_ISDIR(info.st_mode):return None
+            stamp,length=info.st_mtime_ns,info.st_size
+        else:
+            if len(state) > 3 and state[3]:return None
+            stamp,length=state[:2]
         return _picture_thumbnail(path,stamp,length,pixels)
     except OSError:return None
 

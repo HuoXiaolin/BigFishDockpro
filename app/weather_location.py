@@ -68,9 +68,12 @@ def address_name(address):
     fallback = city or place(address.get('locality')) or subdivision or _CURRENT_LOCATION
     locality = address.get('localityInfo')
     administrative = locality.get('administrative') if isinstance(locality, dict) else None
-    if address.get('countryCode') != 'CN' or not isinstance(administrative, list):
+    if address.get('countryCode') != 'CN':
         return fallback
 
+    municipality = subdivision if subdivision.endswith('市') else ''
+    if not isinstance(administrative, list):
+        return city or municipality or fallback
     prefecture = coded_county = boundary_county = ''
     for area in administrative:
         if not isinstance(area, dict):
@@ -84,6 +87,10 @@ def address_name(address):
                 coded_county = name
             elif not code.endswith('0000'):
                 prefecture = name
+            elif name.endswith('市'):
+                municipality = name
+        elif area.get('adminLevel') == 4 and name.endswith('市'):
+            municipality = name
         elif area.get('adminLevel') == 5:
             prefecture = name
         elif area.get('adminLevel') == 6:
@@ -91,12 +98,14 @@ def address_name(address):
 
     county = coded_county or boundary_county
     if not county:
-        return prefecture or fallback
-    parent = prefecture or city or subdivision
-    if not parent or county.startswith(parent):
+        return prefecture or municipality or fallback
+    parent = prefecture or municipality or city or subdivision
+    if not parent or parent == county:
         return county
-    if parent.endswith(county):
-        return parent
+    if county.startswith(parent):
+        county = county[len(parent):]
+    elif parent.endswith(county):
+        parent = parent[:-len(county)]
     return place(f'{parent} · {county}') or county
 
 

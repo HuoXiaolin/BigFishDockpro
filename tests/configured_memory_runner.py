@@ -84,7 +84,7 @@ def main():
                     stage('settings_baseline')
                     started=time.perf_counter();tray.show_settings();pump(.15)
                     settings=tray.settings_dialog
-                    assert runtime.resources.compact and w.liquid.watch.isActive()
+                    assert runtime.resources.compact == was_compact and w.liquid.watch.isActive()
                     sampler.configure(runtime.resources.active_keys())
                     runtime.resources.accept_sample(sampler.sample())
                     result['settings_open_ms_including_150ms_pump']=round((time.perf_counter()-started)*1000,2)
@@ -106,16 +106,10 @@ def main():
                     settings.reject();pump()
                     assert runtime.resources.compact == was_compact and w.liquid.watch.isActive()
                     runtime.memory_budget.reclaim();stage('settings_closed')
-                    runtime.resources.settings_depth += 1
-                    runtime.resources.settings_focus_changed()
-                    try:
-                        options=ResourceOptions(runtime.resources);options.show();stage('standalone_resource_settings_open')
-                        for index in range(options.tabs.count()):
-                            options.tabs.setCurrentIndex(index);stage(f'standalone_resource_settings_tab_{index}')
-                        options.reject();options.deleteLater();pump()
-                    finally:
-                        runtime.resources.settings_depth -= 1
-                        runtime.resources.settings_focus_changed()
+                    options=ResourceOptions(runtime.resources);options.show();stage('standalone_resource_settings_open')
+                    for index in range(options.tabs.count()):
+                        options.tabs.setCurrentIndex(index);stage(f'standalone_resource_settings_tab_{index}')
+                    options.reject();options.deleteLater();pump()
                 if os.environ.get('FISHDOCK_MEMORY_STRESS')=='1':
                     cfg.update(panel_face=True,panel_face_interactive=True);runtime.panels.apply_settings()
                     cfg.update(resource_collapsed=False,resource_face=True,resource_face_interactive=True);runtime.resources.auto_compact=None;runtime.resources.sync()

@@ -130,6 +130,13 @@ static bool BF_FillFooterFrame(HWND window,HDC dc,const BF_NativePopup& menu) {
     if (!dc || !GetWindowRect(window,&frame) || !GetClientRect(window,&client)) return false;
     MapWindowPoints(window,nullptr,reinterpret_cast<POINT*>(&client),2);
     OffsetRect(&client,-frame.left,-frame.top);
+    const auto handle=reinterpret_cast<HMENU>(SendMessageW(window,MN_GETHMENU,0,0));
+    if (handle && handle!=menu.handle) {
+        // USER can paint an additional light line just inside the submenu's
+        // client area. Continue the same surface across both sides of that seam.
+        const int rim=MulDiv(2,menu.dpi,96);
+        InflateRect(&client,-rim,-rim);
+    }
     const RECT bounds{0,0,frame.right-frame.left,frame.bottom-frame.top};
     const int saved=SaveDC(dc);
     if (!saved) return false;
@@ -166,7 +173,13 @@ static LRESULT CALLBACK BF_PaintFooterFrame(HWND window,UINT msg,WPARAM wp,LPARA
                 RestoreDC(dc,saved);
             }
         }
-        if (msg==WM_PAINT && dc) ReleaseDC(window,dc);
+        if (msg==WM_PAINT) {
+            if (dc) ReleaseDC(window,dc);
+            if (HDC frame=GetWindowDC(window)) {
+                BF_FillFooterFrame(window,frame,menu);
+                ReleaseDC(window,frame);
+            }
+        }
         if (msg==WM_PRINT && (lp&PRF_NONCLIENT)) BF_FillFooterFrame(window,dc,menu);
         return result;
     } else if (msg==WM_NCDESTROY) {
@@ -218,9 +231,9 @@ static void BF_RoundFooterWindow(BF_NativePopup& menu,HMENU parent,HWND window) 
         }
     }
     const DWM_WINDOW_CORNER_PREFERENCE corner=DWMWCP_ROUND;
+    const COLORREF border=DWMWA_COLOR_NONE;
+    DwmSetWindowAttribute(window,DWMWA_BORDER_COLOR,&border,sizeof(border));
     if (SUCCEEDED(DwmSetWindowAttribute(window,DWMWA_WINDOW_CORNER_PREFERENCE,&corner,sizeof(corner)))) {
-        const COLORREF border=DWMWA_COLOR_NONE;
-        DwmSetWindowAttribute(window,DWMWA_BORDER_COLOR,&border,sizeof(border));
         SetWindowRgn(window,nullptr,FALSE);
         return;
     }
@@ -243,6 +256,11 @@ static void BF_QueueFooterFrame(BF_NativePopup& menu,HMENU handle) {
 
 static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR ref) {
     auto& menu=*reinterpret_cast<BF_NativePopup*>(ref);
+    if (msg==WM_INITMENUPOPUP) {
+        const auto handle=reinterpret_cast<HMENU>(wp);
+        if (handle && handle!=menu.handle) BF_QueueFooterFrame(menu,handle);
+        return DefSubclassProc(owner,msg,wp,lp);
+    }
     if (msg==WM_TIMER && menu.frameTimer && wp==menu.frameTimer) {
         const auto handle=menu.pendingFrame;
         const auto window=handle ? BF_FindFooterWindow(handle) : nullptr;
@@ -339,11 +357,11 @@ static LRESULT CALLBACK BF_PaintFooterItem(HWND owner,UINT msg,WPARAM wp,LPARAM 
 // its HWND. Recompose the client (including the gutters) in its final screen
 // coordinates, preserving the original USER selection and command IDs.
 static void BF_PaintSubmenuClient(HWND window,HDC dc,BF_NativePopup& menu) {
-    if (!menu.backdrop) return;
     auto handle=reinterpret_cast<HMENU>(SendMessageW(window,MN_GETHMENU,0,0));
     if (!handle || handle==menu.handle) return;
     RECT client{};POINT origin{};
     if (!GetClientRect(window,&client) || !ClientToScreen(window,&origin)) return;
+    FillRect(dc,&client,menu.background);
     BF_DrawPopupBackdrop(menu,dc,client,origin);
     for (const auto& row:menu.rows) {
         if (row.parent!=handle) continue;

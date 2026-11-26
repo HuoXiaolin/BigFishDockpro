@@ -29,6 +29,10 @@ def is_reference(path):
     except ValueError:return False
 
 
+def is_shortcut_file(path, suffix):
+    return path.lower().endswith(suffix) and not is_reference(path) and not os.path.isdir(path)
+
+
 def retained_link(item,path,migrated=False):
     result=dict(item,path=os.path.abspath(path))
     result.setdefault('name',Path(path).stem)
@@ -53,7 +57,7 @@ def map_entry(item,validate=True):
             return retained_link(item,source,migrated=True)
     original=path;info={};seen=set()
     for _ in range(8):
-        if is_reference(path) or not path.lower().endswith('.lnk'):break
+        if not is_shortcut_file(path, '.lnk'):break
         key=os.path.normcase(os.path.abspath(path))
         if key in seen:return None
         seen.add(key)
@@ -68,8 +72,8 @@ def map_entry(item,validate=True):
         for field in ('working_directory','icon','icon_index','show_command','verb','app_user_model_id'):
             if field not in info and details.get(field):info[field]=details[field]
         path=target
-    if path.lower().endswith('.lnk'):return None
-    if not is_reference(path) and path.lower().endswith('.url'):
+    if is_shortcut_file(path, '.lnk'):return None
+    if is_shortcut_file(path, '.url'):
         from configparser import ConfigParser,Error
         try:
             data=Path(path).read_bytes()[:65536]
