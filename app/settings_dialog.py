@@ -314,6 +314,8 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
                     field.setChecked(bool(value))
             finally:
                 field.blockSignals(blocked)
+        if 'dock_clock' in changes and 'dock_clock' in self.fields:
+            self.clock_options.setEnabled(self.fields['dock_clock'].isChecked())
         if 'panel_collapse_style' in changes and 'panel_fold_height' in self.fields:
             self.sync_fold_size()
         if 'panel_face_auto_switch' in changes and 'panel_face_auto_switch' in self.fields:
@@ -374,6 +376,15 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         for key,title in [('dock_reflections','图标倒影'),('dock_clock','时间'),('dock_quick_settings','九宫格'),('dock_add_button','＋ 添加')]:
             control=ModernCheckBox(title);self.fields[key]=control;extras.add(control)
         appearance.addRow(extras)
+        from compact_clock import CALENDAR_OPTIONS
+        clock_options = ResponsiveFields()
+        for suffix, title in {'seconds':'秒数', **CALENDAR_OPTIONS}.items():
+            control = ModernCheckBox(title)
+            self.fields['dock_clock_'+suffix] = control
+            clock_options.add(control)
+        self.clock_options = clock_options
+        self.fields['dock_clock'].toggled.connect(clock_options.setEnabled)
+        appearance.addRow(self.field_label('时钟内容'), clock_options)
         self.add_field(appearance, 'bump_level')
         layout = appearance
         section_marker(layout,'停靠与交互')

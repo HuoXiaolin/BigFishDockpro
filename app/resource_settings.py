@@ -17,6 +17,7 @@ from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_me
 from resource_device_picker import DevicePicker
 from resource_options import DEVICE_ALERTS, DEVICE_SOURCES, HALO_COLOR_MODES, HALO_SPEEDS, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS, clean_halo_color
 from settings_design import NumericControl,SettingsNavigation
+from resource_options import COMPACT_ROTATE_INTERVAL_RANGE, COMPACT_ZONES, ZONE_ROTATION_KEYS
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
@@ -68,7 +69,8 @@ class ResourceOptions(QDialog):
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values(),'resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
+           'resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
            'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'} | {'resource_alert_'+key for key in DEVICE_ALERTS},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
@@ -114,7 +116,9 @@ class ResourceOptions(QDialog):
                 self.custom_box.setVisible(self.fields['resource_background'].currentData()=='custom')
                 self.sync_halo_fields()
             elif index == 2:
-                self.fields['resource_clock_format'].setEnabled(self.fields['resource_clock'].isChecked())
+                for field in ('format','weekday','lunar','festival'):
+                    self.fields['resource_clock_'+field].setEnabled(self.fields['resource_clock'].isChecked())
+                self.sync_rotation_fields()
                 self.sync_runner_fields()
             elif index == 6:
                 self.fields['resource_face_switch_minutes'].setEnabled(self.fields['resource_face_auto_switch'].isChecked())
@@ -302,7 +306,7 @@ class ResourceOptions(QDialog):
             layout=page(2)
             readouts=section(layout,'收起时显示的项目')
             tools=QHBoxLayout()
-            hint=QLabel('调整已开启项目在收起胶囊中的显示顺序。');hint.setWordWrap(True)
+            hint=QLabel('分配已开启项目的左、中、右位置，并调整各区顺序。');hint.setWordWrap(True)
             tools.addWidget(hint,1)
             tools.addWidget(button('显示顺序…',self.edit_compact_order))
             readouts.addLayout(tools)
@@ -321,13 +325,30 @@ class ResourceOptions(QDialog):
             self.fields['resource_compact_auto_width']=check('宽度随内容收紧（不超过设定宽度）',cfg['resource_compact_auto_width']);compact.addWidget(self.fields['resource_compact_auto_width'])
             spin(compact_form,'resource_compact_width','胶囊宽度',96,1400,cfg['resource_compact_width'],self.fields)
             spin(compact_form,'resource_compact_height','胶囊高度',28,100,cfg['resource_compact_height'],self.fields)
-            spin(compact_form,'resource_compact_badge_height','徽标高度',*COMPACT_BADGE_HEIGHT_RANGE,cfg['resource_compact_badge_height'],self.fields)
+            spin(compact_form,'resource_compact_badge_height','色块高度',*COMPACT_BADGE_HEIGHT_RANGE,cfg['resource_compact_badge_height'],self.fields)
             self.fields['resource_compact_badge_height'].setSuffix(' px')
+            self.fields['resource_compact_badge_height'].setToolTip('调整收起时的色块和状态图标高度。资源标题和数值保留原有字体与字号，两行的上下位置与日期、时间对齐。')
             spin(compact_form,'resource_expanded_width','展开宽度（各页共用）',260,1000,cfg['resource_expanded_width'],self.fields)
             spin(compact_form,'resource_expanded_height','展开高度（各页共用）',180,800,cfg['resource_expanded_height'],self.fields)
             combo(compact_form,'resource_compact_density','内容密度',[('自动紧凑','auto'),('始终紧凑','dense')],cfg['resource_compact_density'],self.fields)
-            for key,title in [('resource_compact_rings','资源占用环'),('resource_compact_rotate','读数自动翻页')]:
-                self.fields[key]=check(title,cfg[key]);compact.addWidget(self.fields[key])
+            self.fields['resource_compact_rings']=check('资源占用环',cfg['resource_compact_rings'])
+            compact.addWidget(self.fields['resource_compact_rings'])
+            rotate = self.fields['resource_compact_rotate'] = check('读数自动翻页',cfg['resource_compact_rotate'])
+            compact.addWidget(rotate)
+            paging = QFormLayout();paging.setHorizontalSpacing(8);compact.addLayout(paging)
+            key = 'resource_compact_rotate_interval'
+            spin(paging,key,'翻页间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
+            self.fields[key].setSuffix(' 秒')
+            zones = QHBoxLayout()
+            for zone, key in ZONE_ROTATION_KEYS.items():
+                field = self.fields[key] = check(COMPACT_ZONES[zone],cfg[key])
+                field.setAccessibleName(COMPACT_ZONES[zone]+'区域自动翻页')
+                zones.addWidget(field)
+            zones.addStretch()
+            paging.addRow('自动翻页区域',zones)
+            rotate.setToolTip('勾选的区域有多页时才会自动轮换。悬停暂停，其他区域仍可用滚轮翻页。')
+            rotate.toggled.connect(self.sync_rotation_fields)
+            self.sync_rotation_fields()
             clock=section(layout,'日期与时间')
             show_clock=check('显示日期或时间',cfg['resource_clock'])
             self.fields['resource_clock']=show_clock;clock.addWidget(show_clock)
@@ -335,6 +356,16 @@ class ResourceOptions(QDialog):
             clock_format=combo(form,'resource_clock_format','显示格式',[(label,key) for key,(label,_) in COMPACT_CLOCK_FORMATS.items()],
                                cfg['resource_clock_format'],self.fields)
             clock_format.setEnabled(show_clock.isChecked());show_clock.toggled.connect(clock_format.setEnabled)
+            from compact_clock import CALENDAR_OPTIONS
+            details = QHBoxLayout()
+            for suffix, title in CALENDAR_OPTIONS.items():
+                key = 'resource_clock_' + suffix
+                field = self.fields[key] = check(title, cfg[key])
+                details.addWidget(field)
+                field.setEnabled(show_clock.isChecked())
+                show_clock.toggled.connect(field.setEnabled)
+            details.addStretch()
+            form.addRow('日期行内容', details)
             mail=section(layout,'邮箱图标')
             key='resource_mail_icon'
             self.fields[key]=check('收起时显示邮箱图标',cfg[key]);mail.addWidget(self.fields[key])
@@ -738,6 +769,11 @@ class ResourceOptions(QDialog):
         self.fill_ai_tray_metrics(row, '')
         self.sync_ai_tray_fields()
 
+    def sync_rotation_fields(self):
+        enabled = self.fields['resource_compact_rotate'].isChecked()
+        for key in ('resource_compact_rotate_interval', *ZONE_ROTATION_KEYS.values()):
+            self.fields[key].setEnabled(enabled)
+
     def sync_runner_fields(self):
         enabled=self.fields['resource_runner_enabled'].isChecked()
         for key in ('resource_runner_animal','resource_runner_metric','resource_runner_speed'):
@@ -851,7 +887,8 @@ class ResourceOptions(QDialog):
             self.tints[key]=color.name();self.fields['resource_palette'].setCurrentIndex(self.fields['resource_palette'].findData('custom'));self.color_preview()
 
     def edit_compact_order(self):
-        from capsule_order import configured_items, display_order, merge_visible
+        from capsule_order import assign_visible, configured_items, display_order, item_zones
+        from capsule_order_editor import CompactOrderDialog
         for index in self.loaded:
             self.snapshot_page(index)
         cfg = dict(self.service.cfg, **self.orders)
@@ -863,9 +900,14 @@ class ResourceOptions(QDialog):
             if 'location_fields' in stores:
                 cfg['resource_component_locations'] = stores['location_fields']
         names = configured_items(cfg)
-        selected = self.order_dialog(names, list(names), compact=True)
-        if selected is not None and selected != list(names):
-            self.orders['resource_compact_order'] = merge_visible(display_order(cfg), selected)
+        dialog = CompactOrderDialog(self, names, item_zones(cfg, display_order(cfg)))
+        initial = dialog.groups()
+        try:
+            if dialog.exec_() == QDialog.Accepted and dialog.groups() != initial:
+                order, zones = assign_visible(cfg, dialog.groups())
+                self.orders.update(resource_compact_order=order, resource_compact_zones=zones)
+        finally:
+            dialog.deleteLater()
 
     def edit_order(self, key, names):
         saved = self.orders.get(key, self.service.cfg[key])
@@ -874,13 +916,12 @@ class ResourceOptions(QDialog):
         if selected is not None:
             self.orders[key] = selected
 
-    def order_dialog(self, names, order, compact=False):
+    def order_dialog(self, names, order):
         dialog = QDialog(self)
         dialog.setWindowTitle('显示顺序')
         dialog.resize(380, 390)
         layout = QVBoxLayout(dialog)
-        hint = QLabel('拖动已开启的项目，按从左到右排列。' if compact else '拖动项目调整顺序，也可使用上移和下移。')
-        if not order:hint.setText('尚未开启收起显示项目。')
+        hint = QLabel('拖动项目调整顺序，也可使用上移和下移。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
         view = QListWidget()

@@ -112,7 +112,7 @@ def check_compact_scroll(window,app,output,checks):
             assert window.offset==1 and not window.compact_scroll and not window.animation.isActive()
             wheel(120);middle(-1)
             wheel(-120);wheel(-120);finish()
-            assert window.offset==2 and window.compact_scroll[0]==0
+            assert window.offset==2 and window.compact_scroll[0].left==0
             finish()
             with patch.object(window,'underMouse',return_value=False):
                 window.rotate.timeout.emit()

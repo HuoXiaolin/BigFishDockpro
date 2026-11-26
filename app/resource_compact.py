@@ -1,5 +1,6 @@
 """Content-sized compact rows and an inexpensive perimeter-following halo."""
 from functools import lru_cache
+from datetime import datetime
 from math import atan2, degrees, tau
 import time
 from PyQt5.QtCore import Qt,QRectF,QPointF
@@ -7,22 +8,33 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainter
 from resource_status import connection_labels,metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import capsule_reading, ring_ink
-from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RUNNER_SLOT,component_location
-from capsule_order import has_component_order
+from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RUNNER_SLOT,SENSOR_UNITS,compact_text_height,compact_tile_height,component_location
+from capsule_order import clock_turn, has_component_order
+from compact_clock import capsule_clock_width, capsule_headers, draw_clock, headers, lines_at
+from compact_text import draw_stacked_text, readout_fonts
 from spectrum_palettes import SPECTRUM_PALETTES
 
 
-STATUS_STEP=23
-CLOCK_WIDTHS={'%H:%M':38,'%H:%M:%S':53,'%Y-%m-%d':64}
+MAIL_STEP=23
 AI_ICON_SIZE = 16
 AI_RING_SIZE = 18
 AI_PADDING = 4
 AI_GAP = 4
 AI_TEXT_SIZE = 11
+CONTENT_TEXT_LEFT = 22
+CONTENT_PADDING = 4
+CONTENT_MIN_TEXT = 16
+WEATHER_MAX_WIDTH = 82
+MUSIC_MAX_WIDTH = 96
+MUSIC_WAVE_BARS = 15
+MUSIC_WAVE_STEP = 3
+AGENDA_MAX_WIDTH = 80
 MARQUEE_SPEED = 32
 MARQUEE_GAP = 20
 MARQUEE_START_PAUSE = .65
 MARQUEE_LOOP_PAUSE = 5
+READING_SAMPLES = {'traffic':'1023.99 GB','disk_activity':'100%', '°C':'199.9 °C','W':'999.99 W',
+                   'V':'9.99 V','MHz':'9999 MHz','RPM':'19999 RPM','%':'100%'}
 
 
 def text(p,rect,value,color,size=11,bold=False,align=Qt.AlignLeft):
@@ -235,35 +247,78 @@ def compact_values(window):
     return values
 
 
-def cell_width(row,dense=False):
-    key=row[0]
+@lru_cache(maxsize=256)
+def reading_width(key,label,dense,panel_height,side):
+    caption, value = readout_fonts(panel_height,dense)
+    names, numbers = QFontMetrics(caption), QFontMetrics(value)
+    if key=='network':
+        column = numbers.horizontalAdvance('↑ 1023.9M') + 2
+        return max(26,column if dense else 2*column+3)
+    if key in ('cpu','gpu','memory'):
+        if dense:
+            # Keep the same slot when a percentage crosses 10 or reaches 100.
+            return max(26,numbers.horizontalAdvance('100%')+1,names.horizontalAdvance(label)+1)
+        return side+4+numbers.horizontalAdvance('100%')
+    sample = READING_SAMPLES.get(SENSOR_UNITS.get(key,key),'999')
+    return max(26,min(names.horizontalAdvance(label),caption.pixelSize()*9)+2,numbers.horizontalAdvance(sample)+2)
+
+
+@lru_cache(maxsize=256)
+def weather_badge_width(place,temperature):
+    font=QFont()
+    font.setWeight(QFont.Normal);font.setPixelSize(8)
+    place_width=QFontMetrics(font).horizontalAdvance(place)
+    font.setWeight(QFont.DemiBold);font.setPixelSize(10)
+    text_width=max(CONTENT_MIN_TEXT,place_width,QFontMetrics(font).horizontalAdvance(temperature))
+    return min(WEATHER_MAX_WIDTH,CONTENT_TEXT_LEFT+text_width+1+CONTENT_PADDING)
+
+
+@lru_cache(maxsize=128)
+def music_badge_width(value):
+    # None is the fixed wave viewport; song and lyric excerpts fit their text.
+    if value is None:
+        return CONTENT_TEXT_LEFT+MUSIC_WAVE_BARS*MUSIC_WAVE_STEP+CONTENT_PADDING
+    font=QFont();font.setPixelSize(10);font.setWeight(QFont.DemiBold)
+    text_width=max(CONTENT_MIN_TEXT,QFontMetrics(font).horizontalAdvance(value))
+    return min(MUSIC_MAX_WIDTH,CONTENT_TEXT_LEFT+text_width+1+CONTENT_PADDING)
+
+
+def content_badge_width(row,cfg):
+    key,place,value,meta=row
     if key=='ai':
-        value_width = QFontMetrics(ai_value_font()).horizontalAdvance(row[2])
-        reading=row[3]['reading']
+        value_width = QFontMetrics(ai_value_font()).horizontalAdvance(value)
+        reading=meta['reading']
         icon_size=AI_RING_SIZE if reading and reading.remaining is not None else AI_ICON_SIZE
         return max(44, icon_size + AI_PADDING * 2 + AI_GAP + value_width + 1)
-    if key=='music':return 68 if dense else 96
-    if key=='weather':return 60 if dense else 82
-    if dense:
-        return {'cpu':28,'gpu':28,'memory':30,'network':48}.get(key,50)
-    if key in ('cpu','gpu','memory'):return 52
-    if key=='network':return 104
-    label=row[1] if len(row)>1 else ''
-    font=QFont();font.setPixelSize(9);label_width=QFontMetrics(font).horizontalAdvance(label)
-    template='999.99 W' if 'power' in key else '999 °C' if 'temp' in key else '9999 MHz' if 'freq' in key else '9999 RPM' if key.endswith(('fan','pump')) else '999.9 GB' if key in ('traffic','vram') else '999.99'
-    font.setPixelSize(11);value_width=QFontMetrics(font).horizontalAdvance(template)
-    return min(98,max(44,label_width,value_width)+2)
+    if key=='music':return music_badge_width(None if cfg['resource_music_text']=='wave' else value)
+    return weather_badge_width(place,value)
+
+
+def cell_width(row,dense,window):
+    key=row[0]
+    if key in ('ai','weather','music'):return content_badge_width(row,window.service.cfg)
+    width=reading_width(key,row[1],dense,window.height(),badge_height(window))
+    if key not in ('cpu','gpu','memory','network'):
+        actual=QFontMetrics(readout_fonts(window.height(),dense)[1]).horizontalAdvance(row[2])
+        width=max(width,actual+2)
+    return width
 
 
 def cell_gap(dense):
     return 1.5 if dense else 3
 
 
-def packed(values,available,dense=False):
+def compact_face_width(cfg,height):
+    base=min(30 if cfg['resource_compact_density']=='dense' else 40,max(16,height-5))
+    return round(base*cfg['resource_face_scale']/100)
+
+
+def packed(values,available,dense,window):
     pages=[];row=[];used=0;gap=cell_gap(dense)
     for value in values:
-        size=min(cell_width(value,dense),available)+(gap if row else 0)
-        if row and used+size>available:pages.append(row);row=[];used=0;size=min(cell_width(value,dense),available)
+        width=min(cell_width(value,dense,window),available)
+        size=width+(gap if row else 0)
+        if row and used+size>available:pages.append(row);row=[];used=0;size=width
         row.append(value);used+=size
     if row:pages.append(row)
     return pages
@@ -271,11 +326,20 @@ def packed(values,available,dense=False):
 
 def plan(window,limit=None):
     from datetime import date
-    key=(limit,window.width(),window.height(),window.offset,window.service.cfg['resource_runner_enabled'],
-         date.today() if window.service.cfg['resource_alert_almanac'] else None)
+    key=(limit,window.width(),window.height(),window.page_turns,window.service.cfg['resource_runner_enabled'],badge_height(window),
+         date.today() if window.service.cfg['resource_alert_almanac'] or window.service.cfg['resource_clock'] else None)
     cached=getattr(window,'_compact_cache',None)
     if cached and cached[0]==key:return cached[1]
     result=_make_plan(window,limit);window._compact_cache=(key,result);return result
+
+
+def readouts_changed(layout, previous, current, width):
+    if 'positions' in layout:
+        from capsule_order_layout import positions
+        return layout['positions'] != positions(layout,current,width)
+    pages = layout['pages']
+    return (pages[previous.left % len(pages)] != pages[current.left % len(pages)]
+            or any(group[previous.left % len(group)] != group[current.left % len(group)] for group in layout['pinned_groups']))
 
 
 def badge_slots(window,items,capacity,limit,priority=False):
@@ -285,7 +349,7 @@ def badge_slots(window,items,capacity,limit,priority=False):
     for index,(kind,label) in enumerate(items):
         if capacity<25:break
         text_width=metrics.horizontalAdvance(label)
-        cap=int(limit*.20) if kind=='agenda' else 144 if kind in ('mail_new','quota_notice') else 110 if kind in ('almanac','weather_notice') else 72
+        cap=min(AGENDA_MAX_WIDTH,limit//5) if kind=='agenda' else 144 if kind in ('mail_new','quota_notice') else 110 if kind in ('almanac','weather_notice') else 72
         budget=capacity-3
         if priority:
             others=(len(items)-index-1)*25
@@ -318,19 +382,26 @@ def _make_plan(window,limit=None):
         if rows:groups.append(rows)
     extras=[row for row in values if row not in requested]
     dense=cfg['resource_compact_density']=='dense' or max_width<420 or window.height()<38
-    wanted=lambda dense:sum(cell_width(g[0],dense) for g in groups)+cell_gap(dense)*max(0,len(groups)-1)
-    if not dense and wanted(False)+16+(60 if extras else 0)>max_width:dense=True
+    if not dense:
+        wanted=sum(max(cell_width(row,False,window) for row in group) for group in groups)
+        wanted+=cell_gap(False)*max(0,len(groups)-1)
+        if wanted+16+(60 if extras else 0)>max_width:dense=True
     gap=cell_gap(dense)
     clock=COMPACT_CLOCK_FORMATS[cfg['resource_clock_format']][1] if cfg['resource_clock'] else ()
-    clock_width=max((CLOCK_WIDTHS[pattern] for pattern in clock),default=0)
-    if clock_width>max_width-16:clock=();clock_width=0
+    clock_width=capsule_clock_width(cfg,clock,window.height()) if clock else 0
+    # Keep one readable supplemental slot even when a large bold date has to
+    # share the minimum capsule width with a pinned reading.
+    clock_room=max_width-16
+    if values:clock_room-=26+(8 if cfg['resource_face'] else 0)
+    if clock_room<20:clock=();clock_width=0
+    else:clock_width=min(clock_width,clock_room)
     room=max(0,max_width-16-clock_width)
     value_floor=26 if values and room>=26 else 0
     runner_width=RUNNER_SLOT if cfg['resource_runner_enabled'] and room-value_floor>=RUNNER_SLOT else 0
     room-=runner_width
-    mail_width=STATUS_STEP if cfg['resource_mail'] and cfg['resource_mail_icon'] and room-value_floor>=STATUS_STEP else 0
+    mail_width=MAIL_STEP if cfg['resource_mail'] and cfg['resource_mail_icon'] and room-value_floor>=MAIL_STEP else 0
     room-=mail_width
-    face=min(round((30 if dense else 40)*cfg['resource_face_scale']/100),max(0,room-value_floor-4)) if cfg['resource_face'] else 0
+    face=min(compact_face_width(cfg,window.height()),max(0,room-value_floor-4)) if cfg['resource_face'] else 0
     face_gap=4 if face else 0
     capacity=room-face-face_gap
     available=capacity+clock_width
@@ -344,34 +415,37 @@ def _make_plan(window,limit=None):
     battery_alert=any(kind=='battery' for kind,_,_,_ in active)
     device_keys={key for key,_,_,_ in devices}
     status=[row for row in status_values(window.service) if row[0] not in device_keys and (row[0]!='battery' or not battery_alert)]
-    status=status[:max(0,capacity-ordinary_floor)//STATUS_STEP]
-    capacity-=len(status)*STATUS_STEP
+    status_width=badge_height(window)+3
+    status=status[:max(0,capacity-ordinary_floor)//status_width]
+    capacity-=len(status)*status_width
     routine,spare=badge_slots(window,badges[active_count:],max(0,capacity-ordinary_floor),max_width)
     capacity=min(capacity,spare+ordinary_floor)
     tail=available-capacity
-    pinned_groups=[];used=0
+    pinned_groups=[];pinned_widths=[];used=0
     # Leave one reachable supplemental slot. Never demote the entire core.
     for index,group in enumerate(groups):
-        width=max(cell_width(row,dense) for row in group);cost=width+(gap if pinned_groups else 0)
+        width=max(cell_width(row,dense,window) for row in group);cost=width+(gap if pinned_groups else 0)
         remainder=groups[index+1:]
         reserve=40+gap if extras or remainder else 0
         if used+cost+reserve<=capacity:
-            pinned_groups.append(group);used+=cost
+            pinned_groups.append(group);pinned_widths.append(width);used+=cost
         else:extras.extend(group)
     room=capacity-used-(gap if used and extras else 0)
-    pages=[('values',rows) for rows in packed(extras,room,dense)] if extras and room>=26 else [('values',[])]
-    # LCM lets independent city/provider slots visit every combination of pages.
+    pages=[('values',rows) for rows in packed(extras,room,dense,window)] if extras and room>=26 else [('values',[])]
+    # Each slot gets to show every city, provider or calendar line before repeating.
     from math import lcm
-    count=lcm(len(pages),*(len(g) for g in pinned_groups)) if pinned_groups else len(pages)
+    periods = {'left':lcm(len(pages),*(len(g) for g in pinned_groups)), 'right':len(capsule_headers(cfg,clock)) if clock else 1}
+    count=lcm(*periods.values())
     pages=(pages*((count+len(pages)-1)//len(pages)))[:count]
-    pinned=[g[window.offset%len(g)] for g in pinned_groups]
-    prefix=max((sum(min(cell_width(r,dense),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
+    pinned=[g[window.page_turns.left%len(g)] for g in pinned_groups]
+    prefix=max((sum(min(cell_width(r,dense,window),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
     natural=16+face+face_gap+tail+runner_width+mail_width+used+(gap if used and prefix else 0)+min(prefix,room)
     from math import ceil
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
-                pinned_widths=[max(cell_width(row,dense) for row in group) for group in pinned_groups],pages=pages,clock=clock,clock_width=clock_width,
+                pinned_widths=pinned_widths,pages=pages,clock=clock,clock_width=clock_width,
+                bands=(('left','right'),),zone_periods=periods,
                 face=face,face_gap=face_gap,core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),
-                active_badges=active,routine_badges=routine,status=status,devices=devices,runner_width=runner_width,mail_width=mail_width)
+                active_badges=active,routine_badges=routine,status=status,status_width=status_width,devices=devices,runner_width=runner_width,mail_width=mail_width)
 
 
 def natural_width(window,limit):
@@ -384,10 +458,10 @@ def notice_font(window):
     return font
 
 
-def notice_width(window,notice,limit):
+def notice_width(window,notice,limit,height):
     text_width=QFontMetrics(notice_font(window)).horizontalAdvance(notice[1])
-    # Keep room for the 24 px tile, its margins and fractional font metrics.
-    return min(limit,280,max(76,52+text_width))
+    side = compact_tile_height(window.service.cfg,height)
+    return min(limit,280,max(76,28+side+text_width))
 
 
 def paint_notice(window,p,notice):
@@ -395,7 +469,7 @@ def paint_notice(window,p,notice):
     kind,label=notice
     colors=window.colors
     ink=reminder_ink(kind,colors['light'],window.service.low_battery() if kind=='battery' else None)
-    side=min(24,window.height()-6)
+    side=badge_height(window)
     tile=QRectF(8,(window.height()-side)/2,side,side)
     chip(p,tile,ink,colors['light'])
     icon=QRectF(0,0,min(15,side),min(15,side));icon.moveCenter(tile.center())
@@ -413,13 +487,24 @@ def chip(p,rect,ink,light):
 
 
 def badge_height(window):
-    return min(window.service.cfg['resource_compact_badge_height'], max(1, window.height() - 4))
+    return compact_tile_height(window.service.cfg,window.height())
 
 
 def ai_value_font():
     font = QFont()
     font.setPixelSize(AI_TEXT_SIZE)
     font.setWeight(QFont.DemiBold)
+    return font
+
+
+@lru_cache(maxsize=128)
+def fitted_ai_font(value,room):
+    if room<=0 or not value:return None
+    font=ai_value_font()
+    width=QFontMetrics(font).horizontalAdvance(value)
+    if width>room:
+        font.setPixelSize(max(8,int(AI_TEXT_SIZE*room/width)))
+        if QFontMetrics(font).horizontalAdvance(value)>room:return None
     return font
 
 
@@ -437,14 +522,10 @@ def paint_ai_quota(p, rect, value, meta, colors):
     chip(p, rect, colors['ink'], colors['light'])
     reading=meta['reading']
     has_ring=reading is not None and reading.remaining is not None
-    icon_size = min(AI_RING_SIZE if has_ring else AI_ICON_SIZE, rect.height() - 2)
+    icon_size = min(AI_RING_SIZE if has_ring else AI_ICON_SIZE,rect.width(),rect.height()-2)
     area = rect.adjusted(AI_PADDING + icon_size + AI_GAP, 0, -AI_PADDING, 0)
-    font = ai_value_font()
-    width = QFontMetrics(font).horizontalAdvance(value)
-    if width > area.width():
-        font.setPixelSize(max(8, int(AI_TEXT_SIZE * area.width() / width)))
-    show_value = QFontMetrics(font).horizontalAdvance(value) <= area.width()
-    x = rect.x() + AI_PADDING if show_value else rect.center().x() - icon_size / 2
+    font = fitted_ai_font(value,area.width())
+    x = rect.x() + AI_PADDING if font is not None else rect.center().x() - icon_size / 2
     icon = QRectF(x, rect.center().y() - icon_size / 2, icon_size, icon_size)
     ink=colors['ink']
     if has_ring:
@@ -452,20 +533,40 @@ def paint_ai_quota(p, rect, value, meta, colors):
         inset=icon_size*.175
         icon=icon.adjusted(inset,inset,-inset,-inset)
     paint_provider_mark(p, icon, meta['provider'], colors['ink'])
-    if show_value:
+    if font is not None:
         p.setFont(font)
         text(p, area, value, ink, font.pixelSize(), True)
 
 
 def paint_music_wave(window,p,area,ink,playing):
     levels=window.service.deck.levels if playing and window.service.deck else ()
-    count=min(15,max(0,int(area.width()/3)))
+    count=min(MUSIC_WAVE_BARS,max(0,int(area.width()/MUSIC_WAVE_STEP)))
     p.setPen(QPen(QColor(ink),1.5,Qt.SolidLine,Qt.RoundCap))
     for i in range(count):
         level=levels[i*len(levels)//count] if levels else 0
         height=1+max(0,min(1,level))*5
-        x=area.x()+1+i*3;mid=area.center().y()
+        x=area.x()+1+i*MUSIC_WAVE_STEP;mid=area.center().y()
         p.drawLine(QPointF(x,mid-height),QPointF(x,mid+height))
+
+
+def content_badge_rect(slot,row,cfg):
+    # The slot reserves the longest page; only paint and activate the current badge.
+    key=row[0]
+    natural=content_badge_width(row,cfg)
+    width=min(slot.width(),natural)
+    height=slot.height()
+    if key=='ai':
+        reading=row[3]['reading']
+        icon_size=min(AI_RING_SIZE if reading and reading.remaining is not None else AI_ICON_SIZE,height-2)
+        show_text=width>=natural or fitted_ai_font(row[2],width-icon_size-2*AI_PADDING-AI_GAP) is not None
+    else:
+        show_text=width>=CONTENT_TEXT_LEFT+CONTENT_MIN_TEXT+CONTENT_PADDING
+    if not show_text:
+        width=height=min(width,height)
+    zone=cfg.get('resource_compact_zones',{}).get(key,'left')
+    spare=slot.width()-width
+    offset=spare if zone=='right' else spare/2 if zone=='center' else 0
+    return QRectF(slot.x()+offset,slot.center().y()-height/2,width,height)
 
 
 def paint_content(window,p,rect,key,label,value,meta,overlays=None):
@@ -473,69 +574,84 @@ def paint_content(window,p,rect,key,label,value,meta,overlays=None):
     if key=='ai':
         paint_ai_quota(p,rect,value,meta,c)
         return
-    mark=QRectF(rect.x()+4,mid-7,14,14)
-    area=rect.adjusted(22,0,-4,0)
     if key=='weather':
         from resource_weather_style import compact_temperature_ink,paint_weather_icon
+        area=rect.adjusted(CONTENT_TEXT_LEFT,0,-CONTENT_PADDING,0)
+        size=min(14,rect.width(),rect.height())
+        mark=QRectF(rect.x()+CONTENT_PADDING,mid-size/2,size,size)
+        if area.width()<CONTENT_MIN_TEXT:
+            mark.moveCenter(rect.center())
         ink=compact_temperature_ink(meta['temperature'],c['light'],cfg['resource_weather_thresholds'])
         chip(p,rect,ink,c['light']);paint_weather_icon(p,mark,meta,c['light'])
-        if area.width()>=16:
+        if area.width()>=CONTENT_MIN_TEXT:
+            p.setFont(QFont())
             line=rect.height()/2
             text(p,QRectF(area.x(),rect.y(),area.width(),line),label,c['muted'],max(1,min(8,int(line))))
             text(p,QRectF(area.x(),mid,area.width(),line),value,ink,max(1,min(10,int(line))),True)
     else:
+        area=rect.adjusted(CONTENT_TEXT_LEFT,0,-CONTENT_PADDING,0)
         ink='#285e85' if c['light'] else '#a2d7ff'
         chip(p,rect,ink,c['light'])
         playing=meta.get('state')=='Playing'
-        x=mark.center().x()
+        x=rect.x()+11 if area.width()>=CONTENT_MIN_TEXT else rect.center().x()
         p.setPen(Qt.NoPen);p.setBrush(QColor(ink))
         if playing:
             for offset in (-3,1):p.drawRoundedRect(QRectF(x+offset,mid-4,2,8),.7,.7)
         else:
             symbol=QPainterPath(QPointF(x-3,mid-4));symbol.lineTo(x+4,mid);symbol.lineTo(x-3,mid+4);symbol.closeSubpath()
             p.drawPath(symbol)
+        if area.width()<CONTENT_MIN_TEXT:return
         if cfg['resource_music_text']=='wave':
             if overlays is None:paint_music_wave(window,p,area,ink,playing)
             else:overlays.append(('wave',area,ink,playing))
-        elif area.width()>=16:text(p,area,value,c['ink'],10,True)
+        else:
+            p.setFont(QFont())
+            text(p,area,value,c['ink'],10,True)
 
 
 def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None,overlays=None):
     cfg=window.service.cfg;c=window.colors;bounds=[];gap=cell_gap(dense)
-    short=window.height()<38;font_size=10 if dense else 11;label_y=mid-11 if short else mid-15;value_y=mid if short else mid-1
-    label_height=12 if short else 14;value_height=12 if short else 17;label_font=8 if short else 9
-    row_height=12;network_y=mid-11
-    hit_half = 12 if short else 17
-    if clip is not None:
-        hit_half = min(hit_half, clip.height()/2)
-    if window.height()<30:
-        # A thin taskbar can leave less room than the desktop capsule minimum.
-        row_height=max(5,(window.height()-8)//2)
-        label_height=value_height=row_height;label_y=network_y=mid-row_height
-        font_size=min(font_size,row_height);label_font=min(label_font,row_height)
-    for index,(key,label,value,meta) in enumerate(rows):
-        width=min(widths[index] if widths else cell_width((key,label,value,meta),dense),max(0,available))
+    side=badge_height(window)
+    height=compact_text_height(cfg,window.height())
+    caption,primary=readout_fonts(window.height(),dense)
+    for index,row in enumerate(rows):
+        key,label,value,meta=row
+        width=min(widths[index] if widths else cell_width(row,dense,window),max(0,available))
         if width<26:break
         ink=c['ink'] if key in ('ai','music','weather','traffic') else metric_ink(window.service,key,c['light'],c['ink'])
+        hit=QRectF(x,mid-height/2,width,height)
         if key in ('ai','music','weather'):
-            height=badge_height(window)
-            paint_content(window,p,QRectF(x,mid-height/2,width,height),key,label,value,meta,overlays)
-        elif key in ('cpu','gpu','memory') and not dense:
+            hit=content_badge_rect(QRectF(x,mid-side/2,width,side),row,cfg)
+            paint_content(window,p,hit,key,label,value,meta,overlays)
+        elif key in ('cpu','gpu','memory') and not dense and width>=side+2+QFontMetrics(primary).horizontalAdvance(value):
+            letter={'cpu':'C','memory':'M','gpu':'G'}[key]
             if cfg['resource_compact_rings']:
-                ring(p,QRectF(x,mid-8,16,16),metric_number(window.service,key),ink,c['hover'],{'cpu':'C','memory':'M','gpu':'G'}[key]);left=21
-            else:text(p,QRectF(x,mid-8,20,16),{'cpu':'C','memory':'M','gpu':'G'}[key],c['muted'],9);left=15
-            text(p,QRectF(x+left,mid-10,width-left,20),value,ink,11)
+                p.save()
+                p.translate(x+side/2,mid);p.scale(side/20,side/20)
+                ring(p,QRectF(-8,-8,16,16),metric_number(window.service,key),ink,c['hover'],letter)
+                p.restore()
+                left=side+2
+            else:
+                left=QFontMetrics(caption).horizontalAdvance(letter)+3
+                p.setFont(caption)
+                text(p,QRectF(x,hit.top(),left,height),letter,c['muted'],caption.pixelSize())
+            p.setFont(primary)
+            text(p,hit.adjusted(left,0,0,0),value,ink,primary.pixelSize())
         elif key=='network':
             net=window.service.latest.get('network')
             from resource_charts import rate
-            for row,(arrow,direction) in enumerate((('↑',1),('↓',0))):
-                value=rate(net[direction]).replace(' KB/s','K').replace(' MB/s','M').replace(' B/s','B') if net else '—'
-                rect=QRectF(x,network_y+row*row_height,width,row_height) if dense else QRectF(x+row*width/2,mid-10,width/2-3,20)
-                text(p,rect,arrow+' '+value,c['ink'],font_size)
+            rates=[]
+            for arrow,direction in (('↑',1),('↓',0)):
+                speed=rate(net[direction]).replace(' KB/s','K').replace(' MB/s','M').replace(' B/s','B') if net else '—'
+                rates.append(arrow+' '+speed)
+            if dense or width<2*max(QFontMetrics(primary).horizontalAdvance(s) for s in rates)+3:
+                draw_stacked_text(p,hit,rates,(ink,ink),'rates',(primary,primary))
+            else:
+                p.setFont(primary)
+                for i,speed in enumerate(rates):
+                    text(p,QRectF(x+i*(width+3)/2,hit.top(),(width-3)/2,height),speed,ink,primary.pixelSize())
         else:
-            text(p,QRectF(x,label_y,width,label_height),label,c['muted'],label_font)
-            text(p,QRectF(x,value_y,width,value_height),value,ink,font_size)
-        hit = QRectF(x,mid-hit_half,width,2*hit_half)
+            draw_stacked_text(p,hit,(label,value),(c['muted'],ink),'reading',(caption,primary))
         if clip is not None:
             hit = hit.intersected(clip)
         if not hit.isEmpty():
@@ -550,11 +666,24 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
     return bounds
 
 
-def paint_status(p,rect,row,colors):
+def paint_status(window,p,row,x,width,mid):
+    side=badge_height(window)
+    rect=QRectF(x,mid-side/2,width,side)
+    hit=rect.intersected(QRectF(window.rect()))
+    if hit.isEmpty():return
+    scale=min(width,side)/20
+    p.save()
+    p.translate(rect.center())
+    p.scale(scale,scale)
+    draw_status_icon(p,row,window.colors)
+    p.restore()
+    window.status_bounds[row[0]]=hit
+
+
+def draw_status_icon(p,row,colors):
     key,_,_,value=row
-    center=rect.center()
-    size=min(20,rect.height()-7)
-    circle=QRectF(center.x()-size/2,center.y()-size/2,size,size)
+    center=QPointF()
+    circle=QRectF(-10,-10,20,20)
     if key=='bluetooth':
         from bluetooth_gauge import draw_peripheral_rings
         draw_peripheral_rings(p,circle,value,not colors['light'])
@@ -631,6 +760,9 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
     c=window.colors;height=badge_height(window)
     for kind,label,width,wanted in slots:
         rect=QRectF(right-width,mid-height/2,width,height)
+        if width<37:
+            side=min(width,height)
+            rect=QRectF(rect.center().x()-side/2,mid-side/2,side,side)
         level=window.service.low_battery() if kind=='battery' else None
         ink=reminder_ink(kind,c['light'],level)
         chip(p,rect,ink,c['light'])
@@ -641,7 +773,9 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
                 if overlays is None:paint_marquee(window,p,area,label,ink,wanted+MARQUEE_GAP)
                 else:overlays.append(('marquee',area,label,ink,wanted+MARQUEE_GAP))
             else:text(p,area,label,ink,10,True,Qt.AlignLeft if kind=='agenda' else Qt.AlignCenter)
-        else:reminder_icon(p,QRectF(rect.center().x()-6.5,mid-6.5,13,13),kind,ink)
+        else:
+            size=min(13,rect.width())
+            reminder_icon(p,QRectF(rect.center().x()-size/2,mid-size/2,size,size),kind,ink)
         window.reminder_bounds.append(rect);window.reminder_kinds.append(kind)
         right-=width+3
     return right
@@ -649,6 +783,7 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
 
 def paint_rolling_values(window,p,layout,rows,left,right,mid,scroll):
     previous, progress, direction = scroll
+    previous = previous.left
     clip = QRectF(left,2,max(0,right-left),window.height()-4)
     distance = clip.height() * direction
     eased = progress * progress * (3 - 2 * progress)
@@ -685,12 +820,12 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         from capsule_order_layout import paint_page
         paint_page(window,p,layout,scroll,overlays)
         return
-    _,rows=pages[window.offset%len(pages)]
+    _,rows=pages[window.page_turns.left%len(pages)]
     right=window.width()-8;left=8.+layout['face']+layout['face_gap']
     clock=layout['clock'];width=layout['clock_width']
     if clock:
         right-=width
-        paint_clock(window,p,clock,right,width,mid)
+        paint_clock(window,p,clock,right,width,mid,window.page_turns.right)
     right-=layout['runner_width']
     if layout['active_badges']:right=paint_badges(window,p,layout['active_badges'],right,mid,overlays)
     if layout['devices']:
@@ -700,8 +835,8 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         right-=layout['mail_width']
         paint_mail_status(window,p,QRectF(right,0,layout['mail_width'],window.height()))
     for row in reversed(layout['status']):
-        right-=STATUS_STEP;rect=QRectF(right,0,STATUS_STEP,window.height())
-        paint_status(p,rect,row,c);window.status_bounds[row[0]]=rect
+        right-=layout['status_width']
+        paint_status(window,p,row,right,layout['status_width'],mid)
     if layout['routine_badges']:right=paint_badges(window,p,layout['routine_badges'],right,mid,overlays)
     if scroll:
         if overlays is None:paint_rolling_values(window,p,layout,rows,left,right,mid,scroll)
@@ -712,12 +847,15 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         window.compact_bounds+=paint_values(window,p,rows,left,mid,max(0,right-left),layout['dense'],overlays=overlays)
 
 
-def paint_clock(window,p,clock,x,width,mid):
-    now=time.localtime();line=min(20 if len(clock)==1 else 12,(window.height()-4)/len(clock))
-    for i,pattern in enumerate(clock):
-        date=pattern=='%Y-%m-%d' and len(clock)>1
-        rect=QRectF(x+4,mid-line*len(clock)/2+i*line,width-4,line)
-        text(p,rect,time.strftime(pattern,now),window.colors['muted' if date else 'ink'],min(9 if date else 11,int(line)),False,Qt.AlignRight)
+def paint_clock(window,p,clock,x,width,mid,turn=None):
+    height = compact_text_height(window.service.cfg,window.height())
+    draw_clock(p,QRectF(x,mid-height/2,width,height),clock_rows(window,clock,turn),window.colors['muted'],window.colors['ink'])
+
+
+def clock_rows(window, clock, turn=None):
+    now = datetime.now()
+    if turn is None:turn=clock_turn(plan(window,window.width()),window.page_turns)
+    return lines_at(now,headers(window.service.cfg,'resource_clock_',clock,now.date()),clock[1],turn)
 
 
 def paint_compact(window,p,scroll=None,damage=None):
@@ -733,7 +871,7 @@ def paint_compact(window,p,scroll=None,damage=None):
             return
     layout=plan(window,window.width())
     dpr=window.devicePixelRatioF()
-    stamp=tuple(time.strftime(pattern) for pattern in layout['clock'])
+    stamp=clock_rows(window,layout['clock'],clock_turn(layout,window.page_turns)) if layout['clock'] else ()
     key=(window.size(),dpr,window.font().key(),tuple(window.colors.items()),
          badge_height(window),stamp,window.marquee_title,bool(scroll))
     if not cached or cached[0] is not layout or cached[1]!=key:
@@ -763,12 +901,12 @@ def paint_compact(window,p,scroll=None,damage=None):
         window.liquid.paint_face(p,QPointF(x+layout['face']/2,window.height()/2),layout['face'])
 
 
-def ball_details(window,limit):
+def ball_details(window,limit,height=None):
     room=max(0,limit-38-(RUNNER_SLOT if window.service.cfg['resource_runner_enabled'] else 0))
     timers=[item for item in window.service.reminders() if item[0] in ('stopwatch','stopwatch_paused','alarm','alarm_due')]
     badges,left=badge_slots(window,timers,room,limit,priority=True)
     indicators=getattr(window.service,'indicators',None)
-    cells=indicators.cells(left,38) if indicators else []
+    cells=indicators.cells(left,window.height() if height is None else height) if indicators else []
     return cells,badges,room-left+sum(width+3 for _,_,width,_ in cells)
 
 

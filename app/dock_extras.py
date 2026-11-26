@@ -8,6 +8,7 @@ from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,TILE_TINTS,WI
 from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
 from dock_icon_shape import circular_icon
 from background_contrast import blend, foreground, wallpaper_color
+from compact_clock import ROTATE_SECONDS, clock_width, draw_clock, headers, lines_at
 
 REFLECTION_BUDGET=2*1024*1024
 
@@ -674,6 +675,7 @@ class DockExtras(QObject):
     def __init__(self,dock):
         super().__init__(dock);self.dock=dock;self.popup=None;self.pressed=None;self.hover=None
         self.clock=QTimer(self);self.clock.setSingleShot(True);self.clock.timeout.connect(self.minute)
+        self.clock_day = None
         self.clock_ink = None
         self.clock_sample = QTimer(self)
         self.clock_sample.setSingleShot(True)
@@ -704,16 +706,33 @@ class DockExtras(QObject):
             if source.isNull():continue
             if item.get('_reflection_key')!=key:
                 item['_reflected'],item['_reflection_ratio']=compose_reflection(source,limit);item['_reflection_key']=key
+    def clock_content(self, now):
+        cfg = self.dock.cfg
+        formats = ('%m/%d', '%H:%M:%S' if cfg['dock_clock_seconds'] else '%H:%M')
+        return headers(cfg,'dock_clock_',formats,now.date()), formats[1]
+
+    def utility_sizes(self):
+        d = self.dock
+        side = max(27,min(48,round(d.icon_size*.88)))
+        sizes = []
+        if d.cfg.get('dock_clock',True):
+            upper, lower = self.clock_content(datetime.datetime.now())
+            sizes.append(('clock',clock_width(upper,lower,side,True),4))
+        gap = max(7,round(d.icon_size*.22))
+        for key, option in (('quick','dock_quick_settings'),('add','dock_add_button')):
+            if d.cfg.get(option,True):
+                sizes.append((key,side,4 if sizes and sizes[-1][0]=='clock' else gap))
+        return side, sizes
+
     def width(self):
-        d=self.dock;gap=max(7,round(d.icon_size*.22));side=max(27,min(48,round(d.icon_size*.88)))
-        widths=([max(70,min(128,round(d.icon_size*1.85)))] if d.cfg.get('dock_clock',True) else [])
-        widths+=([side] if d.cfg.get('dock_quick_settings',True) else [])+([side] if d.cfg.get('dock_add_button',True) else [])
-        return sum(widths)+gap*len(widths) if widths else 0
+        return sum(width+gap for _,width,gap in self.utility_sizes()[1])
+
     def rects(self):
-        d=self.dock;bar=d.bar_rect_f();x=bar.right()-d.pad_x-self.width();gap=max(7,round(d.icon_size*.22));side=max(27,min(48,round(d.icon_size*.88)))
+        d=self.dock;bar=d.bar_rect_f();side,sizes=self.utility_sizes()
+        x=bar.right()-d.pad_x-sum(width+gap for _,width,gap in sizes)
         cy=bar.top()+d.pad_y+d.icon_size/2;out={}
-        for key,on,width in [('clock',d.cfg.get('dock_clock',True),max(70,min(128,round(d.icon_size*1.85)))),('quick',d.cfg.get('dock_quick_settings',True),side),('add',d.cfg.get('dock_add_button',True),side)]:
-            if on:x+=gap;out[key]=QRectF(x,cy-side/2,width,side);x+=width
+        for key,width,gap in sizes:
+            x+=gap;out[key]=QRectF(x,cy-side/2,width,side);x+=width
         return out
     def hit(self,pos):return next((key for key,rect in self.rects().items() if key!='clock' and rect.contains(QPointF(pos))),None)
     def move(self,pos):
@@ -724,13 +743,11 @@ class DockExtras(QObject):
         d=self.dock;now=datetime.datetime.now();ink=colors['fg'];rects=self.rects()
         for key,rect in rects.items():
             if key=='clock':
-                p.save()
-                p.setPen(self.clock_ink or QColor(foreground(colors['tint'].getRgb()[:3])))
-                font=QFont('Segoe UI');font.setPixelSize(max(12,min(21,round(d.icon_size*.39))));font.setWeight(QFont.DemiBold);p.setFont(font)
-                p.drawText(rect.adjusted(0,-2,0,-rect.height()*.38),Qt.AlignCenter,now.strftime('%H:%M'))
-                font.setPixelSize(max(9,min(12,round(d.icon_size*.23))));font.setWeight(QFont.Normal);p.setFont(font)
-                label=now.strftime('%m月%d日')+' '+('周'+'一二三四五六日'[now.weekday()]);p.drawText(rect.adjusted(0,rect.height()*.51,0,3),Qt.AlignCenter,label)
-                p.restore()
+                ink = self.clock_ink or QColor(foreground(colors['tint'].getRgb()[:3]))
+                caption = QColor(ink)
+                caption.setAlpha(226)
+                upper, lower = self.clock_content(now)
+                draw_clock(p,rect,lines_at(now,upper,lower),caption,ink,dock=True)
             else:
                 p.save();tint=QColor(255,255,255,85 if colors['light'] else 28);p.setPen(QPen(QColor(128,150,175,25),1));p.setBrush(tint)
                 if self.hover==key:p.setBrush(QColor(255,255,255,145 if colors['light'] else 55))
@@ -761,13 +778,25 @@ class DockExtras(QObject):
         self.clock.stop()
         self.clock_sample.stop()
         if self.dock.cfg.get('dock_clock',True) and self.dock.isVisible():
-            now=datetime.datetime.now();self.clock.start(max(100,60000-now.second*1000-now.microsecond//1000))
+            self.schedule_clock()
             if not self.dock.preview:
                 self.clock_sample.start(80)
+    def schedule_clock(self):
+        now = datetime.datetime.now()
+        self.clock_day = now.date()
+        upper, _ = self.clock_content(now)
+        step = 1 if self.dock.cfg['dock_clock_seconds'] else ROTATE_SECONDS if len(upper)>1 else 60
+        self.clock.start(max(1,(step-now.second%step)*1000-now.microsecond//1000))
+
     def minute(self):
         rect=self.rects().get('clock')
-        if rect:self.dock.update(rect.toAlignedRect())
-        self.sync_clock()
+        if rect and self.dock.isVisible():
+            if datetime.datetime.now().date() != self.clock_day:
+                self.dock.refresh_geometry()
+                self.dock.update()
+            else:
+                self.dock.update(rect.toAlignedRect())
+            self.schedule_clock()
     def close(self):
         self.clock.stop()
         self.clock_sample.stop()

@@ -58,17 +58,17 @@ def capsule_rect(window):
             from capsule_order_layout import ball_slots
             placed=ball_slots(window,window.width()).get('runner')
             if placed is None:return QRect()
-            return QRect(placed.x+(placed.width-side)//2,(window.height()-side)//2,side,side)
+            return QRect(round(placed.x+(placed.width-side)/2),(window.height()-side)//2,side,side)
     if window.width() >= 70 and window.service.compact and window.fold_shape() != 'ball':
         from resource_compact import plan
         layout = plan(window, window.width())
-        if not layout['runner_width']:
+        width = layout['runner_width']
+        if not width:
             return QRect()
-        if 'positions' in layout:
-            placed=layout['positions']['runner']
-            side=min(side,placed.width)
-            return QRect(placed.x+(placed.width-side)//2,(window.height()-side)//2,side,side)
-        inset += layout['clock_width']
+        left = (layout['positions']['runner'].x if 'positions' in layout else
+                window.width() - 8 - layout['clock_width'] - width)
+        side = min(side,width)
+        return QRect(round(left+(width-side)/2),(window.height()-side)//2,side,side)
     return QRect(window.width() - inset - side, (window.height() - side) // 2, side, side)
 
 

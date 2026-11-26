@@ -74,22 +74,20 @@ def check_device_sources(indicators):
 def check_right_clock(window,cfg,output):
     import resource_compact as compact
     from resource_runner import capsule_rect
-    original=compact.text
-    clock_rects=[]
-    def capture(painter,rect,value,color,size=11,bold=False,align=Qt.AlignLeft):
-        if align==Qt.AlignRight:clock_rects.append(rect)
-        original(painter,rect,value,color,size,bold,align)
     with patch.dict(cfg,resource_clock=True,resource_clock_format='date_seconds',resource_runner_enabled=True,
                     resource_compact_auto_width=False):
         for shape in ('pill','bar'):
             cfg['resource_fold']=shape
             window._compact_cache=None
             assert compact.plan(window,96)['clock']==('%Y-%m-%d','%H:%M:%S')
-            layout=compact.plan(window,window.width());window._compact_surface=None;clock_rects.clear()
-            with patch.object(compact,'text',capture):
+            layout=compact.plan(window,window.width());window._compact_surface=None
+            with patch.object(compact,'draw_clock',wraps=compact.draw_clock) as draw:
                 frame=window.grab()
-            assert len(clock_rects)==2 and all(rect.right()==window.width()-8 for rect in clock_rects)
-            clock_left=min(rect.left() for rect in clock_rects)
+            draw.assert_called_once()
+            rect, rows=draw.call_args.args[1:3]
+            assert rect.right()==window.width()-8 and rect.width()==layout['clock_width']
+            assert len(rows)==2 and rows[0] and rows[1].count(':')==2
+            clock_left=rect.left()
             assert layout['runner_width'] and capsule_rect(window).right()<clock_left
             bounds=window.compact_bounds+window.reminder_bounds+list(window.status_bounds.values())
             assert all(rect.right()<=clock_left for rect in bounds)

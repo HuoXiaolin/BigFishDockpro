@@ -147,6 +147,7 @@ class EdgeReveal(QObject):
             self.runtime.click_policy.apply(w)
             if self.capsule and self.target==0. and value==0. and not self.peek_until:
                 self.as_pill=False;self.notice=None;w._compact_cache=None;w.reposition()
+            if self.capsule:w.sync_rotation()
 
     def eventFilter(self,w,event):
         if not self.enabled:return False

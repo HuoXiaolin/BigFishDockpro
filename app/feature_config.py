@@ -30,6 +30,7 @@ DEFAULTS = {
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
     'dock_icon_shape':'default','dock_reflections':True,'dock_clock':True,'dock_quick_settings':True,'dock_add_button':True,
+    'dock_clock_seconds':False, 'dock_clock_weekday':True, 'dock_clock_lunar':False, 'dock_clock_festival':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'medium', 'settings_manual_size':[], 'settings_custom_density':100,
     'calendar_enabled':False,'calendar_locked':False,'calendar_style':'calendar_card','calendar_layout':{},'calendar_appearance':{},
     'watermark_enabled':False, 'watermark_text':'桌面水印', 'watermark_color':'#ffffff',

@@ -9,7 +9,7 @@ import time
 from PyQt5.QtCore import QObject, QPointF, QProcess, QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainterPath, QPen
 
-from resource_options import DEVICE_ALERTS
+from resource_options import DEVICE_ALERTS, compact_tile_height
 
 GROW, HOLD, SHRINK = .19, 5., .23
 KEYBOARD = {'caps_lock', 'input_mode', 'num_lock'}
@@ -268,10 +268,11 @@ class Indicators(QObject):
             window._compact_cache=None
             if window.isVisible() and (self.owner.cfg['resource_compact_auto_width'] or self.owner.cfg['resource_fold']=='ball'):
                 window.reposition()
+            window.sync_rotation()
             window.update()
 
     def cells(self,capacity,height):
-        side=min(23,max(14,height-8));space=max(0,int(capacity));now=self.clock()
+        side=compact_tile_height(self.owner.cfg,height);space=max(0,int(capacity));now=self.clock()
         ordered=[k for k in self.selected if k in self.values]
         active=sorted((k for k in ordered if k in self.transitions),key=lambda k:self.transitions[k][0],reverse=True)
         visible=active[:space//(side+3)]

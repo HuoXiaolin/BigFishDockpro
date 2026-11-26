@@ -17,7 +17,8 @@ def apply_changes(tray,api,previous):
         apply_theme(QApplication.instance(),dock.is_light())
     if changed&{'dock_icon_shape','dock_reflections'}:
         dock.extras.prepare(dock.items)
-    if changed&{'icon_size','items','dock_clock','dock_quick_settings','dock_add_button'}:dock.reload()
+    if changed&{'icon_size','items','dock_clock','dock_quick_settings','dock_add_button',
+                'dock_clock_seconds','dock_clock_weekday','dock_clock_lunar','dock_clock_festival'}:dock.reload()
     elif changed&DOCK_LAYOUT:
         dock.refresh_geometry()
     elif changed&DOCK_GLASS:dock.start_backdrop();dock.update()

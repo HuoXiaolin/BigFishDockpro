@@ -1,5 +1,7 @@
 """Display order shared by compact capsule settings and the painted row."""
-from resource_options import (COMPACT_CONTENT, COMPACT_ITEMS, COMPACT_ROUTINES, COMPACT_STATUS,
+from typing import NamedTuple
+
+from resource_options import (COMPACT_CONTENT, COMPACT_ITEMS, COMPACT_ROUTINES, COMPACT_STATUS, COMPACT_ZONES as ZONES,
                               DEVICE_ALERTS, PINNABLE, SENSOR_UNITS, component_location)
 
 
@@ -35,13 +37,41 @@ NAMES = {'face':'胶囊表情', **PINNABLE, **{key:COMPACT_ITEMS[key] for key in
          **ALERT_NAMES, 'runner':'跑步小动物', 'clock':'日期与时间'}
 
 
+class PageTurns(NamedTuple):
+    shared: int = 0
+    left: int = 0
+    center: int = 0
+    right: int = 0
+
+    def advance(self, step, zones):
+        return self._replace(shared=self.shared+step, **{zone:getattr(self,zone)+step for zone in zones})
+
+
+def automatic_step(layout, turns, enabled):
+    bands = layout['bands']
+    index = turns.shared % len(bands)
+    current = bands[index]
+    # When several zones must share a narrow row, keep a paused visible zone on screen.
+    if all(zone in enabled for zone in current):
+        for step in range(1,len(bands)):
+            if all(zone in enabled for zone in bands[(index+step) % len(bands)]):
+                return step
+    if any(layout['zone_periods'][zone]>1 for zone in current if zone in enabled):
+        return len(bands)
+    return 0
+
+
+def clock_turn(layout, turns):
+    return getattr(turns,layout.get('clock_zone','right')) // len(layout['bands']) // layout.get('clock_stride',1)
+
+
 def has_component_order(cfg):
-    return any(key not in PINNABLE for key in cfg['resource_compact_order'])
+    return bool(cfg.get('resource_compact_zones')) or any(key not in PINNABLE for key in cfg['resource_compact_order'])
 
 
-def display_order(cfg):
+def _saved_order(cfg):
     saved = cfg.get('resource_compact_order', ())
-    if has_component_order(cfg):
+    if any(key not in PINNABLE for key in saved):
         # Add future items before a clock that was deliberately left at the end.
         result = list(dict.fromkeys([*saved, *NAMES]))
         if saved[-1] == 'clock':
@@ -55,6 +85,30 @@ def display_order(cfg):
     status = [key for key in COMPACT_STATUS if key not in ('volume','brightness') or not cfg['resource_alert_'+key]]
     return list(dict.fromkeys(['face', *readings, 'alert_almanac', *reversed(routines), *status, 'mail',
                                *(device_key(kind) for kind in DEVICE_ALERTS), *reversed(ALERT_NAMES), *NAMES]))
+
+
+def item_zones(cfg, order):
+    assigned = cfg.get('resource_compact_zones', {})
+    # An existing clock deliberately moved into the row keeps its old neighbours.
+    return {key:assigned.get(key, 'right' if key=='clock' and key==order[-1] else 'left') for key in order}
+
+
+def display_order(cfg):
+    order = _saved_order(cfg)
+    zones = item_zones(cfg, order)
+    return [key for zone in ZONES for key in order if zones[key]==zone]
+
+
+def assign_visible(cfg, groups):
+    order = _saved_order(cfg)
+    zones = item_zones(cfg, order)
+    for zone, visible in groups.items():
+        zones.update(dict.fromkeys(visible, zone))
+    result = []
+    for zone, visible in groups.items():
+        result.extend(merge_visible([key for key in order if zones[key]==zone], visible))
+    # Explicitly store the clock's side, even when all visible items are on the left.
+    return result, {key:zone for key,zone in zones.items() if zone!='left' or key=='clock'}
 
 
 def configured_items(cfg):

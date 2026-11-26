@@ -1,4 +1,5 @@
 """Movable monitor panel. Compact and expanded states share one header-centre anchor."""
+from datetime import date
 from html import escape
 from math import ceil
 import time
@@ -16,6 +17,8 @@ from flash_view import palette_for,icon
 
 from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
+from capsule_order import PageTurns, ZONES, automatic_step
+from resource_options import ZONE_ROTATION_KEYS
 from desktop_edge_reveal import popup_blocks_folding
 from fold_transition import Foldable
 from window_backdrop import component_backdrop, uses_wallpaper
@@ -442,7 +445,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.setProperty('clickThroughKey','resource')
         self.runner_hovered=False
         self.setMouseTracking(True)
-        self.press=None;self.offset=0;self.last_layer=None
+        self.press=None;self.page_turns=PageTurns();self.last_layer=None
         self.taskbar_placement=None
         self.taskbar_size=None
         self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
@@ -496,8 +499,9 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.animation.setTimerType(Qt.PreciseTimer)
         self.animation.setInterval(COMPACT_FRAME_MS)
         self.animation.timeout.connect(self.animate)
-        self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.update)
-        self.rotate=QTimer(self);self.rotate.setInterval(6000);self.rotate.timeout.connect(self.next_page)
+        self.clock_day = date.today()
+        self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.tick_clock)
+        self.rotate=QTimer(self);self.rotate.timeout.connect(self.next_page)
         self._wallpaper_key = None
         self.wallpaper_timer = QTimer(self)
         self.wallpaper_timer.setInterval(5000)
@@ -794,31 +798,73 @@ class ResourceWindow(Foldable,ResourceContentHost):
             return max(COMPACT_FRAME_MS, ceil(pause * 1000))
         return COMPACT_FRAME_MS
 
-    def next_page(self):
-        if self.press is None and not self.underMouse():
-            self.shift_compact_page(1)
+    def tick_clock(self):
+        today = date.today()
+        if self.clock_day != today:
+            self.clock_day = today
+            self.reposition()
+            self.sync_rotation()
+        self.update()
 
-    def shift_compact_page(self, step):
+    def next_page(self):
+        if self.press is None and not self.underMouse() and not self.compact_scroll:
+            self.shift_compact_page(1,automatic=True)
+
+    @property
+    def offset(self):
+        return self.page_turns.shared
+
+    @offset.setter
+    def offset(self, page):
+        self.page_turns = PageTurns(page,page,page,page)
+
+    def rotating_zones(self):
         cfg = self.service.cfg
-        if not self.service.compact or not self.isVisible() or cfg['resource_fold']=='ball' or self.width()<70:
-            return
+        return {zone for zone,key in ZONE_ROTATION_KEYS.items() if cfg['resource_compact_rotate'] and cfg[key]}
+
+    def readout_layout(self):
+        edge = getattr(self, 'edge_reveal', None)
+        if (not self.service.compact or not self.isVisible() or self.width()<70
+                or self.service.cfg['resource_fold']=='ball' or edge and edge.fraction==0):
+            return None
         from resource_compact import plan
-        count = len(plan(self, self.width())['pages'])
+        return plan(self,self.width())
+
+    def sync_rotation(self):
+        zones = self.rotating_zones()
+        layout = self.readout_layout() if zones else None
+        if layout and automatic_step(layout,self.page_turns,zones):
+            interval = self.service.cfg['resource_compact_rotate_interval']*1000
+            if not self.rotate.isActive() or self.rotate.interval()!=interval:self.rotate.start(interval)
+        elif self.rotate.isActive():
+            self.rotate.stop()
+
+    def shift_compact_page(self, step, *, automatic=False):
+        layout = self.readout_layout()
+        count = len(layout['pages']) if layout else 0
         if count <= 1:
-            return
+            return False
+        zones = self.rotating_zones() if automatic else ZONES
+        if automatic:
+            step = automatic_step(layout,self.page_turns,zones)
+            if not step:return False
         if self.compact_scroll:
             self.compact_scroll_pending += step
-            return
-        previous = self.offset
-        self.offset += step
-        if cfg.get('motion_enabled', True) and step % count:
+            return True
+        previous = self.page_turns
+        self.page_turns = previous.advance(step,zones)
+        from resource_compact import readouts_changed
+        if (self.service.cfg.get('motion_enabled',True) and step % count
+                and readouts_changed(layout,previous,self.page_turns,self.width())):
             self.compact_scroll = (previous, time.monotonic(), 1 if step > 0 else -1)
             if not self.animation.isActive() or self.animation.interval() != COMPACT_FRAME_MS:
                 self.animation.start(COMPACT_FRAME_MS)
         self.update()
+        if len(layout['bands'])>1:self.sync_rotation()
+        return True
 
     def settle_compact_scroll(self):
-        self.offset += self.compact_scroll_pending
+        self.page_turns = self.page_turns.advance(self.compact_scroll_pending,ZONES)
         self.compact_scroll_pending = 0
         self.compact_scroll = None
 
@@ -848,11 +894,10 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 self.animation.start(interval)
         else:
             self.animation.stop()
-        for timer,active in [(self.clock_tick,visible and self.service.compact and cfg['resource_clock']),
-                             (self.rotate,visible and self.service.compact and cfg['resource_compact_rotate'])]:
-            if active and not timer.isActive():
-                timer.start()
-            elif not active:timer.stop()
+        if visible and self.service.compact and cfg['resource_clock']:
+            if not self.clock_tick.isActive():self.clock_tick.start()
+        elif self.clock_tick.isActive():self.clock_tick.stop()
+        self.sync_rotation()
 
     def sync_auto_fold(self):
         if self.isVisible() and not self.service.compact and self.service.cfg['resource_auto_hide']:
@@ -964,13 +1009,13 @@ class ResourceWindow(Foldable,ResourceContentHost):
             if kind=='ball':
                 rect=QRect(*fold_geometry(list(rect.getRect()),{'style':'ball','ratio':80},38))
                 area=(QApplication.screenAt(rect.center()) or QApplication.primaryScreen()).availableGeometry()
-                rect.setWidth(min(area.width(),rect.width()+self.ball_extra(min(area.width(),cfg['resource_compact_width']))))
+                rect.setWidth(min(area.width(),rect.width()+self.ball_extra(min(area.width(),cfg['resource_compact_width']),rect.height())))
             else:
                 center=rect.x()+rect.width()/2;screen=QApplication.screenAt(rect.center()) or QApplication.primaryScreen();area=screen.availableGeometry()
                 from resource_compact import natural_width,notice_width
                 limit=min(cfg['resource_compact_width'],area.width())
                 notice=self.ball_notice()
-                rect.setWidth(notice_width(self,notice,limit) if notice else natural_width(self,limit))
+                rect.setWidth(notice_width(self,notice,limit,cfg['resource_compact_height']) if notice else natural_width(self,limit))
                 rect.setHeight(cfg['resource_compact_height'])
                 rect.moveLeft(max(area.left(),min(round(center-rect.width()/2),area.right()-rect.width()+1)))
         from resource_liquid import attached
@@ -984,13 +1029,13 @@ class ResourceWindow(Foldable,ResourceContentHost):
         if self.compact_notice and self.service.cfg['resource_fold']=='ball' and self.taskbar_slot() is None:return 'pill'
         return self.service.cfg['resource_fold']
 
-    def ball_extra(self,limit):
+    def ball_extra(self,limit,height=38):
         from capsule_order import has_component_order
         if has_component_order(self.service.cfg):
-            from capsule_order_layout import ball_slots
-            return max(0,sum(item.width for item in ball_slots(self,limit).values())-38)
+            from capsule_order_layout import ball_layout
+            return max(0,ball_layout(self,limit,height)[1]-min(38,height,limit))
         from resource_compact import ball_details
-        return ball_details(self,limit)[2]+(RUNNER_SLOT if self.service.cfg['resource_runner_enabled'] else 0)
+        return ball_details(self,limit,height)[2]+(RUNNER_SLOT if self.service.cfg['resource_runner_enabled'] else 0)
 
     def sync_taskbar(self):
         cfg=self.service.cfg
@@ -1025,8 +1070,8 @@ class ResourceWindow(Foldable,ResourceContentHost):
             notice=self.ball_notice()
             if notice and not vertical:
                 from resource_compact import notice_width
-                return notice_width(self,notice,cfg['resource_compact_width'])
-            return diameter if vertical else diameter+self.ball_extra(cfg['resource_compact_width'])
+                return notice_width(self,notice,cfg['resource_compact_width'],diameter)
+            return diameter if vertical else diameter+self.ball_extra(cfg['resource_compact_width'],diameter)
         return cfg['resource_compact_width']
 
     def taskbar_rect(self,slot,compact):
@@ -1124,8 +1169,6 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 from capsule_indicators import description
                 tips.extend(description(key,value) for key,value in self.service.indicators.values.items())
             tips.extend(label+' '+value for _,label,value,_ in status_values(self.service))
-            tips.append('滚轮切换读数，点击展开')
-        self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '灵动胶囊 · 点击展开')
         if not self.service.compact:
             if not self.page_enabled(self.page_key):self.page_key=self.first_page()
             self.scroll.setVisible(self.page_key=='resources')
@@ -1143,7 +1186,11 @@ class ResourceWindow(Foldable,ResourceContentHost):
             enabled=self.page_enabled(key)
             btn.setVisible(not self.service.compact and enabled);btn.setChecked(key==self.page_key)
         self.layout_page_buttons()
-        if self.service.compact:self.reposition();self.sync_animation()
+        if self.service.compact:
+            self.reposition();self.sync_animation()
+            layout = self.readout_layout()
+            tips.append('滚轮翻页，点击展开' if layout and len(layout['pages'])>1 else '点击展开')
+        self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '灵动胶囊 · 点击展开')
         self.update()
 
     def resizeEvent(self,event):
@@ -1154,6 +1201,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.layout_page_buttons()
         if hasattr(self,'resize_edges'):self.resize_edges.sync()
         super().resizeEvent(event)
+        if self.colors:self.sync_rotation()
     def layout_page_buttons(self):
         x=0
         for key in self.service.cfg['resource_component_order']:
@@ -1261,8 +1309,9 @@ class ResourceWindow(Foldable,ResourceContentHost):
         return
 
     def wheelEvent(self,event):
-        if self.service.compact and event.angleDelta().y():
-            self.shift_compact_page(1 if event.angleDelta().y()<0 else -1)
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if delta and self.shift_compact_page(1 if delta<0 else -1):
+            if self.rotate.isActive():self.rotate.start()
             event.accept()
         else:event.ignore()
     def enterEvent(self,event):
@@ -1358,6 +1407,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
     def leaveEvent(self,event):
         self.runner_hovered=False
         self.enter_timer.stop()
+        if self.rotate.isActive():self.rotate.start()
         super().leaveEvent(event)
     def fold_idle(self):
         # Native leave events can be lost when a popup or mouse grab takes over.

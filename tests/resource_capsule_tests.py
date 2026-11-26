@@ -295,10 +295,10 @@ def run(api,runtime,root,app,output,checks):
         from PyQt5.QtGui import QImage
         download, upload = 9 * 1024, 350 * 1024
         with patch.dict(service.latest, network=(download, upload)), patch.object(window, 'compact_shown', [], create=True), \
-                patch('resource_compact.text') as draw:
+                patch('resource_compact.draw_stacked_text') as draw:
             paint_values(window, None, [('network', '', '', None)], 0, 16, 80, dense=True, widths=[80])
-            top, bottom = [call.args for call in draw.call_args_list]
-            assert top[1].y() < bottom[1].y() and top[2] == '↑ 350.0K' and bottom[2] == '↓ 9.0K'
+            draw.assert_called_once()
+            assert draw.call_args.args[2]==['↑ 350.0K','↓ 9.0K'] and draw.call_args.args[4]=='rates'
         totals = {'day': (download, upload), 'month': (2 * download, 2 * upload), 'year': (3 * download, 3 * upload)}
         traffic = TrafficReadout(window)
         traffic.resize(500, traffic.height())

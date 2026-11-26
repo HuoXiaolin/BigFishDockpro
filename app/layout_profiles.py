@@ -15,7 +15,7 @@ SWITCHES=('clock_flipped','clock_locked','calendar_locked','daily_picture_enable
           'watermark_enabled','shell_start_enabled','shell_notifications_enabled',
           'shell_notifications_quick','shell_notifications_media','shell_notifications_toast','shell_notifications_calendar',
           'shell_notifications_tray_overflow','shell_notifications_taskbar_menu',
-          'dock_clock','dock_quick_settings','dock_add_button')
+          'dock_clock','dock_clock_seconds','dock_clock_weekday','dock_clock_lunar','dock_clock_festival','dock_quick_settings','dock_add_button')
 CHOICES={'calendar_style':('calendar_card','almanac'),'watermark_mode':('single','tile'),
          'watermark_position':('top','bottom','left','right','center'),'watermark_layer':('bottom','top'),
          'panel_layer':('bottom','top'),'spectrum_layer':('bottom','top'),
@@ -23,8 +23,10 @@ CHOICES={'calendar_style':('calendar_card','almanac'),'watermark_mode':('single'
 RESOURCE_FIELDS=tuple('resource_'+name for name in (
     'enabled','layout','collapsed','fold','layer','edge','edge_hide','open_page','expand_mode',
     'alert_stopwatch','alert_alarm',*('alert_'+key for key in DEVICE_ALERTS),
-    'compact_width','compact_height','compact_badge_height','compact_auto_width','compact_metrics','compact_order','compact_pinned',
-    'compact_density','compact_rings','compact_rotate','compact_ai','compact_music','weather_compact','clock','clock_format',
+    'compact_width','compact_height','compact_badge_height','compact_auto_width','compact_metrics','compact_order','compact_zones','compact_pinned',
+    'compact_density','compact_rings','compact_rotate','compact_rotate_interval','compact_rotate_left','compact_rotate_center',
+    'compact_rotate_right','compact_ai','compact_music','weather_compact','clock','clock_format',
+    'clock_weekday','clock_lunar','clock_festival',
     'expanded_width','expanded_height','component_locations','component_order','card_layouts',
     'taskbar','taskbar_position','taskbar_layer','taskbar_anchor','task_metrics','task_order','task_music','task_media_parts',
     'capsule_taskbar','capsule_taskbar_position','capsule_taskbar_anchor','ai','ai_tray','ai_tray_mode','ai_tray_provider','ai_tray_metric',

@@ -58,8 +58,8 @@ COMPACT_CONTENT={'ai':'resource_compact_ai','music':'resource_compact_music','we
 PINNABLE={**{key:title for key,title in COMPACT_ITEMS.items() if key not in COMPACT_STATUS},
           'ai':'AI 额度','music':'音乐','weather':'天气'}
 COMPACT_CLOCK_FORMATS={
-    'time':('时:分',('%H:%M',)), 'seconds':('时:分:秒',('%H:%M:%S',)),
-    'date':('年-月-日',('%Y-%m-%d',)),
+    'time':('月日 / 时:分',('%m/%d','%H:%M')), 'seconds':('月日 / 时:分:秒',('%m/%d','%H:%M:%S')),
+    'date':('仅日期（年 / 月日）',('%Y','%m/%d')),
     'date_time':('年-月-日 / 时:分',('%Y-%m-%d','%H:%M')),
     'date_seconds':('年-月-日 / 时:分:秒',('%Y-%m-%d','%H:%M:%S')),
 }
@@ -99,6 +99,9 @@ REMINDER_OPTIONS={
 }
 REMINDER_OPTIONS.update({'resource_alert_'+key: title for key,title in DEVICE_ALERTS.items()})
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
+COMPACT_ROTATE_INTERVAL_RANGE = (1, 300)
+COMPACT_ZONES = {'left':'靠左', 'center':'中间', 'right':'靠右'}
+ZONE_ROTATION_KEYS = {zone:'resource_compact_rotate_'+zone for zone in COMPACT_ZONES}
 MAIL_INTERVAL_RANGE=(10,900)
 FACE_SWITCH_RANGE = (1, 1440)
 FACE_SWITCH_DEFAULT = 10
@@ -148,6 +151,18 @@ DEFAULTS.update(resource_mail=False, resource_mail_accounts=[], resource_mail_no
                 resource_alert_mail_code=True, resource_mail_icon=False, resource_mail_interval=30)
 DEFAULTS.update(dict.fromkeys(('resource_alert_'+key for key in DEVICE_ALERTS), False))
 DEFAULTS.update(resource_edge_hide=False, resource_alert_stopwatch=True, resource_alert_alarm=True)
+DEFAULTS.update(resource_compact_zones={}, resource_clock_weekday=True, resource_clock_lunar=False,
+                resource_clock_festival=True)
+DEFAULTS.update(resource_compact_rotate_interval=6, **dict.fromkeys(ZONE_ROTATION_KEYS.values(), True))
+
+
+def compact_tile_height(cfg, height):
+    return min(cfg['resource_compact_badge_height'], max(1, height-4))
+
+
+def compact_text_height(cfg, height):
+    # Text-only readouts may overshoot the tiles by one logical pixel per edge.
+    return min(compact_tile_height(cfg, height)+2, max(1, height-4))
 
 
 def component_location(cfg,key):
@@ -342,11 +357,18 @@ def normalize(cfg,strict=False):
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
                 'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',
                 'resource_mail','resource_mail_notifications','resource_mail_icon','resource_weather_location',
-                'resource_weather_alert_sound',*REMINDER_OPTIONS):
+                'resource_weather_alert_sound','resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
+                'resource_compact_rotate',*ZONE_ROTATION_KEYS.values(),*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('灵动胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
         else:cfg.setdefault(key,DEFAULTS[key])
+    interval = cfg.get('resource_compact_rotate_interval', DEFAULTS['resource_compact_rotate_interval'])
+    low, high = COMPACT_ROTATE_INTERVAL_RANGE
+    if type(interval) is not int or not low <= interval <= high:
+        if strict:raise ValueError(f'翻页间隔须为 {low} 至 {high} 秒。')
+        interval = DEFAULTS['resource_compact_rotate_interval']
+    cfg['resource_compact_rotate_interval'] = interval
     face_minutes = cfg.get('resource_face_switch_minutes', FACE_SWITCH_DEFAULT)
     if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
         if strict:
@@ -381,7 +403,14 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('任务栏监控项目无效。')
         items=TASK_DEFAULT
     cfg['resource_task_metrics']=[k for k in TASK_METRICS if k in items]
-    from capsule_order import NAMES as compact_order_names
+    from capsule_order import NAMES as compact_order_names, ZONES
+    zones = cfg.get('resource_compact_zones', {})
+    if not isinstance(zones, dict):
+        if strict:raise ValueError('收起胶囊的位置分区无效。')
+        zones = {}
+    clean_zones = {k:v for k,v in zones.items() if k in compact_order_names and isinstance(v,str) and v in ZONES}
+    if strict and clean_zones != zones:raise ValueError('收起胶囊的位置分区无效。')
+    cfg['resource_compact_zones'] = clean_zones
     for key,choices in [('resource_compact_metrics',COMPACT_ITEMS),('resource_compact_pinned',PINNABLE),('resource_ai_providers',AI_PROVIDERS),('resource_task_media_parts',TASK_MEDIA_PARTS),
                         ('resource_task_order',TASK_COLUMN_NAMES),('resource_compact_order',compact_order_names)]:
         value=cfg.get(key,DEFAULTS[key])
