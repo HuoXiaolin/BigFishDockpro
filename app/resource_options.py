@@ -50,6 +50,15 @@ TASK_COLUMN_NAMES = {
     'sensors': '其他传感器',
 }
 COMPACT_METRICS=tuple(k for k in METRICS if k not in ('rank','system_status'))
+RESOURCE_READINGS = tuple(k for k in COMPACT_METRICS if k not in ('bluetooth','traffic'))
+ALMANAC_CATEGORIES = {'term':'节气', 'lunar':'农历节日', 'civil':'公历节日'}
+
+
+def almanac_categories(cfg):
+    if not cfg.get('resource_alert_almanac', True):
+        return ()
+    return tuple(kind for kind in ALMANAC_CATEGORIES if cfg.get('resource_almanac_'+kind, True))
+
 COMPACT_DEVICE={'battery':'电池电量','connection':'网卡名称','volume':'系统音量','brightness':'屏幕亮度'}
 COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth')
 COMPACT_ROUTINES={'pomodoro':'番茄钟','water':'喝水进度','agenda':'下一项日程'}
@@ -93,7 +102,7 @@ DEVICE_ALERTS = {
 REMINDER_OPTIONS={
     'resource_alert_agenda':'日程到提醒时间', 'resource_alert_focus':'番茄钟倒计时与完成',
     'resource_alert_water':'喝水时间到', 'resource_alert_battery':'电脑电量低于或等于 15%',
-    'resource_alert_almanac':'农历节气与节日',
+    'resource_alert_almanac':'节气与节日提醒',
     'resource_alert_mail_code':'收起时显示邮箱验证码',
     'resource_alert_weather':'雨、雪、雾和雷雨',
 }
@@ -140,7 +149,7 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_compact_ai=True,resource_compact_music=True,
                 resource_compact_density='dense',
                 resource_expanded_width=500,resource_expanded_height=280,
-                resource_compact_rings=True,resource_clock=True,resource_clock_format='time',resource_compact_rotate=True,
+                resource_compact_rings=True,resource_clock=True,resource_clock_format='time',
                 resource_ai=False,resource_ai_tray=False,resource_ai_providers=['Claude','Codex','Cursor','Antigravity'],
                 resource_ai_tray_mode='auto',resource_ai_tray_provider='',resource_ai_tray_metric='',
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
@@ -154,6 +163,7 @@ DEFAULTS.update(resource_edge_hide=False, resource_alert_stopwatch=True, resourc
 DEFAULTS.update(resource_compact_zones={}, resource_clock_weekday=True, resource_clock_lunar=False,
                 resource_clock_festival=True)
 DEFAULTS.update(resource_compact_rotate_interval=6, **dict.fromkeys(ZONE_ROTATION_KEYS.values(), True))
+DEFAULTS.update(resource_almanac_interval=6, **{'resource_almanac_'+key:True for key in ALMANAC_CATEGORIES})
 
 
 def compact_tile_height(cfg, height):
@@ -200,6 +210,9 @@ def migrate_runner_placement(cfg):
 
 
 def migrate_docked(data):
+    if 'resource_compact_rotate' in data:
+        data = dict(data)
+        migrate_rotation(data)
     if 'resource_weather_location' not in data and data.get('resource_weather_cities')==['天津','乌鲁木齐','沈阳']:
         data=dict(data,resource_weather_cities=[])
     if 'resource_runner_placement' in data:
@@ -255,7 +268,13 @@ def clean_halo_color(value, strict=False):
     return ''
 
 
+def migrate_rotation(cfg):
+    if cfg.pop('resource_compact_rotate', None) is False:
+        cfg.update(dict.fromkeys(ZONE_ROTATION_KEYS.values(), False))
+
+
 def normalize(cfg,strict=False):
+    migrate_rotation(cfg)
     cfg.setdefault('resource_halo_color_mode', DEFAULTS['resource_halo_color_mode'])
     cfg['resource_halo_mono_color'] = clean_halo_color(cfg.get('resource_halo_mono_color', ''), strict)
     profiles=cfg.get('resource_peripheral_profiles',[])
@@ -358,17 +377,18 @@ def normalize(cfg,strict=False):
                 'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',
                 'resource_mail','resource_mail_notifications','resource_mail_icon','resource_weather_location',
                 'resource_weather_alert_sound','resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
-                'resource_compact_rotate',*ZONE_ROTATION_KEYS.values(),*REMINDER_OPTIONS):
+                *('resource_almanac_'+k for k in ALMANAC_CATEGORIES),*ZONE_ROTATION_KEYS.values(),*REMINDER_OPTIONS):
         if type(cfg.get(key,DEFAULTS[key])) is not bool:
             if strict:raise ValueError('灵动胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
         else:cfg.setdefault(key,DEFAULTS[key])
-    interval = cfg.get('resource_compact_rotate_interval', DEFAULTS['resource_compact_rotate_interval'])
     low, high = COMPACT_ROTATE_INTERVAL_RANGE
-    if type(interval) is not int or not low <= interval <= high:
-        if strict:raise ValueError(f'翻页间隔须为 {low} 至 {high} 秒。')
-        interval = DEFAULTS['resource_compact_rotate_interval']
-    cfg['resource_compact_rotate_interval'] = interval
+    for key in ('resource_compact_rotate_interval', 'resource_almanac_interval'):
+        interval = cfg.get(key, DEFAULTS[key])
+        if type(interval) is not int or not low <= interval <= high:
+            if strict:raise ValueError(f'轮换间隔须为 {low} 至 {high} 秒。')
+            interval = DEFAULTS[key]
+        cfg[key] = interval
     face_minutes = cfg.get('resource_face_switch_minutes', FACE_SWITCH_DEFAULT)
     if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
         if strict:
@@ -403,7 +423,10 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('任务栏监控项目无效。')
         items=TASK_DEFAULT
     cfg['resource_task_metrics']=[k for k in TASK_METRICS if k in items]
-    from capsule_order import NAMES as compact_order_names, ZONES
+    from capsule_order import NAMES as compact_order_names, ZONES, group_resource_order
+    old_order = cfg.get('resource_compact_order', [])
+    if isinstance(old_order, list) and all(isinstance(k,str) for k in old_order) and isinstance(cfg.get('resource_compact_zones',{}), dict):
+        cfg['resource_compact_order'], cfg['resource_compact_zones'] = group_resource_order(cfg, old_order, cfg.get('resource_compact_zones',{}))
     zones = cfg.get('resource_compact_zones', {})
     if not isinstance(zones, dict):
         if strict:raise ValueError('收起胶囊的位置分区无效。')

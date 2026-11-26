@@ -423,7 +423,11 @@ class DockQuickSettings(QDialog):
                 'layouts':'保存 / 切换布局','references':'检查 / 重新定位'}
         values['taskbar_monitor']='已开启' if cfg['resource_taskbar'] else '已关闭'
         for key,(_,_,field,_,tip) in WIDGET_SWITCHES.items():
-            values[key]='已开启' if cfg[field] else '已关闭'
+            enabled=cfg[field]
+            if key=='almanac_alert':
+                from resource_options import almanac_categories
+                enabled=bool(almanac_categories(cfg))
+            values[key]='已开启' if enabled else '已关闭'
             self.tiles[key].setToolTip(tip)
             self.tiles[key].setAccessibleDescription(values[key])
         self.tiles['clock'].setToolTip('左键开关时钟，右键设置时光进度与倒计时')
@@ -590,6 +594,11 @@ class DockQuickSettings(QDialog):
         elif key in WIDGET_SWITCHES:
             field=WIDGET_SWITCHES[key][2]
             changes={field:not cfg[field]}
+            if key=='almanac_alert':
+                from resource_options import ALMANAC_CATEGORIES, almanac_categories
+                changes[field]=not almanac_categories(cfg)
+                if changes[field] and not any(cfg['resource_almanac_'+k] for k in ALMANAC_CATEGORIES):
+                    changes.update({'resource_almanac_'+k:True for k in ALMANAC_CATEGORIES})
         elif key=='panels':changes={'panel_enabled':not cfg['panel_enabled'],'panels_visible':True}
         elif key=='magnify':changes={'magnify':not cfg['magnify']}
         elif key=='notes':changes={'notes_enabled':not (cfg['notes_enabled'] and cfg['notes_visible']),'notes_visible':True}

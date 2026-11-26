@@ -25,7 +25,7 @@ PREVIOUS_DEFAULT = [key for key in DEFAULT_ORDER if key != 'cursor_styles']
 WIDGET_SWITCHES = {
     'capsule_pet': ('胶囊小动物','paw','resource_runner_enabled','resources','收起胶囊时显示小动物'),
     'tray_pet': ('托盘小动物','tray_paw','resource_tray_runner_enabled','taskbar_monitor','在系统托盘显示小动物'),
-    'almanac_alert': ('节气提醒','leaf','resource_alert_almanac','calendar','在灵动胶囊显示农历节气与节日提醒'),
+    'almanac_alert': ('节气提醒','leaf','resource_alert_almanac','calendar','在收起胶囊中轮换显示节气、农历节日和公历节日'),
     'daily_picture': ('每日图片','picture','daily_picture_enabled','watermark','显示每日图片组件'),
 }
 for key,(title,icon,field,anchor,tip) in WIDGET_SWITCHES.items():

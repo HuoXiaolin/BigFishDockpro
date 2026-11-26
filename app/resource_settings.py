@@ -17,7 +17,7 @@ from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_me
 from resource_device_picker import DevicePicker
 from resource_options import DEVICE_ALERTS, DEVICE_SOURCES, HALO_COLOR_MODES, HALO_SPEEDS, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS, clean_halo_color
 from settings_design import NumericControl,SettingsNavigation
-from resource_options import COMPACT_ROTATE_INTERVAL_RANGE, COMPACT_ZONES, ZONE_ROTATION_KEYS
+from resource_options import ALMANAC_CATEGORIES, COMPACT_ROTATE_INTERVAL_RANGE, COMPACT_ZONES, ZONE_ROTATION_KEYS
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
@@ -69,7 +69,7 @@ class ResourceOptions(QDialog):
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
          'resource_capsule_taskbar','resource_capsule_taskbar_position'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values(),'resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values(),'resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
            'resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
            'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'} | {'resource_alert_'+key for key in DEVICE_ALERTS},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
@@ -80,7 +80,8 @@ class ResourceOptions(QDialog):
          'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_weather_location','resource_weather_alert_sound','resource_news'},set(),
         {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound',
-         'resource_alert_stopwatch','resource_alert_alarm','resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval'}]
+         'resource_alert_stopwatch','resource_alert_alarm','resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval',
+         'resource_almanac_interval',*('resource_almanac_'+k for k in ALMANAC_CATEGORIES)}]
 
     def ensure_page(self,index):
         if index in self.loaded:return
@@ -118,7 +119,6 @@ class ResourceOptions(QDialog):
             elif index == 2:
                 for field in ('format','weekday','lunar','festival'):
                     self.fields['resource_clock_'+field].setEnabled(self.fields['resource_clock'].isChecked())
-                self.sync_rotation_fields()
                 self.sync_runner_fields()
             elif index == 6:
                 self.fields['resource_face_switch_minutes'].setEnabled(self.fields['resource_face_auto_switch'].isChecked())
@@ -137,6 +137,8 @@ class ResourceOptions(QDialog):
             self.refresh_news_sources()
         elif index == 3:
             self.sync_ai_tray_fields()
+        elif index == 9:
+            self.sync_almanac_fields()
         if draft:
             root.layout().itemAt(0).widget().verticalScrollBar().setValue(draft['scroll'])
 
@@ -306,7 +308,7 @@ class ResourceOptions(QDialog):
             layout=page(2)
             readouts=section(layout,'收起时显示的项目')
             tools=QHBoxLayout()
-            hint=QLabel('分配已开启项目的左、中、右位置，并调整各区顺序。');hint.setWordWrap(True)
+            hint=QLabel('勾选的性能与传感器读数共用一个「资源轮换」位置。');hint.setWordWrap(True)
             tools.addWidget(hint,1)
             tools.addWidget(button('显示顺序…',self.edit_compact_order))
             readouts.addLayout(tools)
@@ -333,22 +335,18 @@ class ResourceOptions(QDialog):
             combo(compact_form,'resource_compact_density','内容密度',[('自动紧凑','auto'),('始终紧凑','dense')],cfg['resource_compact_density'],self.fields)
             self.fields['resource_compact_rings']=check('资源占用环',cfg['resource_compact_rings'])
             compact.addWidget(self.fields['resource_compact_rings'])
-            rotate = self.fields['resource_compact_rotate'] = check('读数自动翻页',cfg['resource_compact_rotate'])
-            compact.addWidget(rotate)
             paging = QFormLayout();paging.setHorizontalSpacing(8);compact.addLayout(paging)
             key = 'resource_compact_rotate_interval'
-            spin(paging,key,'翻页间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
+            spin(paging,key,'读数轮换间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
             self.fields[key].setSuffix(' 秒')
             zones = QHBoxLayout()
             for zone, key in ZONE_ROTATION_KEYS.items():
                 field = self.fields[key] = check(COMPACT_ZONES[zone],cfg[key])
                 field.setAccessibleName(COMPACT_ZONES[zone]+'区域自动翻页')
+                field.setToolTip('控制该区域的多页内容。资源和节日各自在自己的位置轮换。')
                 zones.addWidget(field)
             zones.addStretch()
-            paging.addRow('自动翻页区域',zones)
-            rotate.setToolTip('勾选的区域有多页时才会自动轮换。悬停暂停，其他区域仍可用滚轮翻页。')
-            rotate.toggled.connect(self.sync_rotation_fields)
-            self.sync_rotation_fields()
+            paging.addRow('区域自动翻页',zones)
             clock=section(layout,'日期与时间')
             show_clock=check('显示日期或时间',cfg['resource_clock'])
             self.fields['resource_clock']=show_clock;clock.addWidget(show_clock)
@@ -660,10 +658,22 @@ class ResourceOptions(QDialog):
             agenda.addWidget(self.fields['resource_agenda'])
             key='resource_alert_agenda'
             self.fields[key]=check('收起时显示日程提醒',cfg[key]);agenda.addWidget(self.fields[key])
-            key='resource_alert_almanac'
-            self.fields[key]=check('收起时显示农历节气与节日提醒',cfg[key]);agenda.addWidget(self.fields[key])
             agenda.addWidget(CalendarAccounts(self.service))
             agenda.addWidget(button('日程账号接入…',self.agenda_connections))
+            calendar=section(layout,'节气与节日提醒')
+            show = self.fields['resource_alert_almanac'] = check('在收起胶囊中显示',cfg['resource_alert_almanac'])
+            calendar.addWidget(show)
+            choices=QHBoxLayout()
+            for kind,title in ALMANAC_CATEGORIES.items():
+                key='resource_almanac_'+kind
+                self.fields[key]=check(title,cfg[key]);choices.addWidget(self.fields[key])
+                self.fields[key].toggled.connect(self.sync_almanac_fields)
+            choices.addStretch();calendar.addLayout(choices)
+            timing=QFormLayout();calendar.addLayout(timing)
+            key='resource_almanac_interval'
+            spin(timing,key,'节日轮换间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
+            self.fields[key].setSuffix(' 秒')
+            show.toggled.connect(self.sync_almanac_fields)
             mail=section(layout,'邮件通知')
             for key,title in (('resource_mail','显示邮箱卡片并同步邮件'),('resource_mail_notifications','来信时通知'),
                               ('resource_alert_mail_code','收起时显示验证码方块')):
@@ -769,10 +779,12 @@ class ResourceOptions(QDialog):
         self.fill_ai_tray_metrics(row, '')
         self.sync_ai_tray_fields()
 
-    def sync_rotation_fields(self):
-        enabled = self.fields['resource_compact_rotate'].isChecked()
-        for key in ('resource_compact_rotate_interval', *ZONE_ROTATION_KEYS.values()):
-            self.fields[key].setEnabled(enabled)
+    def sync_almanac_fields(self):
+        enabled = self.fields['resource_alert_almanac'].isChecked()
+        for kind in ALMANAC_CATEGORIES:
+            self.fields['resource_almanac_'+kind].setEnabled(enabled)
+        self.fields['resource_almanac_interval'].setEnabled(enabled and any(
+            self.fields['resource_almanac_'+k].isChecked() for k in ALMANAC_CATEGORIES))
 
     def sync_runner_fields(self):
         enabled=self.fields['resource_runner_enabled'].isChecked()

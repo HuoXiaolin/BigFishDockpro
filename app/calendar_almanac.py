@@ -3,11 +3,12 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, timedelta
 from functools import lru_cache
+from types import MappingProxyType
 import json
 from pathlib import Path
 import sys
 
-from calendar_details import lunar_details
+from calendar_details import civil_festivals, lunar_details, next_civil_festivals
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets' / 'almanac'
 FIRST_DAY, LAST_DAY = date(1901, 1, 1), date(2099, 12, 31)
@@ -147,11 +148,8 @@ def next_festival(day):
 
 
 def next_civil_holiday(day):
-    for (month, number), art in CIVIL_HOLIDAYS.items():
-        holiday = date(day.year, month, number)
-        if holiday > day:
-            return art.name, (holiday-day).days
-    return CIVIL_HOLIDAYS[1, 1].name, (date(day.year+1, 1, 1)-day).days
+    names, distance = next_civil_festivals(day)
+    return '、'.join(names), distance
 
 
 ROTATION_MINUTES = 10
@@ -179,15 +177,23 @@ class AlmanacDay:
     next_term: str
     days_left: int
     festival: str
-    civil_festival: str
+    civil_names: tuple
+
+    @property
+    def civil_festival(self):
+        return '、'.join(self.civil_names)
 
     @property
     def events(self):
-        return tuple(name for name in (self.civil_festival, self.festival, self.term if self.term_today else '') if name)
+        return tuple(filter(None, (*self.civil_names, self.festival, self.term if self.term_today else '')))
 
     def card(self, choice=0):
         events = self.events
-        return ART[events[choice % len(events)] if events else self.term]
+        name = events[choice % len(events)] if events else self.term
+        if name in ART:
+            return ART[name]
+        seasonal = ART[self.term]
+        return Illustration(name, seasonal.key, seasonal.verses)
 
     def civil_countdown(self):
         if self.civil_festival:
@@ -195,9 +201,36 @@ class AlmanacDay:
         holiday, distance = next_civil_holiday(self.day)
         return f'距{holiday} {distance} 天'
 
-    def badge(self):
-        names = ([self.festival] if self.festival else []) + ([self.term] if self.term_today else [])
-        return ' · '.join(names) if names else f'{self.next_term} {self.days_left}天'
+    def badge_due(self, categories):
+        return (('term' in categories and self.term_today) or ('lunar' in categories and bool(self.festival))
+                or ('civil' in categories and bool(self.civil_names)))
+
+    @lru_cache(maxsize=64)
+    def badge_lines(self, categories=('term','lunar','civil')):
+        entries = []
+        if 'term' in categories:
+            entries.append((self.term, 0) if self.term_today else (self.next_term, self.days_left))
+        if 'lunar' in categories:
+            entries.append((self.festival, 0) if self.festival else next_festival(self.day))
+        if 'civil' in categories:
+            civil, days = (self.civil_names, 0) if self.civil_names else next_civil_festivals(self.day)
+            entries.extend((name, days) for name in civil)
+        # Start with today's event, then keep cycling through the three calendars.
+        start = next((i for i, (name, left) in enumerate(entries) if name and left == 0), 0)
+        rows = {}
+        for name, left in entries[start:] + entries[:start]:
+            if name:
+                short = '新春' if name == '春节' else name.removesuffix('节')
+                countdown = f'{left}天' if left else '今天'
+                rows[short+countdown if left else short] = (short,countdown)
+        return MappingProxyType(rows)
+
+    def badge_labels(self, categories=('term','lunar','civil')):
+        return tuple(self.badge_lines(categories))
+
+    def badge(self, page=0):
+        labels = self.badge_labels()
+        return labels[page % len(labels)]
 
 
 @lru_cache(maxsize=32)
@@ -209,5 +242,4 @@ def almanac(day):
     previous, term = entries[at-1] if at else (None, '冬至')
     upcoming, name = entries[at]
     _, lunar, festival = lunar_details(day)
-    civil = CIVIL_HOLIDAYS.get((day.month, day.day))
-    return AlmanacDay(day, lunar, term, previous == day, name, (upcoming-day).days, festival, civil.name if civil else '')
+    return AlmanacDay(day, lunar, term, previous == day, name, (upcoming-day).days, festival, civil_festivals(day))

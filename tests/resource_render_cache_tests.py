@@ -262,7 +262,7 @@ def run(api, runtime, app, output, checks):
         cfg.update(resource_enabled=True, resource_collapsed=True, resource_auto_hide=False,
                    resource_compact_auto_width=False, resource_compact_width=500,
                    resource_compact_height=35, resource_halo=True, resource_face=False,
-                   resource_compact_rotate=False, resource_clock=False,
+                   resource_compact_rotate_left=False,resource_compact_rotate_center=False,resource_compact_rotate_right=False, resource_clock=False,
                    resource_compact_metrics=['cpu', 'memory', 'network'],
                    resource_compact_pinned=['cpu', 'memory', 'network'])
         service.sync()

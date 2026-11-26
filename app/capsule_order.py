@@ -2,7 +2,7 @@
 from typing import NamedTuple
 
 from resource_options import (COMPACT_CONTENT, COMPACT_ITEMS, COMPACT_ROUTINES, COMPACT_STATUS, COMPACT_ZONES as ZONES,
-                              DEVICE_ALERTS, PINNABLE, SENSOR_UNITS, component_location)
+                              DEVICE_ALERTS, PINNABLE, RESOURCE_READINGS, almanac_categories, component_location)
 
 
 def device_key(kind):
@@ -29,10 +29,10 @@ def badge_key(kind, active):
 ALERT_NAMES = {
     'alert_mail_code':'邮箱验证码', 'alert_agenda':'日程到时提醒', 'alert_battery':'电脑低电量提醒',
     'alert_alarm':'闹钟', 'alert_stopwatch':'正计时', 'alert_water':'喝水提醒',
-    'alert_focus':'番茄钟倒计时与完成提醒', 'alert_weather':'天气提醒', 'alert_almanac':'农历节气与节日',
+    'alert_focus':'番茄钟倒计时与完成提醒', 'alert_weather':'天气提醒', 'alert_almanac':'节气与节日提醒',
     'alert_mail_new':'新邮件提醒', 'alert_quota':'AI 额度提醒',
 }
-NAMES = {'face':'胶囊表情', **PINNABLE, **{key:COMPACT_ITEMS[key] for key in COMPACT_STATUS},
+NAMES = {'face':'胶囊表情', 'resources':'资源轮换', **{k:v for k,v in PINNABLE.items() if k not in RESOURCE_READINGS}, **{key:COMPACT_ITEMS[key] for key in COMPACT_STATUS},
          'mail':'邮箱图标', **{device_key(key):title for key,title in DEVICE_ALERTS.items()},
          **ALERT_NAMES, 'runner':'跑步小动物', 'clock':'日期与时间'}
 
@@ -66,12 +66,30 @@ def clock_turn(layout, turns):
 
 
 def has_component_order(cfg):
-    return bool(cfg.get('resource_compact_zones')) or any(key not in PINNABLE for key in cfg['resource_compact_order'])
+    return bool(cfg.get('resource_compact_zones')) or any(key not in PINNABLE and key!='resources' for key in cfg['resource_compact_order'])
+
+
+def group_resource_order(cfg, order, zones):
+    """In an older layout, inherit the position of the first enabled hardware readout."""
+    if not any(k in RESOURCE_READINGS for k in (*order,*zones)):
+        return list(order), dict(zones)
+    candidates = [k for k in dict.fromkeys([*order,*zones]) if k in RESOURCE_READINGS]
+    selected = cfg.get('resource_compact_metrics', ())
+    if not isinstance(selected,(list,tuple)):
+        selected = ()
+    anchor = next((k for k in candidates if k in selected and cfg.get('resource_'+k)), candidates[0])
+    if 'resources' in order:
+        anchor = 'resources'
+    merged = ['resources' if k == anchor else k for k in order if k == anchor or k not in RESOURCE_READINGS]
+    assigned = {k:v for k,v in zones.items() if k not in RESOURCE_READINGS}
+    if anchor in zones:
+        assigned.setdefault('resources', zones[anchor])
+    return merged, assigned
 
 
 def _saved_order(cfg):
-    saved = cfg.get('resource_compact_order', ())
-    if any(key not in PINNABLE for key in saved):
+    saved, _ = group_resource_order(cfg, cfg.get('resource_compact_order', ()), cfg.get('resource_compact_zones', {}))
+    if any(key not in PINNABLE and key!='resources' for key in saved):
         # Add future items before a clock that was deliberately left at the end.
         result = list(dict.fromkeys([*saved, *NAMES]))
         if saved[-1] == 'clock':
@@ -79,8 +97,8 @@ def _saved_order(cfg):
             result.append('clock')
         return result
     # Older profiles ordered readouts only. Preserve their pinned/readout priority.
-    ordinary = ('cpu','memory','network','gpu','disk_activity','fps',*SENSOR_UNITS,'traffic',*COMPACT_CONTENT)
-    readings = [key for key in (*saved, *cfg['resource_compact_pinned'], *ordinary) if key not in COMPACT_ROUTINES]
+    ordinary = ('resources','traffic',*COMPACT_CONTENT)
+    readings = ['resources' if key in RESOURCE_READINGS else key for key in (*saved, *cfg['resource_compact_pinned'], *ordinary) if key not in COMPACT_ROUTINES]
     routines = list(dict.fromkeys([*(key for key in saved if key in COMPACT_ROUTINES),*COMPACT_ROUTINES]))
     status = [key for key in COMPACT_STATUS if key not in ('volume','brightness') or not cfg['resource_alert_'+key]]
     return list(dict.fromkeys(['face', *readings, 'alert_almanac', *reversed(routines), *status, 'mail',
@@ -88,7 +106,7 @@ def _saved_order(cfg):
 
 
 def item_zones(cfg, order):
-    assigned = cfg.get('resource_compact_zones', {})
+    _, assigned = group_resource_order(cfg, cfg.get('resource_compact_order', ()), cfg.get('resource_compact_zones', {}))
     # An existing clock deliberately moved into the row keeps its old neighbours.
     return {key:assigned.get(key, 'right' if key=='clock' and key==order[-1] else 'left') for key in order}
 
@@ -116,8 +134,8 @@ def configured_items(cfg):
     selected = set(cfg['resource_compact_metrics'])
     enabled = set()
     if component_location(cfg,'resources') == 'capsule':
-        enabled.update(key for key in selected if key not in (*COMPACT_STATUS, *COMPACT_ROUTINES, 'traffic')
-                       and cfg.get('resource_'+key))
+        if any(key in selected and cfg.get('resource_'+key) for key in RESOURCE_READINGS):
+            enabled.add('resources')
         if cfg['resource_system_status']:
             enabled.update(selected.intersection(('battery','connection','volume','brightness')))
         if 'bluetooth' in selected and (cfg['resource_bluetooth'] or cfg.get('resource_peripheral_profiles')):
@@ -129,9 +147,11 @@ def configured_items(cfg):
         if key in selected and cfg['resource_'+page] and component_location(cfg,page) == 'capsule':
             enabled.add(key)
     for key, option in (('face','resource_face'), ('runner','resource_runner_enabled'), ('clock','resource_clock'),
-                        ('alert_battery','resource_alert_battery'), ('alert_almanac','resource_alert_almanac')):
+                        ('alert_battery','resource_alert_battery')):
         if cfg[option]:
             enabled.add(key)
+    if almanac_categories(cfg):
+        enabled.add('alert_almanac')
     if cfg['resource_mail']:
         for key, option in (('mail','resource_mail_icon'), ('alert_mail_new','resource_mail_notifications'),
                             ('alert_mail_code','resource_alert_mail_code')):

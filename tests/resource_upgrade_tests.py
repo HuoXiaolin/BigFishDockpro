@@ -221,7 +221,7 @@ def run(api,runtime,root,app,output,checks):
             with patch('resource_panel.time.monotonic',return_value=101):w.animate()
             assert abs(w.halo_phase-(.1+1/seconds))<1e-9
         cfg['resource_halo_speed']='medium'
-        second.save(str(output/'upgrade-compact.png'));assert {'cpu','gpu','memory','network'}<=set(w.compact_shown)
+        second.save(str(output/'upgrade-compact.png'));assert len({'cpu','gpu','memory','network'}.intersection(w.compact_shown))<=1
         cfg['resource_halo']=False;w.sync_window();app.processEvents();assert not w.animation.isActive()
         assert w.grab().toImage()!=second and w.clock_tick.isActive() and service.deck
         w.grab().save(str(output/'upgrade-compact-halo-off.png'))
@@ -231,7 +231,8 @@ def run(api,runtime,root,app,output,checks):
         (output/'halo-render.json').write_text(json.dumps({'frames':60,'average_ms':round((time.perf_counter()-start)*1000/60,2),'dpr':w.devicePixelRatioF()}),encoding='utf-8')
         cfg['resource_music_text']='lyrics';w.grab().save(str(output/'upgrade-compact-lyrics.png'))
         seen=set()
-        for page in range(w.compact_pages):w.offset=page;w.grab();seen.update(w.compact_shown)
+        from capsule_order_tests import readout_frames
+        for _ in readout_frames(w):w.grab();seen.update(w.compact_shown)
         assert {'cpu','gpu','memory','network','traffic'}<=seen
         for width in (220,380,800):
             cfg['resource_compact_width']=width;w.sync_window();app.processEvents();w.grab().save(str(output/f'upgrade-compact-{width}.png'))
@@ -262,7 +263,7 @@ def run(api,runtime,root,app,output,checks):
         cfg.update(resource_enabled=False,resource_taskbar=False);service.sync();app.processEvents()
         assert not service.deck and not service.signature and not service.window and not service.strip
         assert not w.animation.isActive() and not w.clock_tick.isActive() and not w.rotate.isActive()
-        checks.append('Native resource UI: all sensor fields, AI columns/model details reopened and date filtering, music controls and seeking, compact CPU/GPU/memory/network simultaneously, ring/media/clock composition, 220–800 widths, dark/light themes, moving rainbow halo and off switch (timer stops; data continues), paging, font 8/11/18/24 persistence and narrow taskbar fallback, and complete feature shutdown.')
+        checks.append('Native resource UI: sensors, AI and music controls, compact hardware carousel with CPU/GPU/memory/network, ring/media/clock composition, 220–800 widths, themes, animated halo, taskbar fonts and complete feature shutdown.')
         from deck_bridge_qt_tests import run as pipe_check
         from resource_redesign_tests import run as redesign
         redesign(api,runtime,app,output,checks)

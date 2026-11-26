@@ -53,7 +53,7 @@ def check_centering(window, app, output, checks):
                   resource_mail=True,resource_mail_icon=True,resource_clock=True,resource_clock_format='seconds',
                   resource_compact_density='auto',resource_compact_auto_width=False,resource_music_text='title',
                   resource_clock_festival=False,resource_clock_lunar=False,resource_clock_weekday=True,
-                  resource_compact_badge_height=20,resource_compact_rotate=False)
+                  resource_compact_badge_height=20,resource_compact_rotate_left=False,resource_compact_rotate_center=False,resource_compact_rotate_right=False)
     agenda=('agenda','下一项日程 · 项目周会')
     try:
         with patch.dict(cfg,settings),patch('resource_compact.compact_values',return_value=rows), \
@@ -115,7 +115,7 @@ def check_other_badges(window, app, output, checks):
     cfg=service.cfg
     original,turns=window.geometry(),window.page_turns
     settings=dict(resource_compact_height=42,resource_compact_badge_height=20,resource_compact_width=400,
-                  resource_compact_auto_width=False,resource_compact_density='auto',resource_compact_rotate=False,
+                  resource_compact_auto_width=False,resource_compact_density='auto',resource_compact_rotate_left=False,resource_compact_rotate_center=False,resource_compact_rotate_right=False,
                   resource_runner_enabled=False,resource_face=True,resource_face_scale=100,resource_mail=False,
                   resource_clock=False,resource_fold='pill')
     timepoints=(400,419,420,488,412,400)

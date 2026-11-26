@@ -411,11 +411,13 @@ class ResourceCapsule(QObject):
         if self.compact and (weather:=self.weather_alert(compact=True)):
             city,label=weather
             badges.append(('weather_notice',f'{label} · {city}'))
-        if self.cfg['resource_alert_almanac']:
+        from resource_options import almanac_categories
+        categories = almanac_categories(self.cfg)
+        if categories:
             from datetime import date
             from calendar_almanac import almanac
             day=almanac(date.today())
-            if day and (day.term_today or day.festival):badges.append(('almanac',day.badge()))
+            if day and day.badge_due(categories):badges.append(('almanac',day.badge_labels(categories)[0]))
         if notice:
             if notice[0] in ('mail_new','quota_notice'):
                 badges.insert(0,notice)

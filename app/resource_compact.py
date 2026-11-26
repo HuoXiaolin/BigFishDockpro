@@ -8,7 +8,7 @@ from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainter
 from resource_status import connection_labels,metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import capsule_reading, ring_ink
-from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RUNNER_SLOT,SENSOR_UNITS,compact_text_height,compact_tile_height,component_location
+from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RESOURCE_READINGS,RUNNER_SLOT,SENSOR_UNITS,almanac_categories,compact_text_height,compact_tile_height,component_location
 from capsule_order import clock_turn, has_component_order
 from compact_clock import capsule_clock_width, capsule_headers, draw_clock, headers, lines_at
 from compact_text import draw_stacked_text, readout_fonts
@@ -24,7 +24,8 @@ AI_TEXT_SIZE = 11
 CONTENT_TEXT_LEFT = 22
 CONTENT_PADDING = 4
 CONTENT_MIN_TEXT = 16
-WEATHER_MAX_WIDTH = 82
+STACKED_MIN_WIDTH = CONTENT_TEXT_LEFT + CONTENT_MIN_TEXT + CONTENT_PADDING
+STACKED_MAX_WIDTH = 82
 MUSIC_MAX_WIDTH = 96
 MUSIC_WAVE_BARS = 15
 MUSIC_WAVE_STEP = 3
@@ -184,7 +185,17 @@ def status_values(service):
     return values
 
 
-def compact_badges(service):
+def almanac_badge_lines(cfg):
+    categories = almanac_categories(cfg)
+    if not categories:
+        return {}
+    from datetime import date
+    from calendar_almanac import almanac
+    day = almanac(date.today())
+    return day.badge_lines(categories) if day else {}
+
+
+def compact_badges(service, almanac_page=0):
     cfg=service.cfg
     active=service.reminders()
     badges=list(active)
@@ -215,11 +226,14 @@ def compact_badges(service):
         else:routine['agenda']=('agenda','暂无日程')
     order=dict.fromkeys([*cfg['resource_compact_order'],*COMPACT_ROUTINES])
     badges.extend(routine[key] for key in order if key in routine)
-    if cfg['resource_alert_almanac'] and 'almanac' not in seen:
-        from datetime import date
-        from calendar_almanac import almanac
-        day=almanac(date.today())
-        if day:badges.append(('almanac',day.badge()))
+    if cfg['resource_alert_almanac']:
+        labels = tuple(almanac_badge_lines(cfg))
+        if labels:
+            badge = ('almanac', labels[almanac_page % len(labels)])
+            if 'almanac' in seen:
+                badges = [badge if kind == 'almanac' else (kind, label) for kind, label in badges]
+            else:
+                badges.append(badge)
     return badges,len(active)
 
 
@@ -247,6 +261,24 @@ def compact_values(window):
     return values
 
 
+def grouped_values(window):
+    groups = {}
+    for row in compact_values(window):
+        key = 'resources' if row[0] in RESOURCE_READINGS else row[0]
+        groups.setdefault(key, []).append(row)
+    return groups
+
+
+def visible_component_count(layout, key):
+    if not layout:
+        return 0
+    if 'positions' in layout:
+        placed = layout['positions'].get(key)
+        if not placed or placed.width < (STACKED_MIN_WIDTH if key=='alert_almanac' else 26):
+            return 0
+    return layout['component_counts'].get(key,0)
+
+
 @lru_cache(maxsize=256)
 def reading_width(key,label,dense,panel_height,side):
     caption, value = readout_fonts(panel_height,dense)
@@ -264,13 +296,13 @@ def reading_width(key,label,dense,panel_height,side):
 
 
 @lru_cache(maxsize=256)
-def weather_badge_width(place,temperature):
+def stacked_badge_width(title,value):
     font=QFont()
     font.setWeight(QFont.Normal);font.setPixelSize(8)
-    place_width=QFontMetrics(font).horizontalAdvance(place)
+    title_width=QFontMetrics(font).horizontalAdvance(title)
     font.setWeight(QFont.DemiBold);font.setPixelSize(10)
-    text_width=max(CONTENT_MIN_TEXT,place_width,QFontMetrics(font).horizontalAdvance(temperature))
-    return min(WEATHER_MAX_WIDTH,CONTENT_TEXT_LEFT+text_width+1+CONTENT_PADDING)
+    text_width=max(CONTENT_MIN_TEXT,title_width,QFontMetrics(font).horizontalAdvance(value))
+    return min(STACKED_MAX_WIDTH,CONTENT_TEXT_LEFT+text_width+1+CONTENT_PADDING)
 
 
 @lru_cache(maxsize=128)
@@ -291,7 +323,7 @@ def content_badge_width(row,cfg):
         icon_size=AI_RING_SIZE if reading and reading.remaining is not None else AI_ICON_SIZE
         return max(44, icon_size + AI_PADDING * 2 + AI_GAP + value_width + 1)
     if key=='music':return music_badge_width(None if cfg['resource_music_text']=='wave' else value)
-    return weather_badge_width(place,value)
+    return stacked_badge_width(place,value)
 
 
 def cell_width(row,dense,window):
@@ -348,13 +380,19 @@ def badge_slots(window,items,capacity,limit,priority=False):
     slots=[]
     for index,(kind,label) in enumerate(items):
         if capacity<25:break
-        text_width=metrics.horizontalAdvance(label)
-        cap=min(AGENDA_MAX_WIDTH,limit//5) if kind=='agenda' else 144 if kind in ('mail_new','quota_notice') else 110 if kind in ('almanac','weather_notice') else 72
+        if kind=='almanac':
+            rows=almanac_badge_lines(window.service.cfg)
+            natural=max((stacked_badge_width(*row) for row in rows.values()),default=stacked_badge_width(label,'今天'))
+            text_width=natural-CONTENT_TEXT_LEFT-CONTENT_PADDING
+        else:
+            text_width=metrics.horizontalAdvance(label)
+            cap=min(AGENDA_MAX_WIDTH,limit//5) if kind=='agenda' else 144 if kind in ('mail_new','quota_notice') else 110 if kind=='weather_notice' else 72
+            natural=min(cap,max(44,text_width+25))
         budget=capacity-3
         if priority:
             others=(len(items)-index-1)*25
             budget=max(22,budget-others)
-        width=min(budget,cap,max(44,text_width+25))
+        width=min(budget,natural)
         slots.append((kind,label,width,text_width))
         capacity-=width+3
     return slots,capacity
@@ -365,22 +403,20 @@ def _make_plan(window,limit=None):
     if has_component_order(cfg):
         from capsule_order_layout import make_plan
         return make_plan(window,max_width)
-    badges,active_count=compact_badges(window.service)
-    values=compact_values(window)
-    pinned_keys = cfg['resource_compact_pinned']
+    badges,active_count=compact_badges(window.service,window.component_pages['alert_almanac'])
+    values=grouped_values(window)
+    hardware=values.get('resources', [])
+    pinned_keys = list(dict.fromkeys('resources' if k in RESOURCE_READINGS else k for k in cfg['resource_compact_pinned']))
+    if hardware and 'resources' not in pinned_keys:
+        pinned_keys.append('resources')
+    if 'traffic' in values and 'traffic' not in pinned_keys:
+        pinned_keys.append('traffic')
     order = cfg.get('resource_compact_order', [])
     if order:
-        priority = {key: i for i, key in enumerate(order)}
-        values.sort(key=lambda row: priority.get(row[0], len(priority)))
+        priority = {key:i for i,key in enumerate(dict.fromkeys('resources' if k in RESOURCE_READINGS else k for k in order))}
         pinned_keys = sorted(pinned_keys, key=lambda key: priority.get(key, len(priority)))
-    requested=[row for key in pinned_keys for row in values if row[0]==key]
-    # A city/provider group may rotate within its own pinned slot, while the
-    # selected hardware readings remain stationary on every page.
-    groups=[]
-    for key in pinned_keys:
-        rows=[row for row in requested if row[0]==key]
-        if rows:groups.append(rows)
-    extras=[row for row in values if row not in requested]
+    groups=[values[key] for key in pinned_keys if key in values]
+    extras=[row for key,rows in values.items() if key not in pinned_keys for row in rows]
     dense=cfg['resource_compact_density']=='dense' or max_width<420 or window.height()<38
     if not dense:
         wanted=sum(max(cell_width(row,False,window) for row in group) for group in groups)
@@ -419,6 +455,9 @@ def _make_plan(window,limit=None):
     status=status[:max(0,capacity-ordinary_floor)//status_width]
     capacity-=len(status)*status_width
     routine,spare=badge_slots(window,badges[active_count:],max(0,capacity-ordinary_floor),max_width)
+    if any(key=='almanac' for key,_ in badges) and not any(key=='almanac' and width>=STACKED_MIN_WIDTH for key,_,width,_ in (*active,*routine)):
+        from capsule_order_layout import make_plan
+        return make_plan(window,max_width)
     capacity=min(capacity,spare+ordinary_floor)
     tail=available-capacity
     pinned_groups=[];pinned_widths=[];used=0
@@ -428,12 +467,22 @@ def _make_plan(window,limit=None):
         remainder=groups[index+1:]
         reserve=40+gap if extras or remainder else 0
         if used+cost+reserve<=capacity:
+            if group is hardware:
+                group = [hardware[window.component_pages['resources'] % len(hardware)]]
             pinned_groups.append(group);pinned_widths.append(width);used+=cost
+        elif group is hardware or group[0][0]=='traffic':
+            # Use the component overflow layout so a narrow row can still reach
+            # this card without putting its individual readings into other slots.
+            from capsule_order_layout import make_plan
+            return make_plan(window,max_width)
         else:extras.extend(group)
     room=capacity-used-(gap if used and extras else 0)
     pages=[('values',rows) for rows in packed(extras,room,dense,window)] if extras and room>=26 else [('values',[])]
     # Each slot gets to show every city, provider or calendar line before repeating.
     from math import lcm
+    component_counts = {'resources':len(hardware)}
+    if any(kind == 'almanac' and width >= STACKED_MIN_WIDTH for kind, _, width, _ in (*active, *routine)):
+        component_counts['alert_almanac'] = len(almanac_badge_lines(cfg))
     periods = {'left':lcm(len(pages),*(len(g) for g in pinned_groups)), 'right':len(capsule_headers(cfg,clock)) if clock else 1}
     count=lcm(*periods.values())
     pages=(pages*((count+len(pages)-1)//len(pages)))[:count]
@@ -443,7 +492,7 @@ def _make_plan(window,limit=None):
     from math import ceil
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
                 pinned_widths=pinned_widths,pages=pages,clock=clock,clock_width=clock_width,
-                bands=(('left','right'),),zone_periods=periods,
+                bands=(('left','right'),),zone_periods=periods,component_counts=component_counts,
                 face=face,face_gap=face_gap,core=used,dense=dense,gap=gap,overflow=len(pinned_groups)<len(groups),
                 active_badges=active,routine_badges=routine,status=status,status_width=status_width,devices=devices,runner_width=runner_width,mail_width=mail_width)
 
@@ -459,7 +508,11 @@ def notice_font(window):
 
 
 def notice_width(window,notice,limit,height):
-    text_width=QFontMetrics(notice_font(window)).horizontalAdvance(notice[1])
+    if notice[0]=='almanac':
+        rows=almanac_badge_lines(window.service.cfg).get(notice[1],(notice[1],'今天'))
+        text_width=stacked_badge_width(*rows)-CONTENT_TEXT_LEFT-CONTENT_PADDING
+    else:
+        text_width=QFontMetrics(notice_font(window)).horizontalAdvance(notice[1])
     side = compact_tile_height(window.service.cfg,height)
     return min(limit,280,max(76,28+side+text_width))
 
@@ -475,8 +528,12 @@ def paint_notice(window,p,notice):
     icon=QRectF(0,0,min(15,side),min(15,side));icon.moveCenter(tile.center())
     reminder_icon(p,icon,kind,ink)
     area=QRectF(window.rect()).adjusted(tile.right()+6,0,-9,0)
-    p.setFont(notice_font(window));p.setPen(QColor(colors['ink']))
-    p.drawText(area,Qt.AlignLeft|Qt.AlignVCenter,p.fontMetrics().elidedText(label,Qt.ElideRight,max(0,int(area.width()))))
+    if kind=='almanac':
+        rows=almanac_badge_lines(window.service.cfg).get(label,(label,'今天'))
+        paint_badge_lines(p,QRectF(area.x(),tile.y(),area.width(),side),*rows,colors['muted'],ink)
+    else:
+        p.setFont(notice_font(window));p.setPen(QColor(colors['ink']))
+        p.drawText(area,Qt.AlignLeft|Qt.AlignVCenter,p.fontMetrics().elidedText(label,Qt.ElideRight,max(0,int(area.width()))))
     window.reminder_kinds=[kind];window.reminder_bounds=[QRectF(window.rect())]
     window.status_bounds={};window.compact_ai_hits=[];window.compact_bounds=[];window.compact_shown=[]
 
@@ -569,6 +626,14 @@ def content_badge_rect(slot,row,cfg):
     return QRectF(slot.x()+offset,slot.center().y()-height/2,width,height)
 
 
+def paint_badge_lines(p,area,title,value,muted,ink):
+    if area.width()<CONTENT_MIN_TEXT:return
+    p.setFont(QFont())
+    line=area.height()/2
+    text(p,QRectF(area.x(),area.y(),area.width(),line),title,muted,max(1,min(8,int(line))))
+    text(p,QRectF(area.x(),area.center().y(),area.width(),line),value,ink,max(1,min(10,int(line))),True)
+
+
 def paint_content(window,p,rect,key,label,value,meta,overlays=None):
     c=window.colors;cfg=window.service.cfg;mid=rect.center().y()
     if key=='ai':
@@ -583,11 +648,7 @@ def paint_content(window,p,rect,key,label,value,meta,overlays=None):
             mark.moveCenter(rect.center())
         ink=compact_temperature_ink(meta['temperature'],c['light'],cfg['resource_weather_thresholds'])
         chip(p,rect,ink,c['light']);paint_weather_icon(p,mark,meta,c['light'])
-        if area.width()>=CONTENT_MIN_TEXT:
-            p.setFont(QFont())
-            line=rect.height()/2
-            text(p,QRectF(area.x(),rect.y(),area.width(),line),label,c['muted'],max(1,min(8,int(line))))
-            text(p,QRectF(area.x(),mid,area.width(),line),value,ink,max(1,min(10,int(line))),True)
+        paint_badge_lines(p,area,label,value,c['muted'],ink)
     else:
         area=rect.adjusted(CONTENT_TEXT_LEFT,0,-CONTENT_PADDING,0)
         ink='#285e85' if c['light'] else '#a2d7ff'
@@ -760,13 +821,19 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
     c=window.colors;height=badge_height(window)
     for kind,label,width,wanted in slots:
         rect=QRectF(right-width,mid-height/2,width,height)
-        if width<37:
+        show_text=width>=(STACKED_MIN_WIDTH if kind=='almanac' else 37)
+        if not show_text:
             side=min(width,height)
             rect=QRectF(rect.center().x()-side/2,mid-side/2,side,side)
         level=window.service.low_battery() if kind=='battery' else None
         ink=reminder_ink(kind,c['light'],level)
         chip(p,rect,ink,c['light'])
-        if width>=37:
+        if kind=='almanac' and show_text:
+            size=min(14,rect.height())
+            reminder_icon(p,QRectF(rect.x()+CONTENT_PADDING,mid-size/2,size,size),kind,ink)
+            rows=almanac_badge_lines(window.service.cfg).get(label,(label,'今天'))
+            paint_badge_lines(p,rect.adjusted(CONTENT_TEXT_LEFT,0,-CONTENT_PADDING,0),*rows,c['muted'],ink)
+        elif show_text:
             reminder_icon(p,QRectF(rect.left()+4,mid-6.5,13,13),kind,ink)
             area=rect.adjusted(20,1,-3,-1)
             if kind=='agenda' and label==window.marquee_title and wanted>area.width():

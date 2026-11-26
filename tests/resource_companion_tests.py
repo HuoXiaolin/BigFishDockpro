@@ -70,11 +70,11 @@ def check_compact_scroll(window,app,output,checks):
     from resource_panel import COMPACT_SCROLL_SECONDS
 
     cfg=window.service.cfg
-    options=dict(resource_compact_width=392,resource_compact_height=35,
+    options=dict(resource_compact_width=440,resource_compact_height=35,
                  resource_compact_pinned=['cpu','ai','weather'],resource_face_interactive=False,
-                 resource_halo=False,resource_compact_rotate=True,motion_enabled=True)
+                 resource_halo=False,resource_compact_rotate_left=True,motion_enabled=True)
     original={key:cfg[key] for key in options}
-    point=QPointF(45,17)
+    point=QPointF(1,17)
 
     def wheel(delta):
         event=QWheelEvent(point,QPointF(window.mapToGlobal(point.toPoint())),QPoint(),QPoint(0,delta),
@@ -104,7 +104,7 @@ def check_compact_scroll(window,app,output,checks):
     try:
         cfg.update(options)
         with patch.object(window.service,'reminders',return_value=(('focus','04:45'),)):
-            window.offset=0;window.sync_window();window.grab()
+            window.offset=0;window.component_pages['resources']=0;window.sync_window();window.grab()
             assert len(plan(window,window.width())['pages'])>2
             cpu=bounds('cpu');reminders=window.reminder_bounds;geometry=window.geometry()
             assert cpu and reminders and not window.animation.isActive()
@@ -127,6 +127,7 @@ def check_compact_scroll(window,app,output,checks):
 
 
 def run(api,runtime,app,output,checks):
+    from capsule_order_tests import readout_frames
     from resource_options import DEFAULTS
     from resource_redesign_tests import fixtures
     from resource_compact import plan
@@ -149,18 +150,16 @@ def run(api,runtime,app,output,checks):
         service.accept_sample(dict(time=time.monotonic(),cpu=37,gpu=21,memory=(62,8,16),network=(1024,2048)))
         for width,height in [(292,50),(220,38),(96,28),(560,44)]:
             cfg.update(resource_compact_width=width,resource_compact_height=height);w.sync_window();app.processEvents()
-            seen=set();providers=set();music=False;core=None
-            for page in range(len(plan(w,w.width())['pages'])):
-                w.offset=page;w.grab();seen.update(w.compact_shown);providers.update(w.compact_providers);music|=w.compact_media
+            seen=set();providers=set();music=False
+            for _ in readout_frames(w):
+                w.grab();seen.update(w.compact_shown);providers.update(w.compact_providers);music|=w.compact_media
                 bounds=w.compact_bounds
                 assert len(bounds)==len(w.compact_shown) and all(QRectF(w.rect()).contains(r) for r in bounds)
                 for i,r in enumerate(bounds):assert all(not r.intersects(other) for other in bounds[i+1:])
-                actual=[r[0] for r in plan(w,w.width())['pinned']]
-                if core is None:core=actual
-                assert actual==core and ('cpu' in actual or width<128)
-                assert plan(w,w.width())['face']>0
-                assert all(r.left()>=8+plan(w,w.width())['face'] for r in bounds)
-                if width>=292:assert {'cpu','memory','gpu','network'}<=set(w.compact_shown)
+                layout=plan(w,w.width())
+                if 'positions' not in layout:
+                    assert layout['face']>0 and all(r.left()>=8+layout['face'] for r in bounds)
+                assert len({'cpu','memory','gpu','network'}.intersection(w.compact_shown))<=1
             assert {'cpu','memory','gpu','network','weather'}<=seen and providers=={'Codex','Claude'} and music,(width,seen,providers,music)
             w.offset=0;w.grab().save(str(output/f'companion-resident-{width}x{height}.png'))
         cfg.update(resource_compact_pinned=['ai','music','weather'],resource_compact_width=560)
@@ -222,15 +221,16 @@ def run(api,runtime,app,output,checks):
         for theme in ('light','dark'):
             cfg['resource_appearance']['theme']=theme
             w.sync_window()
-            for page, provider, mark, value, shot in (
-                (0,'Dsh','deepseek-color.svg','¥12.48','balance'),
-                (1,'Codex','codex.png','61%','codex'),
+            for provider, mark, value, shot in (
+                ('Dsh','deepseek-color.svg','¥12.48','balance'),
+                ('Codex','codex.png','61%','codex'),
             ):
-                w.offset=page
-                painted_amounts.clear()
-                with patch.object(resource_compact,'text',record_amount), patch.object(marks,'provider_art',wraps=marks.provider_art) as art:
-                    image=w.grab()
-                assert provider in w.compact_providers and value in painted_amounts
+                for page in range(len(plan(w,w.width())['pages'])):
+                    w.offset=page;w._compact_surface=None;painted_amounts.clear()
+                    with patch.object(resource_compact,'text',record_amount), patch.object(marks,'provider_art',wraps=marks.provider_art) as art:
+                        image=w.grab()
+                    if provider in w.compact_providers:break
+                assert provider in w.compact_providers and value in painted_amounts,(provider,w.compact_providers,painted_amounts)
                 assert any(call.args[0]==mark for call in art.call_args_list)
                 assert image.save(str(output/f'compact-provider-{shot}-{theme}.png'))
         cfg['resource_appearance']['theme']='light'
@@ -240,11 +240,24 @@ def run(api,runtime,app,output,checks):
         # A long pinned list cannot evict an enabled face, including after save.
         cfg.update(resource_compact_width=300,resource_compact_pinned=['cpu','memory','network','ai','music','weather']);w.sync_window();w.grab()
         assert plan(w,w.width())['face']>0
-        assert plan(w,w.width())['face_gap']==4 and plan(w,w.width())['gap']==1.5
+        layout=plan(w,w.width())
+        if 'positions' in layout:
+            slots=list(layout['positions'].values())
+            assert all(a.x+a.width<b.x for a,b in zip(slots,slots[1:]))
+        else:
+            assert layout['face_gap']==4 and layout['gap']==1.5
         w.grab().save(str(output/'face-reserved-many-pins.png'))
         cfg['resource_compact_order']=['memory','cpu','network']
         w.refresh()
-        assert [row[0] for row in plan(w,w.width())['pinned'][:2]]==['memory','cpu']
+        from capsule_order import display_order
+        assert display_order(cfg).count('resources')==1
+        available=set()
+        for _ in readout_frames(w):
+            w.grab()
+            readings={'cpu','memory','network'}.intersection(w.compact_shown)
+            assert len(readings)<=1
+            available.update(readings)
+        assert available=={'cpu','memory','network'}
         cfg['resource_compact_order']=[]
         from resource_face import PetFace
         face = PetFace()
@@ -386,5 +399,5 @@ def run(api,runtime,app,output,checks):
             w.grab()
         assert not face_calls
         checks.append('Capsule face rotation settings survive page changes and persistence, run alongside cursor tracking, and stop when faces are disabled.')
-        checks.append('Resident compact regressions: 96×28–560×44 bounds, stable CPU/core pins at 292px, all supplementary values/AI/media reachable, AI/music/cities independently pinned; face static/interactive/size, hover with auto-collapse off and click-only; all five pages stay 260×180 with scrollable tabs. Seven vector weather backgrounds in both themes; options persist.')
+        checks.append('Compact pills from 96×28 to 560×44 cycle one resource reading at a time. Checked reachable media, quotas and cities, face interactions, scrollable expanded tabs and seven weather backgrounds in both themes.')
     finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

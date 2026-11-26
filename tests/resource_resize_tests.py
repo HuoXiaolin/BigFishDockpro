@@ -184,7 +184,7 @@ def run(api,runtime,app,output,checks):
         assert 'resource_notifications' not in migrated
         assert migrated['resource_open_page'] == 'last'
         assert migrated['resource_compact_pinned'] == ['cpu','weather']
-        assert migrated['resource_compact_order'] == ['weather','cpu']
+        assert migrated['resource_compact_order'] == ['weather','resources']
         checks.append('Capsule resize: sampling does not reset drag; single save, screen/min/max bounds, page geometry stable, manual compact size survives recreation, failed save restores. Unified AI, single-provider filter hidden, remarks collapsed.')
         checks.append('Capsule opening page: weather preference persists, hover and click open it, normal refresh preserves the selected page, disabled preference falls back to resources, and old reminder settings and pins migrate away.')
     finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

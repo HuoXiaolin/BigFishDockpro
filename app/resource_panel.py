@@ -3,7 +3,7 @@ from datetime import date
 from html import escape
 from math import ceil
 import time
-from PyQt5.QtCore import Qt,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
+from PyQt5.QtCore import Qt,QDateTime,QTime,QEvent,QRect,QRectF,QPoint,QPointF,QSize,QTimer
 from PyQt5.QtGui import QColor,QPainter,QPainterPath,QPen,QFont,QFontMetrics,QCursor,QPixmap,QPalette,QRegion
 from PyQt5.QtWidgets import (QWidget,QLabel,QToolButton,QFrame,QScrollArea,
     QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QLayout,QApplication,QSizePolicy,QToolTip)
@@ -18,7 +18,7 @@ from flash_view import palette_for,icon
 from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
 from capsule_order import PageTurns, ZONES, automatic_step
-from resource_options import ZONE_ROTATION_KEYS
+from resource_options import RESOURCE_READINGS, ZONE_ROTATION_KEYS, almanac_categories
 from desktop_edge_reveal import popup_blocks_folding
 from fold_transition import Foldable
 from window_backdrop import component_backdrop, uses_wallpaper
@@ -27,6 +27,30 @@ from window_backdrop import component_backdrop, uses_wallpaper
 COMPACT_PAGES={**dict.fromkeys(COMPACT_STATUS,'resources'),'weather':'weather','music':'music','ai':'ai','mail':'mail'}
 COMPACT_FRAME_MS = 16
 COMPACT_SCROLL_SECONDS = .24
+
+
+class CompactReadoutTimer(QTimer):
+    """Count time spent on screen across separate visits to a narrow capsule page."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.period = 0
+        self.remaining = 0
+        self.timeout.connect(self.restore_period)
+
+    def sync(self, period, visible):
+        if self.period != period:
+            self.stop()
+            self.period = self.remaining = period
+        if visible and not self.isActive():
+            self.start(self.remaining)
+        elif not visible and self.isActive():
+            self.remaining = max(1,self.remainingTime())
+            self.stop()
+
+    def restore_period(self):
+        self.remaining = self.period
+        if self.isActive() and self.interval()!=self.period:
+            self.start(self.period)
 
 
 def display_values(service,compact=None):
@@ -446,6 +470,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.runner_hovered=False
         self.setMouseTracking(True)
         self.press=None;self.page_turns=PageTurns();self.last_layer=None
+        self.component_pages = {'resources':0, 'alert_almanac':0}
         self.taskbar_placement=None
         self.taskbar_size=None
         self.page_key='resources';self._displayed_compact=None;self.halo_phase=0.;self.compact_pages=1
@@ -500,8 +525,13 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.animation.setInterval(COMPACT_FRAME_MS)
         self.animation.timeout.connect(self.animate)
         self.clock_day = date.today()
-        self.clock_tick=QTimer(self);self.clock_tick.setInterval(1000);self.clock_tick.timeout.connect(self.tick_clock)
+        self.clock_tick=QTimer(self);self.clock_tick.setTimerType(Qt.PreciseTimer);self.clock_tick.timeout.connect(self.tick_clock)
         self.rotate=QTimer(self);self.rotate.timeout.connect(self.next_page)
+        self.component_timers = {}
+        for key in self.component_pages:
+            timer = CompactReadoutTimer(self)
+            timer.timeout.connect(lambda key=key:self.step_component(key, 1, automatic=True))
+            self.component_timers[key] = timer
         self._wallpaper_key = None
         self.wallpaper_timer = QTimer(self)
         self.wallpaper_timer.setInterval(5000)
@@ -802,8 +832,11 @@ class ResourceWindow(Foldable,ResourceContentHost):
         today = date.today()
         if self.clock_day != today:
             self.clock_day = today
+            self._compact_cache = None
             self.reposition()
             self.sync_rotation()
+        if self.clock_tick.isSingleShot():
+            self.sync_animation()
         self.update()
 
     def next_page(self):
@@ -820,7 +853,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
 
     def rotating_zones(self):
         cfg = self.service.cfg
-        return {zone for zone,key in ZONE_ROTATION_KEYS.items() if cfg['resource_compact_rotate'] and cfg[key]}
+        return {zone for zone,key in ZONE_ROTATION_KEYS.items() if cfg[key]}
 
     def readout_layout(self):
         edge = getattr(self, 'edge_reveal', None)
@@ -831,13 +864,40 @@ class ResourceWindow(Foldable,ResourceContentHost):
         return plan(self,self.width())
 
     def sync_rotation(self):
+        from resource_compact import visible_component_count
         zones = self.rotating_zones()
-        layout = self.readout_layout() if zones else None
+        layout = self.readout_layout()
+        cfg = self.service.cfg
+        counts = layout['component_counts'] if layout else {}
+        for key,timer in self.component_timers.items():
+            interval = cfg['resource_almanac_interval' if key=='alert_almanac' else 'resource_compact_rotate_interval']*1000
+            timer.sync(interval if counts.get(key,0)>1 else 0, visible_component_count(layout,key)>1)
         if layout and automatic_step(layout,self.page_turns,zones):
             interval = self.service.cfg['resource_compact_rotate_interval']*1000
             if not self.rotate.isActive() or self.rotate.interval()!=interval:self.rotate.start(interval)
         elif self.rotate.isActive():
             self.rotate.stop()
+
+    def component_at(self, point):
+        for key,rect in zip(self.reminder_kinds, self.reminder_bounds):
+            if key=='almanac' and rect.contains(QPointF(point)):
+                return 'alert_almanac'
+        for key,rect in zip(getattr(self,'compact_shown',()), getattr(self,'compact_bounds',())):
+            if key in RESOURCE_READINGS and rect.contains(QPointF(point)):
+                return 'resources'
+        return None
+
+    def step_component(self, key, step, *, automatic=False):
+        from resource_compact import visible_component_count
+        count = visible_component_count(self.readout_layout(),key)
+        if count <= 1:
+            return False
+        if automatic and (self.press is not None or (self.underMouse() and self.component_at(self.mapFromGlobal(QCursor.pos())) == key)):
+            return False
+        self.component_pages[key] = (self.component_pages[key]+step) % count
+        self._compact_cache = None
+        self.update()
+        return True
 
     def shift_compact_page(self, step, *, automatic=False):
         layout = self.readout_layout()
@@ -860,7 +920,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
             if not self.animation.isActive() or self.animation.interval() != COMPACT_FRAME_MS:
                 self.animation.start(COMPACT_FRAME_MS)
         self.update()
-        if len(layout['bands'])>1:self.sync_rotation()
+        self.sync_rotation()
         return True
 
     def settle_compact_scroll(self):
@@ -894,8 +954,16 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 self.animation.start(interval)
         else:
             self.animation.stop()
-        if visible and self.service.compact and cfg['resource_clock']:
-            if not self.clock_tick.isActive():self.clock_tick.start()
+        if visible and self.service.compact and (cfg['resource_clock'] or almanac_categories(cfg)):
+            day_only = not cfg['resource_clock']
+            if not self.clock_tick.isActive() or self.clock_tick.isSingleShot() != day_only:
+                self.clock_tick.setSingleShot(day_only)
+                interval = 1000
+                if day_only:
+                    now = QDateTime.currentDateTime()
+                    midnight = QDateTime(now.date().addDays(1), QTime(0, 0))
+                    interval = max(1, now.msecsTo(midnight) + 1)
+                self.clock_tick.start(interval)
         elif self.clock_tick.isActive():self.clock_tick.stop()
         self.sync_rotation()
 
@@ -1157,7 +1225,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
             data=self.service.latest.get('traffic') or {}
             for key,name in [('day','今日'),('month','本月'),('year','本年')]:
                 if key in data:tips.append(name+'流量：↓ '+amount(data[key][0])+'  ↑ '+amount(data[key][1])+'  合计 '+amount(sum(data[key])))
-        reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注','almanac':'农历',
+        reminder_labels={'agenda':'日程提醒','battery':'电量低','water':'喝水提醒','focus':'专注','almanac':'节气与节日',
                          'rest':'休息','focus_done':'专注','rest_done':'休息','paused':'已暂停','weather_notice':'天气提醒',
                          'stopwatch':'正计时','stopwatch_paused':'正计时暂停','alarm':'闹钟','alarm_due':'闹钟响铃',
                          'mail_new':'新邮件','quota_notice':'额度提醒'}
@@ -1310,7 +1378,13 @@ class ResourceWindow(Foldable,ResourceContentHost):
 
     def wheelEvent(self,event):
         delta = event.angleDelta().y() or event.pixelDelta().y()
-        if delta and self.shift_compact_page(1 if delta<0 else -1):
+        step = 1 if delta<0 else -1
+        key = self.component_at(event.pos()) if delta and self.service.compact else None
+        if key and self.step_component(key,step):
+            timer=self.component_timers[key]
+            if timer.isActive():timer.start(timer.period)
+            event.accept()
+        elif delta and self.shift_compact_page(step):
             if self.rotate.isActive():self.rotate.start()
             event.accept()
         else:event.ignore()
@@ -1515,6 +1589,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.clear_tab_drop()
         self.settle_compact_scroll()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
+        for timer in self.component_timers.values():timer.sync(0,False)
         self.wallpaper_timer.stop()
         self.service.runner_visibility_changed(self)
         self.enter_timer.stop();self.auto_fold_timer.stop();self.outside_since=None
@@ -1534,4 +1609,5 @@ class ResourceWindow(Foldable,ResourceContentHost):
             placement,self.taskbar_placement=self.taskbar_placement,None;placement.close()
         self.liquid.close()
         self.animation.stop();self.clock_tick.stop();self.rotate.stop()
+        for timer in self.component_timers.values():timer.stop()
         self.enter_timer.stop();self.auto_fold_timer.stop();self.glass.clear();self.hide();self.deleteLater()

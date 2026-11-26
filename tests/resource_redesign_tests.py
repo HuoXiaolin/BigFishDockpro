@@ -393,10 +393,11 @@ def run(api,runtime,app,output,checks):
         defaults=list(cfg['resource_compact_pinned'])
         painted.clear()
         quota_captured = False
+        from capsule_order_tests import readout_frames
+        from resource_options import RESOURCE_READINGS
         for width in (220,380,440,560,800):
             cfg['resource_compact_width']=width;cfg['resource_compact_pinned']=defaults;w.sync_window();app.processEvents();seen=set();sources=set();music=False
-            for page in range(len(plan(w,w.width())['pages'])):
-                w.offset=page
+            for _ in readout_frames(w):
                 with patch.object(resource_compact, 'text', record_text):w.grab()
                 seen.update(w.compact_shown);sources.update(w.compact_providers);music=music or w.compact_media
                 if width==560 and 'Codex' in w.compact_providers and not quota_captured:
@@ -406,14 +407,16 @@ def run(api,runtime,app,output,checks):
                 for rect in bounds:assert QRectF(w.rect()).contains(rect)
                 for i,rect in enumerate(bounds):assert all(not rect.intersects(other) for other in bounds[i+1:])
                 assert len(bounds)==len(w.compact_shown),'A reading was reported as visible but was not painted'
-                if not plan(w,w.width())['overflow']:assert set(defaults)<=set(w.compact_shown)
+                assert len(set(RESOURCE_READINGS).intersection(w.compact_shown))<=1
             assert {'cpu','memory','gpu','network','cpu_power','gpu_power','traffic'}<=seen and sources=={'Codex','Claude'} and music
             w.offset=0;w.grab().save(str(output/f'redesign-compact-{width}.png'))
         assert ('61%', quota_color(61, False)) in painted
         assert ('100%', quota_color(100, False)) in painted
         cfg.update(resource_compact_width=560,resource_compact_pinned=['cpu_power','gpu_power']);w.sync_window();app.processEvents()
-        for page in range(len(plan(w,w.width())['pages'])):
-            w.offset=page;w.grab();assert {'cpu_power','gpu_power'}<=set(w.compact_shown)
+        powers=set()
+        for _ in readout_frames(w):
+            w.grab();powers.update({'cpu_power','gpu_power'}.intersection(w.compact_shown))
+        assert powers=={'cpu_power','gpu_power'}
         cfg['resource_compact_pinned']=defaults
         dialog=ResourceOptions(service)
         dialog.tabs.setCurrentIndex(2)

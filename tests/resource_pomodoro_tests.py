@@ -392,13 +392,23 @@ def run(api,runtime,app,output,checks):
             with patch('calendar_almanac.almanac',return_value=almanac(date(2026,11,22))):
                 settings=ResourceOptions(service);settings.tabs.setCurrentIndex(9)
                 toggle=settings.fields['resource_alert_almanac'];toggle.setChecked(True)
-                assert settings.commit() and api.load_config()['resource_alert_almanac']
+                settings.fields['resource_almanac_lunar'].setChecked(False)
+                settings.fields['resource_almanac_interval'].setValue(13)
+                settings.tabs.setCurrentIndex(2);settings.tabs.setCurrentIndex(9)
+                assert settings.commit()
+                saved=api.load_config()
+                assert saved['resource_alert_almanac'] and saved['resource_almanac_term'] and saved['resource_almanac_civil']
+                assert not saved['resource_almanac_lunar'] and saved['resource_almanac_interval']==13
                 check_badge_expansion(service,app)
                 assert service.fold(True)
+                settings.close();settings.deleteLater()
+                settings=ResourceOptions(service);settings.tabs.setCurrentIndex(9)
+                toggle=settings.fields['resource_alert_almanac']
+                assert not settings.fields['resource_almanac_lunar'].isChecked() and settings.fields['resource_almanac_interval'].value()==13
                 toggle.setChecked(False);assert settings.commit() and not api.load_config()['resource_alert_almanac']
                 window.grab();assert 'almanac' not in window.reminder_kinds
                 settings.close();settings.deleteLater();service.fold(False);app.processEvents()
-            checks.append('Clicking the seasonal badge expands the capsule once onto its configured page without a popup. Its saved switch removes the badge.')
+            checks.append('The compact holiday controls retain each calendar and a 13-second interval across tabs, saving and reopening. Clicking the badge opens the chosen page; disabling it removes the badge.')
             options=ResourceOptions(service);options.tabs.setCurrentIndex(2)
             for key in COMPACT_DEVICE:options.compact_fields[key].setChecked(True)
             fmt=options.fields['resource_clock_format'];fmt.setCurrentIndex(fmt.findData('date_seconds'))

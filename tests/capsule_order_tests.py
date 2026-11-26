@@ -152,6 +152,21 @@ def check_clocks(api, runtime, app, output, checks):
     checks.append('Dock clock has 6px side insets and the capsule clock 2px. Date and time both use bold text on both surfaces. The centered capsule text has a 2px optical overshoot when it fits, including weekday, lunar date, holidays and ticking seconds.')
 
 
+def readout_frames(window):
+    """Visit each visible resource in each spatial page using its own control."""
+    from resource_compact import plan, visible_component_count
+    turns, resource_page = window.page_turns, window.component_pages['resources']
+    try:
+        for page in range(len(plan(window,window.width())['pages'])):
+            window.offset = page
+            count = visible_component_count(plan(window,window.width()),'resources')
+            for index in range(max(1,count)):
+                if index:assert window.step_component('resources',1)
+                yield page
+    finally:
+        window.page_turns=turns;window.component_pages['resources']=resource_page;window._compact_cache=None
+
+
 def check_resource_heights(window,output,checks):
     from PyQt5.QtGui import QFont, QFontInfo, QFontMetricsF, QImage, QPainter
     from compact_text import draw_stacked_text
@@ -203,8 +218,8 @@ def check_resource_heights(window,output,checks):
                               for x in range(traffic_hit.left(),traffic_hit.right()+1))]
                     assert abs(ink_rows[-1]-ink_rows[0]+1-optical)<=2 and abs(ink_rows[0]+ink_rows[-1]-(panel-1))<=2
                     hits={}
-                    for page in range(len(layout['pages'])):
-                        window.offset=page;window.grab()
+                    for _ in readout_frames(window):
+                        window.grab()
                         hits.update(zip(window.compact_shown,window.compact_bounds))
                     assert set(hits)==set(keys),(ordered,wanted,panel,list(hits))
                     assert all(r.height()==optical and r.center().y()==panel/2 for r in hits.values())
@@ -221,8 +236,13 @@ def check_resource_heights(window,output,checks):
                 cfg.update(resource_compact_zones={},resource_compact_order=[],resource_compact_badge_height=40)
                 window.resize(96,52);window.offset=0;window._compact_cache=None
                 narrow=plan(window,96)
-                assert narrow['clock'] and 20<=narrow['clock_width']<=96-16-26
-                assert any(readings for _,readings in narrow['pages'])
+                seen=set()
+                for _ in readout_frames(window):
+                    window.grab()
+                    current=plan(window,96)
+                    if current['clock']:assert 20<=current['clock_width']<=80
+                    seen.update(current['positions'])
+                assert {'resources','clock','traffic'}<=seen
                 assert cell_width(('cpu','CPU','9%',''),True,window)==cell_width(('cpu','CPU','100%',''),True,window)
     finally:
         window.resize(original);window.page_turns=turns;window._compact_cache=None;window._compact_surface=None;window.grab()
@@ -239,13 +259,13 @@ def check_paging(window, app, checks):
     readings = [(key,key,'35%','') for key in ('cpu','memory','network','gpu')]
     cities = [dict(name='天津',temperature=10,code=0),dict(name='北京',temperature=14,code=0)]
     settings = dict(resource_clock=True,resource_clock_format='seconds',resource_clock_festival=False,
-                    resource_clock_weekday=True,resource_clock_lunar=False,resource_compact_rotate=True,
+                    resource_clock_weekday=True,resource_clock_lunar=False,
                     resource_compact_rotate_left=True,resource_compact_rotate_center=True,resource_compact_rotate_right=True,
                     resource_face=True,resource_runner_enabled=False,resource_mail=False,resource_traffic=False,
                     resource_system_status=False,resource_music=False,resource_weather=True,resource_weather_compact=True,
                     resource_compact_metrics=['cpu','memory','network','gpu'],resource_compact_zones={'clock':'center','face':'right'})
     def wheel(delta):
-        pos=QPointF(18,16)
+        pos=QPointF(1,16)
         event=QWheelEvent(pos,QPointF(window.mapToGlobal(pos.toPoint())),QPoint(),QPoint(0,delta),
                           Qt.NoButton,Qt.NoModifier,Qt.NoScrollPhase,False)
         app.sendEvent(window,event)
@@ -266,7 +286,7 @@ def check_paging(window, app, checks):
                 seen.update(slots)
                 if 'weather' in slots:temperatures.add(slots['weather'].data[2])
                 wheel(-120)
-            assert seen=={'clock','face','cpu','memory','network','gpu','weather'} and temperatures=={'10℃','14℃'}
+            assert seen=={'clock','face','resources','weather'} and temperatures=={'10℃','14℃'}
             # Left and right each have two readings and the center has two date lines.
             cfg.update(resource_compact_zones={'traffic':'right','clock':'center','face':'right'},resource_clock_format='date_seconds',
                        resource_compact_rotate_interval=11,resource_compact_rotate_center=False,resource_traffic=True)
@@ -325,13 +345,13 @@ def check_paging(window, app, checks):
             with patch.object(window,'underMouse',return_value=False):
                 window.rotate.timeout.emit()
             assert window.offset==1 and not window.compact_scroll and clock_rows(window,forms)[0]!=date
-            cfg['resource_compact_rotate']=False;window.sync_animation()
+            cfg['resource_compact_rotate_center']=False;window.sync_animation()
             assert not window.rotate.isActive() and window.clock_tick.isActive()
             with patch.object(window,'underMouse',return_value=False):
                 window.rotate.timeout.emit()
             assert window.offset==1
             wheel(120);assert window.offset==0 and clock_rows(window,forms)[0]==date
-            cfg['resource_compact_rotate']=True;window.sync_rotation()
+            cfg['resource_compact_rotate_center']=True;window.sync_rotation()
             assert window.rotate.isActive()
             cfg['resource_fold']='ball';window.sync_rotation()
             assert not window.rotate.isActive()
@@ -344,7 +364,7 @@ def check_paging(window, app, checks):
 def check_weather_resize(window, app, output, checks):
     from PyQt5.QtCore import QRectF
     from capsule_badge_resize_tests import drag_frames
-    from resource_compact import chip, content_badge_rect, plan, weather_badge_width
+    from resource_compact import chip, content_badge_rect, plan, stacked_badge_width
     from resource_weather_style import paint_weather_icon
 
     cfg = window.service.cfg
@@ -353,7 +373,7 @@ def check_weather_resize(window, app, output, checks):
     settings = dict(resource_fold='pill',resource_compact_width=400,resource_compact_height=42,
                     resource_compact_badge_height=20,resource_compact_auto_width=False,resource_compact_density='auto',
                     resource_face=False,resource_runner_enabled=False,resource_mail=False,resource_clock=True,resource_clock_format='seconds',
-                    resource_compact_pinned=['weather'],resource_compact_rotate=False)
+                    resource_compact_pinned=['weather'],resource_compact_rotate_left=False,resource_compact_rotate_center=False,resource_compact_rotate_right=False)
     try:
         with patch.dict(cfg,settings), patch('resource_compact.compact_values',return_value=readings), \
                 patch('resource_compact.compact_badges',return_value=([],0)), patch('resource_compact.status_values',return_value=[]), \
@@ -387,7 +407,7 @@ def check_weather_resize(window, app, output, checks):
                     window.offset=page;window._compact_cache=None;window.grab()
                     hit=window.compact_bounds[window.compact_shown.index('weather')]
                     slot=plan(window,488)['positions']['weather']
-                    assert slot.data[1:3]==(place,temp) and hit.width()==weather_badge_width(place,temp)
+                    assert slot.data[1:3]==(place,temp) and hit.width()==stacked_badge_width(place,temp)
                     spare=slot.width-hit.width()
                     offset=spare if zone=='right' else spare/2 if zone=='center' else 0
                     assert hit.left()==slot.x+offset
@@ -427,7 +447,7 @@ def run(api,runtime,app,output,checks):
                       resource_runner_enabled=True,resource_face=True,resource_clock=True,resource_quota_alert=True)
         assert set(configured_items(all_on))==set(NAMES),set(NAMES)-set(configured_items(all_on))
         all_on['resource_component_locations']={'resources':'desktop','weather':'desktop','ai':'desktop','traffic':'desktop'}
-        assert not {'cpu','board_temp','ai','weather','traffic','bluetooth'}.intersection(configured_items(all_on))
+        assert not {'resources','ai','weather','traffic','bluetooth'}.intersection(configured_items(all_on))
         cfg.update(copy.deepcopy(DEFAULTS))
         cfg.update(resource_enabled=True,resource_collapsed=True,resource_fold='pill',resource_auto_hide=False,
                    resource_compact_width=560,resource_compact_auto_width=False,resource_edge='free',
@@ -443,20 +463,20 @@ def run(api,runtime,app,output,checks):
         window=service.window
         options=ResourceOptions(service);options.tabs.setCurrentIndex(2);options.show();app.processEvents()
         initial=list(configured_items(cfg))
-        assert set(initial)=={'face','memory','volume','mail','runner','device_caps_lock','clock'} and initial[-1]=='clock'
+        assert set(initial)=={'face','resources','volume','mail','runner','device_caps_lock','clock'} and initial[-1]=='clock'
         sort_dialog(options,initial)
         # Unsaved changes on a released lazy page and directly on this page both count.
         options.tabs.setCurrentIndex(5);options.fields['resource_board_temp'].setChecked(True)
         options.tabs.setCurrentIndex(2);options.compact_fields['cpu'].setChecked(True)
         options.compact_fields['memory'].setChecked(False)
-        draft=[k for k in display_order(cfg) if k in (set(initial)-{'memory'})|{'cpu','board_temp'}]
-        target=['device_caps_lock','clock','volume','cpu','runner','mail','board_temp','face']
+        draft=initial
+        target=['device_caps_lock','clock','volume','resources','runner','mail','face']
         sort_dialog(options,draft,target,split=(2,5),accept=False)
-        assert 'resource_compact_order' not in options.orders and cfg['resource_compact_order']==['memory','cpu']
+        assert 'resource_compact_order' not in options.orders and list(configured_items(cfg))==initial
         sort_dialog(options,draft,target,split=(2,5),shot=output/'compact-order-settings.png')
         assert list(configured_items(cfg))==initial
         sort_dialog(options,target)
-        options.fields['resource_compact_rotate'].setChecked(True)
+        assert 'resource_compact_rotate' not in options.fields
         options.fields['resource_compact_rotate_interval'].setValue(11)
         options.fields['resource_compact_rotate_center'].setChecked(False)
         options.tabs.setCurrentIndex(5);options.tabs.setCurrentIndex(2)
@@ -469,21 +489,26 @@ def run(api,runtime,app,output,checks):
         scroll.ensureWidgetVisible(zone_field,0,12)
         assert scroll.viewport().rect().contains(zone_field.mapTo(scroll.viewport(),zone_field.rect().center()))
         app.processEvents();assert options.grab().save(str(output/'compact-pagination-settings.png'))
-        options.fields['resource_compact_rotate'].setChecked(False)
-        assert not options.fields['resource_compact_rotate_interval'].isEnabled() and not options.fields['resource_compact_rotate_left'].isEnabled()
+        assert options.fields['resource_compact_rotate_interval'].isEnabled() and options.fields['resource_compact_rotate_left'].isEnabled()
         assert options.commit()
         options.close();options.deleteLater();options=None
         stored=api.load_config()
         assert list(configured_items(stored))==target and len(stored['resource_compact_order'])==len(NAMES)
-        assert not stored['resource_compact_rotate']
+        assert 'resource_compact_rotate' not in stored
         assert stored['resource_compact_rotate_interval']==11 and not stored['resource_compact_rotate_center']
         legacy={k:v for k,v in stored.items() if not k.startswith('resource_compact_rotate_')}
+        legacy['resource_compact_rotate']=False
         imported=normalize(legacy,api)
-        assert not imported['resource_compact_rotate'] and imported['resource_compact_rotate_interval']==6
-        assert all(imported['resource_compact_rotate_'+zone] for zone in ('left','center','right'))
+        assert 'resource_compact_rotate' not in imported and imported['resource_compact_rotate_interval']==6
+        assert not any(imported['resource_compact_rotate_'+zone] for zone in ('left','center','right'))
+        migrated=normalize(dict(stored,resource_compact_order=['face','cpu','clock','memory','traffic'],
+                                resource_compact_zones={'cpu':'left','memory':'center','clock':'right'},
+                                resource_compact_metrics=['memory','traffic'],resource_memory=True),api)
+        assert migrated['resource_compact_order']==['face','clock','resources','traffic']
+        assert migrated['resource_compact_zones']=={'resources':'center','clock':'right'}
         assert configured_items(normalize(stored,api))==configured_items(stored)
         assert normalize(stored,api)['resource_compact_zones']==stored['resource_compact_zones']
-        assert 'board_temp' in configured_items(cfg) and 'memory' not in configured_items(cfg)
+        assert 'resources' in configured_items(cfg) and not {'cpu','board_temp','memory'}.intersection(configured_items(cfg))
         # Disabled items keep their own positions through edits and re-enabling.
         options=ResourceOptions(service);options.tabs.setCurrentIndex(2);options.show();app.processEvents()
         options.fields['resource_runner_enabled'].setChecked(False)
@@ -497,7 +522,7 @@ def run(api,runtime,app,output,checks):
         indicators=service.indicators
         indicators.observe('caps_lock',True);indicators.observe('volume',(42,False))
         service.accept_sample(dict(cpu=31,volume=(42,False),time=time.monotonic()))
-        expected=[key for key in target if key!='board_temp']
+        expected=target
         for shape in ('pill','bar'):
             assert service.set_options(resource_fold=shape)
             window.offset=0;image=window.grab();layout=plan(window,window.width())
@@ -506,9 +531,9 @@ def run(api,runtime,app,output,checks):
             assert all(a.x+a.width<=b.x for a,b in zip(slots.values(),list(slots.values())[1:]))
             assert slots['device_caps_lock'].x==8 and slots['face'].x+slots['face'].width==window.width()-8
             assert abs(slots['volume'].x+slots['runner'].x+slots['runner'].width-window.width())<=1
-            assert slots['clock'].x < slots['cpu'].x and slots['volume'].slot.kind=='device'
+            assert slots['clock'].x < slots['resources'].x and slots['volume'].slot.kind=='device'
             assert window.status_bounds['mail'].center().x()>capsule_rect(window).right()
-            assert window.compact_bounds[window.compact_shown.index('cpu')].left()==slots['cpu'].x
+            assert window.compact_bounds[window.compact_shown.index('cpu')].left()==slots['resources'].x
             assert image.save(str(output/('compact-order-'+shape+'.png')))
         check_clocks(api,runtime,app,output,checks)
         check_resource_heights(window,output,checks)
@@ -524,7 +549,7 @@ def run(api,runtime,app,output,checks):
         # pending agenda and a low-battery reminder all use the same spatial order.
         weather=[dict(name='示例城市',temperature=10,code=61),dict(name='另一城市',temperature=13,code=0)]
         fake_deck=SimpleNamespace(providers=[],media={'track':{'title':'示例曲目','state':'Paused'}},alert_until=0.)
-        named=['music','alert_weather','weather','alert_alarm','device_caps_lock','alert_stopwatch','cpu',
+        named=['music','alert_weather','weather','alert_alarm','device_caps_lock','alert_stopwatch','resources',
                'alert_quota','alert_mail_new','alert_mail_code','alert_agenda','alert_battery','alert_focus','alert_water','alert_almanac','clock']
         alerts=(('weather_notice','雨'),('alarm','17:30'),('stopwatch','01:23'),('quota_notice','低额度'),
                 ('mail_new','新邮件'),('mail_code','123456'),('agenda','会议'),('battery','10%'),
@@ -552,6 +577,8 @@ def run(api,runtime,app,output,checks):
             seen.update(slots)
         assert seen==set(expected),(seen,expected)
         check_paging(window,app,checks)
+        from calendar_almanac_tests import check_badge_rotation
+        check_badge_rotation(window,output,checks)
         assert service.set_options(resource_fold='ball',resource_compact_width=560)
         window.grab()
         ball=ball_slots(window,window.width())

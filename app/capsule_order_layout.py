@@ -55,7 +55,7 @@ def page_group(slots, capacity, urgent):
     widest_first = sorted(slots, key=lambda slot:slot.width, reverse=True)
     fixed = set()
     room = capacity
-    for key in dict.fromkeys(['clock', *urgent, *by_key]):
+    for key in dict.fromkeys(['clock', *urgent, 'resources', 'alert_almanac', *by_key]):
         if key not in by_key:
             continue
         # A fixed item must leave enough room to read every other item on its turn.
@@ -126,18 +126,21 @@ def zone_pages(ordered, zones, capacity, urgent):
 
 def make_plan(window, limit):
     from compact_clock import capsule_clock_width, capsule_headers
-    from resource_compact import (MAIL_STEP, badge_slots, cell_width, compact_badges, compact_face_width,
-                                  compact_values, status_values)
+    from resource_compact import (MAIL_STEP, almanac_badge_lines, badge_slots, cell_width, compact_badges, compact_face_width,
+                                  grouped_values, status_values)
     cfg = window.service.cfg
     inner = max(1,limit-16)
     dense = cfg['resource_compact_density']=='dense' or limit<420 or window.height()<38
     items = {}
-    grouped = {}
-    for row in compact_values(window):
-        grouped.setdefault(row[0],[]).append(row)
-    for key, rows in grouped.items():
+    component_counts = {}
+    for key, rows in grouped_values(window).items():
         row_widths=tuple(cell_width(row,dense,window) for row in rows)
-        items[key] = Slot(key,'value',max(row_widths),tuple(rows),row_widths)
+        if key == 'resources':
+            component_counts[key] = len(rows)
+            row = rows[window.component_pages[key] % len(rows)]
+            items[key] = Slot(key,'value',max(row_widths),row)
+        else:
+            items[key] = Slot(key,'value',max(row_widths),tuple(rows),row_widths)
     for row in status_values(window.service):
         items[row[0]] = Slot(row[0],'status',compact_tile_height(cfg,window.height())+3,row)
     if cfg['resource_face']:
@@ -151,12 +154,14 @@ def make_plan(window, limit):
         items['clock'] = Slot('clock','clock',capsule_clock_width(cfg, formats, window.height()),formats)
 
     urgent = []
-    badges,active_count = compact_badges(window.service)
+    badges,active_count = compact_badges(window.service,window.component_pages['alert_almanac'])
     for index,badge in enumerate(badges):
         active = index < active_count
         key = badge_key(badge[0],active)
         chip = badge_slots(window,[badge],max(25,inner),limit)[0][0]
         items[key] = Slot(key,'badge',chip[2],chip)
+        if badge[0] == 'almanac':
+            component_counts[key] = len(almanac_badge_lines(cfg))
         if active:
             urgent.append(key)
             if badge[0]=='battery':items.pop('battery',None)
@@ -176,7 +181,7 @@ def make_plan(window, limit):
     for zone, group in groups.items():
         period = len(group.pages)
         for slot in group.slots:
-            if slot.kind == 'value':
+            if slot.page_widths:
                 period = lcm(period, len(slot.data) * group.stride(slot.key))
             elif slot.kind == 'clock':
                 clock_stride = group.stride(slot.key)
@@ -187,6 +192,7 @@ def make_plan(window, limit):
                   bands=bands, zone_periods=periods,
                   clock=(), clock_width=0, runner_width=0, face=0, active_badges=[], routine_badges=[])
     layout['positions'] = positions(layout,window.page_turns,limit)
+    layout['component_counts'] = component_counts
     for key,placed in layout['positions'].items():
         if key=='clock':
             layout['clock'],layout['clock_width'] = placed.data,placed.width
@@ -223,7 +229,7 @@ def positions(layout,turns,width):
             if slot.key not in visible:continue
             size = slot.width if slot.key in group.fixed else min(slot.width,group.room)
             data = slot.data
-            if slot.kind=='value':
+            if slot.page_widths:
                 page = offset // group.stride(slot.key) % len(data)
                 data = data[page]
                 if zone=='center':

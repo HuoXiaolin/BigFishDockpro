@@ -22,14 +22,13 @@ def date_lines(day, pattern, weekday, lunar, festival):
     else:
         lines = [base + ' ' + week if weekday else base]
     if lunar or festival:
-        from calendar_details import SOLAR, lunar_details
+        from calendar_details import civil_festivals, lunar_details
         _, lunar_date, lunar_festival = lunar_details(day)
         if lunar and lunar_date:
             lines.append(lunar_date)
         if festival:
-            from calendar_almanac import CIVIL_HOLIDAYS, term_dates
-            civil = CIVIL_HOLIDAYS.get((day.month, day.day))
-            names = [civil.name if civil else '', SOLAR.get((day.month,day.day)), lunar_festival]
+            from calendar_almanac import term_dates
+            names = [*civil_festivals(day), lunar_festival]
             if day.month == 4 and (day,'清明') in term_dates(day.year):
                 names.append('清明节')
             lines.extend(name for name in names if name)
