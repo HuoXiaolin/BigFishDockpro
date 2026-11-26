@@ -276,6 +276,8 @@ def run(api,runtime,root,app,output,checks):
         companion_ui(api,runtime,app,output,checks)
         from resource_runner_tests import run as runner_ui
         runner_ui(api,runtime,app,output,checks)
+        from tray_readout_tests import run as tray_hovers
+        tray_hovers(service,app,output,checks)
         from quota_day_tests import run as quota_day_ui
         quota_day_ui(api,runtime,app,output,checks)
         from resource_performance_tests import run as performance_ui

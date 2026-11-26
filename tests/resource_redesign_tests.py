@@ -149,8 +149,10 @@ def ai_tray_modes(service, app, output, checks):
     bridge.accept(dict(type='ai', providers=rows))
     assert [(r.provider, r.remaining) for r in tray.readings] == [('Codex',85),('Claude',55),('Cursor',8)]
     assert tray.balance is None
-    assert 'Codex Pro 100 · 小时额度剩余 85%' in tray.tray.toolTip()
-    assert 'Cursor · 周额度剩余 8% · 上次读数' in tray.tray.toolTip()
+    tip_lines = tray.tray.toolTip().splitlines()
+    assert tip_lines[:2] == ['Codex Pro 100', '小时额度剩余 85%']
+    cursor_line = tip_lines.index('Cursor')
+    assert tip_lines[cursor_line-1:cursor_line+3] == ['', 'Cursor', '周额度剩余 8%', '上次读数']
     tray.tray.icon().pixmap(32,32).save(str(output/'ai-tray-auto.png'))
     tray.tray.activated.emit(QSystemTrayIcon.Trigger)
     app.processEvents()
@@ -195,7 +197,7 @@ def ai_tray_modes(service, app, output, checks):
     pro = dict(codex, quotas=[week])
     bridge.accept(dict(type='ai', providers=[cursor,dsh,claude,pro]))
     assert [r.remaining for r in tray.readings] == [22,55,8]
-    assert tray.tray.toolTip().startswith('Codex Pro 100 · 周额度剩余 22% · 5 天后恢复')
+    assert tray.tray.toolTip().splitlines()[:3] == ['Codex Pro 100', '周额度剩余 22%', '5 天后恢复']
     fourth = dict(id='Pi', name='Pi', quotas=[dict(week, percent=5)])
     assert [r.provider for r in tray_readings([*rows, fourth], 'auto','','')] == ['Codex','Claude','Pi']
     assert tray_readings([claude], 'fixed','Codex','week') == ()

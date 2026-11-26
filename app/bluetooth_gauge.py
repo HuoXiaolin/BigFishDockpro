@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QApplication,QSystemTrayIcon
 from ui_style import AlignedMenu
 from resource_status import BATTERY_WARNING_LEVEL, TRAY_RING_SIZES, draw_tray_rings, low_battery_ink
 from probe_lifecycle import allowed, start as start_probe
+from tray_readout import ReadoutTrayIcon
 
 HUES=('#5b8def','#41b66a','#8297c9','#ac81e2','#e99d36','#35adb3')
 GROUP=3
@@ -131,7 +132,7 @@ class BluetoothGauge(QObject):
 
     def set_tray(self,visible):
         if visible and self.tray is None:
-            self.tray=QSystemTrayIcon(self);self.menu=AlignedMenu()
+            self.tray=ReadoutTrayIcon(self);self.menu=AlignedMenu()
             self.menu.aboutToShow.connect(self.build_menu);self.tray.setContextMenu(self.menu)
             self.tray.activated.connect(self.activated);self.paint_tray()
             if not self.preview:self.tray.show()
@@ -175,9 +176,9 @@ class BluetoothGauge(QObject):
         rows,pages=self.tray_group()
         self.tray.setIcon(tray_icon(rows,not self.owner.runtime.dock.is_light()))
         lines=['外设电量']+[tray_line(row) for row in rows]
-        if not rows:lines.append(self.owner.battery_status(tray=True))
+        if not rows:lines.append(self.owner.battery_status(tray=True, separator='\n'))
         if pages>1:lines.append(f'第 {self.tray_page+1}/{pages} 组')
-        self.tray.setToolTip('\n'.join(lines))
+        self.tray.set_readout('\n'.join(lines))
 
     def close(self):
         self.closed=True;self.next.stop();self.deadline.stop();self.set_tray(False)

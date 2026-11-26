@@ -929,10 +929,10 @@ class ResourceCapsule(QObject):
                    for row in bluetooth)
         return [row for pair in zip_longest(connected,wireless) for row in pair if row is not None]
 
-    def battery_status(self,tray=False):
+    def battery_status(self,tray=False, *, separator=' · '):
         bt=self.bluetooth if tray or self.cfg['resource_bluetooth'] else None
         statuses=[reader.status for reader in (bt,self.peripherals) if reader and reader.status]
-        return ' · '.join(statuses) or '暂无外设电量'
+        return separator.join(statuses) or '暂无外设电量'
 
     def refresh_batteries(self):
         if self.bluetooth:self.bluetooth.refresh()

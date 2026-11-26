@@ -278,13 +278,16 @@ def run(api, runtime, app, output, checks):
             service.accept_sample(dict(time=time.monotonic(), cpu=load))
             speeds.append(runner.fps)
             assert runner.timer.isActive() == (load > 0)
-            assert runner.tray.toolTip()==f'小狗 CPU {load}%'+uptime
+            assert runner.tray.toolTip()==f'小狗\nCPU {load}%'+uptime
             if load==50:
-                runner.tray.activated.emit(QSystemTrayIcon.Trigger)
-                assert QToolTip.text()=='小狗 CPU 50%'+uptime
-                with patch('resource_runner.uptime_minutes',return_value=2*1440+3*60+5):
+                # No pointer is available for keyboard activation on the private
+                # desktop. The mouse activation path is exercised with the tray HWND.
+                with patch('tray_readout._pointer', return_value=None):
                     runner.tray.activated.emit(QSystemTrayIcon.Trigger)
-                    assert QToolTip.text().endswith('3 小时 5 分钟') and runner.tray.toolTip()==QToolTip.text()
+                    assert QToolTip.text()=='小狗\nCPU 50%'+uptime
+                    with patch('resource_runner.uptime_minutes',return_value=2*1440+3*60+5):
+                        runner.tray.activated.emit(QSystemTrayIcon.Trigger)
+                        assert QToolTip.text().endswith('3 小时 5 分钟') and runner.tray.toolTip()==QToolTip.text()
                 QToolTip.hideText()
         assert speeds == [0, 24, 48, 72, 96], speeds
         assert [frame_rate('adaptive', load) for load in (-1, None, float('nan'), 120)] == [0, 0, 0, 96]
@@ -299,14 +302,14 @@ def run(api, runtime, app, output, checks):
             assert key in service.active_keys() and api.load_config()['resource_tray_runner_metric']==key
             now=time.monotonic()
             service.accept_sample({'time':now,key:(50.,100,200) if key=='memory' else 50.})
-            assert runner.fps==48 and runner.tray.toolTip()==f'小狗 {label} 50%'+uptime
+            assert runner.fps==48 and runner.tray.toolTip()==f'小狗\n{label} 50%'+uptime
             service.accept_sample({'time':now+20,key:None})
-            assert runner.fps==0 and not runner.timer.isActive() and runner.tray.toolTip()==f'小狗 {label} —'+uptime
+            assert runner.fps==0 and not runner.timer.isActive() and runner.tray.toolTip()==f'小狗\n{label} —'+uptime
         for mode, fps in (('fixed_low',24), ('fixed_medium',48), ('fixed_high',96)):
             menu = pet_menu()
             action(action(menu, '奔跑速度').menu(), RUNNER_SPEEDS[mode]).trigger()
             service.accept_sample(dict(time=time.monotonic(),network_utilization=27))
-            assert runner.fps == fps and runner.tray.toolTip()=='小狗 网络 27%'+uptime
+            assert runner.fps == fps and runner.tray.toolTip()=='小狗\n网络 27%'+uptime
         # Replay Qt's integer-millisecond wake-ups. Rounding every frame to
         # 10 ms would finish all 96 updates 40 ms early.
         first_deadline = runner.next_frame
@@ -392,7 +395,7 @@ def run(api, runtime, app, output, checks):
         service.sync()
         service.accept_sample(dict(time=time.monotonic(), memory=(50,1,2),network_utilization=36))
         assert capsule.fps == 48 and runner.fps == 96
-        assert capsule.readout=='小兔 内存 50%'+uptime and runner.tray.toolTip()=='小猫 网络 36%'+uptime
+        assert capsule.readout=='小兔 内存 50%'+uptime and runner.tray.toolTip()=='小猫\n网络 36%'+uptime
         for form in ('pill', 'bar', 'ball'):
             cfg['resource_fold'] = form
             service.sync()

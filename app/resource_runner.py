@@ -10,6 +10,7 @@ from PyQt5.QtGui import QCursor, QIcon, QImage, QImageReader, QPixmap
 from PyQt5.QtWidgets import QSystemTrayIcon, QToolTip
 
 from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS, RUNNER_SLOT
+from tray_readout import ReadoutTrayIcon
 
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets' / 'runner'
@@ -123,10 +124,11 @@ class RunningAnimal(QObject):
         self.fps = 0
         self.next_frame = 0.0
         self.frame_remaining = 1.0
-        self.tray = QSystemTrayIcon(self) if target == 'tray' else None
+        self.tray = ReadoutTrayIcon(self) if target == 'tray' else None
         if self.tray is not None:
             self.tray.setContextMenu(service.runtime.tray.contextMenu())
             self.tray.activated.connect(self.tray_activated)
+            self.tray.readoutRequested.connect(self.refresh_readout)
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.PreciseTimer)
         self.timer.setSingleShot(True)
@@ -177,10 +179,12 @@ class RunningAnimal(QObject):
             else:
                 self.timer.stop()
         label = '—' if percent is None else f'{percent:.0f}%'
-        text = f'{RUNNER_ANIMALS[self.animal]} {RUNNER_METRICS[self.metric]} {label}'
+        metric = f'{RUNNER_METRICS[self.metric]} {label}'
+        separator = '\n' if self.tray is not None else ' '
+        text = RUNNER_ANIMALS[self.animal] + separator + metric
         if self.device:
             name = self.service.hardware_name(self.metric, self.device)
-            text += f' · {name}'
+            text += ('\n' if self.tray is not None else ' · ') + name
         self.metric_text = text
         if self.refresh_readout() and self.tray is None:
             window = self.service.window
@@ -193,10 +197,12 @@ class RunningAnimal(QObject):
             return False
         self.readout=text
         if self.tray is not None:
-            self.tray.setToolTip(text)
+            self.tray.set_readout(text)
         return True
 
     def show_reading(self, point):
+        if self.tray is not None and self.tray.show_on_click():
+            return
         self.refresh_readout()
         if self.tray is not None:
             QToolTip.showText(point, self.readout)

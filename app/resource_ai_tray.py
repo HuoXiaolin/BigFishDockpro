@@ -9,6 +9,7 @@ from resource_pages import SCROLL_STYLE, reset_text
 from resource_quota import daily_text, ring_ink, tray_balance_text, tray_label, tray_readings
 from resource_status import TRAY_RING_SIZES, draw_tray_rings, ring_dimensions, today_ring_ink
 from taskbar_text import foreground_ink, system_mode
+from tray_readout import ReadoutTrayIcon
 
 
 def quota_icon(levels, light, used_today=()):
@@ -68,7 +69,7 @@ def amount_icon(amount, ink):
     return icon
 
 
-def tooltip_line(reading):
+def tooltip_line(reading, *, separator=' · '):
     period = reading.label.removesuffix(' · 已用')
     period = {'每小时额度': '小时额度', '每周额度': '周额度', '每月额度': '月额度',
               '每周': '周额度', '每月': '月额度'}.get(period, period)
@@ -83,7 +84,7 @@ def tooltip_line(reading):
         parts.append(reset)
     if day := daily_text(reading.daily):
         parts.append(day)
-    return ' · '.join(parts)
+    return separator.join(parts)
 
 
 class AiPopup(QWidget):
@@ -111,7 +112,7 @@ class AiPopup(QWidget):
 
 class AiTray(QObject):
     def __init__(self,service):
-        super().__init__(service);self.service=service;self.popup=None;self.key=None;self.tray=QSystemTrayIcon(self);self.menu=AlignedMenu()
+        super().__init__(service);self.service=service;self.popup=None;self.key=None;self.tray=ReadoutTrayIcon(self);self.menu=AlignedMenu()
         self.readings=()
         self.balance=None
         self.taskbar_ink=None
@@ -142,9 +143,7 @@ class AiTray(QObject):
             rows = bridge.providers if bridge else []
             self.readings = tray_readings(rows, *prefs)
             self.balance = tray_balance_text(self.readings[0].amount) if self.readings else None
-            tip = self.tooltip(rows, mode, provider, target)
-            if tip != self.tray.toolTip():
-                self.tray.setToolTip(tip)
+            self.tray.set_readout(self.tooltip(rows, mode, provider, target))
         self.data_key, self.appearance = data_key, appearance
         self.update_icon()
         if self.popup and self.popup.isVisible():
@@ -174,15 +173,15 @@ class AiTray(QObject):
 
     def tooltip(self, rows, mode, provider, target):
         if self.readings:
-            return '\n'.join(map(tooltip_line, self.readings))
+            return '\n\n'.join(tooltip_line(reading, separator='\n') for reading in self.readings)
         if mode == 'fixed' and provider:
             name = next((row['name'] for row in rows if row['id'] == provider), '')
             if not name:
                 name = AI_PROVIDER_NAMES.get(provider, provider)
                 if provider.startswith('gateway-'):
                     name = '自定义用量接口'
-            return ' · '.join(filter(None, (name, tray_label(target), '暂无读数')))
-        return 'AI 用量 · 等待读数'
+            return '\n'.join(filter(None, (name, tray_label(target), '暂无读数')))
+        return 'AI 用量\n等待读数'
 
     def open(self,page='stats'):
         if self.popup is None:self.popup=AiPopup(self.service)
