@@ -30,7 +30,7 @@ DEFAULTS = {
     'dock_clock_seconds':False, 'dock_clock_weekday':True, 'dock_clock_lunar':False, 'dock_clock_festival':True,
     'card_sizing': {}, 'display_layout': {}, 'card_scale':70, 'settings_size':'medium', 'settings_manual_size':[], 'settings_custom_density':100,
     'calendar_enabled':False,'calendar_locked':False,'calendar_style':'calendar_card','calendar_layout':{},'calendar_appearance':{},
-    'watermark_enabled':False, 'watermark_text':'桌面水印', 'watermark_color':'#ffffff',
+    'watermark_enabled':False, 'watermark_text':'桌面水印', 'watermark_color':'#ffffff', 'watermark_auto_contrast':True,
     'watermark_size':32, 'watermark_angle':-25, 'watermark_density':5, 'watermark_opacity':24,
     'watermark_mode':'single', 'watermark_position':'center', 'watermark_layer':'bottom',
     'clock_enabled': False, 'clock_flipped':False, 'clock_locked': False, 'clock_style': 'digital', 'clock_layout': {}, 'clock_appearance': {},
@@ -123,7 +123,7 @@ def normalize(cfg):
     from quick_cycles import normalize_custom
     result['dock_quick_custom']=normalize_custom(result.get('dock_quick_custom'))
     # Ignore retired preferences from older profiles.
-    for key in ('realtime_glass', 'runtime_lite', 'lite_enabled', 'lite_restore'):
+    for key in ('realtime_glass', 'runtime_lite', 'lite_enabled', 'lite_restore', 'spectrum_auto_contrast'):
         result.pop(key, None)
     # Retired selective hiding is migrated to the safe co-display mode.
     if result.get('desktop_icon_mode')=='collected':result['desktop_icon_mode']='both'

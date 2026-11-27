@@ -4,7 +4,7 @@ from math import ceil
 from weakref import WeakSet
 
 from PyQt5.QtCore import QEvent, QObject, QRectF, QTimer, Qt
-from PyQt5.QtGui import QColor, QImage, QPainter, QPainterPath
+from PyQt5.QtGui import QColor, QImage, QPainter, QPainterPath, QPixmap
 
 from background_contrast import blend, contrast, majority_surface, wallpaper_samples
 
@@ -50,6 +50,8 @@ class ContentContrast(QObject):
         self.regional = False
         self.region_size = None
         self.regions = {}
+        self.live = False
+        self.texture = None
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.refresh)
@@ -64,37 +66,47 @@ class ContentContrast(QObject):
 
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Show,QEvent.Move,QEvent.Resize) and self.spec:
-            if not self.timer.isActive():self.timer.start(120)
+            self.timer.start(100)
         elif event.type() == QEvent.Hide:
             self.timer.stop()
         return False
 
     def measure(self):
-        mode, app_light, fallback_light, material, theme, tint, opacity, highlight, system_light, design, solid, desktop_fallback = self.spec
+        from window_backdrop import desktop_backdrop
+        mode, app_light, fallback_light, material, theme, tint, opacity, highlight, system_light, design, solid, desktop_fallback, _ = self.spec
         if solid:
             layers = (QColor(solid).getRgb(),)*128
         else:
             layers = _glass_samples(material,theme,tint,opacity,highlight,system_light,design)
         fallback = (235,238,242) if fallback_light else (30,35,40)
         pixels = None
-        if any(layer[3]<250 for layer in layers):
+        needs_background = mode == 'auto' and any(layer[3]<250 for layer in layers)
+        self.live = needs_background and desktop_backdrop(self.widget,self.dock.cfg) == 'dynamic'
+        if needs_background:
             try:
                 # Never create a native HWND for an embedded label or card.
                 top = self.widget.window()
                 rect = self.widget.rect()
                 rect.moveTopLeft(self.widget.mapTo(top,rect.topLeft()))
-                pixels = wallpaper_samples(top,rect,allow_fallback=desktop_fallback)
+                if self.live:
+                    from desktop_underlay import window_samples
+                    pixels = window_samples(top, rect)
+                if pixels is None or None in pixels:
+                    paper = wallpaper_samples(top,rect,allow_fallback=desktop_fallback)
+                    paper = tuple(paper[y*32+x] for y in range(8) for x in range(16)) if paper else (fallback,)*128
+                    pixels = tuple(color if color is not None else paper[i] for i,color in enumerate(pixels)) if pixels else paper
             except (OSError, ValueError, RuntimeError, AttributeError):
                 pass
         measurement = self.spec, pixels
         if self.last_measurement == measurement and self.result is not None:
             return self.result
         self.last_measurement = measurement
-        samples = [blend(layer[:3], pixels[(i//16)*32+i%16] if pixels else fallback, layer[3]/255)
+        samples = [blend(layer[:3], (pixels[i] if pixels else None) or fallback, layer[3]/255)
                    for i,layer in enumerate(layers)]
         if self.regional:
             self.surface_samples = tuple(tuple(round(v) for v in sample) for sample in samples)
             self.regions.clear()
+            self.texture = None
         representative=majority_surface(samples)
         if mode=='auto':
             light=contrast(representative,'#000000')>=contrast(representative,'#ffffff')
@@ -103,8 +115,15 @@ class ContentContrast(QObject):
         self.ink_background=representative if self.uses_custom_ink else None
         return light
 
+    def sample_texture(self):
+        """Low-resolution input for the clock's own material and typography renderer."""
+        if self.texture is None and self.surface_samples:
+            data = bytes(channel for color in self.surface_samples for channel in color)
+            self.texture = QPixmap.fromImage(QImage(data,16,8,48,QImage.Format_RGB888))
+        return self.texture
+
     def background_at(self, rect):
-        if not self.surface_samples or self.spec[0]!='auto':return None
+        if not self.surface_samples or not self.spec or self.spec[0]!='auto':return None
         width,height=max(1,self.widget.width()),max(1,self.widget.height())
         left=max(0,min(15,int(rect.left()*16/width)))
         right=max(left+1,min(16,ceil(rect.right()*16/width)))
@@ -125,23 +144,30 @@ class ContentContrast(QObject):
             self.result = result
             self.region_size=size
             self.callback()
+        if self.live and self.widget is not None and self.widget.isVisible():
+            self.timer.start(900)
 
 
 def content_contrast(widget, dock, style, mode, callback, *, design=None, solid=None, custom_ink=False, regional=False):
+    from window_backdrop import desktop_backdrop
     state = getattr(widget,'_content_contrast',None)
     if state is None:
         state = widget._content_contrast = ContentContrast(widget)
     app_light = dock.base_theme_colors(dock.cfg.get('theme','auto'))['light']
     theme = style.get('theme','auto')
     spec = (mode, app_light, dock.base_theme_colors(theme)['light'],style['material'],theme,style.get('color',''),
-            style.get('opacity',0),style.get('highlight',0),bool(dock._sys_light),design,solid,not getattr(dock,'preview',False))
+            style.get('opacity',0),style.get('highlight',0),bool(dock._sys_light),design,solid,not getattr(dock,'preview',False),
+            desktop_backdrop(widget,dock.cfg) if mode=='auto' else None)
     state.callback = callback
+    state.dock = dock
     if state.spec != spec or state.uses_custom_ink!=custom_ink or state.regional!=regional:
         state.regional = regional
         state.uses_custom_ink = custom_ink
         state.last_measurement = None
         state.spec = spec
         state.result = state.measure()
+        if state.live and widget.isVisible():
+            state.timer.start(900)
     return state.result
 
 
@@ -156,7 +182,30 @@ def card_text_ink(custom, light, background):
     return QColor(neutral)
 
 
-def refresh_visible():
+def transparent_surface(widget, dock, enabled):
+    """Observe only the ground when a renderer applies its own colors or material."""
+    if enabled:
+        content_contrast(widget,dock,{'theme':'auto','material':'clear'},'auto',widget.update,regional=True)
+        return widget._content_contrast
+    state = getattr(widget,'_content_contrast',None)
+    if state is not None and state.spec is not None:
+        state.spec = None
+        state.live = False
+        state.surface_samples = ()
+        state.texture = None
+        state.regions.clear()
+        state.timer.stop()
+    return None
+
+
+@lru_cache(maxsize=512)
+def graphic_ink(color, background, minimum=3):
+    from clock_legibility import readable
+    return readable(QColor(color),[QColor(*background)],minimum).name() if background else color
+
+
+def refresh_visible(live_only=False):
     for state in tuple(_windows):
-        if state.widget.isVisible() and not state.timer.isActive():
+        if state.spec and (not live_only or state.live) and state.widget.isVisible() and (
+                not state.timer.isActive() or state.timer.remainingTime()>100):
             state.timer.start(100)

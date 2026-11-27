@@ -570,6 +570,7 @@
   "watermark_enabled": false,
   "watermark_text": "桌面水印",
   "watermark_color": "#ffffff",
+  "watermark_auto_contrast": true,
   "watermark_size": 32,
   "watermark_angle": -25,
   "watermark_opacity": 24,

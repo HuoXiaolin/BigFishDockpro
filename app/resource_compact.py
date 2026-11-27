@@ -233,7 +233,7 @@ def compact_badges(service, almanac_page=0):
             starts=datetime.fromtimestamp(event['start'])
             stamp=starts.strftime('%H:%M' if starts.date()==datetime.fromtimestamp(now).date() else '%m/%d')
             when='进行中' if event['start']<=now else stamp
-            routine['agenda']=('agenda',f"{when} · {event['title']}")
+            routine['agenda']=('agenda',f"{event['title']} · {when}")
         else:routine['agenda']=('agenda','暂无日程')
     order=dict.fromkeys([*cfg['resource_compact_order'],*COMPACT_ROUTINES])
     badges.extend(routine[key] for key in order if key in routine)

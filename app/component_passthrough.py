@@ -1,6 +1,6 @@
 """Effective pointer policy for desktop widgets and its recovery menu."""
 from weakref import WeakKeyDictionary
-from PyQt5.QtCore import QObject,QEvent,QTimer
+from PyQt5.QtCore import QObject,QEvent,QTimer,Qt,pyqtSignal
 from PyQt5.QtWidgets import QActionGroup,QApplication,QWidget
 
 MODES=(('全部穿透','all'),('全部可交互','none'),('自定义','custom'))
@@ -42,6 +42,8 @@ def set_mode(runtime,mode):
 
 
 class ClickThroughPolicy(QObject):
+    input_restored = pyqtSignal(object)
+
     def __init__(self,runtime):
         super().__init__(runtime.dock);self.runtime=runtime;self.app=QApplication.instance();self.applying=False
         # Visible windows that need cursor hit-testing or a global Alt sample.
@@ -87,8 +89,17 @@ class ClickThroughPolicy(QObject):
             passthrough = mode is True and not unlocked
             if conditional and not unlocked:
                 passthrough = application_under(int(window.winId()), point if point is not None else cursor_position())
+            restored = not passthrough and window.testAttribute(Qt.WA_TransparentForMouseEvents)
             click_through(window,passthrough)
+            if restored and visible:
+                self.input_restored.emit(window)
         finally:self.applying=False
+
+    def accepts_input(self, window):
+        # An enter or key event can arrive before the next Alt/underlay poll.
+        if window in self.watched:
+            self.apply(window)
+        return not window.testAttribute(Qt.WA_TransparentForMouseEvents)
 
     def update_pointer(self):
         from window_layers import alt_pressed, cursor_position

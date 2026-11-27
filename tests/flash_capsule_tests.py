@@ -22,6 +22,70 @@ def drop(widget,mime):
     return event.isAccepted() and event.dropAction()==Qt.CopyAction
 
 
+def check_attached_rows(service, app, output):
+    from flash_data import new_entry
+    from PyQt5.QtGui import QPainter, QPixmap
+    edge=service.edge
+    entries=[new_entry(title,'blue') for title in ('本周计划','资料','回电')]
+    def drag_event(kind,pos,held):
+        event=QMouseEvent(kind,QPointF(edge.mapFromGlobal(pos)),QPointF(pos),Qt.LeftButton,held,Qt.NoModifier)
+        app.sendEvent(edge,event)
+
+    with patch.dict(service.cfg,flash_entries=entries,flash_draft={}):
+        service.open(activate=False)
+        panel=service.panel
+        panel.launch_shell.show()
+        panel.render()
+        for side in ('left','right'):
+            area=edge.work_area
+            start=edge.mapToGlobal(QPoint(14,20))
+            dest=QPoint(area.left()+12 if side=='left' else area.right()-12,area.center().y())
+            drag_event(QEvent.MouseButtonPress,start,Qt.LeftButton)
+            drag_event(QEvent.MouseMove,dest,Qt.LeftButton)
+            app.processEvents()
+            panel.fold_if_idle()
+            assert service.panel is panel and panel.side==side
+            vp=panel.list.viewport()
+            item=panel.list.item(0)
+            identity=item.data(Qt.UserRole)
+            bubble=panel.list.itemDelegate().bubble(panel.list.visualItemRect(item),panel.list.fontMetrics(),item.text(),0)
+            near=bubble.topLeft() if side=='left' else bubble.topRight()
+            anchor=edge.geometry().right() if side=='left' else edge.geometry().left()
+            assert abs(vp.mapToGlobal(near.toPoint()).x()-anchor)<20
+            tool_edge=panel.launch_shell.rect().topLeft() if side=='left' else panel.launch_shell.rect().topRight()
+            assert abs(panel.launch_shell.mapToGlobal(tool_edge).x()-anchor)<20
+            center=bubble.center().toPoint()
+            assert panel.mask().contains(vp.mapTo(panel,center))
+            assert not panel.mask().contains(vp.mapTo(panel,QPoint(vp.width()-center.x(),center.y())))
+            release=dest+QPoint(0,32)
+            drag_event(QEvent.MouseButtonRelease,release,Qt.NoButton)
+            assert edge.y()==release.y()-20 and service.cfg['flash_side']==side
+            bounds=edge.geometry().united(panel.geometry())
+            dpr=panel.devicePixelRatioF()
+            snapshot=QPixmap(bounds.size()*dpr)
+            snapshot.setDevicePixelRatio(dpr)
+            snapshot.fill(Qt.transparent)
+            painter=QPainter(snapshot)
+            for widget in (edge,panel):
+                painter.drawPixmap(widget.geometry().topLeft()-bounds.topLeft(),widget.grab())
+            painter.end()
+            assert snapshot.save(str(output/f'flash-attached-{side}.png'))
+            app.sendEvent(vp,QMouseEvent(QEvent.MouseButtonRelease,QPointF(center),Qt.LeftButton,Qt.NoButton,Qt.NoModifier))
+            assert panel.expanded==identity
+            panel.expand(identity)
+        # A short vertical drag may have no intermediate mouse-move message.
+        start=edge.mapToGlobal(QPoint(14,20))
+        finish=start-QPoint(0,64)
+        drag_event(QEvent.MouseButtonPress,start,Qt.LeftButton)
+        drag_event(QEvent.MouseButtonRelease,finish,Qt.NoButton)
+        assert service.panel is panel and not panel.editing and edge.y()==finish.y()-20
+        saved_bounds=panel.geometry()
+        service.collapse(force=True)
+        service.open(activate=False)
+        assert service.panel.side=='right' and service.panel.geometry()==saved_bounds
+        service.collapse(force=True)
+
+
 def run(api,runtime,root,app,output,checks):
     from run_isolated_test import assert_isolated
     assert_isolated()
@@ -169,6 +233,8 @@ def run(api,runtime,root,app,output,checks):
         with patch('flash_panel.QCursor.pos',return_value=outside):edge.hide_if_idle();edge.slide.setCurrentTime(edge.slide.duration())
         assert edge.width()==6 and edge.work_area.contains(edge.geometry())
         assert cfg['flash_entries']==edge_rows
+        check_attached_rows(service,app,output)
+        checks.append('Flash rows and tools stay beside the dragged handle on both edges; painted bubbles and click regions agree, and release saves the final position.')
         checks.append('Flash edge hide: 6-pixel target, hover slide-out, panel hover/open/leave collapse, independent persisted off switch, drag across left/right edges, saved anchor, and geometry stays inside the selected screen.')
         runtime.game_active=True;service.sync()
         assert not service.edge and not service.panel and service.reminder is None and not edge.slide.state() and not edge.hide_timer.isActive()

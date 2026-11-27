@@ -114,8 +114,6 @@ class FlashCapsule(QObject):
     def reposition(self):
         if self.edge is not None:
             self.edge.place()
-        if self.panel is not None and self.edge is not None:
-            self.panel.place(self.edge)
 
     def sync(self,reload=False):
         if self.closed: return

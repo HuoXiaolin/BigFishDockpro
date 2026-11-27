@@ -9,7 +9,7 @@ from appearance_presets import panel_appearance
 from glass_capture import smooth_backdrop
 from liquid_glass import material_blur, material_palette, paint_liquid_glass, tint_palette
 from wallpaper_source import capture
-from window_backdrop import uses_wallpaper
+from window_backdrop import desktop_backdrop, uses_wallpaper
 
 
 class CapsuleGlass:
@@ -23,7 +23,9 @@ class CapsuleGlass:
         self.tiny = None
 
     def paint(self, painter, widget, dock, radius, moving=False, appearance=None, inset=0, shape=None,
-              backdrop_mode='wallpaper', outline=None):
+              backdrop_mode=None, outline=None):
+        if backdrop_mode is None:
+            backdrop_mode = desktop_backdrop(widget, dock.cfg)
         style=appearance if appearance is not None else panel_appearance(dock.cfg)
         material=style['material']
         self.uses_wallpaper = uses_wallpaper(backdrop_mode, style)

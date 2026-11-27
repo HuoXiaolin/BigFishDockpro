@@ -41,12 +41,12 @@ class WatermarkStamp:
                          max(1, area.height()-8) / max(1, rotated.height()))
         self.size = QSize(math.ceil(rotated.width()*self.scale)+4, math.ceil(rotated.height()*self.scale)+4)
 
-    def draw(self, painter, center):
+    def draw(self, painter, center, ink=None):
         painter.save()
         painter.translate(center)
         painter.scale(self.scale, self.scale)
         painter.rotate(self.angle)
-        painter.setPen(self.color)
+        painter.setPen(ink if ink is not None else self.color)
         self.layout.draw(painter, self.offset)
         painter.restore()
 
@@ -98,7 +98,7 @@ class WatermarkWindow(QWidget):
         area = screen.geometry() if tiled else screen.availableGeometry()
         top = effective_top(cfg,cfg['watermark_layer']=='top')
         signature = (area.getRect(), screen.devicePixelRatio(), top, *(cfg['watermark_'+key] for key in
-                     ('text','color','size','angle','opacity','mode','position','density','layer')))
+                     ('text','color','auto_contrast','size','angle','opacity','mode','position','density','layer')))
         if signature == self.signature and self.isVisible():
             return
         self.tiled, self.density = tiled, cfg['watermark_density']
@@ -124,11 +124,18 @@ class WatermarkWindow(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.TextAntialiasing)
         area = QRectF(self.rect())
-        if self.tiled:
-            for center in tile_centers(area, self.stamp.size, self.density):
-                self.stamp.draw(painter, center)
-        else:
-            self.stamp.draw(painter, area.center())
+        from component_contrast import graphic_ink, transparent_surface
+        dock=self.runtime.dock
+        state=transparent_surface(self,dock,dock.cfg['watermark_auto_contrast'])
+        centers=tile_centers(area,self.stamp.size,self.density) if self.tiled else (area.center(),)
+        for center in centers:
+            ink=self.stamp.color
+            if state:
+                region=QRectF(0,0,self.stamp.size.width(),self.stamp.size.height())
+                region.moveCenter(center)
+                ink=QColor(graphic_ink(ink.name(),state.background_at(region),4.5))
+                ink.setAlpha(self.stamp.color.alpha())
+            self.stamp.draw(painter,center,ink)
         painter.end()
 
 

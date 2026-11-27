@@ -12,7 +12,7 @@ def run(api, runtime, main, app, output, checks):
     from PyQt5.QtCore import Qt, QRectF, QEvent
     from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QPainterPath, QLinearGradient
     from PyQt5.QtWidgets import QWidget
-    from ui_test_events import Events as QTest
+    from desktop_panel_tests import wait_for
     from appearance_presets import NEW_PRESET_IDS, PRESET_IDS, PANEL_PRESETS, DOCK_PRESETS
     from appearance_profiles import apply_profile, snapshot, clean_snapshot, selected_mode
     from clock_appearance import STYLES, normalize
@@ -181,9 +181,8 @@ def run(api, runtime, main, app, output, checks):
     motion=attach(window,lambda:cfg)
     try:
         window.show();app.processEvents();motion.stop()
-        assert motion.trigger('tab')
-        QTest.qWait(380)
-        assert motion.progress is None and motion.animation.state()==motion.animation.Stopped
+        assert motion.animation.duration()==320 and motion.trigger('tab')
+        wait_for(app,lambda:motion.progress is None and motion.animation.state()==motion.animation.Stopped,2)
         assert motion.trigger();window.hide();app.processEvents()
         assert motion.progress is None and motion.animation.state()==motion.animation.Stopped
         cfg['motion_enabled']=False;window.show();app.processEvents()

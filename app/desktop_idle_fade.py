@@ -3,6 +3,7 @@ from weakref import WeakKeyDictionary
 
 from PyQt5 import sip
 from PyQt5.QtCore import QEvent, QObject, Qt, QTimer, QVariantAnimation, QEasingCurve
+from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QApplication, QWidget
 from idle_fade_options import HINT, LABEL, enabled, individual, selection_changes
 from ui_style import ModernCheckBox
@@ -96,7 +97,8 @@ class WindowFade(QObject):
 
     def dim(self):
         grabber = QWidget.mouseGrabber()
-        if grabber is not None and grabber.window() is self.parent():
+        window = self.parent()
+        if grabber is not None and grabber.window() is window and not window.testAttribute(Qt.WA_TransparentForMouseEvents):
             self.delay.start()
             return
         self.idle = True
@@ -123,6 +125,18 @@ class DesktopIdleFade(QObject):
         self.states = WeakKeyDictionary()
         self.app = QApplication.instance()
         self.app.installEventFilter(self)
+        # Hit-test after all windows in a global policy change have updated.
+        runtime.click_policy.input_restored.connect(self.restore_under_pointer, Qt.QueuedConnection)
+
+    def restore_under_pointer(self, window):
+        if sip.isdeleted(window):
+            return
+        state = self.states.get(window)
+        if state is None or window.testAttribute(Qt.WA_TransparentForMouseEvents):
+            return
+        hit = self.app.widgetAt(QCursor.pos())
+        if hit is not None and hit.window() is window:
+            state.interact()
 
     def owns_floating_window(self, window, key):
         if not window.isWindow():
@@ -166,8 +180,9 @@ class DesktopIdleFade(QObject):
                 else:
                     self.sync_window(widget)
         elif kind in INPUT_EVENTS and self.states and isinstance(widget, QWidget):
-            state = self.states.get(widget.window())
-            if state is not None:
+            window = widget.window()
+            state = self.states.get(window)
+            if state is not None and self.runtime.click_policy.accepts_input(window):
                 state.interact()
         return False
 

@@ -65,7 +65,7 @@ class Badge(QToolButton):
             category=self.owner.identity;ink=category_color(category,self.owner.colors()['light'])
         else:
             from sticky_notes import note_icon_color
-            category='note';ink=note_icon_color(self.owner.row()['color'])
+            category='note';ink=note_icon_color(self.owner.row()['color']) if self.owner.content_light else '#bccddd'
         # Render the vector at the final badge size and actual monitor DPR,
         # rather than enlarging the smaller title-bar pixmap.
         pixmap=category_icon(category,ink,size,self.devicePixelRatioF())

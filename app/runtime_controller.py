@@ -237,6 +237,8 @@ class RuntimeController:
 
     def refresh_layers(self):
         if self.closed:return
+        from component_contrast import refresh_visible
+        refresh_visible(live_only=True)
         self.shell_appearance.refresh_foreground()
         strip=self.resources.strip
         if strip:strip.placement.shell_changed()
@@ -262,8 +264,13 @@ class RuntimeController:
                 return
         if changed is not None and 'desktop_layer_mode' in changed:
             from window_layers import place_desktop
+            from component_contrast import refresh_visible
             for window,top,owned in self.visible_layers():
                 place_desktop(window,self.dock.cfg,top,shell_owned=owned)
+                if getattr(window,'refresh_timer',None) is not None and hasattr(window,'capture_backdrop'):
+                    window.refresh_timer.start(100)
+                window.update()
+            refresh_visible()
             self.click_policy.refresh()
         from settings_effects import DOCK_GLASS
         dock_appearance_changed = changed is None or bool(changed & DOCK_GLASS)

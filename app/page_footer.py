@@ -1,6 +1,6 @@
 """Transparent page navigation anchored inside capsule and collection cards."""
-from PyQt5.QtCore import QEvent, QPointF, QSize, Qt
-from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
+from PyQt5.QtCore import QEvent, QSize, Qt
+from PyQt5.QtGui import QPainter
 from PyQt5.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QSizePolicy, QToolButton
 from flash_view import icon
 
@@ -47,29 +47,8 @@ class CollectionHint(FooterLabel):
             super().paintEvent(event)
 
 
-class PagerTitle(FooterLabel):
-    ink = '#ffffff'
-
-    def paintEvent(self, event):
-        rect = self.contentsRect()
-        metrics = self.fontMetrics()
-        text = metrics.elidedText(self.text(), Qt.ElideRight, rect.width() - 3)
-        x = rect.x() + (rect.width() - metrics.horizontalAdvance(text)) / 2
-        y = rect.y() + (rect.height() + metrics.ascent() - metrics.descent()) / 2
-        glyphs = QPainterPath()
-        glyphs.addText(QPointF(x, y), self.font(), text)
-        ink = QColor(self.ink)
-        edge = QColor('#101820' if ink.lightness() > 128 else '#ffffff')
-        edge.setAlpha(210)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        # Keep overlaid letters legible on content without a filled surface.
-        painter.strokePath(glyphs, QPen(edge, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.fillPath(glyphs, ink)
-
-
 class PagePager(QFrame):
-    def __init__(self, parent, step, *, bottom=PAGER_BOTTOM, leading=None, outlined=True):
+    def __init__(self, parent, step, *, bottom=PAGER_BOTTOM, leading=None):
         super().__init__(parent)
         self.setObjectName('FooterPager')
         self.setAttribute(Qt.WA_StyledBackground)
@@ -88,8 +67,7 @@ class PagePager(QFrame):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
         self.previous = self.arrow(row, '上一页', -1)
-        label_type = PagerTitle if outlined else FooterLabel
-        self.name = label_type(parent=self)
+        self.name = FooterLabel(parent=self)
         self.name.setObjectName('FooterPagerName')
         self.name.setAlignment(Qt.AlignCenter)
         self.name.installEventFilter(self)
@@ -136,8 +114,6 @@ class PagePager(QFrame):
         if self.appearance == ink:
             return
         self.appearance = ink
-        if isinstance(self.name, PagerTitle):
-            self.name.ink = ink
         for button, name in ((self.previous, 'back'), (self.next, 'fold')):
             button.setFixedSize(24, PAGER_HEIGHT)
             button.setIcon(icon(name, ink, 14))

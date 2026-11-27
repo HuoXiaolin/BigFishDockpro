@@ -260,6 +260,7 @@ def run(api,runtime,app,output,checks):
         assert available=={'cpu','memory','network'}
         cfg['resource_compact_order']=[]
         from resource_face import PetFace
+        from desktop_idle_fade_tests import faded_through
         face = PetFace()
         face._step(QPointF(12, 0), True, .7)
         mood = face.mood
@@ -270,15 +271,16 @@ def run(api,runtime,app,output,checks):
             cfg.update(resource_fold=shape,resource_collapsed=collapsed);service.auto_compact=None;service.sync();w.grab()
             assert w.liquid.watch.isActive()
             center=w.liquid.face_bounds.center();positions=[]
-            for direction in (-1,1):
-                w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame()
-                position=w.mapToGlobal(center+QPoint(direction*1250,direction*620))
-                with patch.object(QCursor,'pos',return_value=position):
-                    w.liquid.watch_face()
-                    assert w.liquid.frames.isActive() and not w.liquid.was_near
-                    for _ in range(16):w.liquid.face._t-=.033;w.grab()
-                    positions.append((w.liquid.face.ex.x,w.liquid.face.ey.x))
-                    w.grab().save(str(output/f'face-follow-{shape}-{collapsed}-{direction}.png'))
+            with faded_through(runtime,w):
+                for direction in (-1,1):
+                    w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame()
+                    position=w.mapToGlobal(center+QPoint(direction*1250,direction*620))
+                    with patch.object(QCursor,'pos',return_value=position):
+                        w.liquid.watch_face()
+                        assert w.liquid.frames.isActive() and not w.liquid.was_near
+                        for _ in range(16):w.liquid.face._t-=.033;w.grab()
+                        positions.append((w.liquid.face.ex.x,w.liquid.face.ey.x))
+                        w.grab().save(str(output/f'face-follow-{shape}-{collapsed}-{direction}.png'))
             assert positions[0][0]<-.4 and positions[1][0]>.4 and positions[0][1]<positions[1][1]
             w.liquid.face_until=time.monotonic()-1;w.liquid.face_frame();assert not w.liquid.frames.isActive()
         cfg.update(resource_fold='pill',resource_collapsed=True,resource_compact_width=560);service.sync()
@@ -398,6 +400,6 @@ def run(api,runtime,app,output,checks):
         with patch.object(w.liquid, 'paint_face', new=count_face):
             w.grab()
         assert not face_calls
-        checks.append('Capsule face rotation settings survive page changes and persistence, run alongside cursor tracking, and stop when faces are disabled.')
+        checks.append('Capsule faces follow the cursor while faded and passing input in expanded, pill and ball forms. Rotation persists across pages and stops when faces are disabled.')
         checks.append('Compact pills from 96×28 to 560×44 cycle one resource reading at a time. Checked reachable media, quotas and cities, face interactions, scrollable expanded tabs and seven weather backgrounds in both themes.')
     finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

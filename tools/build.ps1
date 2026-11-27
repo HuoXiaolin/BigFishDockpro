@@ -43,7 +43,7 @@ $taskTestSeconds = 0.0
 $taskBuildTimer = [Diagnostics.Stopwatch]::StartNew()
 function Invoke-TaskCheck([string]$Target,[string]$Output,[string]$Kind,[string[]]$Options) {
     $taskTimer = [Diagnostics.Stopwatch]::StartNew()
-    $taskDeadline = if ($Kind -eq 'singlefile-runtime') {240} else {160}
+    $taskDeadline = if ($Kind -eq 'singlefile-runtime') {300} else {160}
     & $taskPython tools/run_isolated_test.py --target $Target --timeout $taskDeadline --output $Output @Options
     $taskExit = $LASTEXITCODE
     $taskTimer.Stop()

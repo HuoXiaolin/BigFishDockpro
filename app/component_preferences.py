@@ -21,7 +21,7 @@ COMPONENTS = {
         ('图片与轮播', 'calendar', ('enabled', 'idle_fade', 'source', 'interval', 'locked')),
         ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'material', 'color')))),
     'watermark': ('桌面文字水印', (
-        ('文字与颜色', 'notes', ('enabled', 'text', 'color', 'size', 'opacity')),
+        ('文字与颜色', 'notes', ('enabled', 'text', 'color', 'auto_contrast', 'size', 'opacity')),
         ('位置与平铺', 'position', ('mode', 'position', 'angle', 'density', 'layer', 'idle_fade')))),
     'note': ('新便签默认设置', (
         ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'style')),)),

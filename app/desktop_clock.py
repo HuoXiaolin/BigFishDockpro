@@ -155,6 +155,11 @@ class DesktopClock(QWidget):
 
     def capture_backdrop(self):
         if self.parentWidget() is not None:return
+        from window_backdrop import desktop_backdrop
+        if desktop_backdrop(self,self.dock.cfg)=='dynamic':
+            self.backdrop=None
+            self.update()
+            return
         cfg=effective_appearance(self.option('appearance'), self.dock.cfg)
         blur_surface=cfg.get('blur_enabled', True) and cfg['material'] not in ('clear', 'solid')
         from glass_capture import backdrop_key
@@ -324,11 +329,19 @@ class DesktopClock(QWidget):
     def paint_face(self,painter,style,**values):
         rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         options=self.draw_options(**values)
+        from window_backdrop import desktop_backdrop
+        live=self.isWindow() and desktop_backdrop(self,self.dock.cfg)=='dynamic'
+        appearance=effective_appearance(options,self.dock.cfg)
+        from component_contrast import transparent_surface
+        state=transparent_surface(self,self.dock,live and style!='almanac' and appearance['material']!='solid' and
+                                  appearance.get('content_mode','auto')=='auto' and appearance['auto_contrast'])
+        if state:options['_underlay']=state.sample_texture()
+        options['_dynamic_glass']=live
         if style=='almanac' and getattr(self,'flip_progress',None) is None:
             ink=self.almanac_transition.paint(painter,rect,options,datetime.datetime.now())
         else:
             self.almanac_transition.reset()
-            ink=draw_clock(painter,rect,self.dock,options,style,self.backdrop)
+            ink=draw_clock(painter,rect,self.dock,options,style,None if live else self.backdrop)
         painter.end()
         if ink!=getattr(self,'_control_ink',None):
             self._control_ink=ink
@@ -420,7 +433,7 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
         strength=options['highlight']/45
         colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)))
         stops=[(position,min(255,round(alpha*strength))) for position,alpha in dock.merged_grad_stops(colors)]
-        surface=SimpleNamespace(cfg={'glass':options.get('blur_enabled',True) and material!='solid',
+        surface=SimpleNamespace(cfg={'glass':options.get('blur_enabled',True) and material!='solid','live_backdrop':options.get('_dynamic_glass',False),
                                      'dock_material':material},backdrop=backdrop,spec_x=0,spec_alpha=0)
 
         def paint_surface(target):
@@ -436,18 +449,20 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
     from clock_legibility import surface_map,background_at,readable,contrast,neutral_text
     analysis=None
     samples=[]
-    if options['auto_contrast']:
+    content_mode=options.get('content_mode','auto')
+    if options['auto_contrast'] and content_mode=='auto':
         if host:
             ink,muted=QColor(host['ink']),QColor(host['muted'])
             samples=[QColor(host['surface'])]
         else:
             surface_keys=('material','color','opacity','highlight','corner_radius')
-            key=(w,h,backdrop.cacheKey() if backdrop is not None else 0,light,design,tuple(options[k] for k in surface_keys))
+            ground=options.get('_underlay') or backdrop
+            key=(w,h,ground.cacheKey() if ground is not None else 0,light,design,tuple(options[k] for k in surface_keys))
             fallback=QColor(colors['tint'])
-            analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
+            analysis=surface_map(key,w,h,ground,fallback,paint_surface)
             samples=background_at(analysis,rect,w,h)
             ink,muted=neutral_text(samples)
-    content_mode=options.get('content_mode','auto')
+        light=ink.lightness()<128
     if content_mode!='auto':
         light=dock.base_theme_colors(dock.cfg.get('theme','auto'))['light'] if content_mode=='app' else content_mode=='light'
         ink,muted=QColor('#101b25' if light else '#ffffff'),QColor('#34485a' if light else '#e1ebf3')

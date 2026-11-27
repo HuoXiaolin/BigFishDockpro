@@ -95,6 +95,15 @@ def check_agenda_order(page, checks):
     from ui_test_events import Events
 
     agenda = page.model
+    from resource_compact import compact_badges
+    from datetime import datetime
+    noon=datetime(2026,11,27,12,0).timestamp()
+    with patch.dict(agenda.owner.cfg,resource_compact_metrics=['agenda'],resource_agenda=True,
+                    resource_component_locations={'agenda':'capsule'},resource_alert_almanac=False), \
+         patch.object(agenda,'clock',return_value=noon), patch.object(agenda.owner,'reminders',return_value=[]):
+        for offset, suffix in ((-60,'进行中'),(3600,'13:00'),(86400,'11/28')):
+            with patch.object(agenda,'next_event',return_value=dict(title='项目周会',start=noon+offset)):
+                assert ('agenda','项目周会 · '+suffix) in compact_badges(agenda.owner)[0]
     now = int(agenda.clock())
     clock = [now]
     fixtures = (
@@ -734,7 +743,7 @@ def run(api,runtime,app,output,checks):
             assert agenda.timer.isActive() and not agenda.due()
             view=plan(window,window.width())
             item=next(row for row in view['routine_badges'] if row[0]=='agenda')
-            assert '项目周会' in item[1]
+            assert item[1].startswith(agenda.next_event()['title']+' · ')
             window.grab()
             point=window.reminder_bounds[window.reminder_kinds.index('agenda')].center()
             window.expand_from(point)

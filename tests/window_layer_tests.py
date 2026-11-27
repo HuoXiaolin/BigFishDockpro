@@ -95,12 +95,12 @@ def run(api,runtime,app,output,checks):
         for x,y in ((0,0),(0,image.height()-1),(image.width()-1,0),(image.width()-1,image.height()-1)):
             assert image.pixelColor(x,y).alpha()==0, (window.windowTitle(),x,y)
 
-    def wallpaper_sample(window, screen=None):
+    def wallpaper_sample(window, screen=None, color='#e9a767'):
         geometry=window.frameGeometry()
         dpr=window.devicePixelRatioF()
         image=QPixmap(round(geometry.width()*dpr),round(geometry.height()*dpr))
         image.setDevicePixelRatio(dpr)
-        image.fill(QColor('#e9a767'))
+        image.fill(QColor(color))
         return image
 
     def assert_no_window_accent(window):
@@ -298,8 +298,12 @@ def run(api,runtime,app,output,checks):
                     window.grab()
                     assert window.material.uses_wallpaper
                     assert_no_window_accent(window)
-                assert spectrum_pixels()!=dynamic and spectrum.material.uses_wallpaper
+                fixed_spectrum=spectrum_pixels()
+                assert fixed_spectrum!=dynamic and spectrum.material.uses_wallpaper
                 assert wallpaper.call_count==3
+            with patch('capsule_glass.capture',side_effect=lambda w,s=None:wallpaper_sample(w,s,'#183f70')):
+                spectrum.material.clear()
+                assert spectrum_pixels()==fixed_spectrum
             assert mask==flash.mask() and not is_topmost(int(spectrum.winId()))
             assert cfg['spectrum_backdrop_mode']=='dynamic'
             cfg['spectrum_layer']='top';spectrum.apply_layer()

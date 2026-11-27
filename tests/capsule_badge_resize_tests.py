@@ -179,7 +179,7 @@ def check_other_badges(window, app, output, checks):
                     painter.end()
             rows.clear()
             cfg.update(resource_face=False,resource_compact_pinned=[],resource_compact_order=[],resource_compact_zones={})
-            reminders=[('agenda','11/27 · 项目周会与设备联调工作安排'),('focus','25:00'),('water','200 mL'),
+            reminders=[('agenda','项目周会与设备联调工作安排 · 11/27'),('focus','25:00'),('water','200 mL'),
                        ('stopwatch','01:23'),('alarm','18:30'),('battery','12%'),('mail_code','123456'),
                        ('mail_new','新邮件'),('quota_notice','额度提醒'),('weather_notice','大风'),('almanac','小雪')]
             for shape,ordered in (('pill',False),('bar',True)):

@@ -108,6 +108,22 @@ def footer_page_checks(window, app, output, checks):
     assert window.grab().save(str(output / 'capsule-pager-idle.png'))
     app.sendEvent(pager, QEvent(QEvent.Enter))
     assert pager.visibility_effect.opacity() == 1
+    from PyQt5.QtCore import QPoint, Qt
+    from PyQt5.QtGui import QColor, QImage, QPainter, QRegion
+    from PyQt5.QtWidgets import QWidget
+    saved_ink=pager.appearance
+    for ink in ('#15232b','#f4f8fb'):
+        pager.sync_appearance(ink)
+        title=pager.name
+        image=QImage(title.size(),QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        painter=QPainter(image)
+        title.render(painter,QPoint(),QRegion(),QWidget.DrawChildren)
+        painter.end()
+        pixels=[image.pixelColor(x,y) for y in range(image.height()) for x in range(image.width())]
+        visible=[c.lightness() for c in pixels if c.alpha()>=160]
+        assert visible and all(abs(level-QColor(ink).lightness())<24 for level in visible), (ink,visible[:20])
+    pager.sync_appearance(saved_ink)
     assert window.grab().save(str(output / 'capsule-footer-pager.png'))
     pager.next.click()
     assert window.page_key == successor and pager.name.text() == OPEN_PAGES[successor]
@@ -126,7 +142,7 @@ def footer_page_checks(window, app, output, checks):
     window.select_page('ai')
     stats = window.stats_view
     assert stats.notes_button.parent() is stats.scroll.widget()
-    checks.append('Capsule floating page navigation: transparent and shown only on hover or keyboard focus, overlays the lower content without a layout row, remarks remain visible independently, and click/wheel follow the page order.')
+    checks.append('Capsule floating page navigation: unoutlined light and dark text, hover and keyboard focus visibility, independent remarks and working arrow and wheel navigation.')
 
 
 def run(api,runtime,root,app,output,checks):

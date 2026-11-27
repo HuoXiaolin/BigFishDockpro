@@ -59,6 +59,8 @@ def run(output):
         run_usage_stats(api,runtime,root.name,output,checks)
         from shell_appearance_tests import run as run_shell_appearance
         run_shell_appearance(api,runtime,root.name,app,output,checks)
+        from desktop_underlay_tests import run as check_underlay
+        check_underlay(runtime,output,checks)
         from watermark_tests import run as check_watermark
         check_watermark(api,runtime,app,checks)
         from material_tests import check_zero_crystal

@@ -357,7 +357,7 @@ class DesktopPanel(Foldable,QDialog):
         self.notice.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.list.verticalScrollBar().valueChanged.connect(self.notice.update)
         self.list.verticalScrollBar().rangeChanged.connect(self.notice.update)
-        self.page_pager = PagePager(self.list, self.shift_merged_page, bottom=0, leading=self.notice, outlined=False)
+        self.page_pager = PagePager(self.list, self.shift_merged_page, bottom=0, leading=self.notice)
         self.page_pager.hide()
         body.addWidget(self.content, 1)
         self.query.textChanged.connect(self.render)
@@ -581,6 +581,8 @@ class DesktopPanel(Foldable,QDialog):
         palette = self.query.palette()
         palette.setColor(QPalette.PlaceholderText,QColor(self.text_ink_at(self.query,extent,muted=True)))
         self.query.setPalette(palette)
+        if getattr(self,'fold_badge',None) is not None:
+            self.fold_badge.update()
         self.list.viewport().update();self.update()
 
     def update_identity_header(self):
@@ -1120,6 +1122,7 @@ class DesktopPanel(Foldable,QDialog):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        self.refresh_wallpaper_later(120)
         badge=getattr(self,'fold_badge',None)
         if not self.restoring and self.drag_origin is None and self.edge_drag is None and (not badge or badge.origin is None):
             self.resize_timer.start(250)

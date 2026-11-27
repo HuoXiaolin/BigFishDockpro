@@ -122,6 +122,7 @@ def field_catalog(api, cfg):
         'watermark_enabled': (WIDGETS, '显示桌面文字水印', 'check', None),
         'watermark_text': (WIDGETS, '水印文字', 'text', None),
         'watermark_color': (WIDGETS, '水印颜色', 'color', None),
+        'watermark_auto_contrast': (WIDGETS, '水印颜色自动适配背景', 'check', None),
         'watermark_size': (WIDGETS, '水印字号（像素）', 'number', WATERMARK_RANGES['watermark_size']),
         'watermark_angle': (WIDGETS, '旋转角度（°）', 'number', WATERMARK_RANGES['watermark_angle']),
         'watermark_opacity': (WIDGETS, '水印不透明度（%）', 'number', WATERMARK_RANGES['watermark_opacity']),

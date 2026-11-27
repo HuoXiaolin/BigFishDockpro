@@ -445,10 +445,10 @@ class DesktopSpectrum(QWidget):
         self.paint_spectrum(frame, style)
         frame.end()
 
-        # Show wallpaper only through the frequency graphics' existing alpha.
-        # Transparent space around the sphere, ring and bars stays transparent.
+        # Keep the configured spectrum RGB in both layers. Glass contributes
+        # coverage inside the strokes, including their translucent edges.
         self.material.paint(painter, self, self.runtime.dock, 0, self.drag is not None, appearance)
-        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
         painter.drawPixmap(QRectF(self.rect()), ink, QRectF(ink.rect()))
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         painter.drawPixmap(QRectF(self.rect()), ink, QRectF(ink.rect()))
@@ -465,8 +465,9 @@ class DesktopSpectrum(QWidget):
         if style == 'crown' and self.crown_started is not None:
             crown_angle = (monotonic() - self.crown_started) % CROWN_ROTATION_SECONDS * tau / CROWN_ROTATION_SECONDS
         preset=SPECTRUM_PALETTES.get(self.cfg['spectrum_color_mode'])
+        palette=preset[1] if preset else SPECTRUM_COLORS
         draw_spectrum(painter,QRectF(self.rect()),self.levels,style,accent,
-                      not following and preset is not None,self.peaks,ring_height=height,palette=preset[1] if preset else SPECTRUM_COLORS,
+                      not following and preset is not None,self.peaks,ring_height=height,palette=palette,
                       show_limit=preview is not None,crown_angle=crown_angle,
                       sphere_angle=self.sphere_angle,sphere_strength=self.sphere_strength)
 

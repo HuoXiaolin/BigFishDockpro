@@ -7,6 +7,7 @@ from PyQt5.QtGui import QCursor,QMouseEvent
 
 def run(api,runtime,app,output,checks):
     from glass_panel import PanelOptions
+    from desktop_idle_fade_tests import faded_through
     cfg=runtime.dock.cfg;before=copy.deepcopy(cfg);dialog=None
     try:
         cfg.update(panel_enabled=True,panels_visible=True,panel_auto_hide=False,panel_face=True,
@@ -18,15 +19,16 @@ def run(api,runtime,app,output,checks):
             panel.set_collapsed_geometry(collapsed);panel.expand_timer.stop();app.processEvents();panel.grab()
             assert tracker.watch.isActive() and tracker.face_bounds is not None
             positions=[]
-            for direction in (-1,1):
-                tracker.face_until=time.monotonic()-1;tracker.face_frame()
-                cursor=panel.mapToGlobal(tracker.face_bounds.center()+QPoint(direction*1250,direction*620))
-                with patch.object(QCursor,'pos',return_value=cursor):
-                    tracker.watch_face()
-                    assert tracker.frames.isActive() and not tracker.was_near
-                    for _ in range(16):tracker.face._t-=.033;panel.grab()
-                    positions.append((tracker.face.ex.x,tracker.face.ey.x))
-                    panel.grab().save(str(output/f'desktop-face-{shape}-{direction}.png'))
+            with faded_through(runtime,panel):
+                for direction in (-1,1):
+                    tracker.face_until=time.monotonic()-1;tracker.face_frame()
+                    cursor=panel.mapToGlobal(tracker.face_bounds.center()+QPoint(direction*1250,direction*620))
+                    with patch.object(QCursor,'pos',return_value=cursor):
+                        tracker.watch_face()
+                        assert tracker.frames.isActive() and not tracker.was_near
+                        for _ in range(16):tracker.face._t-=.033;panel.grab()
+                        positions.append((tracker.face.ex.x,tracker.face.ey.x))
+                        panel.grab().save(str(output/f'desktop-face-{shape}-{direction}.png'))
             assert positions[0][0]<-.4<positions[1][0] and positions[1][0]>.4
             assert positions[0][1]<positions[1][1]
             tracker.face_until=time.monotonic()-1;tracker.face_frame();assert not tracker.frames.isActive()
@@ -80,7 +82,7 @@ def run(api,runtime,app,output,checks):
         panel.hide();assert not tracker.watch.isActive() and not tracker.frames.isActive()
         panel.show();assert tracker.watch.isActive()
         cfg['motion_enabled']=False;runtime.apply_settings({'motion_enabled'});assert not tracker.watch.isActive()
-        checks.append('Desktop faces follow distant cursor positions in expanded/capsule/ball layouts, keep click/hover controls and moods, and stop tracking when hidden or motion is disabled.')
+        checks.append('Desktop faces follow distant cursor positions while faded and passing input in expanded/capsule/ball layouts, keep click/hover controls and moods, and stop tracking when hidden or motion is disabled.')
         checks.append('Desktop face rotation defaults to 10 minutes, persists a custom interval, rotates with interaction off, pauses when hidden, and restores a fixed style when disabled.')
     finally:
         if dialog:dialog.reject()

@@ -28,7 +28,7 @@ def run(api, runtime, app, checks):
     screen = app.primaryScreen()
     try:
         dialog.tabs.setCurrentIndex(WIDGETS);dialog.show()
-        dialog.set_draft_values(dict(watermark_enabled=True, watermark_color='#5599dd', watermark_opacity=47,
+        dialog.set_draft_values(dict(watermark_enabled=True, watermark_color='#5599dd', watermark_auto_contrast=False, watermark_opacity=47,
                                      watermark_text='测试 123', watermark_size=36, watermark_angle=-32))
         assert dialog.fields['watermark_position'].isEnabled() and not dialog.fields['watermark_density'].isEnabled()
         dialog.fields['watermark_mode'].setCurrentIndex(1)

@@ -583,7 +583,7 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.add_field(panel, 'calendar_idle_fade')
         section_marker(panel,'桌面文字水印')
         from feature_config import WATERMARK_TEXT_LIMIT
-        for key in ('enabled','idle_fade','text','color','size','angle','opacity','layer','mode','position','density'):
+        for key in ('enabled','idle_fade','text','color','auto_contrast','size','angle','opacity','layer','mode','position','density'):
             self.add_field(panel, 'watermark_'+key)
         self.fields['watermark_text'].setMaxLength(WATERMARK_TEXT_LIMIT)
         self.fields['watermark_mode'].currentIndexChanged.connect(self.sync_watermark_fields)

@@ -2,7 +2,7 @@
 import datetime as dt
 from PyQt5.QtCore import Qt, QTimer, QSize, QPoint, QRect, QRectF, QDateTime,QVariantAnimation,QEasingCurve
 from PyQt5.QtGui import QColor, QPainter, QPen, QCursor, QKeySequence, QFont, QRegion, QPainterPath, QPalette
-from PyQt5.QtWidgets import (QWidget,QFrame,QDialog,QLabel,QLineEdit,QPushButton,QVBoxLayout,QHBoxLayout,
+from PyQt5.QtWidgets import (QWidget,QFrame,QDialog,QLabel,QLineEdit,QPushButton,QBoxLayout,QVBoxLayout,QHBoxLayout,
     QListWidgetItem,QPlainTextEdit,QShortcut,QMessageBox,QApplication,QToolButton,QDateTimeEdit,QSizePolicy)
 from flash_data import COLORS, filtered, MAX_TEXT
 from flash_view import (flash_appearance, glass_fill, palette_for, text_ink, icon, tool, Swatch, IdeaEditor, CapsuleDelegate,
@@ -131,8 +131,10 @@ class EdgeHandle(QWidget):
         top=point.y()-self.press.y() if point is not None and self.press is not None else (
             projected[1]+projected[3]//2-self.height()//2 if projected else y+(h-self.height())//2)
         left=x+2 if self.side=='left' else x+w-self.width()-2
-        self.move(left,max(y,min(top,y+h-self.height())))
         self.work_area=QRect(x,y,w,h)
+        self.move(left,max(y,min(top,y+h-self.height())))
+        if self.service.panel:self.service.panel.place(self)
+        self.update()
 
     def paintEvent(self,event):
         colors=palette_for(self.service,widget=self)
@@ -188,19 +190,23 @@ class EdgeHandle(QWidget):
             self.moving=True
         if self.moving:
             self.place(event.globalPos())
-            if self.service.panel:self.service.panel.place(self)
 
     def mouseReleaseEvent(self,event):
         if event.button()!=Qt.LeftButton or self.press is None:return
-        self.press=None
-        if self.moving:
+        if self.moving or (event.globalPos()-self.mapToGlobal(self.press)).manhattanLength()>=QApplication.startDragDistance():
+            # A release can carry a newer screen/position than the last move.
+            self.place(event.globalPos())
+            self.press=None
             self.moving=False
             record=capture(list(self.anchor_rect().getRect()),screen_records())
             saved=self.service.persist(flash_layout=record,flash_side=self.side)
             self.drag_side=None
             if not saved:self.service.reposition()
             self.arm_hide()
-        else:self.service.open(compose=True)
+            if self.service.panel:self.service.panel.arm_fold()
+        else:
+            self.press=None
+            self.service.open(compose=True)
 
     def dragEnterEvent(self,event):
         if self.service.cfg['flash_drop'] and plain_drop(event.mimeData()) and event.possibleActions()&Qt.CopyAction:
@@ -241,6 +247,7 @@ class FlashPanel(QWidget):
         self.setProperty('clickThroughKey','flash')
         self.material=CapsuleGlass()
         self.service=service;self.expanded='';self.color_filter='';self.editing=False;self.edit_id=''
+        self.side=None
         self.edit_color=service.cfg['flash_color'];self.rows={};self.icons={};self.hold=False
         rounded_window(self);self.setAcceptDrops(True);self.setWindowTitle('闪念胶囊 · 大肥鱼Dock')
         outer=QVBoxLayout(self);outer.setContentsMargins(1,1,1,1)
@@ -424,6 +431,18 @@ class FlashPanel(QWidget):
 
     def place(self,edge):
         if not hasattr(edge,'work_area'):return
+        side_changed = self.side != edge.side
+        if side_changed:
+            self.side = edge.side
+            left = self.side == 'left'
+            align = Qt.AlignLeft if left else Qt.AlignRight
+            self.tools_slot.layout().setDirection(QBoxLayout.RightToLeft if left else QBoxLayout.LeftToRight)
+            self.tools_slot.layout().activate()
+            body = self.browse.layout()
+            body.setAlignment(self.filters_bar,align)
+            body.setAlignment(self.clear_trash,align)
+            body.setAlignment(self.empty,align | Qt.AlignTop)
+            self.surface.layout().setAlignment(self.status,align)
         area=edge.work_area
         width=max(1,min(368,area.width()-edge.width()-6))
         available=max(1,width-8)
@@ -442,6 +461,9 @@ class FlashPanel(QWidget):
         y=max(area.top()+3,min(edge.geometry().center().y()-height//2,area.bottom()-height-2))
         rect=QRect(x,y,width,height)
         if rect!=self.geometry():self.setGeometry(rect)
+        if side_changed:
+            self.list.viewport().update()
+            self.input_region()
 
     def focus_search(self):
         if self.editing:return
@@ -640,6 +662,7 @@ class FlashPanel(QWidget):
         if (self.editing or self.hold or self.search.hasFocus() and self.search.text()
                 or QApplication.activePopupWidget() or QApplication.activeModalWidget()):return
         point=QCursor.pos();edge=self.service.edge
+        if edge and edge.press is not None:return
         if not self.mask().contains(self.mapFromGlobal(point)) and not (edge and edge.geometry().contains(point)):
             self.service.collapse()
     def enterEvent(self,event):

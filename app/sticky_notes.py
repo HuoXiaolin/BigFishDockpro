@@ -550,8 +550,9 @@ class NoteWindow(QWidget):
             self.fit_title()
     def capture_backdrop(self):
         if self.embedded:return
+        from window_backdrop import desktop_backdrop
         appearance=self.effective_appearance()
-        if appearance['style']!='glass' or appearance['material'] in ('clear','solid') or not appearance.get('blur_enabled',True):self.backdrop=None;self.update();return
+        if desktop_backdrop(self,self.dock.cfg)=='dynamic' or appearance['style']!='glass' or appearance['material'] in ('clear','solid') or not appearance.get('blur_enabled',True):self.backdrop=None;self.update();return
         if self.dock.preview or not self.isVisible():return
         from glass_capture import capture_behind,surface_windows,backdrop_key
         blur=material_blur(appearance['blur'],appearance['material'])
@@ -573,12 +574,14 @@ class NoteWindow(QWidget):
         appearance=self.effective_appearance();clear=False
         color=QColor(appearance['color'])
         if appearance['style']=='glass':
+            from window_backdrop import desktop_backdrop
+            live=desktop_backdrop(self,self.dock.cfg)=='dynamic'
             material=appearance['material'];colors=material_palette(tint_palette(self.dock.base_theme_colors(appearance['theme']),appearance['color']),material)
             strength=appearance['highlight']/45
             colors['border'].setAlpha(min(255,round(colors['border'].alpha()*strength)));colors['spec']=min(255,round(colors['spec']*strength))
             stops=[(position,min(255,round(alpha*strength))) for position,alpha in self.dock.merged_grad_stops(colors)]
             clear=material=='clear' and appearance['opacity']==0 and appearance['highlight']==0
-            surface=SimpleNamespace(cfg={'glass':appearance.get('blur_enabled',True) and material not in ('clear','solid'),'clear_background':clear,'dock_material':material},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
+            surface=SimpleNamespace(cfg={'glass':not live and appearance.get('blur_enabled',True) and material not in ('clear','solid'),'live_backdrop':live,'clear_background':clear,'dock_material':material},backdrop=self.backdrop,spec_x=self.width()*.5,spec_alpha=.25)
             paint_liquid_glass(surface,p,shape,rect,rect,colors,round(appearance['opacity']*2.55),stops)
         else:
             p.setClipPath(shape)

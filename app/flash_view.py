@@ -218,7 +218,8 @@ class CapsuleDelegate(QStyledItemDelegate):
     def bubble(self,rect,metrics,text,adorn):
         available=max(1,rect.width()-6)
         width=min(available,max(82,metrics.horizontalAdvance(text)+40+adorn))
-        return QRectF(rect.right()-width-2,rect.top()+3,width,max(1,rect.height()-6))
+        x=rect.left()+3 if self.panel.side=='left' else rect.right()-width-2
+        return QRectF(x,rect.top()+3,width,max(1,rect.height()-6))
     def paint(self,painter,option,index):
         identity=index.data(Qt.UserRole)
         row=self.panel.rows.get(identity)

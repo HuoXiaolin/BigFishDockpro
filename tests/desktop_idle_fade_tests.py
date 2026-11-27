@@ -1,8 +1,82 @@
 """Exercise native desktop layers and independent inactivity on a private desktop."""
-from PyQt5.QtCore import QEvent, QRect, Qt
+from contextlib import contextmanager
+from unittest.mock import patch
+from PyQt5.QtCore import QEvent, QPoint, QRect, Qt
+from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QApplication, QLabel, QWidget
 from desktop_panel_tests import wait_for
 from ui_test_events import Events
+
+
+@contextmanager
+def faded_through(runtime, window):
+    """Exercise the real face renderer while the native host is faded and passes input."""
+    try:
+        with patch.dict(runtime.dock.cfg, desktop_idle_fade_mode='on', desktop_idle_fade_amount=50,
+                        passthrough_mode='all', passthrough_alt_unlock=False):
+            runtime.click_policy.apply(window)
+            runtime.idle_fade.sync_window(window)
+            state = runtime.idle_fade.states[window]
+            state.delay.stop()
+            state.dim()
+            state.animation.setCurrentTime(state.animation.duration())
+            assert window.testAttribute(Qt.WA_TransparentForMouseEvents) and state.factor == .5
+            yield
+            assert state.idle and state.factor == .5 and not state.delay.isActive()
+    finally:
+        runtime.click_policy.apply(window)
+        runtime.idle_fade.sync_window(window)
+
+
+def check_pointer_recovery(runtime, app, first, second, child):
+    from window_layers import TOPMOST, restack
+    cfg, policy = runtime.dock.cfg, runtime.click_policy
+    one, two = (runtime.idle_fade.states[w] for w in (first, second))
+    def dim(state):
+        state.delay.stop()
+        state.dim()
+        assert state.idle and abs(state.parent().windowOpacity()-.5)<.01
+
+    cursor = child.mapToGlobal(child.rect().center())
+    assert restack(int(second.winId()), TOPMOST)
+    try:
+        with patch.dict(cfg, passthrough_mode='all', passthrough_alt_unlock=True,
+                        desktop_idle_fade_amount=50, motion_enabled=False), \
+             patch('window_layers.alt_pressed', return_value=False) as alt, \
+             patch.object(QCursor, 'pos', return_value=cursor):
+            policy.refresh()
+            dim(one);dim(two)
+            app.sendEvent(child,QEvent(QEvent.Enter))
+            Events.wheel(child,-120)
+            Events.drag(child,child.rect().center(),QPoint(3,2))
+            assert two.idle and two.factor==.5 and not two.delay.isActive()
+
+            alt.return_value=True
+            policy.update_pointer()
+            wait_for(app,lambda:two.factor==1.)
+            assert not two.idle and two.delay.isActive() and one.idle and one.factor==.5
+            alt.return_value=False
+            policy.update_pointer()
+            dim(two)
+            cfg['passthrough_mode']='none'
+            policy.refresh()
+            wait_for(app,lambda:two.factor==1.)
+            assert one.idle and one.factor==.5
+
+            # The cursor can cross onto another application before the 24 ms policy timer fires.
+            cfg.update(passthrough_mode='custom',component_passthrough={'custom:test':'apps'})
+            with patch('window_layers.application_under',return_value=False) as below:
+                policy.refresh()
+                dim(two)
+                below.return_value=True
+                app.sendEvent(child,QEvent(QEvent.Enter))
+                assert second.testAttribute(Qt.WA_TransparentForMouseEvents)
+                assert two.idle and two.factor==.5 and not two.delay.isActive()
+                below.return_value=False
+                app.sendEvent(child,QEvent(QEvent.Enter))
+                assert not two.idle and two.factor==1. and two.delay.isActive()
+    finally:
+        policy.refresh()
 
 
 def run(api, runtime, output, checks):
@@ -115,10 +189,12 @@ def run(api, runtime, output, checks):
         assert second not in policy.states and second.windowOpacity()>.99
         second.setProperty('clickThroughKey','custom:test')
         assert second in policy.states and not policy.states[second].idle
+        check_pointer_recovery(runtime,app,first,second,second_label)
         second.hide()
         assert second not in policy.states and second.windowOpacity()>.99
         checks.append('Native Dock and desktop clock cycle through top, bottom and their individual layers; passthrough restores mixed per-component choices.')
         checks.append('Opt-in fresh/legacy/reset defaults, per-instance menu and persistence, six-second fade/recovery, global on/off/custom restoration, layer independence and taskbar exclusion verified.')
+        checks.append('Pass-through hover, clicks and wheel leave opacity and the idle deadline alone. Alt unlock and disabling pass-through recover the actual child under a stationary cursor. Conditional input changes apply on the first event.')
     finally:
         if popup is not None:
             popup.close()
