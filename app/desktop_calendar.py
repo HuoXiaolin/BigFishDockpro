@@ -110,4 +110,6 @@ class DesktopCalendar(DesktopClock):
         menu.addSeparator()
         if self.parentWidget() is None:
             lock=menu.addAction('锁定位置与大小');lock.setCheckable(True);lock.setChecked(self.option('locked'));lock.triggered.connect(self.set_locked)
+            from desktop_idle_fade import add_action
+            add_action(menu,self.runtime,self.kind)
         menu.addSeparator();menu.addAction('隐藏日历').triggered.connect(lambda:self.set_enabled(False));return menu

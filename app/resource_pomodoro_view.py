@@ -1,4 +1,4 @@
-"""Two compact timer cards and the icons shared with the collapsed capsule."""
+"""Compact timer cards and the icons shared with the collapsed capsule."""
 from datetime import datetime
 
 from PyQt5.QtCore import QPointF, QRectF, QSize, Qt, QTime
@@ -149,6 +149,39 @@ class TimerSummary(QWidget):
             text(p,label_rect.translated(0,label_rect.height()),status,accent if due else c['muted'],10,due)
 
 
+class ClockEmblem(QWidget):
+    """A seconds sweep for the stopwatch and a ringing accent for a due alarm."""
+    def __init__(self,window,model,kind):
+        super().__init__()
+        self.owner=window
+        self.model=model
+        self.kind=kind
+        self.setFixedSize(40,40)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def paintEvent(self,event):
+        colors=self.owner.colors
+        if not colors:return
+        state=self.model.state
+        watch=self.kind=='stopwatch'
+        due=not watch and state['alarm_due']
+        accent=QColor(reminder_ink('alarm_due' if due else self.kind,colors['light']))
+        track=QColor(accent)
+        track.setAlpha(85)
+        wash=QColor(accent)
+        wash.setAlpha(25 if colors['light'] else 35)
+        painter=QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        circle=QRectF(self.rect()).adjusted(2,2,-2,-2)
+        painter.setBrush(wash)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(circle)
+        # The sweep follows the real second within the minute and rests on pause.
+        sweep=(self.model.elapsed()%60)*100/60 if watch else 100 if state['alarm_at'] or due else None
+        ring(painter,circle,sweep,accent,track,stroke=2)
+        reminder_icon(painter,circle.adjusted(7,7,-7,-7),self.kind,accent)
+
+
 class PomodoroView(QWidget):
     def __init__(self,window):
         super().__init__()
@@ -197,19 +230,22 @@ class PomodoroView(QWidget):
         second=QWidget();self.tools.addWidget(second)
         self.clock_cards=QBoxLayout(QBoxLayout.LeftToRight,second)
         self.clock_cards.setContentsMargins(0,0,0,0);self.clock_cards.setSpacing(7)
-        watch,_,body=self.card('正计时','mint')
-        self.watch_value=QLabel();self.watch_value.setAccessibleName('累计计时');body.addWidget(self.watch_value,1)
-        self.watch_status=QLabel();self.watch_status.setObjectName('Subtle');body.addWidget(self.watch_status)
+        watch,watch_head,body=self.card('正计时','ice')
+        self.watch_value=QLabel();self.watch_value.setAccessibleName('累计计时')
+        self.watch_status=QLabel();self.watch_status.setObjectName('Subtle')
+        self.watch_emblem=self.clock_summary(body,self.watch_value,self.watch_status,'stopwatch')
         row=QHBoxLayout();self.watch_toggle=self.control(row,'开始',self.model.toggle_stopwatch)
         self.watch_reset=self.control(row,'归零',self.model.reset_stopwatch);body.addLayout(row)
-        alarm,_,body=self.card('闹钟','lavender')
-        row=QHBoxLayout();self.alarm_time=QTimeEdit();self.alarm_time.setDisplayFormat('HH:mm')
-        self.alarm_time.setButtonSymbols(QAbstractSpinBox.NoButtons);self.alarm_time.setMinimumHeight(32)
+        alarm,alarm_head,body=self.card('闹钟','amethyst')
+        self.alarm_time=QTimeEdit();self.alarm_time.setDisplayFormat('HH:mm')
+        self.alarm_time.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.alarm_time.setToolTip('点击时间可编辑小时和分钟')
         self.alarm_time.setAccessibleName('闹钟时间');self.alarm_time.setTime(QTime.fromString(self.model.state['alarm_time'],'HH:mm'))
-        row.addWidget(self.alarm_time,1)
         self.repeat=QToolButton();self.repeat.setCheckable(True);self.repeat.setText('每天');self.repeat.setAccessibleName('每天重复')
-        self.repeat.setChecked(self.model.state['alarm_daily']);row.addWidget(self.repeat);body.addLayout(row)
-        self.alarm_status=QLabel();self.alarm_status.setObjectName('Subtle');body.addWidget(self.alarm_status,1)
+        self.repeat.setChecked(self.model.state['alarm_daily']);alarm_head.addWidget(self.repeat)
+        self.alarm_status=QLabel();self.alarm_status.setObjectName('Subtle')
+        self.alarm_emblem=self.clock_summary(body,self.alarm_time,self.alarm_status,'alarm')
+        watch_head.addStrut(self.repeat.sizeHint().height())
         row=QHBoxLayout()
         self.arm=self.control(row,'设定',lambda:self.model.arm_alarm(self.alarm_time.time().toString('HH:mm'),self.repeat.isChecked()))
         self.cancel=self.control(row,'取消',self.model.cancel_alarm)
@@ -226,6 +262,22 @@ class PomodoroView(QWidget):
         heading=QLabel(title);heading.setObjectName('RankTitle');head.addWidget(heading,1)
         body.addLayout(head)
         return card,head,body
+
+    def clock_summary(self,body,value,status,kind):
+        summary=QWidget()
+        summary.setFixedHeight(54)
+        row=QHBoxLayout(summary)
+        row.setContentsMargins(1,0,3,0)
+        row.setSpacing(4)
+        labels=QVBoxLayout()
+        labels.setContentsMargins(0,0,0,0)
+        labels.setSpacing(0)
+        labels.addWidget(value);labels.addWidget(status)
+        row.addLayout(labels,1)
+        mark=ClockEmblem(self.owner,self.model,kind)
+        row.addWidget(mark,0,Qt.AlignVCenter)
+        body.addWidget(summary)
+        return mark
 
     @staticmethod
     def control(row,label,action,checkable=False):
@@ -253,17 +305,21 @@ class PomodoroView(QWidget):
             self.timer_theme=signature
             ink=colors['ink']
             primary_fg='#ffffff' if colors['light'] else '#14202a'
-            for button,day,night in ((self.toggle,'#86462e','#f4b999'),(self.drink,'#226654','#a1d9c7')):
+            for button,day,night in ((self.toggle,'#86462e','#f4b999'),(self.drink,'#226654','#a1d9c7'),
+                                     (self.watch_toggle,'#19666a','#95d7d1'),(self.arm,'#674782','#d9b9ec')):
                 fill=day if colors['light'] else night
                 button.setStyleSheet(f'QToolButton{{background:{fill};color:{primary_fg};border:1px solid transparent;border-radius:6px;padding:3px 6px;font-weight:600;}}'
                                      f'QToolButton:hover,QToolButton:focus{{border-color:{ink};}}')
-            self.watch_value.setStyleSheet(f'QLabel{{background:transparent;color:{ink};font-size:27px;font-weight:650;}}')
-            self.alarm_time.setStyleSheet('QTimeEdit{background:rgba(120,112,165,28);border:1px solid rgba(120,112,165,95);'
-                                         f'border-radius:5px;padding:0 6px;font-size:21px;font-weight:600;color:{ink};}}')
-            for widget in (self.watch_toggle,self.arm):
-                widget.setStyleSheet('QToolButton{background:rgba(112,134,160,35);border:1px solid rgba(112,134,160,82);'
-                                     f'border-radius:5px;padding:2px 8px;font-weight:600;color:{ink};}}'
-                                     'QToolButton:hover{background:rgba(112,134,160,66)}')
+            clock_type='font-family:"Segoe UI";font-size:24px;font-weight:600;'
+            self.watch_value.setStyleSheet(f'QLabel{{background:transparent;color:{ink};{clock_type}}}')
+            alarm_ink=reminder_ink('alarm',colors['light'])
+            self.alarm_time.setStyleSheet(f'QTimeEdit{{background:transparent;color:{ink};{clock_type}'
+                                          'padding:0 2px;border:1px solid transparent;border-radius:4px;}'
+                                          f'QTimeEdit:hover,QTimeEdit:focus{{border-color:{alarm_ink};}}'
+                                          f'QTimeEdit QLineEdit{{{clock_type}background:transparent;color:{ink};padding:0;border:0;}}')
+            self.alarm_time.ensurePolished()
+            self.alarm_time.setFixedWidth(max(self.alarm_time.sizeHint().width(),
+                                              self.alarm_time.fontMetrics().horizontalAdvance('88:88')+16))
         self.watch_value.setText(elapsed_text(self.model.elapsed()))
         self.watch_status.setText({'idle':'待开始','running':'计时中','paused':'已暂停'}[watch])
         self.watch_toggle.setText({'idle':'开始','running':'暂停','paused':'继续'}[watch])
@@ -275,6 +331,13 @@ class PomodoroView(QWidget):
             alarm_text=('每天' if state['alarm_daily'] else '今天' if local.date()==today else '明天')+' '+state['alarm_time']
         else:alarm_text='未设定闹钟'
         self.alarm_status.setText(alarm_text);self.arm.setText('更新' if at else '设定')
+        watch_color=reminder_ink('stopwatch',colors['light']) if watch=='running' else colors['muted']
+        alarm_color=reminder_ink('alarm_due' if due else 'alarm',colors['light']) if due or at else colors['muted']
+        for status_label,color in ((self.watch_status,watch_color),(self.alarm_status,alarm_color)):
+            if status_label.property('statusInk')!=color:
+                status_label.setProperty('statusInk',color)
+                status_label.setStyleSheet(f'color:{color};font-size:11px;')
+        self.watch_emblem.update();self.alarm_emblem.update()
         self.cancel.setVisible(bool(at));self.dismiss.setVisible(due)
         phase,status,_,_=self.model.focus()
         self.focus_button.setChecked(phase=='focus');self.rest_button.setChecked(phase=='rest')

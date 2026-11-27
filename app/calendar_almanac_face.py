@@ -3,7 +3,7 @@ from datetime import datetime
 from functools import lru_cache
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QColor, QFont, QFontMetricsF, QImageReader, QLinearGradient, QPainter, QPainterPath, QPixmap
-from calendar_almanac import almanac, ASSETS, edition, next_festival, verse_index
+from calendar_almanac import almanac, ASSETS, ROTATION_MINUTES, edition, next_civil_holiday, next_festival, verse_index
 
 
 @lru_cache(maxsize=2)
@@ -83,12 +83,14 @@ def draw_almanac(painter, rect, dock, options):
     version = edition(now)
     events = model.events
     light = (options.get('_host_palette') or dock.base_theme_colors(options['theme']))['light']
+    mode=options.get('content_mode','auto')
+    if mode!='auto':light=dock.base_theme_colors(dock.cfg.get('theme','auto'))['light'] if mode=='app' else mode=='light'
     ink = QColor('#252f29' if light else '#fff7e5')
     detail = QColor('#52594e' if light else '#e2decc')
     accent = QColor(('#874129' if model.festival or model.civil_festival else '#385d50') if light else '#f5d89e')
     from desktop_clock import contrast_ink
     paper = QColor('#f6efdf' if light else '#263532')
-    if not options['auto_contrast'] and options['text_color']:
+    if mode=='auto' and not options['auto_contrast'] and options['text_color']:
         ink = contrast_ink(options['text_color'], paper, 4.5)
     if options['accent_color']:
         accent = contrast_ink(options['accent_color'], paper, 4.5)
@@ -118,33 +120,59 @@ def draw_almanac(painter, rect, dock, options):
         header = QRectF(pad, 5 if tight else 9, usable-reserve, 14 if tight else 24)
         main = art.name if events else model.lunar
         secondary = ' · '.join((model.lunar, *(name for name in events if name != art.name))) if events else f'{model.term}时节'
-        rows = [(secondary, 11 if tight else 13, detail, QFont.Normal),
-                (f'距{model.next_term} {model.days_left} 天', 11 if tight else 16, accent, QFont.DemiBold)]
-        if not tight:
-            upcoming, distance = next_festival(day)
-            if upcoming:
-                rows.append((f'距{upcoming} {distance} 天', 13, detail, QFont.Normal))
-        rows.append((model.civil_countdown(), 11 if tight else 13, detail, QFont.Normal))
+        lunar_name, lunar_days = next_festival(day)
+        civil_name, civil_days = (model.civil_festival, 0) if model.civil_names else next_civil_holiday(day)
+        upcoming = [(name, days) for name,days in ((model.next_term,model.days_left),
+                    (lunar_name,lunar_days),(civil_name,civil_days)) if name]
+        from calendar_markers import upcoming_countdowns
+        personal=upcoming_countdowns(dock.cfg,day,now)
 
-        verse_h = 16 if tight else max(20, min(29, h * .105))
-        verse_y = h - pad * .58 - verse_h
-        content_top = header.bottom() + (2 if tight else 5)
-        content_height = verse_y - content_top - (4 if tight else 10)
-        title_h = min(60, h * .185)
-        row_h = min(13 if tight else 24, (content_height-title_h)/len(rows))
-        content_y = content_top + (content_height-title_h-len(rows)*row_h) * .35
-        title_width = usable * (.82 if w < 250 else .67)
-        rows_width = usable * (.80 if w < 250 else .58)
-        _painting(painter, body, illustration(art.key, version), paper, light, header.bottom()+11, verse_y)
+        verse_h = min(27, max(13, h*.12))
+        verse_y = h-pad-verse_h
+        _painting(painter, body, illustration(art.key, version), paper, light, header.bottom()+9, verse_y)
+        line(header, stamp, 10 if tight else 13, detail)
+        top = header.bottom() + min(9,h*.025)
+        bottom = verse_y - min(13,h*.045)
+        available = max(1,bottom-top)
+        content_w = min(usable, max(132, usable*(.66 if w>=300 else .79)))
+        if personal:
+            # Keep a holiday and a personal date together even on the narrow face.
+            # Additional dates share the existing almanac rotation and animation.
+            content_w=min(usable,max(content_w,usable*.89))
+            slots=max(2,min(6,int(content_w//54)))
+            slot=(now.hour*60+now.minute)//ROTATION_MINUTES
+            holiday_slots=min(len(upcoming),slots-1)
+            if holiday_slots<len(upcoming):
+                upcoming=[upcoming[(slot+i)%len(upcoming)] for i in range(holiday_slots)]
+            places=min(len(personal),slots-holiday_slots)
+            start=(slot*places)%len(personal) if places<len(personal) else 0
+            upcoming.extend(personal[(start+i)%len(personal)] for i in range(places))
+        title_h = available*.39
+        subtitle_h = available*.16
+        face = 'SimSun'
+        line(QRectF(pad,top,content_w,title_h), main, min(44,title_h*.90), ink, QFont.DemiBold, face)
+        line(QRectF(pad,top+title_h,content_w,subtitle_h), secondary,
+             min(13,subtitle_h*.95), accent, QFont.Medium)
 
-        line(header, stamp, 11 if tight else 13, detail)
-        face = 'Microsoft YaHei UI' if version else 'SimSun'
-        line(QRectF(pad, content_y, title_width, title_h), main, min(44, title_h*.88), ink, QFont.DemiBold, face)
-        for index, (value, size, color, weight) in enumerate(rows):
-            line(QRectF(pad, content_y+title_h+index*row_h, rows_width, row_h), value, size, color, weight)
+        # All names and values share baselines with the holiday reminders.
+        grid_y = top+title_h+subtitle_h + available*.075
+        cell_w = min(content_w/len(upcoming), 74) if upcoming else 0
+        name_h = (bottom-grid_y)*.45
+        for index,(name,days) in enumerate(upcoming):
+            x = pad+index*cell_w
+            if index:
+                pen = QColor(detail);pen.setAlpha(57)
+                painter.fillRect(QRectF(x-4,grid_y+2,.8,max(2,bottom-grid_y-4)),pen)
+            name_size=min(13,name_h)
+            if personal:
+                font=QFont(family);font.setPixelSize(max(1,round(name_size*size_factor)))
+                name=QFontMetricsF(font).elidedText(name,Qt.ElideRight,max(1,cell_w-6))
+            line(QRectF(x,grid_y,cell_w-6,name_h),name,name_size,detail)
+            box = QRectF(x,grid_y+name_h,cell_w-6,bottom-grid_y-name_h)
+            line(box, f'{days}天' if days else '今天',min(18,box.height()),accent if index==0 else ink,QFont.DemiBold)
         quote_width = usable - options.get('_almanac_switch_width', 0)
-        verse = QRectF(pad, verse_y, quote_width, verse_h)
-        line(verse, art.verses[verse_index(now)], 11 if tight else min(17, 13+w/180), face='SimSun')
+        verse = QRectF(pad,verse_y,quote_width,verse_h)
+        line(verse,art.verses[verse_index(now)],11 if tight else min(17,13+w/180),face=face)
     finally:
         painter.restore()
     return ink.name()

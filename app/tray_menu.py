@@ -118,6 +118,9 @@ def common_actions(menu,tray,dock_context=False,insert_at=None):
         tools.addAction('失效入口检查…').triggered.connect(runtime.productivity.open_references)
 
     layout=dock_actions.addMenu('Dock 布局');separator_actions(layout,tray,insert_at)
+    if runtime:
+        from desktop_idle_fade import add_action
+        add_action(layout,runtime,'dock')
     if getattr(tray.dock,'page_count',1)>1:
         layout.addSeparator();layout.addAction('上一页').triggered.connect(lambda:tray.dock.change_page(-1));layout.addAction('下一页').triggered.connect(lambda:tray.dock.change_page(1))
     if dock_context:
@@ -201,6 +204,8 @@ def component_actions(menu,capsules,system,tray,runtime):
         from component_preferences import open_preferences
         marking=menu.addMenu('桌面文字水印')
         marking.addAction('水印设置…',lambda:open_preferences(runtime,'watermark'))
+        from desktop_idle_fade import add_action
+        add_action(marking,runtime,'watermark')
         watermark = marking.addAction('显示桌面文字水印')
         watermark.setCheckable(True)
         watermark.setChecked(tray.cfg['watermark_enabled'])

@@ -2,6 +2,8 @@
 MATERIALS = [('液态玻璃','liquid'), ('高光玻璃','gloss'), ('亚克力','acrylic'), ('云母','mica'), ('全透明','clear'), ('纯色','solid'), ('清透水晶','crystal'), ('柔光流彩','flowing'), ('浅色纸玻璃','paper_glass'), ('铜边缎面','obsidian'), ('青瓷釉面','celadon'), ('霞光丝绒','velvet')]
 COLOR_MODES = [('跟随系统','auto'), ('浅色','light'), ('深色','dark')]
 APPEARANCE_SOURCES = [('跟随本应用', 'app'), ('自定义', 'custom')]
+CONTENT_MODES = [('自动适配背景', 'auto'), ('浅色方块 · 深色文字', 'light'),
+                 ('深色方块 · 浅色文字', 'dark'), ('跟随本应用', 'app')]
 BACKDROP_MODES = [('动态透明', 'dynamic'), ('仅壁纸', 'wallpaper')]
 VIVID_BLUE, VIVID_GREEN, VIVID_RED = '#5b8def', '#5fd97b', '#ff5d5d'
 LIQUID_TINT = '#d3e4f8'

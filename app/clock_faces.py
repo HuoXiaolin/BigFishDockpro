@@ -34,7 +34,9 @@ def normalize_progress(value, legacy):
         try:
             if len(clock)!=5 or datetime.time.fromisoformat(clock).strftime('%H:%M')!=clock:clock=''
         except (ValueError,TypeError):clock=''
-        rows.append(dict(id=identity,title=title.strip()[:28],date=target.isoformat(),time=clock,repeat=repeat))
+        entry=dict(id=identity,title=title.strip()[:28],date=target.isoformat(),time=clock,repeat=repeat)
+        if row.get('calendar') is False:entry['calendar']=False
+        rows.append(entry)
     primary=value.get('primary','')
     if not isinstance(primary,str) or primary not in ids:primary=''
     secondary=[]

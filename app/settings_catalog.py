@@ -21,6 +21,7 @@ ALT_PASSTHROUGH_LABEL = '按住 Alt 临时解除鼠标穿透'
 
 def field_catalog(api, cfg):
     from appearance_presets import APPEARANCE_SOURCES, BACKDROP_MODES, COLOR_MODES, MATERIALS, material_choices
+    from appearance_presets import CONTENT_MODES
     from card_design import DESIGNS
     from flash_data import COLORS, PALETTES
     from settings_layout import MODES as SIZE_MODES
@@ -51,7 +52,19 @@ def field_catalog(api, cfg):
         'position': (0, '停靠位置', 'combo', api.POSITIONS),
         'custom_bottom': (0, '自定义距底部（像素）', 'number', (0, 2000)),
         'bottom_margin': (0, '边缘距离（像素）', 'number', (0, 200)),
-        'layer': (0, '窗口层级', 'combo', api.LAYERS),
+        'layer': (0, 'Dock 自定义层级', 'combo', api.LAYERS),
+        'desktop_layer_mode': (APPEARANCE, '全局层级', 'combo', [('各组件自定义','custom'),('置顶','top'),('置底','bottom')]),
+        'passthrough_mode': (APPEARANCE, '全局鼠标穿透', 'combo', [('各组件自定义','custom'),('穿透','all'),('不穿透','none')]),
+        'desktop_idle_fade_mode': (APPEARANCE, '全局空闲淡化', 'combo', [('各组件自定义','custom'),('全部开启','on'),('全部关闭','off')]),
+        'desktop_idle_fade_amount': (APPEARANCE, '淡化程度（%）', 'number', (0, 95)),
+        'dock_idle_fade': (APPEARANCE, 'Dock 空闲淡化', 'check', None),
+        'resource_idle_fade': (CAPSULES, '灵动胶囊空闲淡化', 'check', None),
+        'flash_idle_fade': (CAPSULES, '闪念胶囊空闲淡化', 'check', None),
+        'clock_idle_fade': (WIDGETS, '时钟空闲淡化', 'check', None),
+        'calendar_idle_fade': (WIDGETS, '日历空闲淡化', 'check', None),
+        'daily_picture_idle_fade': (WIDGETS, '每日图片空闲淡化', 'check', None),
+        'watermark_idle_fade': (WIDGETS, '文字水印空闲淡化', 'check', None),
+        'spectrum_idle_fade': (WIDGETS, '音乐频谱空闲淡化', 'check', None),
         'show_name': (0, '悬停时显示应用名称', 'check', None),
         'passthrough_alt_unlock': (APPEARANCE, ALT_PASSTHROUGH_LABEL, 'check', None),
         'sep_split': (0, '分隔符切开玻璃背景', 'check', None),
@@ -71,6 +84,11 @@ def field_catalog(api, cfg):
         'resource_tray_runner_speed': (TASKBAR, '奔跑速度', 'combo', [(label, value) for value, label in RUNNER_SPEEDS.items()]),
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
+        'panel_content_mode': (1, '文字与方块', 'combo', CONTENT_MODES),
+        'daily_picture_content_mode': (WIDGETS, '图片卡文字与方块', 'combo', CONTENT_MODES),
+        'note_content_mode': (WIDGETS, '便签文字与方块', 'combo', CONTENT_MODES),
+        'flash_content_mode': (CAPSULES, '闪念文字与方块', 'combo', CONTENT_MODES),
+        'custom_card_content_mode': (WIDGETS, '自定义卡片文字与方块', 'combo', CONTENT_MODES),
         'card_design': (1, '装饰样式', 'combo', DESIGNS),
         'panel_appearance_source': (1, '外观来源', 'combo', APPEARANCE_SOURCES),
         'panel_backdrop_mode': (1, '玻璃背景', 'combo', BACKDROP_MODES),

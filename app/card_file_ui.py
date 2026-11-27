@@ -4,7 +4,7 @@ import os
 from stat import S_ISDIR
 from ctypes import wintypes
 from PyQt5.QtCore import Qt, QRect, QSize
-from PyQt5.QtGui import QIcon, QPalette, QTextLayout, QTextOption, QFontMetrics
+from PyQt5.QtGui import QColor, QIcon, QPalette, QTextLayout, QTextOption, QFontMetrics
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle, QApplication, QListView
 
 
@@ -97,6 +97,12 @@ class FileNameDelegate(QStyledItemDelegate):
         painter.setFont(opt.font);painter.setPen(opt.palette.color(QPalette.Text))
         lines=file_name_lines(text,opt.font,text_rect.width());line_height=opt.fontMetrics.height()
         y=text_rect.top()+max(0,(text_rect.height()-len(lines)*line_height)//2) if is_list else text_rect.top()
+        local_ink=getattr(view.window(),'text_ink_at',None)
+        if local_ink and lines:
+            width=min(text_rect.width(),max(opt.fontMetrics.horizontalAdvance(line) for line in lines))
+            x=text_rect.left() if is_list else text_rect.left()+(text_rect.width()-width)//2
+            label=QRect(x,y,width,len(lines)*line_height)
+            painter.setPen(QColor(local_ink(view.viewport(),label)))
         for line in lines:
             painter.drawText(QRect(text_rect.left(),y,text_rect.width(),line_height),Qt.AlignVCenter|(Qt.AlignLeft if is_list else Qt.AlignHCenter),line);y+=line_height
         painter.restore()

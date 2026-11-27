@@ -9,6 +9,12 @@ def dates_and_assets():
     from calendar_almanac import ART, ASSETS, CIVIL_HOLIDAYS, FIRST_DAY, LAST_DAY, almanac, edition, next_civil_holiday, next_festival, term_dates, until_rotation, verse_index
     assert len(ART)==36+len(CIVIL_HOLIDAYS) and all(len(set(art.verses))==4 for art in ART.values())
     assert len({line for art in ART.values() for line in art.verses if line})==4*len(ART)
+    from almanac_verses import VERSES
+    from calendar_details import LUNAR, SOLAR, WEEKDAY_FESTIVALS
+    from calendar_almanac import JANUARY_ORDER
+    names=set(JANUARY_ORDER)|set(LUNAR.values())|{'除夕'}|set(SOLAR.values())|{row[-1] for row in WEEKDAY_FESTIVALS}
+    assert set(VERSES)==names and all(len(v)==4 for v in VERSES.values())
+    assert len({line for lines in VERSES.values() for line in lines})==4*len(names)
     periods=[datetime(2026,11,19,8,m) for m in (0,10,20,30,40)]
     assert [edition(t) for t in periods]==[0,1,0,1,0] and [verse_index(t) for t in periods]==[0,1,2,3,0]
     files=[ASSETS/'pictures'/f'{art.key}{suffix}.jpg' for art in ART.values() for suffix in ('','-print')]
@@ -46,6 +52,7 @@ def dates_and_assets():
         eve, today = almanac(when-timedelta(days=1)), almanac(when)
         assert next_civil_holiday(eve.day) == (name,1)
         assert name.removesuffix('节') in today.badge_labels()
+        assert today.card().verses == VERSES[name]
         assert today.card().name == name and today.civil_countdown() == '今日'+name
         assert (ASSETS/'pictures'/f'{today.card().key}.jpg').is_file()
     from calendar_details import civil_festivals, info
@@ -70,9 +77,37 @@ def render(dock, cfg, output):
     from PyQt5.QtCore import Qt, QRectF
     from PyQt5.QtGui import QImage, QPainter
     from desktop_clock import draw_clock
+    from calendar_markers import countdowns,month_markers,upcoming_countdowns
+    from resource_compact import almanac_badge_lines
+    now=datetime(2026,11,27,12)
+    salary=dict(id='salary',title='发薪日',date='2026-11-15',time='17:00',repeat='monthly')
+    birthday=dict(id='birthday',title='生日',date='2024-02-29',time='',repeat='yearly')
+    past=dict(id='past',title='已结束',date='2026-11-26',time='',repeat='once')
+    hidden=dict(salary,id='off',title='未同步',calendar=False)
+    appearance=dict(dock.cfg['clock_appearance'],progress=dict(countdowns=[salary,birthday,past,hidden]))
+    with patch.dict(dock.cfg,clock_appearance=appearance,resource_alert_almanac=True,resource_almanac_countdown=True):
+        assert upcoming_countdowns(dock.cfg,now.date(),now)==(('发薪日',18),('生日',93))
+        rows=almanac_badge_lines(dock.cfg,now)
+        assert rows['发薪日18天']==('发薪日','18天') and rows['生日93天']==('生日','93天')
+        assert not any(pair[0] in ('已结束','未同步') for pair in rows.values())
+        assert almanac_badge_lines(dock.cfg,datetime(2026,12,15,16))['发薪日'][1]=='今天'
+        assert almanac_badge_lines(dock.cfg,datetime(2026,12,15,18))['发薪日31天'][1]=='31天'
+        assert 'countdown' in month_markers([],countdowns(dock.cfg),date(2027,2,28),1)[date(2027,2,28)]
+        image=QImage(421,237,QImage.Format_ARGB32_Premultiplied);image.fill(Qt.transparent)
+        painter=QPainter(image)
+        try:
+            from calendar_almanac_face import _line
+            with patch('calendar_almanac_face._line',wraps=_line) as ink:
+                draw_clock(painter,QRectF(image.rect()),dock,dict(cfg,_now=now),'almanac')
+            boxes={call.args[2]:call.args[1] for call in ink.call_args_list}
+            assert boxes['发薪日'].y()==boxes['生日'].y()==boxes['平安夜'].y()
+        finally:painter.end()
+        assert image.save(str(Path(output)/'almanac-shared-countdowns.png'))
+        with patch.dict(dock.cfg,resource_almanac_countdown=False):
+            assert '发薪日18天' not in almanac_badge_lines(dock.cfg,now)
     folder=Path(output);folder.mkdir(parents=True,exist_ok=True)
     for name, day, size, minute, term in [
-            ('normal',date(2026,11,19),(360,235),0,False),('snow',date(2026,11,22),(360,235),0,False),
+            ('editorial',date(2026,11,27),(421,237),0,False),('normal',date(2026,11,19),(360,235),0,False),('snow',date(2026,11,22),(360,235),0,False),
             ('moon',date(2026,9,25),(360,235),0,False),('moon-print',date(2026,9,25),(360,235),10,False),
             ('national-day',date(2026,10,1),(360,235),0,False),('national-day-print',date(2026,10,1),(360,235),10,False),
             ('mother',date(2026,5,10),(360,235),0,False),
@@ -88,12 +123,20 @@ def render(dock, cfg, output):
                            _almanac_date=day,_almanac_art=term,_almanac_controls='clock' if name=='clock-min' else 'calendar',
                            _almanac_switch_width=74 if name.startswith('overlap-') else 0),'almanac')
                 labels = {call.args[2]: call.args[1] for call in line.call_args_list}
-                civil = labels[almanac(day).civil_countdown()]
-                assert not any(value.startswith('公历') for value in labels)
-                assert civil.height()>=10 and civil.bottom() < line.call_args.args[1].top()
-                boxes = [call.args[1] for call in line.call_args_list]
+                from calendar_almanac import next_civil_holiday, next_festival
+                model=almanac(day)
+                entries=[(model.next_term,model.days_left),next_festival(day),
+                         (model.civil_festival,0) if model.civil_names else next_civil_holiday(day)]
+                pairs=[call.args[1:3] for call in line.call_args_list]
+                boxes=[box for box,_ in pairs]
                 assert all(QRectF(0,0,*size).contains(box) for box in boxes)
-                assert all(before.bottom() <= after.top()+.001 for before, after in zip(boxes, boxes[1:]))
+                assert all(not a.intersects(b) for i,a in enumerate(boxes) for b in boxes[i+1:])
+                countdowns=pairs[3:-1]
+                assert [value for _,value in countdowns] == [value for name,n in entries if name
+                                                             for value in (name,f'{n}天' if n else '今天')]
+                assert len({box.top() for box,_ in countdowns[::2]})==1
+                assert len({box.bottom() for box,_ in countdowns[1::2]})==1
+                assert boxes[-1].top()>max(box.bottom() for box,_ in countdowns)
         finally:painter.end()
         assert image.save(str(folder/f'almanac-{name}.png'))
 

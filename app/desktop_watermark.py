@@ -6,7 +6,7 @@ from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PyQt5.QtGui import QColor, QFont, QFontMetricsF, QPainter, QTextLayout, QTextOption, QTransform
 from PyQt5.QtWidgets import QApplication, QWidget
 
-from window_layers import click_through, desktop_layer, native, shell_owner
+from window_layers import click_through, desktop_layer, effective_top, native, shell_owner
 
 
 class WatermarkStamp:
@@ -96,7 +96,8 @@ class WatermarkWindow(QWidget):
     def configure(self, cfg, screen):
         tiled = cfg['watermark_mode'] == 'tile'
         area = screen.geometry() if tiled else screen.availableGeometry()
-        signature = (area.getRect(), screen.devicePixelRatio(), *(cfg['watermark_'+key] for key in
+        top = effective_top(cfg,cfg['watermark_layer']=='top')
+        signature = (area.getRect(), screen.devicePixelRatio(), top, *(cfg['watermark_'+key] for key in
                      ('text','color','size','angle','opacity','mode','position','density','layer')))
         if signature == self.signature and self.isVisible():
             return
@@ -112,7 +113,6 @@ class WatermarkWindow(QWidget):
         extended = user.GetWindowLongW(hwnd, -20)
         user.SetWindowLongW(hwnd, -20, extended | 0x08000000)  # WS_EX_NOACTIVATE
         click_through(self, True)
-        top = cfg['watermark_layer'] == 'top'
         owner = 0 if top or os.environ.get('FISHDOCK_TEST_DESKTOP') else shell_owner()
         desktop_layer(hwnd, top, owner)
         self.signature = signature
@@ -151,4 +151,6 @@ class DesktopWatermarks:
         for screen in filter(None, screens):
             if screen not in self.windows:
                 self.windows[screen] = WatermarkWindow()
+                self.windows[screen].runtime = self.runtime
+                self.windows[screen].setProperty('desktopLayerKey','watermark')
             self.windows[screen].configure(cfg, screen)

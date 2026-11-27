@@ -554,7 +554,8 @@ class MediaLabel(QLabel):
         self.setFixedHeight(self.lines * QFontMetrics(font).height())
     def paintEvent(self,event):
         p=QPainter(self);font=self.font();font.setPixelSize(self.pixel_size);font.setWeight(QFont.DemiBold if self.bold else QFont.Normal)
-        color=QColor(self.owner.colors['ink' if self.bold else 'muted']) if self.owner else self.palette().windowText().color()
+        role='ink' if self.bold else 'muted'
+        color=QColor(self.owner.colors[role]) if self.owner else self.palette().windowText().color()
         p.setFont(font);p.setPen(color)
         fm=p.fontMetrics();remaining=' '.join(self.text().split());width=max(1,self.width());line_h=self.height()/self.lines
         for line in range(self.lines):
@@ -563,7 +564,13 @@ class MediaLabel(QLabel):
                 count=0
                 while count<len(remaining) and fm.horizontalAdvance(remaining[:count+1])<=width:count+=1
                 value=remaining[:max(1,count)];remaining=remaining[max(1,count):].lstrip()
-            p.drawText(QRectF(0,line*line_h,width,line_h),Qt.AlignLeft|Qt.AlignVCenter,value)
+            box=QRectF(0,line*line_h,width,line_h)
+            local=getattr(self.owner,'text_color_at',None)
+            if local:
+                ink_rect=QRectF(box)
+                ink_rect.setWidth(min(width,fm.horizontalAdvance(value)))
+                p.setPen(QColor(local(self,ink_rect,role)))
+            p.drawText(box,Qt.AlignLeft|Qt.AlignVCenter,value)
 
 
 class MusicView(CapsuleScrollArea):

@@ -160,6 +160,34 @@ def material_palette(colors, material):
     return colors
 
 
+def _stop_alpha(stops, t):
+    """在一条渐变的色标里插值取值。"""
+    if t <= stops[0][0]:
+        return float(stops[0][1])
+    for i in range(1, len(stops)):
+        p0, a0 = stops[i - 1]
+        p1, a1 = stops[i]
+        if t <= p1:
+            if p1 <= p0:
+                return float(a1)
+            return a0 + (a1 - a0) * (t - p0) / (p1 - p0)
+    return float(stops[-1][1])
+
+def merged_grad_stops(c):
+    """把"竖向渐变"和"顶部高光"合并成一条渐变。
+
+    两者都是白色的竖向渐变，合成一条之后每段只要裁切一次、填充一次，
+    能省掉一次昂贵的路径裁切光栅化（性能关键）。
+    """
+    hl_span = 0.42
+    out = []
+    for f in (0.0, 0.10, 0.20, 0.28, 0.42, 0.70, 1.0):
+        a1 = _stop_alpha(c["grad"], f)
+        a2 = _stop_alpha(c["hl"], f / hl_span) if f <= hl_span else 0.0
+        m = 1.0 - (1.0 - a1 / 255.0) * (1.0 - a2 / 255.0)
+        out.append((f, int(round(m * 255))))
+    return out
+
 def material_alpha(alpha, material):
     if material == 'clear': return min(alpha, 30)
     if material == 'acrylic': return max(alpha, 130)

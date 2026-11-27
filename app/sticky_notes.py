@@ -374,6 +374,9 @@ class NoteWindow(QWidget):
         choices=[] if self.embedded else [('pinned','置顶显示'),('locked','锁定位置与大小')]
         if not self.fixed_open:choices.insert(0,('auto_hide','自动收起（鼠标离开后）'))
         if choices:window=menu_group(menu,'窗口与收起','position')
+        if not self.embedded:
+            from desktop_idle_fade import add_action
+            add_action(window,self.runtime,self.property('clickThroughKey'))
         for key,title in choices:
             action=window.addAction(title);action.setCheckable(True);action.setChecked(self.row()[key]);action.triggered.connect(lambda checked,k=key:self.set_option(k,checked))
         if not self.fixed_open:
@@ -470,12 +473,16 @@ class NoteWindow(QWidget):
         appearance=self.effective_appearance()
         glass=appearance['style']=='glass'
         capsule=self.window() if self.embedded else None
-        if capsule:content_light=capsule.colors['light']
-        elif glass:content_light=self.dock.base_theme_colors(appearance['theme'])['light']
-        else:content_light=QColor(appearance['color']).lightness()>110
+        from component_contrast import content_contrast
+        mode=self.dock.cfg.get('note_content_mode','auto')
+        if capsule and mode=='auto':
+            content_light=capsule.colors['light']
+        else:
+            content_light=content_contrast(self,self.dock,appearance,mode,self.apply_style,
+                                                  solid=None if glass else appearance['color'])
         self.content_light=content_light
         ink='#20252b' if content_light else '#f5f7fa'
-        if capsule:ink=capsule.colors['ink']
+        if capsule and mode=='auto':ink=capsule.colors['ink']
         elif glass and content_light:
             from appearance_presets import THEME_INKS
             ink=THEME_INKS.get(appearance['material'],ink)
@@ -518,8 +525,8 @@ class NoteWindow(QWidget):
 
     def layer(self):
         if self.embedded:return
-        from window_layers import desktop_layer,shell_owner
-        top=self.row()['pinned']
+        from window_layers import desktop_layer,effective_top,shell_owner
+        top=effective_top(self.dock.cfg,self.row()['pinned'])
         owner=0 if top or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP') else shell_owner()
         desktop_layer(int(self.winId()),top,owner)
         if self.dock.cfg['component_passthrough'].get(self.property('clickThroughKey'))=='apps':
@@ -608,6 +615,11 @@ class NoteOptions(QDialog):
         for title,key in APPEARANCE_SOURCES:self.source.addItem(title,key)
         self.source.setCurrentIndex(self.source.findData(row.get('appearance_source','custom')))
         form.addRow('外观来源',self.source)
+        from appearance_presets import CONTENT_MODES
+        self.content_mode=ModernComboBox()
+        for title,key in CONTENT_MODES:self.content_mode.addItem(title,key)
+        self.content_mode.setCurrentIndex(self.content_mode.findData(note.dock.cfg['note_content_mode']))
+        form.addRow('便签文字与方块',self.content_mode)
         self.style=ModernComboBox();self.color=ModernComboBox()
         for title,key in STYLES:self.style.addItem(title,key)
         self.style.setCurrentIndex(self.style.findData(row['style']))
@@ -630,6 +642,8 @@ class NoteOptions(QDialog):
         self.body_font=ModernSpinBox();self.body_font.setRange(8,72);self.body_font.setValue(note.text_pixels());self.body_font.setAccessibleName('便签正文字号')
         font_row=QHBoxLayout();font_row.addWidget(self.body_font,1);self.follow_button=button('跟随卡片',self.follow_font);font_row.addWidget(self.follow_button);form.addRow('正文字号（像素）',font_row)
         self.auto_hide=ModernCheckBox('鼠标离开后自动收起');self.auto_hide.setChecked(row['auto_hide']);form.addRow(self.auto_hide)
+        from desktop_idle_fade import FadeCheckBox
+        self.idle_fade=FadeCheckBox(note.dock.cfg,note.property('clickThroughKey'));form.addRow(self.idle_fade)
         flags=QHBoxLayout();self.pinned=ModernCheckBox('置顶显示');self.locked=ModernCheckBox('锁定位置与大小')
         self.pinned.setChecked(row['pinned']);self.locked.setChecked(row['locked']);flags.addWidget(self.pinned);flags.addWidget(self.locked);flags.addStretch();form.addRow(flags)
         form.addRow(label('正文字号只影响这张便签，标题使用卡片字号。','muted'))
@@ -666,8 +680,11 @@ class NoteOptions(QDialog):
         row.update(appearance_source=self.source.currentData(),style=self.style.currentData(),color=self.color.currentData(),appearance=copy.deepcopy(self.appearance),auto_hide=self.auto_hide.isChecked(),pinned=self.pinned.isChecked(),locked=self.locked.isChecked())
         if self.custom:row.update(body_font_size=self.body_font.value(),body_font_scale=self.note.ui_factor)
         else:row.pop('body_font_size',None);row.pop('body_font_scale',None)
-        if not self.manager.persist(sticky_notes=rows):self.status.setText('保存失败，原设置保持不变。');return False
-        self.note.apply_style();self.status.setText('已保存，窗口保持打开。');return True
+        changes=self.idle_fade.changes(self.note.dock.cfg)
+        if not self.manager.persist(sticky_notes=rows,note_content_mode=self.content_mode.currentData(),**changes):self.status.setText('保存失败，原设置保持不变。');return False
+        if changes:self.note.runtime.idle_fade.refresh()
+        self.idle_fade.saved=self.idle_fade.isChecked()
+        self.manager.sync();self.status.setText('已保存，窗口保持打开。');return True
 
 
 class NotesDialog(QDialog):

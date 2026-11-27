@@ -4,7 +4,7 @@ CARD_FOLD_SIZE = 44
 NOTE_FOLD_SIZE = 42
 ICON_ALIGNMENTS = (('左对齐','left'), ('居中','center'), ('右对齐','right'))
 
-KEYS=('appearance_source','backdrop_mode','material','theme','color','highlight','opacity','blur','layer','locked','auto_hide','collapse_style','capsule_ratio','ball_diameter','fold_height',
+KEYS=('appearance_source','content_mode','backdrop_mode','material','theme','color','highlight','opacity','blur','layer','locked','auto_hide','collapse_style','capsule_ratio','ball_diameter','fold_height',
       'face','face_interactive','face_mood','face_role','face_scale','face_auto_switch','face_switch_minutes','expand_mode')
 CONFIG_KEYS=tuple('panel_'+key for key in KEYS)
 

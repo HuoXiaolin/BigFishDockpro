@@ -48,6 +48,9 @@ def run(api,runtime,output,checks):
 
     check_clock_materials(api,runtime,output,checks)
     check_appearance_sources(api,runtime,output,checks)
+    from component_contrast_tests import badge_settings, check_widgets
+    check_widgets(api,runtime,output,checks)
+    badge_settings(api,runtime,output,checks)
     check_zero_crystal(api,runtime,output,checks)
 
 
@@ -202,6 +205,7 @@ def check_appearance_sources(api,runtime,output,checks):
 
         dialog=SettingsDialog(runtime.tray,api);dialogs.append(dialog);dialog.tabs.setCurrentIndex(WIDGETS)
         for component,setting in (('daily_picture','material'),('spectrum','mono_color'),('note','style')):
+            if component=='spectrum':dialog.set_draft_values({'spectrum_color_mode':'mono'})
             source=dialog.fields[component+'_appearance_source'];assert options(source)==APPEARANCE_SOURCES
             dialog.set_draft_values({component+'_appearance_source':'app'})
             assert not dialog.fields[component+'_'+setting].isEnabled()

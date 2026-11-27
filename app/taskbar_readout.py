@@ -1,7 +1,7 @@
 """An independently enabled, two-line resource display in a verified taskbar gap."""
 from ctypes import wintypes
-from PyQt5.QtCore import Qt,QRect,QRectF,QPointF
-from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter
+from PyQt5.QtCore import Qt,QRect,QRectF,QPointF,QEvent
+from PyQt5.QtGui import QColor,QCursor,QFont,QFontMetrics,QPainter
 from PyQt5.QtWidgets import QWidget,QApplication
 from resource_taskbar import Placement
 from ui_style import AlignedMenu
@@ -78,6 +78,7 @@ class TaskbarReadout(QWidget):
         self.service=service;self.placement=Placement(self);self.press=None;self.page=0;self.page_count=1;self.cells=[]
         self.media_actions={};self.media_bounds=[];self.text_bounds=[];self.wanted=288;self.press_media=None
         self.native_layer = None
+        self.readout_popup = None
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowTitle('任务栏监控 · 大肥鱼Dock');self.setAccessibleName('任务栏监控')
@@ -165,11 +166,33 @@ class TaskbarReadout(QWidget):
         self.cells=columns(self.service)
         info='\n'.join(f'{label}  {value}'+(' · '+tip if tip else '') for pair in self.cells for item in pair if item for label,value,key,number,tip in (item,))
         self.setAccessibleDescription(info)
-        if self.toolTip()!=info:self.setToolTip(info)
+        if self.toolTip()!=info:
+            self.setToolTip(info)
+            if self.readout_popup and self.readout_popup.isVisible():self.show_readout()
         wanted=self.preferred_width()
         if wanted!=self.wanted:self.wanted=wanted;self.placement.schedule_check()
         if self.service.deck:self.service.deck.configure()
         self.update()
+
+    def show_readout(self):
+        point=QCursor.pos()
+        if (self.isVisible() and self.toolTip() and self.rect().contains(self.mapFromGlobal(point))
+                and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and not QApplication.activePopupWidget()):
+            if self.readout_popup is None:
+                from tray_readout import ReadoutPopup
+                self.readout_popup=ReadoutPopup(self)
+            self.readout_popup.present(self.toolTip(),point)
+        elif self.readout_popup:
+            self.readout_popup.hide()
+
+    def event(self,event):
+        if event.type()==QEvent.ToolTip:
+            self.show_readout()
+            return True
+        if event.type() in (QEvent.Leave,QEvent.Hide,QEvent.MouseButtonPress,QEvent.Move,QEvent.ContextMenu):
+            popup=getattr(self,'readout_popup',None)
+            if popup:popup.hide()
+        return super().event(event)
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHints(QPainter.TextAntialiasing|QPainter.Antialiasing)

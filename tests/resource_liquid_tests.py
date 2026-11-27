@@ -29,7 +29,7 @@ def daily_picture_recovery_checks(runtime,app,output,checks):
         if failure[0]=='offline':
             raise OSError('fixture offline')
         if 'HPImageArchive' in url:
-            return json.dumps({'images':[dict(urlbase='/th?id=OHR.Fixture'+d,startdate='202611'+d,
+            return json.dumps({'images':[dict(urlbase='/th?id=OHR.Fixture'+d,startdate=f'202611{int(d)-1:02}',enddate='202611'+d,
                            title='图片'+d,copyright='说明'+d,copyrightlink='/search?q='+d)
                            for d in (day[0],'18')]}).encode()
         if failure[0]=='primary' and url.startswith('https://www.bing.com/'):

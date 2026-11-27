@@ -365,6 +365,15 @@ class ResourceCapsule(QObject):
         calendar=getattr(self.runtime,'calendar',None)
         if calendar and calendar.isVisible():calendar.update()
 
+    def countdowns_changed(self):
+        self.agenda_changed()
+        if self.window and self.compact:
+            self.window._compact_cache=self.window._compact_surface=None
+            self.window.sync_rotation()
+            self.window.update()
+        clock=getattr(self.runtime,'clock',None)
+        if clock and clock.isVisible():clock.update()
+
     def reminders_changed(self):
         if self.window:self.window.refresh_reminders()
         for key in ('pomodoro','agenda'):
@@ -411,13 +420,10 @@ class ResourceCapsule(QObject):
         if self.compact and (weather:=self.weather_alert(compact=True)):
             city,label=weather
             badges.append(('weather_notice',f'{label} · {city}'))
-        from resource_options import almanac_categories
-        categories = almanac_categories(self.cfg)
-        if categories:
-            from datetime import date
-            from calendar_almanac import almanac
-            day=almanac(date.today())
-            if day and day.badge_due(categories):badges.append(('almanac',day.badge_labels(categories)[0]))
+        if self.cfg['resource_alert_almanac']:
+            from resource_compact import almanac_badge_lines
+            due=next((key for key,(_,value) in almanac_badge_lines(self.cfg).items() if value=='今天'),None)
+            if due:badges.append(('almanac',due))
         if notice:
             if notice[0] in ('mail_new','quota_notice'):
                 badges.insert(0,notice)

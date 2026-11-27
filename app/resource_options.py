@@ -14,6 +14,7 @@ LEGACY_RUNNER_SPEEDS = {
 }
 RUNNER_METRICS = {'cpu': 'CPU', 'gpu': 'GPU', 'memory': '内存', 'disk_activity': '磁盘', 'network_utilization': '网络'}
 RUNNER_SLOT = 26
+DEFAULT_BADGE_STRENGTH = 40
 
 DEVICE_SOURCES = {
     'gpu': ('gpu', 'GPU', '自动 · 最忙 GPU'),
@@ -51,13 +52,15 @@ TASK_COLUMN_NAMES = {
 }
 COMPACT_METRICS=tuple(k for k in METRICS if k not in ('rank','system_status'))
 RESOURCE_READINGS = tuple(k for k in COMPACT_METRICS if k not in ('bluetooth','traffic'))
-ALMANAC_CATEGORIES = {'term':'节气', 'lunar':'农历节日', 'civil':'公历节日'}
+ALMANAC_CATEGORIES = {'term':'节气', 'lunar':'农历节日', 'civil':'公历节日', 'countdown':'个人倒计时'}
 
 
 def almanac_categories(cfg):
     if not cfg.get('resource_alert_almanac', True):
         return ()
-    return tuple(kind for kind in ALMANAC_CATEGORIES if cfg.get('resource_almanac_'+kind, True))
+    from calendar_markers import countdowns
+    return tuple(kind for kind in ALMANAC_CATEGORIES if cfg.get('resource_almanac_'+kind, True)
+                 and (kind!='countdown' or countdowns(cfg)))
 
 COMPACT_DEVICE={'battery':'电池电量','connection':'网卡名称','volume':'系统音量','brightness':'屏幕亮度'}
 COMPACT_STATUS=(*COMPACT_DEVICE,'bluetooth')
@@ -124,7 +127,7 @@ DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_thro
               resource_fold='pill',resource_collapsed=True,resource_layout={},resource_delay=3,
               resource_capsule_taskbar=False,resource_capsule_taskbar_position='custom',resource_capsule_taskbar_anchor={},
               resource_interval=2,resource_taskbar=False,resource_taskbar_position='right',resource_taskbar_layer='bottom',
-              resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_backdrop_mode='dynamic',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
+              resource_taskbar_anchor={},resource_taskbar_click_through=False,resource_task_metrics=TASK_DEFAULT,resource_background='global',resource_content_mode='auto',resource_backdrop_mode='dynamic',resource_appearance={},resource_palette='theme',resource_tints={},resource_bt_tray=False)
 DEFAULTS.update({'resource_'+key:key in ('cpu','memory','network','gpu','rank',*FAN_METRICS) for key in METRICS})
 DEFAULTS.update(resource_system_status=True,resource_peripheral_profiles=[],resource_pomodoro=True,resource_focus_minutes=25,resource_break_minutes=5,
                 resource_water_enabled=False,resource_water_interval=45,resource_water_amount=250,resource_water_goal=2000)
@@ -155,7 +158,7 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                 resource_music=False,resource_music_text='wave',resource_lyrics=True,resource_equalizer='flow',
                 resource_quota_alert=True)
 DEFAULTS.update(resource_component_locations={},resource_component_order=list(CAPSULE_PAGES),resource_card_layouts={},
-                resource_card_transparency=20)
+                resource_card_transparency=20,resource_badge_strength=DEFAULT_BADGE_STRENGTH)
 DEFAULTS.update(resource_mail=False, resource_mail_accounts=[], resource_mail_notifications=True,
                 resource_alert_mail_code=True, resource_mail_icon=False, resource_mail_interval=30)
 DEFAULTS.update(dict.fromkeys(('resource_alert_'+key for key in DEVICE_ALERTS), False))
@@ -351,7 +354,9 @@ def normalize(cfg,strict=False):
         device = cfg.get(key, '')
         cfg[key] = device if valid_device(device, 'network_utilization' if metric == 'network' else metric) else ''
     from appearance_presets import BACKDROP_MODES
-    options={'resource_background':('global','app','custom'),'resource_backdrop_mode':tuple(value for _,value in BACKDROP_MODES),
+    from appearance_presets import CONTENT_MODES
+    cfg.setdefault('resource_content_mode','auto')
+    options={'resource_content_mode':tuple(v for _,v in CONTENT_MODES),'resource_background':('global','app','custom'),'resource_backdrop_mode':tuple(value for _,value in BACKDROP_MODES),
              'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
@@ -412,6 +417,11 @@ def normalize(cfg,strict=False):
         if strict:raise ValueError('卡底透底须为 0 至 100 的整数。')
         transparency=DEFAULTS['resource_card_transparency']
     cfg['resource_card_transparency']=transparency
+    strength=cfg.get('resource_badge_strength',DEFAULT_BADGE_STRENGTH)
+    if type(strength) is not int or not 0<=strength<=100:
+        if strict:raise ValueError('徽标与方块底色强度须为 0 至 100 的整数。')
+        strength=DEFAULT_BADGE_STRENGTH
+    cfg['resource_badge_strength']=strength
     limits=cfg.get('resource_limits',{})
     valid=isinstance(limits,dict) and all(k in METRICS and type(v) is int and 0<=v<=100000 for k,v in limits.items())
     if not valid:

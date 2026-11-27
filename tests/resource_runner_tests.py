@@ -283,11 +283,13 @@ def run(api, runtime, app, output, checks):
                 # No pointer is available for keyboard activation on the private
                 # desktop. The mouse activation path is exercised with the tray HWND.
                 with patch('tray_readout._pointer', return_value=None):
-                    runner.tray.activated.emit(QSystemTrayIcon.Trigger)
-                    assert QToolTip.text()=='小狗\nCPU 50%'+uptime
-                    with patch('resource_runner.uptime_minutes',return_value=2*1440+3*60+5):
+                    with patch.object(runner.tray,'geometry',return_value=QRect()),patch.object(QToolTip,'showText') as show:
                         runner.tray.activated.emit(QSystemTrayIcon.Trigger)
-                        assert QToolTip.text().endswith('3 小时 5 分钟') and runner.tray.toolTip()==QToolTip.text()
+                        show.assert_not_called()
+                        assert runner.tray.toolTip()=='小狗\nCPU 50%'+uptime
+                        with patch('resource_runner.uptime_minutes',return_value=2*1440+3*60+5):
+                            runner.tray.activated.emit(QSystemTrayIcon.Trigger)
+                            assert runner.tray.toolTip().endswith('3 小时 5 分钟')
                 QToolTip.hideText()
         assert speeds == [0, 24, 48, 72, 96], speeds
         assert [frame_rate('adaptive', load) for load in (-1, None, float('nan'), 120)] == [0, 0, 0, 96]

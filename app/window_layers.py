@@ -67,6 +67,17 @@ def desktop_layer(hwnd, top, owner=0):
     return restack(hwnd, TOPMOST if top else BOTTOM) and owned
 
 
+def effective_top(cfg, custom_top):
+    mode = cfg.get('desktop_layer_mode', 'custom')
+    return custom_top if mode == 'custom' else mode == 'top'
+
+
+def place_desktop(window, cfg, custom_top=False, *, shell_owned=False):
+    top = effective_top(cfg, custom_top)
+    owner = shell_owner() if shell_owned and not top and not os.environ.get('FISHDOCK_TEST_DESKTOP') else 0
+    return desktop_layer(int(window.winId()), top, owner)
+
+
 def click_through(window, enabled):
     # These widgets are already layered (Qt translucent backgrounds). The
     # Win32 style passes input to other processes; the Qt flag covers children.

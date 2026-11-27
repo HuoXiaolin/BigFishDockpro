@@ -35,6 +35,8 @@ class CardEditor(QDialog):
         form.addRow('背景',self.style)
         self.width_field=ModernSpinBox();self.width_field.setRange(190,640);form.addRow('宽度',self.width_field)
         self.visible=ModernCheckBox('在桌面显示');form.addRow('',self.visible)
+        from desktop_idle_fade import FadeCheckBox
+        self.idle_fade=FadeCheckBox(manager.runtime.dock.cfg);form.addRow('',self.idle_fade)
         base.addLayout(form)
         self.fields=QTableWidget(0,4)
         self.fields.setHorizontalHeaderLabels(('内容类型','显示名称','文字 / 日期 / 字段',''))
@@ -127,6 +129,7 @@ class CardEditor(QDialog):
 
     def load(self):
         self.identity=self.cards.currentData()
+        self.idle_fade.load(self.manager.runtime.dock.cfg,'custom:'+self.identity if self.identity else None)
         self.remove_button.setEnabled(self.identity is not None)
         row=next((row for row in self.manager.cards if row['id']==self.identity),TEMPLATE)
         self.fill(row)
@@ -212,9 +215,11 @@ class CardEditor(QDialog):
             if len(self.manager.cards)>=MAX_CARDS:
                 self.status.setText('最多可保存 8 张卡片。');return False
             identity=uuid4().hex
-            saved=self.manager.save([*self.manager.cards,dict(card,id=identity,layout={},locked=False)])
+            rows=[*self.manager.cards,dict(card,id=identity,layout={},locked=False)]
         else:
-            identity=self.identity;saved=self.manager.change(identity,**card)
+            identity=self.identity
+            rows=[dict(row,**card) if row['id']==identity else row for row in self.manager.cards]
+        saved=self.manager.save(rows,**self.idle_fade.changes(self.manager.runtime.dock.cfg,'custom:'+identity))
         if not saved:
             self.status.setText('卡片保存失败。');return False
         self.fill_cards(identity);self.status.setText('已保存卡片。')

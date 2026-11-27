@@ -55,7 +55,10 @@ def apply(current, preset):
     layout = preset['display_layout']
     for key in ('panels', 'merge_groups'):
         layout[key] = dict(current['display_layout'].get(key, {}), **layout[key])
+    from clock_appearance import normalize as normalize_clock
     for key in ('clock_appearance', 'calendar_appearance'):
+        # Restore through the same appearance schema used for a fresh profile.
+        preset[key] = normalize_clock(preset.get(key), preset)
         work = current[key].get('work', {})
         if work.get('calendars'):
             preset[key]['work']['calendars'] = copy.deepcopy(work['calendars'])

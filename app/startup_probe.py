@@ -89,9 +89,14 @@ class StartupProbe:
                             'resource_compact_width','resource_compact_height','resource_expanded_width','resource_expanded_height','resource_compact_density'):
                     assert dock.cfg[key] == preset[key], key
                 assert dock.cfg['taskbar_text_mode']=='system'
-                assert dock.cfg['dock_quick_order'][:9] == [
-                    'settings', 'taskbar', 'taskbar_text', 'shell_start', 'shell_notifications',
-                    'cursor_styles', 'manage', 'appearance', 'panels']
+                from quick_actions import DEFAULT_ORDER
+                assert dock.cfg['dock_quick_order'] == DEFAULT_ORDER
+                assert dock.cfg['dock_quick_order'][:3] == ['settings','global_layer','global_passthrough']
+                from idle_fade_options import SINGLE_FIELDS
+                assert dock.cfg['desktop_idle_fade_mode']=='custom' and dock.cfg['desktop_idle_fade_amount']==50
+                assert not any(dock.cfg[k] for k in SINGLE_FIELDS.values()) and not dock.cfg['component_idle_fade']
+                assert not runtime.idle_fade.states
+                assert dock.cfg['desktop_layer_mode']==dock.cfg['passthrough_mode']=='custom'
                 assert dock.isVisible() == preset['dock_visible'] and tray.isVisible() != preset['hide_tray']
                 assert not dock.cfg['items'] and not dock.cfg['desktop_entries']
                 assert not dock.cfg['sticky_notes'] and not dock.cfg['flash_entries']

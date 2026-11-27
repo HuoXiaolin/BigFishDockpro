@@ -1,8 +1,8 @@
 """Preferences shared by the desktop monitor and the independent taskbar readout."""
 from weakref import proxy
 from component_settings import section
-from PyQt5.QtCore import Qt, QSignalBlocker, QUrl
-from PyQt5.QtGui import QColor, QDesktopServices
+from PyQt5.QtCore import Qt, QRectF, QSignalBlocker, QUrl
+from PyQt5.QtGui import QColor, QDesktopServices, QPainter
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
                              QAbstractItemView)
@@ -40,6 +40,48 @@ PLACEMENT_GROUPS = (
 )
 
 
+class BadgeFillPreview(QWidget):
+    def __init__(self, field):
+        super().__init__()
+        self.field=field
+        self.setFixedHeight(38)
+        self.setAccessibleName('浅色和深色背景下的徽标与小方块预览')
+        field.valueChanged.connect(lambda _:self.update())
+
+    def paintEvent(self,event):
+        from capsule_indicators import ACTIVE_INK, draw_symbol
+        from compact_colors import badge_fill, on_badge, text_ink
+        from resource_compact import paint_badge_lines, text
+        from resource_pomodoro_view import reminder_icon, reminder_ink
+        p=QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        scale=min(self.height()/38,self.width()/240)
+        if scale<=0:return
+        p.scale(scale,scale)
+        width=(self.width()/scale-6)/2
+        height=self.height()/scale
+        for i,(label,base,ink) in enumerate((('浅色','#eaf0f6','#243544'),('深色','#323547','#eff3f8'))):
+            bounds=QRectF(i*(width+6),1,width,height-2)
+            p.setPen(Qt.NoPen);p.setBrush(QColor(base));p.drawRoundedRect(bounds,7,7)
+            left=bounds.left()+max(2,(width-115)/2)
+            text(p,QRectF(left,1,28,bounds.height()),label,ink,10)
+            badge=QRectF(left+30,(height-24)/2,54,24)
+            box=QRectF(badge.right()+4,badge.top(),24,24)
+            colors=dict(light=i==0,ink=ink,muted=ink,background_rgb=QColor(base).getRgb()[:3],
+                        badge_strength=self.field.value())
+            for rect,accent,radius in ((badge,reminder_ink('almanac',i==0),7),(box,ACTIVE_INK['bluetooth_link'][i],5)):
+                fill=badge_fill(accent,colors)
+                local=on_badge(colors,fill)
+                color=text_ink(accent,local)
+                p.setPen(Qt.NoPen);p.setBrush(fill);p.drawRoundedRect(rect,radius,radius)
+                if rect==badge:
+                    reminder_icon(p,rect.adjusted(4,5,-37,-5),'almanac',color)
+                    paint_badge_lines(p,rect.adjusted(20,0,-2,0),'大雪','10天',local['muted'],color)
+                else:
+                    draw_symbol(p,rect,'bluetooth_link',True,QColor(color))
+        p.end()
+
+
 class OptionFields(dict):
     def __init__(self,owner):super().__init__();self.owner=proxy(owner)
     def __missing__(self,key):
@@ -63,18 +105,18 @@ class ResourceOptions(QDialog):
         3: ('ai_fields',),
         4: ('custom_fields',),
         5: ('limit_fields','weather_threshold_fields'),
-        8: ('location_fields',),
+        8: ('location_fields', 'location_fades'),
     }
     field_pages=[
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
-         'resource_capsule_taskbar','resource_capsule_taskbar_position'},
+         'resource_capsule_taskbar','resource_capsule_taskbar_position','resource_idle_fade'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
         {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values(),'resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
            'resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
            'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'} | {'resource_alert_'+key for key in DEVICE_ALERTS},
         {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
-        {'resource_halo','resource_halo_speed','resource_halo_color_mode','resource_halo_mono_color','resource_background','resource_backdrop_mode','resource_palette','resource_card_transparency'},
+        {'resource_halo','resource_halo_speed','resource_halo_color_mode','resource_halo_mono_color','resource_background','resource_backdrop_mode','resource_content_mode','resource_palette','resource_card_transparency','resource_badge_strength'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
         {'resource_edge_snap','resource_edge_hide','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
@@ -198,11 +240,12 @@ class ResourceOptions(QDialog):
         self.drafts = {}
         self.orders = {}
         self.news_disabled_feeds=set(cfg['resource_news_disabled_feeds'])
-        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('ai_fields',3),('limit_fields',5),('weather_threshold_fields',5),('location_fields',8)]:
+        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('ai_fields',3),('limit_fields',5),('weather_threshold_fields',5),('location_fields',8),('location_fades',8)]:
             setattr(self,name,PageFields(self,index))
         from copy import deepcopy
         self.baseline = {key: deepcopy(value) if key.startswith('resource_') else value for key, value in cfg.items()
                          if key.startswith(('resource_', 'panel_'))}
+        self.baseline['component_idle_fade'] = dict(cfg['component_idle_fade'])
         box=QVBoxLayout(self);box.addWidget(SettingsHeader(self,'灵动胶囊设置'))
         content = QHBoxLayout()
         content.setSpacing(10)
@@ -236,11 +279,15 @@ class ResourceOptions(QDialog):
             heading.setProperty('role','group-title')
             layout.addWidget(heading)
             return layout
-        def combo(form,key,title,options,value,store):
+        def combo(form,key,title,options,value,store,companion=None):
             field=ModernComboBox()
             for label,data in options:field.addItem(label,data)
             field.setCurrentIndex(max(0,field.findData(value)));field.setAccessibleName(title)
-            form.addRow(title,field);store[key]=field;return field
+            if companion is None:
+                form.addRow(title,field)
+            else:
+                row=QHBoxLayout();row.addWidget(field,1);row.addWidget(companion);form.addRow(title,row)
+            store[key]=field;return field
         def spin(form,key,title,low,high,value,store):
             field=ModernSpinBox();field.setRange(low,high);field.setValue(value);field.setAccessibleName(title)
             form.addRow(title,field);store[key]=field
@@ -256,6 +303,8 @@ class ResourceOptions(QDialog):
             layout=page(0)
             desktop=section(layout,'显示与层级')
             self.fields['resource_enabled']=check('显示灵动胶囊',cfg['resource_enabled']);desktop.addWidget(self.fields['resource_enabled'])
+            self.fields['resource_idle_fade']=check('在桌面空闲 6 秒后淡化',cfg['resource_idle_fade'])
+            desktop.addWidget(self.fields['resource_idle_fade'])
             form=QFormLayout();desktop.addLayout(form)
             combo(form,'resource_open_page','展开后默认页面',[(label,key) for key,label in OPEN_PAGES.items()],cfg['resource_open_page'],self.fields)
             combo(form,'resource_layer','桌面层级',[('置顶','top'),('置底','bottom')],cfg['resource_layer'],self.fields)
@@ -442,6 +491,8 @@ class ResourceOptions(QDialog):
             style_form=QFormLayout();style.addLayout(style_form)
             from appearance_presets import APPEARANCE_SOURCES
             source=combo(style_form,'resource_background','外观来源',[*APPEARANCE_SOURCES, ('跟随桌面收纳','global')],cfg['resource_background'],self.fields)
+            from appearance_presets import CONTENT_MODES
+            combo(style_form,'resource_content_mode','文字与方块',CONTENT_MODES,cfg['resource_content_mode'],self.fields)
             backdrop=combo(style_form,'resource_backdrop_mode','玻璃背景',BACKDROP_MODES,cfg['resource_backdrop_mode'],self.fields)
             backdrop.setToolTip(BACKDROP_HINT)
             transparency=ModernSpinBox();transparency.setRange(0,100);transparency.setSuffix('%')
@@ -463,6 +514,15 @@ class ResourceOptions(QDialog):
                 spin(custom,key,title,low,high,saved[key],self.custom_fields)
             self.custom_box.setVisible(source.currentData()=='custom')
             source.currentIndexChanged.connect(lambda:self.custom_box.setVisible(source.currentData()=='custom'))
+            badge_section=section(layout,'收起徽标与小方块')
+            badge_form=QFormLayout();badge_section.addLayout(badge_form)
+            strength=ModernSpinBox();strength.setRange(0,100)
+            strength.setValue(cfg['resource_badge_strength']);strength.setAccessibleName('徽标与方块底色强度')
+            strength_control=NumericControl(strength)
+            strength_control.setToolTip('数值越高，徽标与小方块的底色越浓。0% 为透明。')
+            badge_form.addRow('底色强度（%）',strength_control)
+            self.fields['resource_badge_strength']=strength
+            badge_section.addWidget(BadgeFillPreview(strength))
             style=section(layout,'图表颜色与光环')
             graph=QFormLayout();style.addLayout(graph)
             combo(graph,'resource_palette','图表配色',[('跟随整体','theme'),('活力原色','vivid'),('自定义','custom')],cfg['resource_palette'],self.fields)
@@ -642,8 +702,14 @@ class ResourceOptions(QDialog):
                 form=QFormLayout();placement.addLayout(form)
                 for key in keys:
                     label='番茄钟与喝水' if key=='pomodoro' else PLACED_COMPONENTS[key]
+                    fade=None
+                    if key not in DESKTOP_COMPONENTS:
+                        from idle_fade_options import HINT, individual as fade_choice
+                        fade=check('空闲淡化',fade_choice(cfg,'resource:'+key))
+                        fade.setAccessibleName(label+'独立卡片空闲淡化')
+                        fade.setToolTip(HINT);self.location_fades[key]=fade
                     combo(form,key,label,[('收入灵动胶囊','capsule'),('独立桌面卡片','desktop')],
-                          component_location(cfg,key),self.location_fields)
+                          component_location(cfg,key),self.location_fields,fade)
             layout.addStretch()
 
         def build_9():
@@ -986,6 +1052,10 @@ class ResourceOptions(QDialog):
             for key,value in self.drafts[8]['stores']['location_fields'].items():
                 if value!=component_location(self.baseline,key):locations[key]=value
             changes['resource_component_locations']=locations
+            from idle_fade_options import individual as fade_choice, selection_changes as fade_changes
+            choices={'resource:'+key:value for key,value in self.drafts[8]['stores']['location_fades'].items()
+                     if value!=fade_choice(self.baseline,'resource:'+key)}
+            changes.update(fade_changes(self.service.cfg,choices))
         if 7 in self.drafts:
             import re
             from resource_weather import clean_cities

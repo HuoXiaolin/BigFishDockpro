@@ -1,7 +1,5 @@
 """A low-frequency desktop clock with independent appearance and live preview."""
-import ctypes
 import datetime
-import os
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, QSize, QVariantAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QPixmap, QIcon
@@ -47,9 +45,13 @@ class DesktopClock(QWidget):
         if self.runtime.api.save_config(candidate) is False:
             self.runtime.api.log('桌面时钟设置保存失败。'); return False
         self.dock.cfg.update(values)
+        if self.kind+'_idle_fade' in values:
+            from settings_effects import sync_main_fields
+            self.runtime.idle_fade.sync_window(self)
+            sync_main_fields(self.runtime.tray, {self.kind+'_idle_fade':self.option('idle_fade')})
         if 'calendar_enabled' in values:self.runtime.resources.sync()
         if 'clock_appearance' in values or 'calendar_appearance' in values:
-            self.runtime.resources.agenda_changed()
+            self.runtime.resources.countdowns_changed()
         return True
 
     def sync(self):
@@ -156,11 +158,11 @@ class DesktopClock(QWidget):
         cfg=effective_appearance(self.option('appearance'), self.dock.cfg)
         blur_surface=cfg.get('blur_enabled', True) and cfg['material'] not in ('clear', 'solid')
         from glass_capture import backdrop_key
-        key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect'],cfg['auto_contrast']) if not self.dock.preview else None
+        key=backdrop_key(self,cfg['blur'],cfg['material'],cfg['text_effect'],cfg['auto_contrast'],allow_fallback=True) if not self.dock.preview else None
         if key is not None and key==getattr(self,'_backdrop_key',None) and self.backdrop is not None:return
         if self.isVisible() and not self.dock.preview and (blur_surface or cfg['text_effect']=='glass' or (cfg['material']=='clear' and cfg['auto_contrast'])):
             from glass_capture import capture_behind, surface_windows
-            image=capture_behind(self,surface_windows(self.dock))
+            image=capture_behind(self,surface_windows(self.dock),allow_fallback=True)
             if image is not None:
                 from glass_capture import smooth_backdrop
                 if cfg['material']=='clear':
@@ -172,14 +174,9 @@ class DesktopClock(QWidget):
         self.update()
 
     def layer(self):
-        if self.parentWidget() is not None or self.dock.preview or os.environ.get('FISHDOCK_TEST_DESKTOP'): return
-        from ctypes import wintypes
-        user=ctypes.windll.user32; user.GetShellWindow.restype=wintypes.HWND; owner=user.GetShellWindow()
-        if owner:
-            user.SetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_ssize_t]
-            user.SetWindowLongPtrW(int(self.winId()),-8,int(owner))
-            user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
-            user.SetWindowPos(int(self.winId()),1,0,0,0,0,0x13)
+        if self.parentWidget() is not None or self.dock.preview:return
+        from window_layers import place_desktop
+        place_desktop(self,self.dock.cfg,shell_owned=True)
 
     def showEvent(self,event):
         super().showEvent(event)
@@ -278,6 +275,8 @@ class DesktopClock(QWidget):
         if self.parentWidget() is None:
             locked=menu.addAction('锁定位置与大小');locked.setCheckable(True);locked.setChecked(self.option('locked'))
             locked.triggered.connect(self.set_locked)
+            from desktop_idle_fade import add_action
+            add_action(menu,self.runtime,self.kind)
         menu.addAction('隐藏时钟').triggered.connect(lambda:self.set_enabled(False))
         return menu
     def contextMenuEvent(self,event):
@@ -448,6 +447,10 @@ def draw_clock(painter,rect,dock,options,style,backdrop=None):
             analysis=surface_map(key,w,h,backdrop,fallback,paint_surface)
             samples=background_at(analysis,rect,w,h)
             ink,muted=neutral_text(samples)
+    content_mode=options.get('content_mode','auto')
+    if content_mode!='auto':
+        light=dock.base_theme_colors(dock.cfg.get('theme','auto'))['light'] if content_mode=='app' else content_mode=='light'
+        ink,muted=QColor('#101b25' if light else '#ffffff'),QColor('#34485a' if light else '#e1ebf3')
     if options['accent_color']:accent=QColor(options['accent_color'])
     else:
         seed=THEME_ACCENTS.get(theme_family(options),options['color'] or '#62acd4')

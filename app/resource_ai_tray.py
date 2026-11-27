@@ -102,7 +102,7 @@ class AiPopup(QWidget):
         self.refresh()
         self.stats_view.scroll.verticalScrollBar().setValue(0)
     def refresh(self):
-        colors=palette_for(self.service,background(self.service.cfg))
+        colors=palette_for(self.service,background(self.service.cfg),widget=self,component='resource',refresh=self.refresh)
         if colors!=self.colors:
             self.colors=colors;self.setStyleSheet('QWidget{background:transparent;color:%(ink)s;font:11px "Microsoft YaHei UI"} QLabel#UsageTitle{font-size:15px;font-weight:600;padding-left:5px} QLabel#Subtle{color:%(muted)s;font-size:10px} QToolButton{border:0;padding:3px 6px;border-radius:5px;color:%(muted)s} QToolButton:hover,QToolButton:checked{background:%(hover)s;color:%(ink)s} QTableWidget{border:0;background:transparent} QHeaderView::section{background:%(hover)s;color:%(muted)s;border:0;padding:4px}'%colors+SCROLL_STYLE)
         self.ai_view.refresh();self.update()

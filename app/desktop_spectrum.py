@@ -98,6 +98,8 @@ def add_menu_actions(menu, runtime):
     top.triggered.connect(lambda on:runtime.set_spectrum_options(spectrum_layer='top' if on else 'bottom'))
     from component_passthrough import component_actions
     component_actions(window.addMenu('鼠标穿透'),runtime,'spectrum')
+    from desktop_idle_fade import add_action
+    add_action(window,runtime,'spectrum')
     lock = window.addAction('锁定位置')
     lock.setCheckable(True)
     lock.setChecked(cfg['spectrum_locked'])
@@ -289,8 +291,8 @@ class DesktopSpectrum(QWidget):
         self.apply_layer()
 
     def apply_layer(self):
-        from window_layers import desktop_layer
-        desktop_layer(int(self.winId()), self.cfg['spectrum_layer']=='top')
+        from window_layers import place_desktop
+        place_desktop(self, self.cfg, self.cfg['spectrum_layer']=='top')
         self.runtime.click_policy.apply(self)
 
     def hideEvent(self, event):

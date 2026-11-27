@@ -310,9 +310,11 @@ class DesktopPanels(QObject):
             previous = current.identity
             old_state = current.page_state()
             current.identity = identity
+            current.setProperty('clickThroughKey','panel:'+identity)
             if target is not None:
                 new_state = target.page_state()
                 target.identity = previous
+                target.setProperty('clickThroughKey','panel:'+previous)
                 current.default_geometry, target.default_geometry = target.default_geometry, current.default_geometry
                 self.windows[previous] = target
                 target.resize_timer.stop()
@@ -483,7 +485,7 @@ class DesktopPanels(QObject):
     def model(self, identity):
         return next(model for model in self.cfg['desktop_panels'] if model['id'] == identity)
 
-    def update_panel(self, identity, _layout=None, _font_size=None, _pointer_mode=None, **values):
+    def update_panel(self, identity, _layout=None, _font_size=None, _pointer_mode=None, _fade_changes=None, **values):
         panels = copy.deepcopy(self.cfg['desktop_panels'])
         from panel_preferences import KEYS,without_overrides
         shared={key:value for key,value in values.items() if key in KEYS}
@@ -492,6 +494,7 @@ class DesktopPanels(QObject):
         panels=without_overrides(panels)
         next(model for model in panels if model['id']==identity).update(local)
         changes={'desktop_panels':panels,**{'panel_'+key:value for key,value in shared.items()}}
+        if _fade_changes:changes.update(_fade_changes)
         if _pointer_mode is not None:
             from component_passthrough import individual, selection_changes
             key='panel:'+identity
@@ -524,6 +527,7 @@ class DesktopPanels(QObject):
                 self.shared_settings_changed.emit()
             elif identity in self.windows:self.windows[identity].apply_options()
             if 'component_passthrough' in changes:self.runtime.click_policy.refresh()
+            if _fade_changes:self.runtime.idle_fade.refresh()
             return True
         return False
 

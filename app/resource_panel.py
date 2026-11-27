@@ -197,10 +197,14 @@ class CapsuleTab(QToolButton):
     def paintEvent(self,event):
         colors=self.owner.colors
         if not colors:return
+        from compact_colors import widget_colors
+        colors=widget_colors(self.owner,self)
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         selected=self.isChecked()
         if selected or self.underMouse() or self.hasFocus():
-            fill=QColor(colors['field']);fill.setAlpha((209 if selected else 92) if colors['light'] else (231 if selected else 102))
+            selected_alpha=92 if self.owner.background['material']=='clear' else 209 if colors['light'] else 231
+            fill=QColor('#ffffff' if colors['light'] else '#303439')
+            fill.setAlpha(selected_alpha if selected else 92 if colors['light'] else 102)
             edge=QColor(colors['ink']);edge.setAlpha(160 if self.hasFocus() else 26)
             painter.setPen(QPen(edge,1) if selected or self.hasFocus() else Qt.NoPen)
             painter.setBrush(fill)
@@ -245,9 +249,9 @@ class ResourceContentHost(QWidget):
         previous=getattr(self,'background',None)
         self.background=background(self.service.cfg)
         if self.dashboard is not None and previous!=self.background:self.dashboard.update()
-        colors=palette_for(self.service,self.background)
-        colors['muted']='#405361' if colors['light'] else '#bfccd4'
+        colors=palette_for(self.service,self.background,widget=self,component='resource',refresh=self.refresh_contrast)
         colors['card_alpha']=round(255*(100-self.service.cfg['resource_card_transparency'])/100)
+        colors['badge_strength']=self.service.cfg['resource_badge_strength']
         if colors==self.colors:
             return False
         self.colors=colors
@@ -259,6 +263,19 @@ class ResourceContentHost(QWidget):
         self.setPalette(palette)
         if self.dashboard is not None:sync_card_controls(self.dashboard,colors)
         return True
+
+    def refresh_contrast(self):
+        changed=self.sync_palette()
+        if hasattr(self,'fold_button'):
+            self._compact_cache=self._compact_surface=None
+            self.update_header_inks()
+            if changed and not self.service.compact and self.page_key in DESKTOP_COMPONENTS:
+                self.service.runtime.sync_hosted_component(self.page_key)
+        elif changed and hasattr(self,'header'):
+            self.settings_button.setIcon(icon('settings',self.colors['ink'],15))
+            self.header.setStyleSheet('color:%s;font-size:11px;font-weight:600;'%self.colors['ink'])
+        if changed:self.refresh()
+        self.update()
 
     def init_style(self):
         from resource_pages import SCROLL_STYLE
@@ -830,7 +847,10 @@ class ResourceWindow(Foldable,ResourceContentHost):
 
     def tick_clock(self):
         today = date.today()
-        if self.clock_day != today:
+        minute=int(time.time()//60)
+        check_countdowns=minute!=getattr(self,'_countdown_minute',None) and 'countdown' in almanac_categories(self.service.cfg)
+        self._countdown_minute=minute
+        if self.clock_day != today or check_countdowns:
             self.clock_day = today
             self._compact_cache = None
             self.reposition()
@@ -954,15 +974,17 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 self.animation.start(interval)
         else:
             self.animation.stop()
-        if visible and self.service.compact and (cfg['resource_clock'] or almanac_categories(cfg)):
-            day_only = not cfg['resource_clock']
-            if not self.clock_tick.isActive() or self.clock_tick.isSingleShot() != day_only:
-                self.clock_tick.setSingleShot(day_only)
+        calendar_kinds=almanac_categories(cfg) if visible and self.service.compact else ()
+        if visible and self.service.compact and (cfg['resource_clock'] or calendar_kinds):
+            cadence='second' if cfg['resource_clock'] else 'minute' if 'countdown' in calendar_kinds else 'day'
+            if not self.clock_tick.isActive() or getattr(self,'_clock_tick_cadence',None)!=cadence:
+                self._clock_tick_cadence=cadence
+                self.clock_tick.setSingleShot(cadence!='second')
                 interval = 1000
-                if day_only:
+                if cadence!='second':
                     now = QDateTime.currentDateTime()
-                    midnight = QDateTime(now.date().addDays(1), QTime(0, 0))
-                    interval = max(1, now.msecsTo(midnight) + 1)
+                    interval=(60000-now.time().second()*1000-now.time().msec() if cadence=='minute'
+                              else now.msecsTo(QDateTime(now.date().addDays(1),QTime(0,0))))+1
                 self.clock_tick.start(interval)
         elif self.clock_tick.isActive():self.clock_tick.stop()
         self.sync_rotation()
@@ -1006,10 +1028,6 @@ class ResourceWindow(Foldable,ResourceContentHost):
         cfg=self.service.cfg
         previous=getattr(self,'background',None)
         palette_changed=self.sync_palette()
-        if palette_changed:
-            self.settings_button.setIcon(icon('settings',self.colors['ink']));self.fold_button.setIcon(icon('collapse',self.colors['ink']))
-            for btn in (self.settings_button,self.fold_button):btn.setIconSize(QSize(15,15))
-            self.page_pager.sync_appearance(self.colors['ink'])
         compact = self.service.compact
         if not compact:self.clear_notice()
         if not compact or cfg['resource_fold']=='ball':
@@ -1059,6 +1077,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
             self.hide();return
         if self.geometry()!=rect:self.setGeometry(rect)
         self.show();self.layer()
+        if hasattr(self.service.runtime,'idle_fade'):self.service.runtime.idle_fade.sync_window(self)
         self.service.runtime.click_policy.apply(self)
 
     def target_rect(self,compact):
@@ -1176,7 +1195,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
 
     def layer(self):
         if self.service.runtime.dock.preview:return
-        from window_layers import desktop_layer, is_topmost, shell_owner, owner_of
+        from window_layers import desktop_layer, effective_top, is_topmost, shell_owner, owner_of
         hwnd=int(self.winId());top=self.service.cfg['resource_layer']=='top'
         if self.taskbar_slot() is not None:
             from window_layers import set_owner
@@ -1187,6 +1206,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
             if self.last_layer!=state or owner_of(hwnd):
                 if set_owner(hwnd,0) and place_layer(hwnd,bar,placement.layer,cover=fullscreen_window() if top else None):self.last_layer=state
             return
+        top=effective_top(self.service.cfg,top)
         owner=0 if top else shell_owner()
         state=(hwnd,top,owner)
         if self.last_layer!=state or is_topmost(hwnd)!=top or owner_of(hwnd)!=owner:
@@ -1194,7 +1214,8 @@ class ResourceWindow(Foldable,ResourceContentHost):
     def raise_if_top(self):
         if self.taskbar_slot() is not None:
             self.restore_input_layer();return
-        if self.service.cfg['resource_layer']=='top' and not self.service.runtime.dock.preview:
+        from window_layers import effective_top
+        if effective_top(self.service.cfg,self.service.cfg['resource_layer']=='top') and not self.service.runtime.dock.preview:
             from window_layers import restack
             restack(int(self.winId()),-1)
 
@@ -1286,6 +1307,23 @@ class ResourceWindow(Foldable,ResourceContentHost):
         for index,button in enumerate(self.nav_arrows):
             button.setGeometry(left+width+18*index,5,18,24);button.setVisible(visible and overflow)
         self.nav_end=left+width+(36 if overflow else 0)
+        if visible and self.colors:self.update_header_inks()
+
+    def update_header_inks(self):
+        if self.service.compact:return
+        from compact_colors import widget_colors
+        for control,symbol in ((self.settings_button,'settings'),(self.fold_button,'collapse')):
+            ink=widget_colors(self,control)['ink']
+            if control.property('iconInk')!=ink:
+                control.setProperty('iconInk',ink)
+                control.setIcon(icon(symbol,ink,15));control.setIconSize(QSize(15,15))
+        for button in self.page_buttons.values():button.update()
+        for button in self.nav_arrows:
+            ink=widget_colors(self,button)['muted']
+            if button.property('arrowInk')!=ink:
+                button.setProperty('arrowInk',ink);button.setStyleSheet('color:'+ink+';')
+        self.page_pager.sync_appearance(widget_colors(self,self.page_pager)['ink'])
+
     def glass_shape(self):
         cfg=self.service.cfg
         radius=max(0,(self.height()-2)/2)
@@ -1567,6 +1605,8 @@ class ResourceWindow(Foldable,ResourceContentHost):
             item.triggered.connect(lambda checked,layer=layer:self.service.set_options(resource_layer=layer))
         from component_passthrough import component_actions
         component_actions(window.addMenu('鼠标穿透'),self.service.runtime,'resource')
+        from desktop_idle_fade import add_action
+        add_action(window,self.service.runtime,'resource')
         taskbar=menu_group(menu,'任务栏与监控','monitor')
         pin=taskbar.addAction('固定胶囊到任务栏');pin.setCheckable(True);pin.setChecked(cfg['resource_capsule_taskbar'])
         pin.triggered.connect(lambda on:self.service.set_options(resource_capsule_taskbar=on,

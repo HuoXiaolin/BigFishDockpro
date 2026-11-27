@@ -37,7 +37,7 @@ def run(api, runtime, app, output, checks):
     assert PAGE_GROUPS[0][1][-2:] == (NOTIFICATIONS, CURSORS)
     prior_order = [key for key in reversed(DEFAULT_ORDER) if key != 'cursor_styles']
     migrated = normalize_order(prior_order)
-    assert migrated.index('cursor_styles') == migrated.index('shell_notifications') + 1
+    assert migrated.index('cursor_styles') == migrated.index('corners') + 1
     assert [key for key in migrated if key != 'cursor_styles'] == prior_order
 
     with TemporaryDirectory(prefix='bf-cursor-test-', dir=output) as directory:

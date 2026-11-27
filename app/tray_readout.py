@@ -5,7 +5,7 @@ from math import ceil
 from weakref import WeakValueDictionary
 
 from PyQt5.QtCore import QPoint, QRect, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QAbstractTextDocumentLayout, QCursor, QPainter, QPalette, QTextDocument, QTextOption
+from PyQt5.QtGui import QAbstractTextDocumentLayout, QPainter, QPalette, QTextDocument, QTextOption
 from PyQt5.QtWidgets import QApplication, QStyle, QSystemTrayIcon, QToolTip, QWidget
 
 
@@ -24,6 +24,14 @@ kernel = ctypes.WinDLL('kernel32')
 user.EnumThreadWindows.argtypes = (wt.DWORD, _enumerate, wt.LPARAM)
 user.GetWindowTextW.argtypes = (wt.HWND, wt.LPWSTR, ctypes.c_int)
 user.GetCursorPos.argtypes = (ctypes.POINTER(wt.POINT),)
+user.WindowFromPoint.argtypes = (wt.POINT,)
+user.WindowFromPoint.restype = wt.HWND
+user.GetAncestor.argtypes = (wt.HWND,wt.UINT)
+user.GetAncestor.restype = wt.HWND
+user.GetClassNameW.argtypes = (wt.HWND,wt.LPWSTR,ctypes.c_int)
+user.MonitorFromPoint.argtypes = (wt.POINT,wt.DWORD)
+user.MonitorFromPoint.restype = wt.HANDLE
+user.GetMonitorInfoW.argtypes = (wt.HANDLE,ctypes.c_void_p)
 controls.SetWindowSubclass.argtypes = (wt.HWND, _subclass, ctypes.c_size_t, ctypes.c_size_t)
 controls.DefSubclassProc.argtypes = (wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
 controls.DefSubclassProc.restype = wt.LPARAM
@@ -52,6 +60,29 @@ def _icon_rect(hwnd):
     return QRect()
 
 
+def _overflow_at(point):
+    hwnd=user.WindowFromPoint(wt.POINT(point.x(),point.y()))
+    root=user.GetAncestor(hwnd,2) if hwnd else None
+    name=ctypes.create_unicode_buffer(128)
+    return bool(root and user.GetClassNameW(root,name,len(name)) and
+                name.value in ('NotifyIconOverflowWindow','TopLevelWindowForOverflowXamlIsland'))
+
+
+def _logical_point(point):
+    from resource_taskbar import MonitorInfo
+    info=MonitorInfo()
+    info.size=ctypes.sizeof(info)
+    monitor=user.MonitorFromPoint(wt.POINT(point.x(),point.y()),0)
+    if not monitor or not user.GetMonitorInfoW(monitor,ctypes.byref(info)):return None
+    for screen in QApplication.screens():
+        if screen.name().casefold()==info.device.casefold():
+            area=screen.geometry();native=info.monitor
+            x=round((point.x()-native.left)*area.width()/max(1,native.right-native.left))
+            y=round((point.y()-native.top)*area.height()/max(1,native.bottom-native.top))
+            return area.topLeft()+QPoint(min(area.width()-1,x),min(area.height()-1,y))
+    return None
+
+
 def _tray_windows():
     handles = set()
     title = ctypes.create_unicode_buffer(64)
@@ -73,11 +104,15 @@ def _tray_event(hwnd, message, wparam, lparam, subclass_id, data):
         if message == TRAY_MESSAGE:
             kind = lparam & 0xffff
             if kind in (WM_MOUSEMOVE, NIN_POPUPOPEN):
-                tray.hover(kind == NIN_POPUPOPEN)
-            elif 0x0201 <= kind <= 0x0209 or kind in (0x007b, 0x02a3, 0x0400, 0x0401):  # buttons, menu, leave, select
+                where=QPoint(ctypes.c_short(wparam & 0xffff).value,ctypes.c_short((wparam>>16) & 0xffff).value) if wparam else None
+                tray.hover(kind == NIN_POPUPOPEN,where)
+            elif kind == 0x0401:  # NIN_KEYSELECT
+                tray.keyboard_readout()
+            elif 0x0201 <= kind <= 0x0209 or kind in (0x007b, 0x02a3, 0x0400):  # buttons, menu, leave, select
                 tray.dismiss()
-            elif kind == NIN_POPUPCLOSE and tray.leave.isActive():
-                tray.check_pointer()
+            elif kind == NIN_POPUPCLOSE:
+                if tray.keyboard:tray.dismiss()
+                elif tray.anchor is not None:tray.check_pointer()
         elif message == 0x0082:  # WM_NCDESTROY, including QSystemTrayIcon.hide()
             _owners.pop(hwnd, None)
             tray.hwnd = None
@@ -89,15 +124,15 @@ def _tray_event(hwnd, message, wparam, lparam, subclass_id, data):
 
 
 class ReadoutPopup(QWidget):
-    def __init__(self):
-        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint |
+    def __init__(self,owner=None):
+        super().__init__(owner, Qt.ToolTip | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint |
                          Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus)
-        self.setAttribute(Qt.WA_OpaquePaintEvent)
+        palette=self.palette()
+        palette.setColor(QPalette.Window,Qt.white)
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        # Windows 11 can also paint a compositor border outside the Qt client.
-        no_border = wt.DWORD(0xfffffffe)  # DWMWA_COLOR_NONE
-        _set_dwm_attribute(int(self.winId()), 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
         self.document = QTextDocument(self)
         self.document.setDefaultFont(QToolTip.font())
         self.document.setDocumentMargin(0)
@@ -111,7 +146,7 @@ class ReadoutPopup(QWidget):
         self.anchor = QPoint()
 
     def present(self, text, point):
-        screen = QApplication.screenAt(point) or QApplication.primaryScreen()
+        screen = QApplication.screenAt(point)
         if screen is None:
             return
         self.anchor = QPoint(point)
@@ -131,7 +166,16 @@ class ReadoutPopup(QWidget):
         self.setGeometry(x, y, width, height)
         self.update()
         if not self.isVisible():
+            # Create the native window hidden, after its final monitor and bounds are known.
+            no_border = wt.DWORD(0xfffffffe)  # DWMWA_COLOR_NONE
+            hwnd=int(self.winId())
+            if self.windowHandle().screen()!=screen:
+                self.windowHandle().setScreen(screen)
+                self.setGeometry(x,y,width,height)
+                hwnd=int(self.winId())
+            _set_dwm_attribute(hwnd,34,ctypes.byref(no_border),ctypes.sizeof(no_border))
             self.show()
+            self.repaint()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -147,6 +191,8 @@ class ReadoutTrayIcon(QSystemTrayIcon):
         super().__init__(parent)
         self.readout = ''
         self.hwnd = self.popup = self.anchor = None
+        self.keyboard=False
+        self.overflow_anchor=False
         self.tried_icon = False
         self.delay = QTimer(self, singleShot=True)
         self.delay.timeout.connect(self.show_readout)
@@ -160,6 +206,7 @@ class ReadoutTrayIcon(QSystemTrayIcon):
             if controls.SetWindowSubclass(hwnd, _tray_event, 1, 0):
                 self.hwnd = hwnd
                 _owners[hwnd] = self
+                super().setToolTip('')
 
     def setIcon(self, icon):
         if self.tried_icon:
@@ -171,10 +218,11 @@ class ReadoutTrayIcon(QSystemTrayIcon):
 
     def show(self):
         previous = _tray_windows() if self.hwnd is None else None
+        if previous is not None:super().setToolTip('')
         super().show()
         if previous is not None:
             self.attach(previous)
-        if self.anchor is None:
+        if self.hwnd is None:
             super().setToolTip(self.readout)
 
     def hide(self):
@@ -185,28 +233,34 @@ class ReadoutTrayIcon(QSystemTrayIcon):
         if text == self.readout:
             return
         self.readout = text
-        if self.anchor is None:
+        if self.hwnd is None:
             super().setToolTip(text)
-        if self.popup is not None and self.popup.isVisible():
+        if not text:
+            self.dismiss()
+        elif self.popup is not None and self.popup.isVisible() and (self.keyboard or self.check_pointer()):
             self.popup.present(text, self.popup.anchor)
 
-    def hover(self, ready):
+    def toolTip(self):
+        return self.readout
+
+    def hover(self, ready, where=None):
         if not self.isVisible() or not self.readout or QApplication.activePopupWidget():
             return
         point = _pointer()
-        if point is None:
+        if point is None or not self.hwnd:
             return
+        rect=_icon_rect(self.hwnd)
+        overflow=not rect.contains(point)
+        if overflow and not (where is not None and (where-point).manhattanLength()<=8 and _overflow_at(point)):
+            self.dismiss()
+            return
+        if self.keyboard:self.dismiss()
         if self.anchor is None:
-            if ready and not _icon_rect(self.hwnd).contains(point):
-                return  # Keyboard focus uses the usual Shell tooltip.
             for other in list(_owners.values()):
                 if other is not self and other.anchor is not None:
                     other.dismiss()
-            self.anchor = point
-            # Keep the normal Shell label for keyboard access. During actual mouse
-            # hover the tracking tooltip owns the display, even as Qt changes frames.
-            super().setToolTip('')
         self.anchor = point
+        self.overflow_anchor=overflow
         if self.leave.isActive():
             return
         if ready:
@@ -216,12 +270,10 @@ class ReadoutTrayIcon(QSystemTrayIcon):
 
     def check_pointer(self):
         point = _pointer()
-        rect = _icon_rect(self.hwnd)
-        # In the overflow flyout some Explorer versions give the chevron's
-        # rectangle. The latest move delivered to this icon identifies its slot.
-        if self.anchor is not None and not rect.contains(self.anchor):
+        rect = _icon_rect(self.hwnd) if self.hwnd else QRect()
+        if self.overflow_anchor and self.anchor is not None and point is not None and _overflow_at(point):
             rect = QRect(self.anchor.x() - 8, self.anchor.y() - 8, 17, 17)
-        if point is None or not rect.contains(point) or QApplication.activePopupWidget():
+        if self.anchor is None or point is None or not rect.contains(point) or QApplication.activePopupWidget():
             self.dismiss()
             return False
         return True
@@ -229,7 +281,8 @@ class ReadoutTrayIcon(QSystemTrayIcon):
     def show_on_click(self):
         if self.hwnd is None:
             return False
-        self.hover(False)
+        if self.keyboard and self.popup and self.popup.isVisible():return True
+        self.hover(False,_pointer())
         if self.anchor is None:
             return False
         self.delay.stop()
@@ -237,20 +290,36 @@ class ReadoutTrayIcon(QSystemTrayIcon):
         return self.leave.isActive()
 
     def show_readout(self):
-        if not self.hwnd or not self.check_pointer():
+        if not self.hwnd or not self.isVisible() or not self.check_pointer():
+            return
+        self.present_at(self.anchor)
+        if self.anchor is not None:self.leave.start()
+
+    def keyboard_readout(self):
+        if not self.hwnd or not self.isVisible() or QApplication.activePopupWidget():return
+        rect=_icon_rect(self.hwnd)
+        if rect.isEmpty():return
+        for other in list(_owners.values()):
+            other.dismiss()
+        self.keyboard=True
+        self.anchor=rect.center()
+        self.present_at(self.anchor)
+
+    def present_at(self,anchor):
+        point=_logical_point(anchor)
+        if point is None:
+            self.dismiss()
             return
         self.readoutRequested.emit()
+        if self.anchor is None or not self.readout:return
         if self.popup is None:
             self.popup = ReadoutPopup()
-        self.popup.present(self.readout, QCursor.pos())
-        self.leave.start()
+        self.popup.present(self.readout,point)
 
     def dismiss(self):
         self.delay.stop()
         self.leave.stop()
-        had_hover = self.anchor is not None
+        self.keyboard=self.overflow_anchor=False
         self.anchor = None
         if self.popup is not None:
             self.popup.hide()
-        if had_hover and self.hwnd:
-            super().setToolTip(self.readout)

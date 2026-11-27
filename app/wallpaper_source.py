@@ -39,16 +39,59 @@ def set_wallpaper(path):
         if setter(pointer,None,os.path.abspath(path))<0:raise OSError('Windows could not set the wallpaper')
 
 
+class MonitorInfo(ctypes.Structure):
+    _fields_ = [('size', wintypes.DWORD), ('monitor', wintypes.RECT),
+                ('work', wintypes.RECT), ('flags', wintypes.DWORD)]
+
+
+def _window_monitor(window):
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user.MonitorFromWindow.restype = wintypes.HANDLE
+    user.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+    hwnd = window if isinstance(window, int) else int(window.winId())
+    info = MonitorInfo()
+    info.size = ctypes.sizeof(info)
+    if not user.GetMonitorInfoW(user.MonitorFromWindow(hwnd, 2), ctypes.byref(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return info
+
+
+def system_wallpaper(window):
+    """Read the primary desktop image when per-monitor wallpaper metadata is unavailable."""
+    import winreg
+    info = _window_monitor(window)
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+    path = ctypes.create_unicode_buffer(32768)
+    if not user.SystemParametersInfoW(0x0073, len(path), path, 0):  # SPI_GETDESKWALLPAPER
+        raise ctypes.WinError(ctypes.get_last_error())
+    position = 4
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Control Panel\Desktop') as key:
+            style = winreg.QueryValueEx(key, 'WallpaperStyle')[0]
+            position = {'0': 0, '2': 2, '6': 3, '10': 4, '22': 5}.get(str(style), 4)
+            if str(winreg.QueryValueEx(key, 'TileWallpaper')[0]) == '1':
+                position = 1
+    except OSError:
+        pass
+    if path.value and position != 5 and not (info.flags & 1):
+        # SPI only identifies the primary image; a secondary monitor may have its own.
+        raise OSError('Per-monitor wallpaper is unavailable')
+    rect = info.monitor
+    monitor = QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    bounds = QRect(*(user.GetSystemMetrics(i) for i in (76, 77, 78, 79)))
+    value = user.GetSysColor(1)  # COLOR_DESKTOP
+    return path.value, position, QColor(value & 255, (value >> 8) & 255, (value >> 16) & 255), monitor, bounds
+
+
 def desktop_wallpaper(window):
     from native_file_menu import method
     with wallpaper_service() as (pointer,ole):
         count=wintypes.UINT();position=ctypes.c_int(4);color=wintypes.DWORD()
         method(pointer,6,ctypes.c_long,ctypes.POINTER(wintypes.UINT))(pointer,ctypes.byref(count))
         method(pointer,11,ctypes.c_long,ctypes.POINTER(ctypes.c_int))(pointer,ctypes.byref(position));method(pointer,9,ctypes.c_long,ctypes.POINTER(wintypes.DWORD))(pointer,ctypes.byref(color))
-        user=ctypes.windll.user32;user.MonitorFromWindow.argtypes=[wintypes.HWND,wintypes.DWORD];user.MonitorFromWindow.restype=wintypes.HANDLE
-        class Info(ctypes.Structure):_fields_=[('size',wintypes.DWORD),('monitor',wintypes.RECT),('work',wintypes.RECT),('flags',wintypes.DWORD)]
-        hwnd = window if isinstance(window, int) else int(window.winId())
-        info=Info();info.size=ctypes.sizeof(info);user.GetMonitorInfoW.argtypes=[wintypes.HANDLE,ctypes.POINTER(Info)];user.GetMonitorInfoW(user.MonitorFromWindow(hwnd,2),ctypes.byref(info))
+        info = _window_monitor(window)
         selected=None;bounds=QRect()
         for index in range(min(count.value,32)):
             name=ctypes.c_void_p();path=ctypes.c_void_p();rect=wintypes.RECT()
@@ -104,18 +147,23 @@ def invalidate_source():
     image_file.cache_clear()
 
 
-def source_info(window,screen):
-    key=screen.name();now=time.monotonic();cached=_metadata.get(key)
+def source_info(window,screen,allow_fallback=False):
+    key=screen.name(),allow_fallback;now=time.monotonic();cached=_metadata.get(key)
     if cached is None or now-cached[0]>=2:
-        cached=(now,desktop_wallpaper(window));_metadata[key]=cached
+        try:
+            info=desktop_wallpaper(window)
+        except OSError:
+            if not allow_fallback:raise
+            info=system_wallpaper(window)
+        cached=(now,info);_metadata[key]=cached
         # Screen names can change after docking. Metadata must stay bounded.
         if len(_metadata)>16:
             for old in sorted(_metadata,key=lambda name:_metadata[name][0])[:-16]:_metadata.pop(old,None)
     return cached[1]
 
 
-def wallpaper_key(window,screen):
-    path,position,color,monitor,bounds=source_info(window,screen)
+def wallpaper_key(window,screen,*,allow_fallback=False):
+    path,position,color,monitor,bounds=source_info(window,screen,allow_fallback)
     try:
         stamp=os.stat(path).st_mtime_ns if path else None
     except OSError:
@@ -123,8 +171,8 @@ def wallpaper_key(window,screen):
     return path,stamp,position,color.rgba(),monitor.getRect(),bounds.getRect()
 
 
-def capture(window,screen):
-    info=source_info(window,screen)
+def capture(window,screen,*,allow_fallback=False):
+    info=source_info(window,screen,allow_fallback)
     path,position,color,monitor,bounds=info
     try:source=image_file(path,os.stat(path).st_mtime_ns) if path else QImage()
     except OSError:source=QImage()

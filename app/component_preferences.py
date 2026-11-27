@@ -12,19 +12,19 @@ from ui_style import SettingsHeader, button, compact_dialog, exec_dialog, label
 
 COMPONENTS = {
     'flash': ('闪念胶囊', (
-        ('停靠与收起', 'position', ('enabled', 'side', 'edge_hide', 'auto_hide', 'delay', 'drop')),
-        ('材质与配色', 'palette', ('appearance_source', 'backdrop_mode', 'palette', 'color')))),
+        ('停靠与收起', 'position', ('enabled', 'idle_fade', 'side', 'edge_hide', 'auto_hide', 'delay', 'drop')),
+        ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'backdrop_mode', 'palette', 'color')))),
     'spectrum': ('桌面音乐频谱', (
-        ('显示与层级', 'wave', ('enabled', 'style', 'layer', 'locked')),
+        ('显示与层级', 'wave', ('enabled', 'style', 'layer', 'locked', 'idle_fade')),
         ('材质与配色', 'palette', ('appearance_source', 'backdrop_mode', 'color_mode', 'mono_color')))),
     'daily_picture': ('每日图片', (
-        ('图片与轮播', 'calendar', ('enabled', 'source', 'interval', 'locked')),
-        ('材质与配色', 'palette', ('appearance_source', 'material', 'color')))),
+        ('图片与轮播', 'calendar', ('enabled', 'idle_fade', 'source', 'interval', 'locked')),
+        ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'material', 'color')))),
     'watermark': ('桌面文字水印', (
         ('文字与颜色', 'notes', ('enabled', 'text', 'color', 'size', 'opacity')),
-        ('位置与平铺', 'position', ('mode', 'position', 'angle', 'density', 'layer')))),
+        ('位置与平铺', 'position', ('mode', 'position', 'angle', 'density', 'layer', 'idle_fade')))),
     'note': ('新便签默认设置', (
-        ('材质与配色', 'palette', ('appearance_source', 'style')),)),
+        ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'style')),)),
 }
 
 

@@ -494,6 +494,8 @@ def run(output):
         check_shutdown(api,runtime,root.name,app,output,checks)
         from popup_style_tests import run as check_popups
         check_popups(app,output,checks)
+        from desktop_idle_fade_tests import run as check_idle_fade
+        check_idle_fade(api,runtime,output,checks)
         # The temporary Dock extension fixture requests app.quit on close.
         # Keep it last so later tests retain a working native event loop.
         from dock_extension_tests import run as run_dock_extensions

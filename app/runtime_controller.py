@@ -95,6 +95,8 @@ class RuntimeController:
         self._update_source_key=self.updater.source_key()
         from interaction_motion import attach
         for window in (self.dock,self.clock,self.calendar):attach(window,lambda:self.dock.cfg)
+        from desktop_idle_fade import DesktopIdleFade
+        self.idle_fade=DesktopIdleFade(self)
         self.apply_settings()
         self._wallpaper_keys={}
         self.wallpaper_timer=QTimer(self.dock)
@@ -204,6 +206,35 @@ class RuntimeController:
         elif manual_changed:self.resources.sync()
         self.refresh_corners()
 
+    def floating_layers(self):
+        """Visible desktop windows, their own stacking choice and desktop ownership."""
+        cfg=self.dock.cfg
+        capsule=self.resources.window
+        yield self.dock, cfg['layer']=='top', False
+        if capsule and capsule.taskbar_slot() is None:
+            yield capsule, cfg['resource_layer']=='top', True
+        for w in self.panels.windows.values():
+            yield w, cfg['panel_layer']=='top', True
+        for w in self.notes.windows.values():
+            yield w, w.row()['pinned'], True
+        for w in self.resources.desktop_cards.values():
+            yield w, False, True
+        for w in (self.clock,self.calendar):
+            yield w, False, True
+        for w in (self.flash.edge,self.flash.panel,self.flash.toast):
+            yield w, True, False
+        for w in self.watermarks.windows.values():
+            yield w, cfg['watermark_layer']=='top', True
+        yield self.spectrum, cfg['spectrum_layer']=='top', False
+        yield self.daily_picture, False, False
+        if self.custom_cards:
+            for w in self.custom_cards.windows.values():
+                yield w, False, False
+
+    def visible_layers(self):
+        return ((w,top,owned) for w,top,owned in self.floating_layers()
+                if w is not None and w.isWindow() and w.isVisible())
+
     def refresh_layers(self):
         if self.closed:return
         self.shell_appearance.refresh_foreground()
@@ -211,25 +242,29 @@ class RuntimeController:
         if strip:strip.placement.shell_changed()
         capsule=self.resources.window
         if capsule and capsule.taskbar_placement:capsule.taskbar_placement.shell_changed()
-        cfg=self.dock.cfg
-        windows=[self.dock if cfg['layer']=='top' else None,
-                 capsule if cfg['resource_layer']=='top' and capsule and capsule.taskbar_slot() is None else None,
-                 self.flash.edge,self.flash.panel,self.flash.toast]
-        windows.extend(note for note in self.notes.windows.values() if note.row()['pinned'])
-        if cfg['panel_layer']=='top':
-            windows.extend(self.panels.windows.values())
-        if cfg['spectrum_layer']=='top':
-            windows.append(self.spectrum)
-        if cfg['watermark_layer']=='top':
-            windows.extend(self.watermarks.windows.values())
-        visible=[w for w in windows if w is not None and w.isWindow() and w.isVisible()]
+        from window_layers import effective_top
+        visible=[w for w,top,_ in self.visible_layers() if effective_top(self.dock.cfg,top)]
         if visible:
             from window_layers import repair_top
             cover=fullscreen_window()
             for w in visible:repair_top(int(w.winId()),cover)
 
     def apply_settings(self,changed=None):
+        from idle_fade_options import POLICY_FIELDS
         if changed is not None:changed=set(changed)
+        if changed is None or changed & POLICY_FIELDS:
+            self.idle_fade.refresh()
+        if changed is not None:
+            changed -= POLICY_FIELDS
+            if not changed:
+                quick = self.dock.extras.popup
+                if quick and quick.isVisible():quick.refresh()
+                return
+        if changed is not None and 'desktop_layer_mode' in changed:
+            from window_layers import place_desktop
+            for window,top,owned in self.visible_layers():
+                place_desktop(window,self.dock.cfg,top,shell_owned=owned)
+            self.click_policy.refresh()
         from settings_effects import DOCK_GLASS
         dock_appearance_changed = changed is None or bool(changed & DOCK_GLASS)
         if dock_appearance_changed or any(key.startswith('shell_') for key in changed):
@@ -255,7 +290,7 @@ class RuntimeController:
             self.sync_spectrum()
         if placement_changed or any(key.startswith('daily_picture_') for key in changed) or changed & (capsule_style|{'card_scale'}):
             self.sync_daily_picture()
-        if placement_changed or changed & (capsule_style|{'card_scale','custom_cards'}):
+        if placement_changed or changed & (capsule_style|{'card_scale','custom_cards','custom_card_content_mode'}):
             self.sync_custom_cards()
         if policy_changed or any(key.startswith('resource_') for key in changed) or changed & (capsule_style|{'taskbar_text_mode','motion_enabled','card_snap','spectrum_enabled','custom_cards','calendar_enabled'}):
             self.resources.sync()
@@ -270,18 +305,20 @@ class RuntimeController:
         if changed is not None:
             if 'desktop_middle_toggle' in changed:self.desktop_shortcut.set_enabled(self.dock.cfg['desktop_middle_toggle'])
             if 'hide_tray' in changed or policy_changed:self.sync_tray_visibility()
-            panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key!='desktop_middle_toggle'}
+            panel_keys={key for key in changed if key.startswith(('panel_','desktop_','merged_','merge_')) and key not in {'desktop_middle_toggle','desktop_layer_mode'}}
             cfg=self.dock.cfg
-            if panel_keys or changed&{'card_scale','card_sizing','display_layout','card_design'} or (dock_appearance_changed and cfg['panel_appearance_source']=='app'):
+            if panel_keys or changed&{'card_scale','card_sizing','display_layout','card_design'} or (dock_appearance_changed and (cfg['panel_appearance_source']=='app' or cfg['panel_content_mode']=='app')):
                 self.panels.apply_settings()
-            if placement_changed or changed&{'note_style','note_appearance_source','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'} or (dock_appearance_changed and any(row.get('appearance_source')=='app' for row in cfg['sticky_notes'])):
+            if placement_changed or changed&{'note_content_mode','note_style','note_appearance_source','note_appearance','notes_enabled','notes_visible','sticky_notes','card_scale','card_sizing','card_design'} or (dock_appearance_changed and (cfg['note_content_mode']=='app' or any(row.get('appearance_source')=='app' for row in cfg['sticky_notes']))):
                 self.notes.sync()
-            if placement_changed or any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'} or (dock_appearance_changed and cfg['clock_appearance'].get('source')=='app'):
+            if placement_changed or any(key.startswith('clock_') for key in changed) or changed&{'card_scale','card_design'} or (dock_appearance_changed and ('app' in (cfg['clock_appearance'].get('source'),cfg['clock_appearance'].get('content_mode')))):
                 self.clock.sync()
-            if placement_changed or any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'} or (dock_appearance_changed and cfg['calendar_appearance'].get('source')=='app'):
+            if placement_changed or any(key.startswith('calendar_') for key in changed) or changed&{'card_scale','card_design'} or (dock_appearance_changed and ('app' in (cfg['calendar_appearance'].get('source'),cfg['calendar_appearance'].get('content_mode')))):
                 self.calendar.sync()
             if changed&{'clock_enabled','calendar_enabled','daily_picture_enabled','notes_enabled','notes_visible','sticky_notes','custom_cards'}:
                 self.resources.components_changed()
+            if changed&{'clock_appearance','calendar_appearance'}:
+                self.resources.countdowns_changed()
             if 'card_scale' in changed:
                 self.panels.reposition();self.notes.reposition();self.clock.reposition();self.calendar.reposition();self._card_density=self.dock.cfg['card_scale']
             if changed&{'screen_corners','corner_radius'}:self.refresh_corners()
@@ -374,12 +411,16 @@ class RuntimeController:
         if self.closed or self.session_ending:return
         from wallpaper_source import invalidate_source
         invalidate_source()
+        from component_contrast import refresh_visible
+        refresh_visible()
         self.refresh_wallpaper_targets(*self.wallpaper_targets())
         self.dock.extras.sync_clock()
 
     def check_wallpaper(self):
         if self.closed or self.session_ending or self.dock.preview:return
         from wallpaper_source import wallpaper_key
+        from component_contrast import refresh_visible
+        refresh_visible()
         glass,captures=self.wallpaper_targets()
         # The main capsule and Dock already check their own wallpaper.
         glass=[(window,material) for window,material in glass
@@ -487,6 +528,7 @@ class RuntimeController:
 
     def close(self):
         if self.closed: return
+        self.idle_fade.close()
         self.click_policy.close()
         self.closed = True
         self.watermarks.sync()

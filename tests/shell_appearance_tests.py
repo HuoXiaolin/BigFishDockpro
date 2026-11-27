@@ -537,6 +537,8 @@ def run(api, runtime, root, app, output, checks):
                  patch.object(runtime.tray, 'settings_dialog', dialog, create=True):
                 quick.refresh()
                 quick.show();app.processEvents()
+                from quick_actions import page_for
+                quick.set_page(page_for(quick.order().index('shell_start')))
                 start_index = quick.order().index('taskbar_text') + 1
                 assert tuple(quick.order()[start_index:start_index + 2]) == SHELL_ACTIONS
                 original_draft = dialog.draft_values()['shell_start_color']

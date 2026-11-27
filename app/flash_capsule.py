@@ -95,8 +95,10 @@ class FlashCapsule(QObject):
         self.reposition()
         self.panel.show()
         if activate:
-            self.panel.raise_()
+            from window_layers import effective_top, place_desktop
+            if effective_top(self.cfg,True):self.panel.raise_()
             self.panel.activateWindow()
+            if not effective_top(self.cfg,True):place_desktop(self.panel,self.cfg,True)
         if identity: self.panel.reveal_item(identity)
         elif compose: self.panel.begin_edit()
         elif activate: self.panel.list.setFocus(Qt.OtherFocusReason)

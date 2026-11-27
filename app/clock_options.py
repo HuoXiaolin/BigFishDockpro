@@ -84,6 +84,9 @@ class ClockOptions(QDialog):
         if not self.calendar:layout.addRow('',self.show_date)
         dimensions=QHBoxLayout();dimensions.setSpacing(10);self.fields['width']=ModernSpinBox();self.fields['width'].setRange(clock.minimum[0],2400);self.fields['height']=ModernSpinBox();self.fields['height'].setRange(clock.minimum[1],1600)
         dimensions.addWidget(label('宽'));dimensions.addWidget(self.fields['width']);dimensions.addWidget(label('高'));dimensions.addWidget(self.fields['height']);layout.addRow('组件尺寸',dimensions)
+        self.idle_fade=ModernCheckBox('在桌面空闲 6 秒后淡化')
+        self.saved_fade=clock.option('idle_fade')
+        self.idle_fade.setChecked(self.saved_fade);layout.addRow(self.idle_fade)
         number(layout,'padding','内容留白（%）',4,14);number(layout,'corner_radius','背景圆角',8,36)
         fonts=FONTS+[(family,family) for family in QFontDatabase().families() if family not in {v for _,v in FONTS}]
         choice(typeform,'font','日期数字字体' if self.calendar else '时间字体',fonts);choice(typeform,'date_font','辅助文字字体',fonts)
@@ -97,10 +100,14 @@ class ClockOptions(QDialog):
             row=QHBoxLayout();row.addWidget(field,1);row.addWidget(button('选色',lambda:self.choose_color(field)));row.addWidget(button('自动',lambda:field.clear()));box.addLayout(row);box.addWidget(ThemeSwatches(field));form.addRow(title,container)
             return container
         color(typeform,'text_color','主要文字');color(typeform,'accent_color','强调与进度');number(typeform,'text_opacity','文字不透明度（%）',50,100)
-        check(typeform,'auto_contrast','文字随背景自动配色（推荐）')
+        from appearance_presets import CONTENT_MODES
+        choice(typeform,'content_mode','文字与方块',CONTENT_MODES)
+        check(typeform,'auto_contrast','自动选择文字颜色')
         self.fields['auto_contrast'].setToolTip('深色底用白字，浅色底用蓝灰字。强调与进度跟随主题配色，可单独指定。')
         self.fields['text_color'].textChanged.connect(self.text_color_changed)
         self.fields['auto_contrast'].toggled.connect(self.automatic_color_changed)
+        self.fields['content_mode'].currentIndexChanged.connect(self.sync_content_mode)
+        self.sync_content_mode()
         from card_design import DESIGNS
         if not clock.isWindow():material.addRow(label('收入灵动胶囊时使用胶囊材质。下方设置用于独立显示。','muted'))
         choice(material,'source','外观来源',APPEARANCE_SOURCES)
@@ -174,6 +181,10 @@ class ClockOptions(QDialog):
         values.update(show_date=self.show_date.isChecked(),work=self.work_values(),typography_version=2,
                       accent_version=ACCENT_VERSION,progress=self.progress)
         return normalize(values)
+    def sync_content_mode(self):
+        auto=self.fields['content_mode'].currentData()=='auto'
+        self.fields['auto_contrast'].setEnabled(auto);self.fields['text_color'].setEnabled(auto)
+
     def text_color_changed(self,value):
         if self.loading:return
         value=value.strip()
@@ -270,8 +281,11 @@ class ClockOptions(QDialog):
         layout=capture(rect,screen_records(),density=self.clock.dock.cfg.get('card_scale',70)/100)
         options=self.values();options['work']=work
         changes=dict(clock_appearance=options,clock_layout=layout)
+        if self.idle_fade.isChecked()!=self.saved_fade:
+            changes['clock_idle_fade']=self.idle_fade.isChecked()
         if not self.calendar:changes['clock_style']=self.fields['style'].currentData()
         else:changes['calendar_style']=self.fields['calendar_style'].currentData()
         if self.clock.save(**changes):
+            self.saved_fade=self.idle_fade.isChecked()
             self.clock.reposition();self.clock.sync();self.status.setText('已保存并应用'+self.clock.component_name+'设置。');return True
         self.status.setText('保存失败，原设置保持不变。');return False

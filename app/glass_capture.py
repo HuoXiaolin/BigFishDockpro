@@ -15,13 +15,13 @@ def valid_backdrop(pixmap):
                for x in range(image.width()) for y in range(image.height()))
 
 
-def capture_behind(window,windows=()):
+def capture_behind(window,windows=(),*,allow_fallback=False):
     if sys.platform!='win32':return None
     screen=QApplication.screenAt(window.frameGeometry().center()) or QApplication.primaryScreen()
     if screen is None:return None
     try:
         from wallpaper_source import capture
-        return capture(window,screen)
+        return capture(window,screen,allow_fallback=allow_fallback)
     except (OSError,ValueError,AttributeError,RuntimeError):return None
 
 
@@ -34,13 +34,13 @@ def surface_windows(dock):
     return windows
 
 
-def backdrop_key(window,*appearance):
+def backdrop_key(window,*appearance,allow_fallback=False):
     """Skip decoding/blur when wallpaper, geometry and appearance are unchanged."""
     from wallpaper_source import wallpaper_key
     screen=QApplication.screenAt(window.frameGeometry().center()) or QApplication.primaryScreen()
     if screen is None:return None
     try:
-        return (*wallpaper_key(window,screen),
+        return (*wallpaper_key(window,screen,allow_fallback=allow_fallback),
                 screen.geometry().getRect(),window.frameGeometry().getRect(),window.devicePixelRatioF(),appearance)
     except (OSError,ValueError,AttributeError,RuntimeError):return None
 

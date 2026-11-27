@@ -58,6 +58,11 @@ class EdgeHandle(QWidget):
         self.slide=QVariantAnimation(self);self.slide.setDuration(160);self.slide.setEasingCurve(QEasingCurve.OutCubic)
         self.slide.valueChanged.connect(self.set_reveal)
 
+    def showEvent(self,event):
+        super().showEvent(event)
+        from window_layers import place_desktop
+        place_desktop(self,self.service.cfg,True)
+
     @property
     def side(self):return self.drag_side or self.service.cfg['flash_side']
 
@@ -130,7 +135,7 @@ class EdgeHandle(QWidget):
         self.work_area=QRect(x,y,w,h)
 
     def paintEvent(self,event):
-        colors=palette_for(self.service)
+        colors=palette_for(self.service,widget=self)
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         if self.width()<12:
             self.material.clear()
@@ -221,6 +226,8 @@ class EdgeHandle(QWidget):
         hide=window.addAction('贴边隐藏入口');hide.setCheckable(True);hide.setChecked(self.service.cfg['flash_edge_hide']);hide.toggled.connect(self.toggle_edge_hide)
         from component_passthrough import component_actions
         component_actions(window.addMenu('鼠标穿透'),self.service.runtime,'flash')
+        from desktop_idle_fade import add_action
+        add_action(window,self.service.runtime,'flash')
         menu.addSeparator();menu.addAction('隐藏贴边胶囊',lambda:self.service.set_enabled(False))
         try:menu.exec_(event.globalPos())
         finally:menu.deleteLater();self.arm_hide()
@@ -309,7 +316,7 @@ class FlashPanel(QWidget):
         self.list.viewport().update()
 
     def apply_style(self):
-        self.colors=palette_for(self.service);c=self.colors;self.icons.clear()
+        self.colors=palette_for(self.service,widget=self,refresh=self.apply_style);c=self.colors;self.icons.clear()
         self.launcher.setIcon(icon('more',c['ink']))
         for symbol,item in self.tools.items():item.setIcon(icon(symbol,c['ink']))
         for bar in (self.toolbar,self.launch_shell,self.filters_bar,self.composer):bar.update()
@@ -382,6 +389,8 @@ class FlashPanel(QWidget):
 
     def showEvent(self,event):
         super().showEvent(event);self.input_region_later()
+        from window_layers import place_desktop
+        place_desktop(self,self.service.cfg,True)
     def resizeEvent(self,event):
         super().resizeEvent(event);self.input_region_later()
     def toggle_tools(self):
@@ -670,8 +679,7 @@ class ReminderToast(QFrame):
         self.material=CapsuleGlass()
         self.service=service;self.setAttribute(Qt.WA_ShowWithoutActivating);self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle('闪念提醒');self.setObjectName('FlashReminder')
-        c=palette_for(service)
-        self.setStyleSheet('QFrame#FlashReminder{background:transparent;border:0;} QLabel{color:%s;background:transparent;}'%c['ink'])
+        self.refresh_contrast()
         layout=QVBoxLayout(self);layout.setContentsMargins(14,10,14,10)
         layout.addWidget(QLabel('闪念提醒' if count==1 else f'{count} 条闪念到期'))
         snippet=QLabel(' '.join(row['text'].split())[:90]);snippet.setTextFormat(Qt.PlainText);snippet.setWordWrap(True);layout.addWidget(snippet)
@@ -681,6 +689,16 @@ class ReminderToast(QFrame):
         area=edge.work_area if edge is not None and hasattr(edge,'work_area') else QApplication.primaryScreen().availableGeometry()
         self.move(area.right()-self.width()-10,area.bottom()-self.height()-10)
         self.timeout=QTimer(self);self.timeout.setSingleShot(True);self.timeout.timeout.connect(self.close);self.timeout.start(10000)
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        from window_layers import place_desktop
+        place_desktop(self,self.service.cfg,True)
+
+    def refresh_contrast(self):
+        c=palette_for(self.service,widget=self,refresh=self.refresh_contrast)
+        self.setStyleSheet('QFrame#FlashReminder{background:transparent;border:0;} QLabel{color:%s;background:transparent;}'%c['ink'])
+
     def closeEvent(self,event):
         self.timeout.stop()
         if self.service.toast is self:self.service.toast=None

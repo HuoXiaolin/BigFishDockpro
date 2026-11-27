@@ -1,4 +1,5 @@
 """Stable action IDs and user-defined ordering for Dock quick settings."""
+from idle_fade_options import MODES as FADE_MODES
 SHELL_ACTIONS = ('shell_start', 'shell_notifications')
 SYSTEM_ACTIONS = (*SHELL_ACTIONS, 'cursor_styles')
 ACTIONS=[('settings','全部设置','grid'),('taskbar','任务栏效果','position'),('taskbar_text','任务栏文字','text_color'),
@@ -20,17 +21,46 @@ OLD_PRIORITY_ORDER = [
 FIRST_PAGE_SETTINGS = ['settings', 'taskbar', 'taskbar_text', *SYSTEM_ACTIONS, 'manage', 'appearance', 'panels']
 PRIORITY_ORDER = FIRST_PAGE_SETTINGS + [key for key in OLD_PRIORITY_ORDER if key not in FIRST_PAGE_SETTINGS]
 PRIORITY_ORDER.insert(PRIORITY_ORDER.index('calendar')+1, 'watermark')
-DEFAULT_ORDER = PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in PRIORITY_ORDER]
-PREVIOUS_DEFAULT = [key for key in DEFAULT_ORDER if key != 'cursor_styles']
+LEGACY_BASE = PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in PRIORITY_ORDER]
+PREVIOUS_DEFAULT = [key for key in LEGACY_BASE if key != 'cursor_styles']
 WIDGET_SWITCHES = {
-    'capsule_pet': ('胶囊小动物','paw','resource_runner_enabled','resources','收起胶囊时显示小动物'),
-    'tray_pet': ('托盘小动物','tray_paw','resource_tray_runner_enabled','taskbar_monitor','在系统托盘显示小动物'),
     'almanac_alert': ('节气提醒','leaf','resource_alert_almanac','calendar','在收起胶囊中轮换显示节气、农历节日和公历节日'),
     'daily_picture': ('每日图片','picture','daily_picture_enabled','watermark','显示每日图片组件'),
+    'card_snap': ('卡片吸附','snap_cards','card_snap',None,'拖动桌面卡片时吸附屏幕边缘和相邻卡片'),
+    'card_lock': ('卡片锁定','card_lock','panel_locked',None,'锁定桌面收纳卡片的位置和大小'),
 }
-for key,(title,icon,field,anchor,tip) in WIDGET_SWITCHES.items():
-    ACTIONS.append((key,title,icon))
-    DEFAULT_ORDER.insert(DEFAULT_ORDER.index(anchor)+1,key)
+STYLE_ACTIONS = {
+    'capsule_pet': ('胶囊小动物','paw'), 'tray_pet': ('托盘小动物','tray_paw'),
+    'desktop_spectrum': ('桌面频谱','spectrum'), 'capsule_halo': ('胶囊光环','halo'),
+}
+GLOBAL_CYCLES = {
+    'idle_fade': ('空闲淡化', 'fade', 'desktop_idle_fade_mode', FADE_MODES),
+    'global_layer': ('全局层级', 'layers', 'desktop_layer_mode',
+                     (('custom','自定义'), ('top','置顶'), ('bottom','置底'))),
+    'global_passthrough': ('全局穿透', 'pointer_pass', 'passthrough_mode',
+                           (('custom','自定义'), ('all','穿透'), ('none','不穿透'))),
+}
+ACTIONS.extend((key, spec[0], spec[1]) for options in (WIDGET_SWITCHES, GLOBAL_CYCLES, STYLE_ACTIONS)
+               for key, spec in options.items())
+
+# Keep related controls on one page even when the final two pages have empty cells.
+QUICK_PAGES = (
+    ('全局与外观', ('settings','global_layer','global_passthrough', 'appearance','color_mode','blur',
+                 'idle_fade','corners','cursor_styles')),
+    ('Dock 与系统面板', ('position','size','magnify', 'reflections','dock_time','taskbar',
+                      'taskbar_text','shell_start','shell_notifications')),
+    ('桌面卡片', ('panels','card_lock','card_snap', 'panel_auto_hide','notes','clock',
+               'calendar','daily_picture','watermark')),
+    ('胶囊与监控', ('resources','capsule_halo','capsule_pet', 'flash','almanac_alert','desktop_spectrum',
+                 'taskbar_monitor','tray_pet')),
+    ('入口与整理', ('add','manage','search', 'layouts','undo','references')),
+)
+DEFAULT_ORDER = [key for _, keys in QUICK_PAGES for key in keys]
+PAGE_STARTS = tuple(DEFAULT_ORDER.index(keys[0]) for _, keys in QUICK_PAGES)
+
+
+def page_for(index):
+    return next(page for page in reversed(range(len(PAGE_STARTS))) if index >= PAGE_STARTS[page])
 PRODUCTIVITY_ACTIONS=('search','undo','layouts','references','flash','resources','taskbar_monitor')
 MIME='application/x-bigfishdock-quick-action'
 
@@ -47,6 +77,9 @@ TILE_TINTS = {
     'dock_time':'#648cb9', 'color_mode':'#947db8', 'blur':'#5b9caa',
     'panel_auto_hide':'#678e7e', 'corners':'#8d80a6', 'add':'#57976d',
     'search':'#479899', 'undo':'#ab8464', 'layouts':'#758ab6', 'references':'#a37e55',
+    'global_layer':'#647db5','idle_fade':'#58968c','global_passthrough':'#9272b3',
+    'card_snap':'#668fbe','card_lock':'#ac8550',
+    'desktop_spectrum':'#a16fa8','capsule_halo':'#578e9e',
 }
 
 
@@ -60,17 +93,33 @@ def normalize_order(value):
     previous_default = list(old_default)
     previous_default[1], previous_default[-1] = previous_default[-1], previous_default[1]
     old_priority = OLD_PRIORITY_ORDER + [key for key in PREVIOUS_ORDER if key not in OLD_PRIORITY_ORDER]
-    old_orders = (PREVIOUS_ORDER, PREVIOUS_DEFAULT, previous_twenty, old_default, previous_default, previous_default[:-1], old_priority)
-    if not order or order in old_orders or any(order == [key for key in layout if key != 'watermark'] for layout in old_orders):
+    anchored = list(LEGACY_BASE)
+    for key, anchor in (('capsule_pet','resources'), ('tray_pet','taskbar_monitor')):
+        anchored.insert(anchored.index(anchor) + 1, key)
+    for key, (_, _, _, anchor, _) in WIDGET_SWITCHES.items():
+        if anchor:
+            anchored.insert(anchored.index(anchor) + 1, key)
+    old_orders = (PREVIOUS_ORDER, PREVIOUS_DEFAULT, previous_twenty, old_default, previous_default,
+                  previous_default[:-1], old_priority, LEGACY_BASE, anchored)
+    saved = set(order)
+    optional = {*SYSTEM_ACTIONS,'taskbar_text','watermark','capsule_pet','tray_pet','almanac_alert','daily_picture'}
+    if not order or any(set(layout)-saved <= optional and order == [key for key in layout if key in saved]
+                        for layout in old_orders):
         return list(DEFAULT_ORDER)
-    # Add missing system controls in functional order, leaving saved positions intact.
-    order += [key for key in PREVIOUS_ORDER if key not in order and key not in ('taskbar_text','watermark')]
-    if 'watermark' not in order:
-        order.insert(order.index('calendar')+1, 'watermark')
-    anchor = 'taskbar'
-    for key in ('taskbar_text', *SYSTEM_ACTIONS):
-        if key not in order:
-            order.insert(order.index(anchor) + 1, key)
-        anchor = key
-    order.extend(key for key in WIDGET_SWITCHES if key not in order)
+    # Intermediate releases appended extra switches in several combinations.
+    if order == anchored + ['card_snap','card_lock','desktop_spectrum','capsule_halo']:
+        return list(DEFAULT_ORDER)
+    if len(order) >= len(LEGACY_BASE) and order == [key for key in DEFAULT_ORDER if key in order]:
+        return list(DEFAULT_ORDER)
+    # Preserve a personal ordering. Introduce missing siblings next to the closest
+    # preceding member of their own group; an entirely new group starts at the end.
+    for _, group in QUICK_PAGES:
+        anchor = None
+        for key in group:
+            if key not in order:
+                if anchor is None:
+                    order.append(key)
+                else:
+                    order.insert(order.index(anchor) + 1, key)
+            anchor = key
     return order

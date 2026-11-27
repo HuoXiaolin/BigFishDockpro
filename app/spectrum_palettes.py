@@ -1,5 +1,10 @@
 """Shared colour stops for the desktop spectrum and the capsule halo."""
 
+SPECTRUM_STYLES = (
+    ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
+    ('立体彩环', 'crown'), ('渐变彩柱', 'peak_bars'), ('彩色粒子球', 'particle_sphere'),
+)
+
 SPECTRUM_PALETTES = {
     'colorful': ('经典炫彩', ('#4cdddf', '#639ffb', '#aa83fd', '#f38eba', '#ffd086')),
     'aurora': ('薄荷极光', ('#96f4ad', '#38dabb', '#31b8ce', '#829dff', '#c996ff')),

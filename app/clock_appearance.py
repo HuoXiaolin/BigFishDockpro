@@ -7,7 +7,7 @@ LEGACY_ACCENTS={'crystal':'#ff755e','flowing':'#ff68a1','paper_glass':'#ffad37',
 DEFAULTS={'source':'custom','design':'follow','material':'liquid','theme':'light','color':LIQUID_TINT,'opacity':38,'blur':8,'highlight':45,
           'typography_version':2,'accent_version':ACCENT_VERSION,'font':'Segoe UI','font_scale':110,'text_color':'','text_effect':'clear','show_date':True,'hour_format':'24'}
 DEFAULTS.update(layout='auto',align='left',date_font='Microsoft YaHei UI',date_scale=100,font_weight=63,letter_spacing=100,
-                padding=7,accent_color='',text_opacity=100,shadow='none',auto_contrast=True,bar_width=8,ring_width=9,corner_radius=22,
+                padding=7,accent_color='',text_opacity=100,shadow='none',auto_contrast=True,content_mode='auto',bar_width=8,ring_width=9,corner_radius=22,
                 show_work=True,show_week=True,show_month=True,show_year=True,show_lunar=True,show_holidays=True,ring_mode='day',work={},progress=None)
 FONTS=[('现代宽体（推荐）','Segoe UI'),('几何数字','Bahnschrift'),('简洁中文','Microsoft YaHei UI')]
 STYLES=[('现代数字','digital'),('现代表盘','analog'),('纵向时间','stacked'),('日历周览','calendar'),('时光进度','orbit'),('月历看板','month')]
@@ -48,7 +48,8 @@ def normalize(value, cfg=None):
     if result['source'] not in ('app', 'custom'):
         result['source'] = 'custom'
     from card_design import DESIGNS
-    for key,allowed in [('design',{'follow'}|{value for _,value in DESIGNS}),('material',{v for _,v in MATERIALS}),('theme',{'auto','light','dark'}),('hour_format',{'12','24'}),('text_effect',{'glass','clear'}),('layout',{'auto','wide','portrait'}),('align',{'left','center'}),('shadow',{'none','soft'}),('ring_mode',{'day','work'})]:
+    from appearance_presets import CONTENT_MODES
+    for key,allowed in [('content_mode',{v for _,v in CONTENT_MODES}),('design',{'follow'}|{value for _,value in DESIGNS}),('material',{v for _,v in MATERIALS}),('theme',{'auto','light','dark'}),('hour_format',{'12','24'}),('text_effect',{'glass','clear'}),('layout',{'auto','wide','portrait'}),('align',{'left','center'}),('shadow',{'none','soft'}),('ring_mode',{'day','work'})]:
         if not isinstance(result[key],str) or result[key] not in allowed:result[key]=DEFAULTS[key]
     for key,low,high in [('opacity',0,100),('blur',0,30),('highlight',0,100),('font_scale',60,180),('date_scale',70,150),('font_weight',50,87),('letter_spacing',90,115),('padding',4,14),('text_opacity',50,100),('bar_width',4,18),('ring_width',4,18),('corner_radius',8,36)]:
         value=result[key];result[key]=max(low,min(high,value)) if type(value) is int else DEFAULTS[key]

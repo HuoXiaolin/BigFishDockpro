@@ -3,10 +3,10 @@ from ui_style import compact_dialog
 import os
 from types import SimpleNamespace
 from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer, QSize, QRect, QRectF, QMimeData, QUrl, QItemSelectionModel
-from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence
+from PyQt5.QtGui import QPainter, QPainterPath, QIcon, QDrag, QCursor, QColor, QPalette, QPixmap, QPen, QKeySequence, QFont
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QAbstractItemView, QApplication,
-    QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy, QTabBar)
+    QMenu, QInputDialog, QFileDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLayout, QColorDialog, QSizePolicy, QTabBar, QStyle, QStyleOptionTab)
 from ui_style import AlignedMenu as QMenu
 from app_catalog import path_key
 from liquid_glass import paint_liquid_glass, tint_palette
@@ -152,6 +152,24 @@ class PanelTabs(QTabBar):
         self.setToolTip('拖动栏目排序，拖出卡片后独立显示，拖到另一张卡片可合入')
         self.tabMoved.connect(self.save_order)
 
+    def paintEvent(self,event):
+        super().paintEvent(event)
+        if self.property('movingTab'):return
+        painter=QPainter(self)
+        for index in range(self.count()):
+            opt=QStyleOptionTab()
+            self.initStyleOption(opt,index)
+            if not event.rect().intersects(opt.rect):continue
+            rect=self.style().subElementRect(QStyle.SE_TabBarTabText,opt,self)
+            font=QFont(self.font());font.setWeight(QFont.DemiBold);painter.setFont(font)
+            ink=self.panel.text_ink_at(self,rect,index!=self.currentIndex(),on_selection=index==self.currentIndex())
+            painter.setPen(QColor(ink));painter.drawText(rect,Qt.AlignCenter,opt.text)
+
+    def native_drag_labels(self,enabled):
+        if bool(self.property('movingTab'))==enabled:return
+        self.setProperty('movingTab',enabled)
+        self.style().unpolish(self);self.style().polish(self);self.update()
+
     def mousePressEvent(self, event):
         if event.button()==Qt.LeftButton:
             self.pressing = True
@@ -162,6 +180,8 @@ class PanelTabs(QTabBar):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self,event):
+        if self.press_point is not None and (event.globalPos()-self.press_point).manhattanLength()>=QApplication.startDragDistance():
+            self.native_drag_labels(True)
         if self.pressed_identity and not self.panel.option('locked'):
             point=event.globalPos()
             if not self.panel.geometry().contains(point):
@@ -173,6 +193,7 @@ class PanelTabs(QTabBar):
         identity = self.pressed_identity
         moved = self.press_point is not None and (event.globalPos()-self.press_point).manhattanLength()>=QApplication.startDragDistance()
         super().mouseReleaseEvent(event)
+        self.native_drag_labels(False)
         if event.button()==Qt.LeftButton:
             self.pressing = False
             self.update()
@@ -197,6 +218,7 @@ class PanelTabs(QTabBar):
             self.panel.select_tab(index)
 
     def hideEvent(self, event):
+        self.native_drag_labels(False)
         if self.pressing:self.panel.manager.preview_card_drop()
         self.pressing = False
         self.pressed_identity = None
@@ -412,7 +434,7 @@ class DesktopPanel(Foldable,QDialog):
             return settings(self)[{'collapse_style':'style','capsule_ratio':'ratio','ball_diameter':'diameter','fold_height':'height'}[key]]
         return self.dock.cfg['panel_'+key]
 
-    def colors(self, style=None):
+    def surface_colors(self, style=None):
         from appearance_presets import panel_appearance
         style = panel_appearance(self.dock.cfg) if style is None else style
         theme, color = style['theme'], style['color']
@@ -422,6 +444,27 @@ class DesktopPanel(Foldable,QDialog):
         if self.option('appearance_source') == 'custom' and self.dock.cfg.get('card_design') in ('gradient','paper','minimal'):theme='light'
         from liquid_glass import material_palette
         return material_palette(tint_palette(self.dock.base_theme_colors(theme), color), style['material'])
+
+    def colors(self, style=None):
+        from appearance_presets import material_design, panel_appearance
+        from component_contrast import content_contrast
+        style=panel_appearance(self.dock.cfg) if style is None else style
+        design=material_design(style['material'],'aurora') if self.option('appearance_source')=='app' else self.dock.cfg['card_design']
+        light=content_contrast(self,self.dock,style,self.option('content_mode'),self.refresh_content_style,
+                               design=design,regional=True)
+        return dict(self.surface_colors(style),light=light,fg=QColor('#101b25' if light else '#ffffff'))
+
+    def text_ink_at(self,child,rect,muted=False,on_selection=False):
+        from compact_colors import area_colors
+        state=getattr(self,'_content_contrast',None)
+        light=state.result if state is not None else self.surface_colors()['light']
+        colors=dict(light=light,ink='#101b25' if light else '#ffffff',muted='#34485a' if light else '#e1ebf3')
+        area=QRectF(rect).translated(child.mapTo(self,QPoint()))
+        colors=area_colors(self,area,colors)
+        if on_selection and 'background_rgb' in colors:
+            from background_contrast import blend,foreground
+            return foreground(blend('#ffffff',colors['background_rgb'],(145 if light else 45)/255))
+        return colors['muted' if muted else 'ink']
 
     def apply_options(self):
         layout=getattr(self.runtime,'layout',None)
@@ -465,9 +508,24 @@ class DesktopPanel(Foldable,QDialog):
             self.setMinimumSize(min(minimum(factor)[0],self.width()),min(minimum(factor)[1],self.height()))
             if self.option('locked'):self.setFixedSize(self.size())
         self.unsetCursor()
+        self.refresh_content_style()
+        height=self.list.fontMetrics().height();icon=self.list.iconSize().height()
+        if view!='list':
+            grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*3+metric(12,factor))))
+        self.render()
+        if self.isVisible():self.fit_timer.start(0)
+        self.face_tracker.sync_face()
+        from fold_options import header
+        header(self,self.collapsed)
+        if self.isVisible():self.attach_desktop()
+        self.refresh_wallpaper_later(100)
+        self.update()
+
+    def refresh_content_style(self):
+        factor=self.ui_factor
         colors = self.colors()
         ink = colors['fg'].name()
-        self.page_pager.sync_appearance(ink)
+        self.page_pager.sync_appearance(self.text_ink_at(self.page_pager,self.page_pager.rect()))
         content_ink='#000000' if colors['light'] else '#ffffff'
         self.list.setStyleSheet('QListWidget#PanelFiles {color:'+content_ink+';}')
         content_palette=self.list.palette()
@@ -491,9 +549,10 @@ class DesktopPanel(Foldable,QDialog):
         selected='rgba(255,255,255,145)' if colors['light'] else 'rgba(255,255,255,45)'
         pressed='rgba(255,255,255,205)' if colors['light'] else 'rgba(255,255,255,72)'
         self.setStyleSheet(self.styleSheet()+panel_css("""
-            QTabBar#PanelTabs::tab {padding:4px 8px;margin:1px 3px 2px 0;border:1px solid transparent;border-radius:7px;background:transparent;font-weight:600;}
+            QTabBar#PanelTabs::tab {color:transparent;padding:4px 8px;margin:1px 3px 2px 0;border:1px solid transparent;border-radius:7px;background:transparent;font-weight:600;}
             QTabBar#PanelTabs::tab:hover {background:%s;}
-            QTabBar#PanelTabs::tab:selected {background:%s;border:1px solid rgba(255,255,255,110);font-weight:600;}
+            QTabBar#PanelTabs::tab:selected {color:transparent;background:%s;border:1px solid rgba(255,255,255,110);font-weight:600;}
+            QTabBar#PanelTabs[movingTab="true"]::tab {color:palette(window-text);}
             QTabBar#PanelTabs::tab:selected:hover {background:%s;}
             QTabBar#PanelTabs[pointerDown="true"]::tab:selected {background:%s;}
             QPushButton#PanelButton {padding:0;min-width:24px;max-width:24px;min-height:24px;max-height:24px;border:0;border-radius:6px;outline:0;background:transparent;}
@@ -504,23 +563,25 @@ class DesktopPanel(Foldable,QDialog):
         self.update_identity_header()
         self.update_tab_icons()
         self.title.setToolTip(self.model['name']);self.count.setToolTip('此分组项目数量')
-        self.count.setStyleSheet(panel_css('padding:1px 5px;border-radius:5px;background:rgba(128,128,128,16);',factor))
-        self.settings_button.setIcon(QIcon(category_icon('settings',ink,metric(16,factor,12),self.devicePixelRatioF())));self.settings_button.setIconSize(QSize(metric(16,factor,12),metric(16,factor,12)))
+        for label,text in ((self.title,self.model['name']),(self.notice,self.notice.text())):
+            extent=label.rect()
+            extent.setWidth(min(extent.width(),label.fontMetrics().horizontalAdvance(text)+4))
+            label_ink=self.text_ink_at(label,extent,muted=label is self.notice)
+            font='font-weight:600;' if label is self.title else 'font-size:%dpx;'%metric(11,factor,6)
+            label.setStyleSheet(f'color:{label_ink};'+font)
+        count_ink=self.text_ink_at(self.count,self.count.rect())
+        self.count.setStyleSheet(panel_css(f'color:{count_ink};padding:1px 5px;border-radius:5px;background:rgba(128,128,128,16);',factor))
+        self.settings_button.setIcon(QIcon(category_icon('settings',self.text_ink_at(self.settings_button,self.settings_button.rect()),metric(16,factor,12),self.devicePixelRatioF())));self.settings_button.setIconSize(QSize(metric(16,factor,12),metric(16,factor,12)))
+        for control in (self.menu_button,self.collapse_button):
+            control.setStyleSheet('color:'+self.text_ink_at(control,control.rect())+';')
         for control in (self.settings_button,self.menu_button,self.collapse_button):control.setFixedSize(metric(24,factor,16),metric(24,factor,16))
+        extent=self.query.contentsRect()
+        extent.setWidth(min(extent.width(),8+self.query.fontMetrics().horizontalAdvance(self.query.text() or self.query.placeholderText())))
+        self.query.setStyleSheet('color:'+self.text_ink_at(self.query,extent)+';')
         palette = self.query.palette()
-        palette.setColor(QPalette.PlaceholderText, QColor('#5c626c' if colors['light'] else '#b4b8c0'))
+        palette.setColor(QPalette.PlaceholderText,QColor(self.text_ink_at(self.query,extent,muted=True)))
         self.query.setPalette(palette)
-        height=self.list.fontMetrics().height();icon=self.list.iconSize().height()
-        if view!='list':
-            grid=self.list.gridSize();self.list.setGridSize(QSize(grid.width(),max(grid.height(),icon+height*3+metric(12,factor))))
-        self.render()
-        if self.isVisible():self.fit_timer.start(0)
-        self.face_tracker.sync_face()
-        from fold_options import header
-        header(self,self.collapsed)
-        if self.isVisible():self.attach_desktop()
-        self.refresh_wallpaper_later(100)
-        self.update()
+        self.list.viewport().update();self.update()
 
     def update_identity_header(self):
         self.setWindowTitle(self.model['name']+' · 桌面收纳')
@@ -838,6 +899,8 @@ class DesktopPanel(Foldable,QDialog):
         top.triggered.connect(lambda on:self.manager.update_panel(self.identity,layer='top' if on else 'bottom'))
         from component_passthrough import component_actions
         component_actions(window.addMenu('鼠标穿透'),self.runtime,self.property('clickThroughKey'))
+        from desktop_idle_fade import add_action
+        add_action(window,self.runtime,self.property('clickThroughKey'))
         sort = layout.addMenu('排序方式')
         for key, title in [('name_asc','文件名：升序'), ('name_desc','文件名：降序'),
                            ('modified_desc','修改时间：最新优先'), ('modified_asc','修改时间：最早优先')]:
@@ -1124,9 +1187,9 @@ class DesktopPanel(Foldable,QDialog):
 
     def attach_desktop(self, owner=None):
         if owner is None and self.dock.preview:return
-        from window_layers import desktop_layer, is_topmost, owner_of, shell_owner
+        from window_layers import desktop_layer, effective_top, is_topmost, owner_of, shell_owner
         hwnd = int(self.winId())
-        top = self.option('layer')=='top'
+        top = effective_top(self.dock.cfg,self.option('layer')=='top')
         owner = 0 if top else shell_owner() if owner is None else owner
         state = (hwnd, top, owner)
         if self.desktop_stack!=state or is_topmost(hwnd)!=top or owner_of(hwnd)!=owner:
@@ -1186,7 +1249,7 @@ class DesktopPanel(Foldable,QDialog):
         style = panel_appearance(self.dock.cfg)
         mode = component_backdrop(self.dock.cfg,'panel')
         wallpaper = uses_wallpaper(mode,style)
-        colors = self.colors(style)
+        colors = self.surface_colors(style)
         highlight = style['highlight']/45
         colors['border'].setAlpha(min(255, round(colors['border'].alpha()*highlight)))
         colors['spec'] = min(255, round(colors['spec']*highlight))
@@ -1212,7 +1275,11 @@ class DesktopPanel(Foldable,QDialog):
             compact=badge is not None and badge.isVisible()
             center=QRectF(self.rect() if compact else self.header_icon.geometry()).center()
             slot=min(self.width()-12,self.height()-2,metric(42*self.option('face_scale')/100,self.ui_factor,24)) if compact else self.header_icon.width()
-            self.face_tracker.paint_face(painter,center,slot,{'ink':colors['fg'],'light':colors['light']})
+            from compact_colors import area_colors
+            content=self.colors()
+            area=QRectF(center.x()-slot/2,center.y()-slot/2,slot,slot)
+            face=area_colors(self,area,dict(light=content['light'],ink=content['fg'].name()))
+            self.face_tracker.paint_face(painter,center,slot,face)
         if getattr(self.manager,'drop_preview',None) is self:
             painter.setPen(QPen(self.palette().color(QPalette.Link),2))
             painter.setBrush(Qt.NoBrush)
@@ -1302,6 +1369,8 @@ class PanelOptions(QDialog):
         def number(key,title,low,high):
             field=ModernSpinBox();field.setRange(low,high);self.fields[key]=field;form.addRow(title,field)
         choice('appearance_source','外观来源',APPEARANCE_SOURCES)
+        from appearance_presets import CONTENT_MODES
+        choice('content_mode','文字与方块',CONTENT_MODES)
         choice('backdrop_mode','玻璃背景',BACKDROP_MODES)
         self.fields['backdrop_mode'].setToolTip(BACKDROP_HINT)
         self.preset=ModernComboBox();self.preset.addItem('自定义');self.preset.addItems([name for name,_ in PANEL_PRESETS]);form.addRow('主题预设',self.preset)
@@ -1317,6 +1386,9 @@ class PanelOptions(QDialog):
         for title,value in CHOICES:self.passthrough.addItem(title,value)
         self.passthrough.setAccessibleName('当前卡片的鼠标穿透')
         form.addRow('当前卡片的鼠标穿透',self.passthrough)
+        from desktop_idle_fade import FadeCheckBox
+        self.idle_fade=FadeCheckBox(panel.dock.cfg,panel.property('clickThroughKey'))
+        form.addRow('当前卡片',self.idle_fade)
         self.locked=ModernCheckBox('锁定卡片位置与大小');form.addRow(self.locked)
         form=self.tabs.form('展开与收起','size','触发方式与尺寸')
         self.auto=ModernCheckBox('鼠标离开后自动收起');form.addRow(self.auto)
@@ -1343,7 +1415,7 @@ class PanelOptions(QDialog):
         self.refresh_shared()
         self.preset.currentIndexChanged.connect(self.apply_preset)
         for key,field in self.fields.items():
-            if key in ('layer','backdrop_mode'):continue
+            if key in ('layer','backdrop_mode','content_mode'):continue
             signal=field.currentIndexChanged if isinstance(field,QComboBox) else field.valueChanged
             signal.connect(self.customized)
         self.color.textChanged.connect(self.customized);self.fields['material'].currentIndexChanged.connect(self.material_changed)
@@ -1428,6 +1500,7 @@ class PanelOptions(QDialog):
         values['fold']={'style':values.pop('collapse_style'),'ratio':values.pop('capsule_ratio'),
                         'diameter':values.pop('ball_diameter'),'height':values.pop('fold_height')}
         if self.panel.manager.update_panel(self.panel.identity,_font_size=self.text_size.value(),icon_alignment=self.icon_alignment.currentData(),
-                                           _pointer_mode=self.passthrough.currentData(),**values):
+                                           _pointer_mode=self.passthrough.currentData(),_fade_changes=self.idle_fade.changes(self.panel.dock.cfg),**values):
+            self.idle_fade.saved=self.idle_fade.isChecked()
             self.status.setText('已保存。外观和层级应用到所有桌面卡片。');return True
         self.status.setText('保存失败，原设置保持不变，可重试。');return False

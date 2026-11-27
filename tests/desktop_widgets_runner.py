@@ -329,11 +329,21 @@ def run(output,checks):
                     clock_appearance=dict(clock.option('appearance'),progress=progress)))
             edit=ClockProgressDialog(dock,clock.option('appearance')['progress'],save)
             edit.add_countdown('发薪日','monthly');identity=list(edit.rows)[-1]
-            role,(_,target,_)=edit.rows[identity]
+            role,(_,target,repeat)=edit.rows[identity]
+            edit.show();pump();repeat.showPopup();pump()
+            row=edit.table.rowCount()-1
+            assert edit.table.visualRect(edit.table.model().index(row,1)).contains(target.geometry())
+            view=repeat.view()
+            assert view.isVisible() and view.verticalScrollBar().maximum()==0
+            assert all(view.visualRect(view.model().index(i,0)).height()>=view.fontMetrics().height()
+                       for i in range(repeat.count()))
+            assert view.viewport().width()>=view.fontMetrics().horizontalAdvance('每月')+28
+            repeat.hidePopup()
             target.setDate(QDate(2026,1,31));role.setCurrentIndex(role.findData('main'))
             edit.add_countdown('生日','yearly');birthday=list(edit.rows)[-1]
             edit.rows[birthday][1][1].setDate(QDate(2024,2,29))
             edit.commit()
+            edit.close()
             progress=clock.option('appearance')['progress']
             assert progress['primary']==identity and progress['secondary']==['week','month','year',birthday]
             pay,birth=progress['countdowns']
@@ -537,7 +547,8 @@ def run(output,checks):
                     return pixels.pixelColor(round(point.x()*scale),round(point.y()*scale)).alpha()
                 city=window.weather_view.city;tab=window.page_buttons['weather'];week=window.weather_view.week
                 alphas=(alpha_at(city,city.width()//2),alpha_at(tab,5),alpha_at(week,4))
-                assert all(0<a<128 for a in alphas), (theme,alphas)
+                assert all(0<a<128 for a in (alphas[0],alphas[2])), (theme,alphas)
+                assert 0<alphas[1]<128, (theme,alphas)
                 assert city.width()<=144 and city.height()==week.height()==22
                 assert shot.save(str(output/('weather-clear-'+theme+'.png')))
                 QTest.mouseClick(city,Qt.LeftButton);pump()
@@ -640,7 +651,7 @@ def run(output,checks):
             ai_popup.close();ai_popup.deleteLater()
             checks.append('AI cost: capsule and tray render clean currency, source totals and a number-only donut, with pricing status below the amount.')
 
-            samples={'images':[dict(title='海岸日光（演示图）',copyright='内置测试画面',copyrightlink='/search?q=sample',urlbase='/th?id=OHR.Sample',startdate='20261108')]*8}
+            samples={'images':[dict(title='海岸日光（演示图）',copyright='内置测试画面',copyrightlink='/search?q=sample',urlbase=f'/th?id=OHR.Sample{i}',startdate=f'202611{8-i:02}',enddate=f'202611{9-i:02}') for i in range(8)]}
             pictures=read_bing(json.dumps(samples).encode())
             assert len(pictures)==8 and pictures[0]['picture'].startswith('https://www.bing.com/')
             assert not window.page_enabled('picture')
@@ -660,7 +671,26 @@ def run(output,checks):
             tight_height=daily_card.height()
             assert tight_height-daily.photo.height()<88
             with patch('resource_content.QDesktopServices.openUrl') as open_story:
-                daily.story.click();assert open_story.call_args.args[0].toString()==pictures[0]['story']
+                from types import SimpleNamespace
+                def finish_page(*,index):
+                    job=daily.job=SimpleNamespace(index=index,preview_bytes=b'preview')
+                    with patch.object(daily,'sender',return_value=job):daily.receive((pictures,image))
+                    daily.job=None;daily.update_controls()
+                with patch.object(daily,'start',side_effect=finish_page):
+                    for index in range(8):
+                        if index:daily.previous.click()
+                        assert daily.index==index and f'11/{9-index:02}' in daily.position.text()
+                        daily.story.click()
+                        assert open_story.call_args.args[0].toString()==f'https://dailybing.com/bing/zh-cn/202611{9-index:02}.html'
+                    while daily.index:daily.newer.click()
+            from content_sources import load_bing_preview,store_bing_preview
+            legacy={'images':[dict(samples['images'][0],startdate='20251231')],'index':0}
+            del legacy['images'][0]['enddate']
+            saved_cache=Path(folder)/'story-preview'
+            saved_cache.write_bytes(json.dumps(legacy).encode()+b'\npreview')
+            assert load_bing_preview(saved_cache)[0][0]['story'].endswith('/20260101.html')
+            store_bing_preview(saved_cache,pictures,7,b'preview')
+            assert load_bing_preview(saved_cache)==(pictures,7,b'preview')
             daily.set_status('已保存原图');pump();assert daily.status.isVisible() and daily_card.height()>tight_height
             daily.set_status('');pump();assert daily_card.height()==tight_height
             assert runtime.set_daily_picture_options(daily_picture_material='solid',daily_picture_color='#82a9c9')

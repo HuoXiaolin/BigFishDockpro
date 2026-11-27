@@ -2,13 +2,9 @@
 import re
 from update_sources import DEFAULT_SOURCE
 from quick_actions import DEFAULT_ORDER,normalize_order
+import idle_fade_options
 from panel_preferences import FOLD_SIZE_RANGE, CARD_FOLD_SIZE
-from spectrum_palettes import SPECTRUM_COLOR_MODES, SPECTRUM_PALETTES
-
-SPECTRUM_STYLES = (
-    ('线条', 'line'), ('柱形', 'bars'), ('圆环', 'ring'), ('镜像', 'mirror'), ('点阵', 'dots'),
-    ('立体彩环', 'crown'), ('渐变彩柱', 'peak_bars'), ('彩色粒子球', 'particle_sphere'),
-)
+from spectrum_palettes import SPECTRUM_COLOR_MODES, SPECTRUM_PALETTES, SPECTRUM_STYLES
 RING_HEIGHT_MAX = 140
 STARTUP_ANIMATION_STYLES = (('流动描边', 'outline'), ('滚动文字', 'rolling'))
 DOCK_ICON_SHAPES = (('默认', 'default'), ('圆形', 'circle'))
@@ -26,6 +22,7 @@ DEFAULTS = {
     'taskbar_text_mode':'system', 'taskbar_text_auto':False, 'layout_profiles':[], 'motion_enabled':True,
     'card_design':'aurora',
     'card_snap': True, 'card_snap_distance': 12, 'card_edge_hide': False,
+    'desktop_layer_mode':'custom','desktop_idle_fade_mode':'custom','component_idle_fade':{},'desktop_idle_fade_amount':50,
     'passthrough_mode':'custom','component_passthrough':{},'passthrough_alt_unlock':True,
     'appearance_mode':'custom','appearance_custom':{},'appearance_applied':{},'note_appearance':{},
     'dock_quick_order':list(DEFAULT_ORDER),'dock_quick_custom':{},
@@ -73,11 +70,15 @@ DEFAULTS = {
 }
 
 from resource_options import DEFAULTS as RESOURCE_DEFAULTS, FACE_SWITCH_DEFAULT, FACE_SWITCH_RANGE
+DEFAULTS.update(dict.fromkeys(idle_fade_options.SINGLE_FIELDS.values(), False))
 DEFAULTS.update(RESOURCE_DEFAULTS, panel_face_switch_minutes=FACE_SWITCH_DEFAULT)
 from shell_appearance_model import DEFAULTS as SHELL_DEFAULTS, normalize as normalize_shell
 DEFAULTS.update(SHELL_DEFAULTS)
 
 # Missing style fields in existing configurations retain pre-1.1.3 defaults.
+CONTENT_MODE_KEYS = ('panel_content_mode','daily_picture_content_mode','flash_content_mode','note_content_mode','custom_card_content_mode')
+DEFAULTS.update(dict.fromkeys(CONTENT_MODE_KEYS, 'auto'))
+
 LEGACY_STYLE_DEFAULTS={key:DEFAULTS[key] for key in ('card_design','appearance_mode','appearance_custom','appearance_applied','note_appearance','clock_appearance','calendar_appearance','panel_opacity','panel_blur','panel_highlight','panel_material','panel_theme','panel_color','theme_color','dock_highlight','dock_material','clear_background')}
 LEGACY_STYLE_DEFAULTS.update(transparency=40,theme='auto',glass=True,blur_px=6)
 
@@ -138,6 +139,9 @@ def normalize(cfg):
     if type(face_minutes) is not int or not FACE_SWITCH_RANGE[0] <= face_minutes <= FACE_SWITCH_RANGE[1]:
         result['panel_face_switch_minutes'] = FACE_SWITCH_DEFAULT
     from appearance_presets import BACKDROP_MODES, MATERIALS
+    from appearance_presets import CONTENT_MODES
+    for key in CONTENT_MODE_KEYS:
+        if result.get(key) not in tuple(v for _,v in CONTENT_MODES):result[key]='auto'
     for key in ('panel_appearance_source', 'note_appearance_source', 'daily_picture_appearance_source',
                 'flash_appearance_source', 'spectrum_appearance_source'):
         if result[key] not in ('app', 'custom'):
@@ -195,6 +199,17 @@ def normalize(cfg):
     result['clock_appearance']=normalize_clock(result.get('clock_appearance'),result)
     calendar_options=result.get('calendar_appearance')
     result['calendar_appearance']=normalize_clock(calendar_options,result)
+    # Older profiles could store the same date in both component appearances.
+    # Move calendar-only dates into the editable clock list while it has room.
+    from clock_faces import MAX_COUNTDOWNS
+    shared=result['clock_appearance']['progress']['countdowns']
+    legacy=result['calendar_appearance']['progress']
+    overflow=[]
+    for row in legacy['countdowns']:
+        if any(r['id']==row['id'] or all(r[k]==row[k] for k in ('title','date','time','repeat')) for r in shared):
+            continue
+        (shared if len(shared)<MAX_COUNTDOWNS else overflow).append(row)
+    legacy['countdowns']=overflow
     if not calendar_options:result['calendar_appearance'].update(theme='light',color='')
     from screen_layout import valid_record
     result['clock_layout']=valid_record(result.get('clock_layout'))
@@ -209,6 +224,10 @@ def normalize(cfg):
     result['daily_picture_local_paths']=list(dict.fromkeys(p for p in paths[:64] if isinstance(p,str) and 0<len(p)<=2048 and '\0' not in p)) if isinstance(paths,list) else []
     interval=result['daily_picture_interval']
     result['daily_picture_interval']=max(5,min(3600,interval)) if type(interval) is int else 30
+    if result['desktop_layer_mode'] not in ('custom','top','bottom'):result['desktop_layer_mode']='custom'
+    idle_fade_options.normalize(result)
+    amount=result['desktop_idle_fade_amount']
+    result['desktop_idle_fade_amount']=max(0,min(95,amount)) if type(amount) is int else DEFAULTS['desktop_idle_fade_amount']
     if result['passthrough_mode'] not in ('all','none','custom'):result['passthrough_mode']='custom'
     selection=result['component_passthrough']
     result['component_passthrough']={k:v for k,v in selection.items() if isinstance(k,str) and 0<len(k)<=104 and (v is True or v=='apps')} if isinstance(selection,dict) else {}

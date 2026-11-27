@@ -12,6 +12,7 @@ from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RESOURCE_REA
 from capsule_order import clock_turn, has_component_order
 from compact_clock import capsule_clock_width, capsule_headers, draw_clock, headers, lines_at
 from compact_text import draw_stacked_text, readout_fonts
+from compact_colors import area_colors, badge_fill, on_badge, text_ink
 from spectrum_palettes import SPECTRUM_PALETTES
 
 
@@ -44,7 +45,9 @@ def text(p,rect,value,color,size=11,bold=False,align=Qt.AlignLeft):
 
 
 def ring(p,rect,value,color,track,letter='',stroke=2.5):
-    p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(track),stroke));p.drawEllipse(rect)
+    p.setBrush(Qt.NoBrush)
+    if track is not None:
+        p.setPen(QPen(QColor(track),stroke));p.drawEllipse(rect)
     if value is not None:
         p.setPen(QPen(QColor(color),stroke,Qt.SolidLine,Qt.RoundCap));p.drawArc(rect,90*16,-round(min(100,max(0,value))*3.6*16))
     if letter:text(p,rect,letter,color,10,True,Qt.AlignCenter)
@@ -185,14 +188,22 @@ def status_values(service):
     return values
 
 
-def almanac_badge_lines(cfg):
+def almanac_badge_lines(cfg,now=None):
     categories = almanac_categories(cfg)
     if not categories:
         return {}
-    from datetime import date
+    from datetime import datetime
     from calendar_almanac import almanac
-    day = almanac(date.today())
-    return day.badge_lines(categories) if day else {}
+    from calendar_markers import upcoming_countdowns
+    now=now or datetime.now()
+    day=almanac(now.date())
+    rows=dict(day.badge_lines(categories)) if day else {}
+    if 'countdown' in categories:
+        for title,left in upcoming_countdowns(cfg,now.date(),now):
+            value=f'{left}天' if left else '今天'
+            rows[title+value if left else title]=(title,value)
+        return dict(sorted(rows.items(),key=lambda item:item[1][1]!='今天'))
+    return rows
 
 
 def compact_badges(service, almanac_page=0):
@@ -520,16 +531,19 @@ def notice_width(window,notice,limit,height):
 def paint_notice(window,p,notice):
     from resource_pomodoro_view import reminder_icon,reminder_ink
     kind,label=notice
-    colors=window.colors
-    ink=reminder_ink(kind,colors['light'],window.service.low_battery() if kind=='battery' else None)
     side=badge_height(window)
     tile=QRectF(8,(window.height()-side)/2,side,side)
-    chip(p,tile,ink,colors['light'])
+    colors=area_colors(window,tile,window.colors)
+    level=window.service.low_battery() if kind=='battery' else None
+    ink=reminder_ink(kind,colors['light'],level)
+    chip(p,tile,ink,colors)
     icon=QRectF(0,0,min(15,side),min(15,side));icon.moveCenter(tile.center())
-    reminder_icon(p,icon,kind,ink)
+    reminder_icon(p,icon,kind,text_ink(ink,on_badge(colors,badge_fill(ink,colors))))
     area=QRectF(window.rect()).adjusted(tile.right()+6,0,-9,0)
+    colors=area_colors(window,area,window.colors)
     if kind=='almanac':
         rows=almanac_badge_lines(window.service.cfg).get(label,(label,'今天'))
+        ink=text_ink(reminder_ink(kind,colors['light']),colors)
         paint_badge_lines(p,QRectF(area.x(),tile.y(),area.width(),side),*rows,colors['muted'],ink)
     else:
         p.setFont(notice_font(window));p.setPen(QColor(colors['ink']))
@@ -538,9 +552,9 @@ def paint_notice(window,p,notice):
     window.status_bounds={};window.compact_ai_hits=[];window.compact_bounds=[];window.compact_shown=[]
 
 
-def chip(p,rect,ink,light):
-    tint=QColor(ink);tint.setAlpha(28 if light else 47)
-    p.setPen(Qt.NoPen);p.setBrush(tint);p.drawRoundedRect(rect,7,7)
+def chip(p,rect,ink,colors):
+    p.setPen(Qt.NoPen);p.setBrush(badge_fill(ink,colors))
+    p.drawRoundedRect(rect,7,7)
 
 
 def badge_height(window):
@@ -576,7 +590,8 @@ def paint_quota_ring(p, rect, reading, light):
 def paint_ai_quota(p, rect, value, meta, colors):
     from resource_provider_icons import paint_provider_mark
 
-    chip(p, rect, colors['ink'], colors['light'])
+    chip(p, rect, colors['ink'], colors)
+    colors=on_badge(colors,badge_fill(colors['ink'],colors))
     reading=meta['reading']
     has_ring=reading is not None and reading.remaining is not None
     icon_size = min(AI_RING_SIZE if has_ring else AI_ICON_SIZE,rect.width(),rect.height()-2)
@@ -592,7 +607,7 @@ def paint_ai_quota(p, rect, value, meta, colors):
     paint_provider_mark(p, icon, meta['provider'], colors['ink'])
     if font is not None:
         p.setFont(font)
-        text(p, area, value, ink, font.pixelSize(), True)
+        text(p, area, value, text_ink(ink,colors), font.pixelSize(), True)
 
 
 def paint_music_wave(window,p,area,ink,playing):
@@ -635,7 +650,7 @@ def paint_badge_lines(p,area,title,value,muted,ink):
 
 
 def paint_content(window,p,rect,key,label,value,meta,overlays=None):
-    c=window.colors;cfg=window.service.cfg;mid=rect.center().y()
+    c=area_colors(window,rect,window.colors);cfg=window.service.cfg;mid=rect.center().y()
     if key=='ai':
         paint_ai_quota(p,rect,value,meta,c)
         return
@@ -647,12 +662,15 @@ def paint_content(window,p,rect,key,label,value,meta,overlays=None):
         if area.width()<CONTENT_MIN_TEXT:
             mark.moveCenter(rect.center())
         ink=compact_temperature_ink(meta['temperature'],c['light'],cfg['resource_weather_thresholds'])
-        chip(p,rect,ink,c['light']);paint_weather_icon(p,mark,meta,c['light'])
-        paint_badge_lines(p,area,label,value,c['muted'],ink)
+        chip(p,rect,ink,c);paint_weather_icon(p,mark,meta,c['light'])
+        c=on_badge(c,badge_fill(ink,c))
+        paint_badge_lines(p,area,label,value,c['muted'],text_ink(ink,c))
     else:
         area=rect.adjusted(CONTENT_TEXT_LEFT,0,-CONTENT_PADDING,0)
         ink='#285e85' if c['light'] else '#a2d7ff'
-        chip(p,rect,ink,c['light'])
+        chip(p,rect,ink,c)
+        c=on_badge(c,badge_fill(ink,c))
+        ink=text_ink(ink,c)
         playing=meta.get('state')=='Playing'
         x=rect.x()+11 if area.width()>=CONTENT_MIN_TEXT else rect.center().x()
         p.setPen(Qt.NoPen);p.setBrush(QColor(ink))
@@ -679,8 +697,9 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
         key,label,value,meta=row
         width=min(widths[index] if widths else cell_width(row,dense,window),max(0,available))
         if width<26:break
-        ink=c['ink'] if key in ('ai','music','weather','traffic') else metric_ink(window.service,key,c['light'],c['ink'])
         hit=QRectF(x,mid-height/2,width,height)
+        c=area_colors(window,hit,window.colors)
+        ink=c['ink'] if key in ('ai','music','weather','traffic') else text_ink(metric_ink(window.service,key,c['light'],c['ink']),c)
         if key in ('ai','music','weather'):
             hit=content_badge_rect(QRectF(x,mid-side/2,width,side),row,cfg)
             paint_content(window,p,hit,key,label,value,meta,overlays)
@@ -736,7 +755,7 @@ def paint_status(window,p,row,x,width,mid):
     p.save()
     p.translate(rect.center())
     p.scale(scale,scale)
-    draw_status_icon(p,row,window.colors)
+    draw_status_icon(p,row,area_colors(window,rect,window.colors))
     p.restore()
     window.status_bounds[row[0]]=hit
 
@@ -752,7 +771,7 @@ def draw_status_icon(p,row,colors):
     if key=='battery':
         from resource_system_view import battery_icon,battery_ink
         level,state=value;ink=battery_ink(level,state,colors['light'],colors['muted'])
-        track=ink if level==0 else colors['hover']
+        track=ink if level==0 else None
         ring(p,circle.adjusted(1,1,-1,-1),level,ink,track,stroke=1.65)
         battery_icon(p,center,state,ink)
         return
@@ -826,8 +845,11 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
             side=min(width,height)
             rect=QRectF(rect.center().x()-side/2,mid-side/2,side,side)
         level=window.service.low_battery() if kind=='battery' else None
+        c=area_colors(window,rect,window.colors)
         ink=reminder_ink(kind,c['light'],level)
-        chip(p,rect,ink,c['light'])
+        chip(p,rect,ink,c)
+        c=on_badge(c,badge_fill(ink,c))
+        ink=text_ink(ink,c)
         if kind=='almanac' and show_text:
             size=min(14,rect.height())
             reminder_icon(p,QRectF(rect.x()+CONTENT_PADDING,mid-size/2,size,size),kind,ink)
@@ -916,7 +938,9 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
 
 def paint_clock(window,p,clock,x,width,mid,turn=None):
     height = compact_text_height(window.service.cfg,window.height())
-    draw_clock(p,QRectF(x,mid-height/2,width,height),clock_rows(window,clock,turn),window.colors['muted'],window.colors['ink'])
+    rect=QRectF(x,mid-height/2,width,height)
+    colors=area_colors(window,rect,window.colors)
+    draw_clock(p,rect,clock_rows(window,clock,turn),colors['muted'],colors['ink'])
 
 
 def clock_rows(window, clock, turn=None):
@@ -1003,6 +1027,7 @@ def paint_mail_status(window,p,rect):
     size=min(16,rect.width()-2,rect.height()-2)
     if size<=0:return
     center=rect.center()
-    ink=reminder_ink('mail_code',window.colors['light']) if has_mail else window.colors['muted']
+    colors=area_colors(window,rect,window.colors)
+    ink=text_ink(reminder_ink('mail_code',colors['light']),colors) if has_mail else colors['muted']
     reminder_icon(p,QRectF(center.x()-size/2,center.y()-size/2,size,size),'mail_new' if has_mail else 'mail',ink)
     window.status_bounds['mail']=rect

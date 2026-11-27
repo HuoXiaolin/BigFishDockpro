@@ -78,9 +78,9 @@ class CustomCards:
     def reposition(self):
         for window in self.windows.values():window.reposition()
 
-    def save(self,cards):
+    def save(self,cards,**preferences):
         from settings_effects import save_changes
-        return save_changes(self.runtime.tray,self.runtime.api,{'custom_cards':cards})
+        return save_changes(self.runtime.tray,self.runtime.api,dict(preferences,custom_cards=cards))
 
     def change(self,identity,**changes):
         return self.save([dict(card,**changes) if card['id']==identity else card for card in self.cards])
@@ -257,9 +257,9 @@ class CustomCard(QWidget):
         return rect
 
     def showEvent(self,event):
-        from window_layers import BOTTOM,restack
+        from window_layers import place_desktop
         super().showEvent(event)
-        if not self.embedded:restack(int(self.winId()),BOTTOM)
+        if not self.embedded:place_desktop(self,self.runtime.dock.cfg)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -302,6 +302,9 @@ class CustomCard(QWidget):
         menu.addSeparator()
         lock=menu.addAction('锁定位置');lock.setCheckable(True);lock.setChecked(self.card['locked'])
         lock.triggered.connect(lambda on:self.manager.change(identity,locked=on))
+        if not self.embedded:
+            from desktop_idle_fade import add_action
+            add_action(menu,self.runtime,self.property('clickThroughKey'))
         menu.addAction('隐藏卡片').triggered.connect(lambda:self.manager.change(identity,visible=False))
         menu.exec_(event.globalPos());menu.deleteLater()
 
@@ -313,24 +316,33 @@ class CustomCard(QWidget):
         colors=dock.base_theme_colors(background['theme'])
         custom={} if following else card['colors'];factor=cfg['card_scale']/70
         host=self.window() if self.embedded else None
-        ink=QColor(custom.get('text') or (host.colors['ink'] if host else colors['fg']))
-        if 'text' not in custom and 'surface' in custom:
-            ink=QColor('#f2f7fa' if QColor(custom['surface']).lightness()<128 else '#172b36')
         clear=background['material']=='clear' if following else style=='clear' or style=='follow' and background['material']=='clear'
+        from component_contrast import card_text_ink, content_contrast
+        mode=cfg.get('custom_card_content_mode','auto')
+        custom_ink=custom.get('text') if mode=='auto' else None
+        surface=QColor(custom.get('surface') or ('#f5fafc' if colors['light'] else '#1e2b34'))
+        if style=='follow':surface.setAlpha(min(250,155+background['opacity']))
+        if host and mode=='auto' and not custom.get('surface'):
+            light=host.colors['light']
+            ink_background=QColor(host.colors['surface']).getRgb()[:3]
+        else:
+            solid=None if following or clear else surface.name(QColor.HexArgb)
+            glass_style=dict(background,material='clear') if clear else background
+            light=content_contrast(self,dock,glass_style,mode,self.update,solid=solid,custom_ink=bool(custom_ink))
+            ink_background=self._content_contrast.ink_background
+        ink=card_text_ink(custom_ink,light,ink_background)
         if host:
-            paint_capsule_card(p,QRectF(self.rect()),dict(host.colors,ink=ink),'lavender',host.background,
+            paint_capsule_card(p,QRectF(self.rect()),dict(host.colors,ink=ink,light=light),'lavender',host.background,
                                radius=12,base=custom.get('surface'))
         elif following:
             self.glass.paint(p,self,self.service.runtime.dock,12,moving=self.drag is not None,appearance=background)
         elif not clear:
             path=QPainterPath();path.addRoundedRect(rect,12,12)
-            surface=QColor(custom.get('surface') or ('#f5fafc' if colors['light'] else '#1e2b34'))
-            if style=='follow':surface.setAlpha(min(250,155+background['opacity']))
             p.fillPath(path,surface)
             if style=='follow':
                 design=dict(theme_color=custom.get('accent') or cfg['theme_color'],panel_color=background['color'],card_design=cfg['card_design'])
                 paint_design(p,rect,design,corner_radius=12,header_separator=False)
-        muted=QColor(ink);muted.setAlpha(180)
+        muted=QColor('#34485a' if light else '#e1ebf3')
         fonts={key:max(1,round(size*factor)) for key,size in card['fonts'].items()}
         latest=self.runtime.resources.latest;now=datetime.datetime.now()
         date_width=85*factor if card['header_date'] else 0

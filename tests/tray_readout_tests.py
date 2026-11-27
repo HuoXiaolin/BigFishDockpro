@@ -14,7 +14,8 @@ def run(service, app, output, checks):
     from bluetooth_gauge import devices
     from resource_quota_day import QuotaDayHistory
     from run_isolated_test import assert_isolated
-    from tray_readout import TRAY_MESSAGE, WM_MOUSEMOVE
+    from tray_readout import TRAY_MESSAGE, WM_MOUSEMOVE, NIN_POPUPOPEN, _logical_point
+    from PyQt5.QtWidgets import QSystemTrayIcon
 
     assert_isolated()
     user = ctypes.WinDLL('user32')
@@ -82,8 +83,14 @@ def run(service, app, output, checks):
                 pointer.return_value = slots[tray.hwnd].center()
                 user.SendMessageW(tray.hwnd, TRAY_MESSAGE, 0, WM_MOUSEMOVE)
 
+            assert QSystemTrayIcon.toolTip(bt.tray)==''
+            pointer.return_value=QPoint(1,205)
+            for message in (WM_MOUSEMOVE,NIN_POPUPOPEN):
+                user.SendMessageW(bt.tray.hwnd,TRAY_MESSAGE,slots[bt.tray.hwnd].center().x() | (211<<16),message)
+            assert bt.tray.anchor is None and not bt.tray.delay.isActive() and not visible(bt.tray)
             hover(bt.tray)
             wait_for(lambda: visible(bt.tray))
+            assert bt.tray.popup.anchor==_logical_point(pointer.return_value)
             assert lines(bt.tray) == ['外设电量', '蓝牙耳机  72%', '无线键盘  0%', '旅行鼠标  未报告', '第 1/2 组']
             screenshot(bt.tray, 'bluetooth')
             handle = bt.tray.popup
@@ -114,6 +121,7 @@ def run(service, app, output, checks):
             pointer.return_value = QPoint(80, 100)
             wait_for(lambda: not visible(pet.tray))
             assert pet.tray.toolTip() == pet.readout
+            assert QSystemTrayIcon.toolTip(pet.tray)==''
             hover(bt.tray)
             pointer.return_value = QPoint(80, 100)
             wait_for(lambda: not bt.tray.delay.isActive())
@@ -141,6 +149,24 @@ def run(service, app, output, checks):
             ai.hide()
             ai.show()
             assert ai.hwnd and not ai.popup and ai.toolTip() == ai.readout
+        from taskbar_readout import TaskbarReadout
+        from PyQt5.QtCore import QEvent
+        from PyQt5.QtGui import QHelpEvent
+        strip=TaskbarReadout(service)
+        try:
+            strip.setGeometry(180,180,250,36);strip.show();app.processEvents()
+            strip.setToolTip('CPU  20%\n内存  40%')
+            local=strip.rect().center();point=strip.mapToGlobal(local)
+            with patch('taskbar_readout.QCursor.pos',return_value=point):
+                app.sendEvent(strip,QHelpEvent(QEvent.ToolTip,local,point))
+                assert strip.readout_popup.isVisible() and strip.readout_popup.anchor==point
+                app.sendEvent(strip,QEvent(QEvent.Leave))
+                assert not strip.readout_popup.isVisible()
+            with patch('taskbar_readout.QCursor.pos',return_value=QPoint(0,0)):
+                app.sendEvent(strip,QHelpEvent(QEvent.ToolTip,local,point))
+                assert not strip.readout_popup.isVisible()
+        finally:strip.dispose()
+        checks.append('Stale tray moves and deferred taskbar help events outside their data target cannot show a popup; accepted events anchor the white readout at the validated point.')
         checks.append('Native mouse-only tray callbacks: Bluetooth device groups, zero/unknown/long names, animal metrics and uptime at 96 fps, click, data refresh, leaving and icon disposal on the isolated desktop.')
         checks.append('Window captures for peripheral battery, animal and AI quota have white backgrounds, black text, separate data lines, and white pixels along all four unframed edges.')
     finally:

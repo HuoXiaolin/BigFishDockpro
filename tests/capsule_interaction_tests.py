@@ -260,8 +260,11 @@ def run(api,runtime,app,output,checks):
         page=window.view('pomodoro').content;page.tab_buttons[1].click()
         page.watch_toggle.click();clock[0]+=75;model.sync()
         assert page.watch_value.text()=='01:15'
+        assert page.watch_emblem.isVisible() and page.alarm_emblem.isVisible()
+        assert page.watch_emblem.size()==page.alarm_emblem.size() and page.watch_toggle.styleSheet()!=page.arm.styleSheet()
         from PyQt5.QtCore import QTime
         page.alarm_time.setTime(QTime(18,22));page.repeat.setChecked(True);page.arm.click()
+        assert page.alarm_time.lineEdit().contentsRect().width()>=page.alarm_time.lineEdit().fontMetrics().horizontalAdvance('18:22')
         assert window.grab().save(str(output/'capsule-stopwatch-alarm.png'))
         assert service.fold(True);window.grab()
         assert ('stopwatch','01:15') in service.reminders() and ('alarm','18:22') in service.reminders()

@@ -445,6 +445,9 @@ class ModernComboBox(QComboBox):
         layout.setContentsMargins(4,4,4,4)
         view = self._popup_view = PopupList(self, self._popup)
         view.setObjectName('ComboPopup')
+        # PopupDelegate owns the text and check-mark insets. A parent table or
+        # combo stylesheet must not add a second set of insets around each row.
+        view.setStyleSheet('QListView#ComboPopup, QListView#ComboPopup::item {padding:0;margin:0;border:0;}')
         view.setUniformItemSizes(False)
         view.setMouseTracking(True)
         view.viewport().setAutoFillBackground(False)
@@ -473,6 +476,7 @@ class ModernComboBox(QComboBox):
         view.setModelColumn(self.modelColumn())
         view.setRootIndex(self.rootModelIndex())
         view.setFont(self.font())
+        self._popup.ensurePolished();view.ensurePolished()
         view.setCurrentIndex(self.model().index(self.currentIndex(),self.modelColumn(),self.rootModelIndex()))
         point = self.mapToGlobal(QPoint(0,self.height()+3))
         screen = QApplication.screenAt(point) or QApplication.primaryScreen()
@@ -481,9 +485,9 @@ class ModernComboBox(QComboBox):
         contents=max(metrics.horizontalAdvance(self.itemText(i))+(widget_px(self,24) if not self.itemIcon(i).isNull() else 0)
                      for i in range(self.count()))
         reserves=widget_px(self,40)+view.verticalScrollBar().sizeHint().width()+8
-        width=min(bounds.width(),max(self.width(),min(widget_px(self,780),contents+reserves)))
+        width=min(bounds.width(),max(self.width(),widget_px(self,120),min(widget_px(self,780),contents+reserves)))
         view.row_width=max(1,width-8-view.verticalScrollBar().sizeHint().width())
-        view.scheduleDelayedItemsLayout()
+        view.doItemsLayout()
         visible=min(self.count(),self.maxVisibleItems())
         first=min(max(0,self.currentIndex()-visible//2),self.count()-visible)
         height=8+sum(view.sizeHintForRow(i) for i in range(first,first+visible))

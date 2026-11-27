@@ -71,6 +71,7 @@ def read_feed(data,url):
 
 def read_bing(data):
     import json,re
+    from datetime import datetime, timedelta
     raw=json.loads(data)
     rows=[]
     for image in raw.get('images',[])[:8] if isinstance(raw,dict) else []:
@@ -82,11 +83,20 @@ def read_bing(data):
         picture=web_url(BING+base+'_640x360.jpg')
         title=image.get('title') or image.get('copyright') or '必应每日图片'
         credit=image.get('copyright') or ''
-        story=image.get('copyrightlink') or 'https://www.bing.com/'
-        if picture and isinstance(title,str) and isinstance(credit,str) and isinstance(story,str):
+        # The Chinese archive's enddate is the local publication day. Older
+        # preview caches contain only the UTC start day and Bing's search link.
+        try:
+            published=image.get('enddate')
+            if published is None:
+                published=(datetime.strptime(date,'%Y%m%d')+timedelta(days=1)).strftime('%Y%m%d')
+            if not isinstance(published,str) or not re.fullmatch(r'[0-9]{8}',published):raise ValueError
+            datetime.strptime(published,'%Y%m%d')
+        except (ValueError,OverflowError):
+            published=''
+        if picture and isinstance(title,str) and isinstance(credit,str):
             alternate='https://th.bing.com'+base+'_1920x1080.jpg&w=640&h=360&c=7'
             rows.append(dict(picture=picture,alternate=alternate,original=BING+base+'_UHD.jpg',title=title[:140],credit=credit[:220],date=date,
-                             story=web_url(urljoin(BING,story))))
+                             published=published,story=f'https://dailybing.com/bing/zh-cn/{published}.html' if published else ''))
     return rows
 
 
@@ -96,7 +106,7 @@ def store_bing_preview(path, items, index, preview):
     from config_store import _atomic
     archive = [dict(urlbase=row['picture'][len(BING):-len('_640x360.jpg')],
                     startdate=row['date'], title=row['title'], copyright=row['credit'],
-                    copyrightlink=row['story']) for row in items]
+                    enddate=row.get('published')) for row in items]
     header = json.dumps(dict(images=archive, index=index), ensure_ascii=False).encode('utf-8')
     try:
         _atomic(path, header + b'\n' + preview)

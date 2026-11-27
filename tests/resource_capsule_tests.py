@@ -292,11 +292,15 @@ def run(api,runtime,root,app,output,checks):
         from resource_compact import paint_values
         from resource_pages import TrafficReadout
         from resource_traffic import amount
-        from PyQt5.QtGui import QImage
+        from PyQt5.QtGui import QImage, QPainter
         download, upload = 9 * 1024, 350 * 1024
         with patch.dict(service.latest, network=(download, upload)), patch.object(window, 'compact_shown', [], create=True), \
                 patch('resource_compact.draw_stacked_text') as draw:
-            paint_values(window, None, [('network', '', '', None)], 0, 16, 80, dense=True, widths=[80])
+            image=QImage(80,32,QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent)
+            painter=QPainter(image)
+            try:paint_values(window, painter, [('network', '', '', None)], 0, 16, 80, dense=True, widths=[80])
+            finally:painter.end()
             draw.assert_called_once()
             assert draw.call_args.args[2]==['↑ 350.0K','↓ 9.0K'] and draw.call_args.args[4]=='rates'
         totals = {'day': (download, upload), 'month': (2 * download, 2 * upload), 'year': (3 * download, 3 * upload)}

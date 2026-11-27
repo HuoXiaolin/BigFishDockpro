@@ -113,7 +113,8 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.setObjectName('SettingsDialog')
         self.setProperty('compactDialog', True)
         self.tray, self.api = tray, api
-        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','watermark_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection','passthrough_alt_unlock')
+        from idle_fade_options import SINGLE_FIELDS
+        self._runtime_switch_keys=('panel_enabled','notes_enabled','clock_enabled','calendar_enabled','watermark_enabled','spectrum_enabled','daily_picture_enabled','flash_enabled','resource_enabled','resource_taskbar','resource_bt_tray','hide_tray','game_mode','fullscreen_detection','passthrough_alt_unlock','desktop_layer_mode','passthrough_mode','desktop_idle_fade_mode','desktop_idle_fade_amount',*SINGLE_FIELDS.values())
         self._runtime_switch_baseline={key:tray.cfg[key] for key in self._runtime_switch_keys}
         self.fields = SettingsFields(self)
         self.import_candidate=None;self.import_path=None
@@ -391,12 +392,19 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.add_field(layout, 'position')
         self.add_field(layout, 'custom_bottom')
         self.add_field(layout, 'bottom_margin')
+        self.add_field(layout, 'desktop_layer_mode')
         self.add_field(layout, 'layer')
+        self.add_field(layout, 'passthrough_mode')
         self.add_field(layout, 'passthrough_alt_unlock')
         self.fields['passthrough_alt_unlock'].setToolTip('按住左 Alt 或右 Alt 可以点击或拖动穿透中的组件，松开后恢复原模式。')
         self.add_field(layout, 'show_name')
         self.add_field(layout, 'sep_split')
         self.add_field(layout, 'lang')
+        section_marker(layout,'桌面组件空闲淡化')
+        self.add_field(layout,'desktop_idle_fade_mode')
+        self.add_field(layout,'desktop_idle_fade_amount')
+        self.add_field(layout,'dock_idle_fade')
+        layout.addRow(label('自定义时，按各组件自己的开关生效。连续 6 秒无操作时淡化，交互时恢复。','muted'))
         section_marker(layout,'屏幕圆角')
         self.add_field(layout, 'screen_corners')
         self.fields['screen_corners'].setToolTip('手动暂停桌面组件时隐藏，圆角区域允许鼠标穿透。')
@@ -513,6 +521,7 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         section_marker(panel,'卡片材质与配色')
         from appearance_presets import PANEL_PRESETS
         self.add_field(panel, 'panel_appearance_source')
+        self.add_field(panel, 'panel_content_mode')
         self.add_field(panel, 'panel_backdrop_mode')
         self.fields['panel_backdrop_mode'].setToolTip(BACKDROP_HINT)
         self.panel_preset=ModernComboBox();self.panel_preset.addItem('自定义')
@@ -569,16 +578,19 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         from settings_design import section_marker
         section_marker(panel,'时钟与日历')
         self.component_row(panel, 'clock_enabled', '桌面时钟', button('时钟设置', lambda:self.tray.runtime.clock.open_settings()))
+        self.add_field(panel, 'clock_idle_fade')
         self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
+        self.add_field(panel, 'calendar_idle_fade')
         section_marker(panel,'桌面文字水印')
         from feature_config import WATERMARK_TEXT_LIMIT
-        for key in ('enabled','text','color','size','angle','opacity','layer','mode','position','density'):
+        for key in ('enabled','idle_fade','text','color','size','angle','opacity','layer','mode','position','density'):
             self.add_field(panel, 'watermark_'+key)
         self.fields['watermark_text'].setMaxLength(WATERMARK_TEXT_LIMIT)
         self.fields['watermark_mode'].currentIndexChanged.connect(self.sync_watermark_fields)
         panel.addRow(label('单一水印显示在主屏幕，平铺覆盖每个屏幕。鼠标和键盘输入穿透水印。','muted'))
         section_marker(panel,'音乐频谱')
         self.add_field(panel, 'spectrum_enabled')
+        self.add_field(panel, 'spectrum_idle_fade')
         self.add_field(panel, 'spectrum_style')
         self.add_field(panel, 'spectrum_appearance_source')
         self.add_field(panel, 'spectrum_backdrop_mode')
@@ -588,7 +600,9 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.add_field(panel, 'spectrum_mono_color')
         section_marker(panel,'每日图片')
         self.add_field(panel, 'daily_picture_enabled')
+        self.add_field(panel, 'daily_picture_idle_fade')
         self.add_field(panel, 'daily_picture_appearance_source')
+        self.add_field(panel, 'daily_picture_content_mode')
         self.add_field(panel, 'daily_picture_material')
         self.add_field(panel, 'daily_picture_color')
         self.add_field(panel, 'daily_picture_source')
@@ -602,10 +616,12 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         section_marker(panel,'便签与原生卡片')
         self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
         self.add_field(panel, 'note_appearance_source')
+        self.add_field(panel, 'note_content_mode')
         self.add_field(panel, 'note_style')
         for key in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source', 'spectrum_color_mode'):
             self.fields[key].currentIndexChanged.connect(self.sync_appearance_sources)
         panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
+        self.add_field(panel, 'custom_card_content_mode')
         self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
 
     def build_capsules(self, panel):
@@ -613,12 +629,15 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         from settings_design import section_marker
         section_marker(panel,'灵动胶囊')
         self.component_row(panel,'resource_enabled','显示灵动胶囊',button('打开详情',lambda:self.tray.runtime.resources.open()),button('显示与采样…',lambda:self.tray.runtime.resources.settings()))
+        self.add_field(panel, 'resource_idle_fade')
         self.add_field(panel, 'resource_bt_tray')
         self.add_field(panel, 'resource_ai_tray')
 
         section_marker(panel,'闪念胶囊')
         self.component_row(panel,'flash_enabled','显示贴边胶囊',button('记一条',lambda:self.tray.runtime.flash.open(compose=True)),button('查看闪念',lambda:self.tray.runtime.flash.open()))
+        self.add_field(panel, 'flash_idle_fade')
         self.add_field(panel, 'flash_appearance_source')
+        self.add_field(panel, 'flash_content_mode')
         self.add_field(panel, 'flash_backdrop_mode')
         self.fields['flash_backdrop_mode'].setToolTip('动态透明实时透出后方的窗口与桌面。仅壁纸使用所在屏幕的壁纸。')
         self.add_field(panel, 'flash_palette')

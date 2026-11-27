@@ -201,11 +201,10 @@ class RunningAnimal(QObject):
         return True
 
     def show_reading(self, point):
-        if self.tray is not None and self.tray.show_on_click():
-            return
         self.refresh_readout()
         if self.tray is not None:
-            QToolTip.showText(point, self.readout)
+            if not self.tray.show_on_click() and self.tray.hwnd is None and self.tray.geometry().contains(point):
+                QToolTip.showText(point, self.readout)
         else:
             window = self.service.window
             QToolTip.showText(point, self.readout, window, capsule_rect(window))

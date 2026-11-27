@@ -2,6 +2,37 @@
 import copy,re
 from appearance_presets import APPEARANCE_SOURCES, DOCK_PRESETS, MATERIALS
 from shell_appearance_model import SOURCES
+from resource_options import HALO_COLOR_MODES, RUNNER_ANIMALS
+from spectrum_palettes import SPECTRUM_STYLES
+
+ANIMALS = tuple((title, value) for value, title in RUNNER_ANIMALS.items())
+WIDGET_STYLES = {
+    'capsule_pet': ('resource_runner_enabled', 'resource_runner_animal', ANIMALS),
+    'tray_pet': ('resource_tray_runner_enabled', 'resource_tray_runner_animal', ANIMALS),
+    'capsule_halo': ('resource_halo', 'resource_halo_color_mode', HALO_COLOR_MODES),
+    'desktop_spectrum': ('spectrum_enabled', 'spectrum_style', SPECTRUM_STYLES),
+}
+
+
+def widget_style_choices(key):
+    return {value: '单色' if value == 'mono' else title for title, value in WIDGET_STYLES[key][2]}
+
+
+def widget_style_state(cfg, key):
+    switch, field, _ = WIDGET_STYLES[key]
+    value = cfg[field]
+    record = cfg.get('dock_quick_custom', {}).get(key)
+    if record:
+        mode, custom = record['mode'], record['custom']
+        applied = custom if mode in ('custom', 'off') else mode
+        if applied != value:  # The detailed editor supplied a new personal style.
+            mode, custom = 'custom', value
+        elif mode == 'off' and cfg[switch]:
+            mode = 'custom'
+    else:
+        mode, custom = value if value in widget_style_choices(key) else 'custom', value
+    return (mode if cfg[switch] else 'off'), custom
+
 
 SIZES=(32,42,54,64)
 APPEARANCE_FIELDS=tuple(DOCK_PRESETS[0][1])
@@ -33,6 +64,10 @@ def normalize_custom(value):
     if isinstance(size,dict) and type(size.get('icon_size')) is int and 20<=size['icon_size']<=256:result['size']={'icon_size':size['icon_size']}
     position=value.get('position')
     if isinstance(position,dict) and type(position.get('custom_bottom')) is int and 0<=position['custom_bottom']<=2000:result['position']={'position':'custom','custom_bottom':position['custom_bottom']}
+    for key, (_, _, styles) in WIDGET_STYLES.items():
+        entry = value.get(key)
+        if isinstance(entry, dict) and entry.get('mode') in (*widget_style_choices(key), 'custom', 'off') and entry.get('custom') in tuple(v for _, v in styles):
+            result[key] = {'mode': entry['mode'], 'custom': entry['custom']}
     return result
 
 
@@ -44,6 +79,14 @@ def shell_cycle_index(cfg, key):
 
 
 def next_cycle(cfg,key):
+    if key in WIDGET_STYLES:
+        switch, field, _ = WIDGET_STYLES[key]
+        current, custom = widget_style_state(cfg, key)
+        modes = (*widget_style_choices(key), 'custom', 'off')
+        mode = modes[(modes.index(current) + 1) % len(modes)]
+        saved = dict(cfg.get('dock_quick_custom', {}))
+        saved[key] = {'mode': mode, 'custom': custom}
+        return {switch: mode != 'off', field: custom if mode in ('custom', 'off') else mode, 'dock_quick_custom': saved}
     if key in SHELL_CYCLES:
         choices = SHELL_CYCLES[key]
         index = shell_cycle_index(cfg, key)

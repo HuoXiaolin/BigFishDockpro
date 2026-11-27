@@ -1,6 +1,7 @@
 """The dates and colors shared by the agenda and desktop calendars."""
 import calendar
 from datetime import date
+from functools import lru_cache
 
 from PyQt5.QtCore import QPointF,Qt
 from PyQt5.QtGui import QColor
@@ -18,8 +19,32 @@ def countdowns(cfg):
     entries={}
     for key in ('clock_appearance','calendar_appearance'):
         for row in cfg.get(key,{}).get('progress',{}).get('countdowns',()):
-            entries.setdefault((row['title'],row['date'],row['time'],row['repeat']),row)
-    return tuple(entries.values())
+            identity=row.get('id') or (row['title'],row['date'],row.get('time'),row['repeat'])
+            entries.setdefault(identity,row)
+    unique={}
+    for row in entries.values():
+        key=(row['title'],row['date'],row.get('time') or '',row['repeat'])
+        unique.setdefault(key,row)
+    return tuple(row for row in unique.values() if row.get('calendar',True))
+
+
+def upcoming_countdowns(cfg,day,now=None):
+    """Next occurrence of each shared countdown on the date being viewed."""
+    from datetime import datetime,time
+    moment=now if now and now.date()==day else datetime.combine(day,time.min)
+    entries=tuple((row['title'],row['date'],row.get('time',''),row['repeat']) for row in countdowns(cfg))
+    return _next_occurrences(entries,moment.replace(second=0,microsecond=0))
+
+
+@lru_cache(maxsize=64)
+def _next_occurrences(rows,minute):
+    from clock_faces import countdown_window
+    entries=[]
+    for title,day,clock,repeat in rows:
+        _,due=countdown_window(dict(date=day,time=clock,repeat=repeat),minute)
+        if due.date()<minute.date() or (clock and due<minute):continue
+        entries.append((due,title))
+    return tuple((title,(due.date()-minute.date()).days) for due,title in sorted(entries,key=lambda item:item[0]))
 
 
 def countdown_on(row,day):

@@ -4,8 +4,8 @@ from PyQt5.QtCore import QObject,QTimer,Qt,QRectF,QPointF,QSize,QPoint,QMimeData
 from PyQt5.QtGui import QPixmap,QPainter,QColor,QLinearGradient,QFont,QPen,QDrag,QPainterPath
 from PyQt5.QtWidgets import QDialog,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QApplication,QStackedWidget,QWidget,QFrame,QToolTip
 
-from quick_actions import ACTIONS,DEFAULT_ORDER,MIME,SHELL_ACTIONS,TILE_TINTS,WIDGET_SWITCHES,normalize_order
-from quick_cycles import SHELL_CYCLES, next_cycle, shell_cycle_index
+from quick_actions import ACTIONS,DEFAULT_ORDER,GLOBAL_CYCLES,MIME,PAGE_STARTS,QUICK_PAGES,SHELL_ACTIONS,TILE_TINTS,WIDGET_SWITCHES,normalize_order,page_for
+from quick_cycles import SHELL_CYCLES, WIDGET_STYLES, next_cycle, shell_cycle_index, widget_style_choices, widget_style_state
 from dock_icon_shape import circular_icon
 from background_contrast import blend, foreground, wallpaper_color
 from compact_clock import ROTATE_SECONDS, clock_width, draw_clock, headers, lines_at
@@ -34,6 +34,28 @@ def symbol(p,rect,kind,color):
         for x in (5,12,19):
             for y in (5,12,19):p.drawRoundedRect(QRectF(x-1.5,y-1.5,3,3),.9,.9)
     elif kind=='plus':p.drawLine(12,4,12,20);p.drawLine(4,12,20,12)
+    elif kind=='layers':
+        for y in (7,12,17):
+            p.drawPolyline(QPointF(2,y),QPointF(12,y+5),QPointF(22,y))
+        p.drawLine(2,7,12,2);p.drawLine(12,2,22,7)
+    elif kind=='pointer_pass':
+        p.drawRoundedRect(QRectF(13,3,8,17),2,2)
+        p.drawLine(2,12,17,12);p.drawLine(11,7,17,12);p.drawLine(11,17,17,12)
+    elif kind=='fade':
+        p.drawEllipse(QRectF(3,3,18,18))
+        for x,inset in ((12,1),(15,2),(18,4)):
+            p.drawLine(x,3+inset,x,21-inset)
+    elif kind=='snap_cards':
+        p.drawRoundedRect(QRectF(2,5,8,14),2,2);p.drawRoundedRect(QRectF(14,5,8,14),2,2)
+        p.drawLine(10,12,14,12)
+    elif kind=='card_lock':
+        p.drawRoundedRect(QRectF(4,10,16,11),2,2);p.drawArc(QRectF(8,3,8,12),0,180*16)
+        p.drawLine(8,9,8,10);p.drawLine(16,9,16,10);p.drawLine(12,14,12,17)
+    elif kind=='spectrum':
+        for x,h in ((3,5),(7,11),(11,17),(15,12),(19,8)):p.drawLine(x,round(12-h/2),x,round(12+h/2))
+    elif kind=='halo':
+        p.drawRoundedRect(QRectF(2,6,20,12),6,6)
+        p.drawArc(QRectF(5,9,14,6),30*16,126*16)
     elif kind=='apps':
         for x in (4,14):
             for y in (4,14):p.drawRoundedRect(QRectF(x,y,6,6),1.5,1.5)
@@ -162,10 +184,10 @@ class QuickTile(QPushButton):
                     open_settings(runtime, CURSORS)
             return
         from ui_style import AlignedMenu
-        menu=AlignedMenu(self);order=self.popup.order();page=order.index(self.key)//9
+        menu=AlignedMenu(self);order=self.popup.order();page=page_for(order.index(self.key))
         previous=menu.addAction('移到上一页');previous.setEnabled(page>0);previous.triggered.connect(lambda:self.popup.move_to_page(self.key,page-1))
         following=menu.addAction('移到下一页');following.setEnabled(page<self.popup.pages.count()-1);following.triggered.connect(lambda:self.popup.move_to_page(self.key,page+1))
-        first=order[page*9];menu.addAction('移到本页开头').triggered.connect(lambda:self.popup.move_action(self.key,first))
+        first=order[PAGE_STARTS[page]];menu.addAction('移到本页开头').triggered.connect(lambda:self.popup.move_action(self.key,first))
         menu.exec_(event.globalPos());menu.deleteLater()
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);colors=self.popup.colors()
@@ -239,7 +261,7 @@ class DockQuickSettings(QDialog):
         self.pages=QStackedWidget();self.pages.setObjectName('QuickPages');self.pages.setFrameShape(QFrame.NoFrame);self.pages.setAutoFillBackground(False)
         self.pages.setStyleSheet('QStackedWidget#QuickPages,QWidget#QuickPage {background:transparent;border:0;}')
         self.page_grids=[]
-        for _ in range(math.ceil(len(ACTIONS)/9)):
+        for _ in QUICK_PAGES:
             page=QWidget();page.setObjectName('QuickPage');grid=QGridLayout(page);grid.setContentsMargins(0,0,0,0);grid.setSpacing(7)
             for row in range(3):grid.setRowStretch(row,1)
             for column in range(3):grid.setColumnStretch(column,1)
@@ -280,21 +302,32 @@ class DockQuickSettings(QDialog):
         self.status_timer.start(5000)
     def clear_feedback(self):
         self.status_timer.stop()
-        self.status.setText('滚轮翻页')
-        self.status.setToolTip('')
+        self.update_page_caption()
     def order(self):return normalize_order(self.dock.cfg.get('dock_quick_order'))
     def rebuild_pages(self):
         current=self.pages.currentIndex()
         for grid in self.page_grids:
             while grid.count():grid.takeAt(0)
         for index,key in enumerate(self.order()):
-            tile=self.tiles[key];tile.hide();self.page_grids[index//9].addWidget(tile,index%9//3,index%3);tile.show()
+            page=page_for(index)
+            row,column=divmod(index-PAGE_STARTS[page],3)
+            tile=self.tiles[key];tile.hide();self.page_grids[page].addWidget(tile,row,column);tile.show()
         self._shown_order=tuple(self.order())
         self.set_page(max(0,current))
     def set_page(self,page):
         page=max(0,min(page,self.pages.count()-1));self.pages.setCurrentIndex(page)
         self.prev_button.setEnabled(page>0);self.next_button.setEnabled(page<self.pages.count()-1)
         self.page_label.setText(str(page+1)+' / '+str(self.pages.count()))
+        if not self.status_timer.isActive():self.update_page_caption()
+    def update_page_caption(self):
+        page=self.pages.currentIndex()
+        if page<0:return
+        title,group=QUICK_PAGES[page]
+        start=PAGE_STARTS[page]
+        keys=self._shown_order[start:start+len(group)]
+        self.status.setText(title if set(keys)==set(group) else '自定义排序')
+        self.status.setToolTip('')
+        self.page_label.setToolTip('滚轮或箭头翻页')
     def wheelEvent(self,event):
         delta=event.angleDelta().y() or event.pixelDelta().y()*3
         if not delta:event.ignore();return
@@ -324,7 +357,7 @@ class DockQuickSettings(QDialog):
         return self.save_order(order)
     def move_to_page(self,key,page):
         if key not in self.tiles or page<0 or page>=self.pages.count():return False
-        order=self.order();order.remove(key);order.insert(min(page*9,len(order)),key)
+        order=self.order();order.remove(key);order.insert(PAGE_STARTS[page],key)
         if not self.save_order(order):return False
         self.set_page(page);return True
     def reset_order(self):return self.save_order(list(DEFAULT_ORDER))
@@ -430,6 +463,14 @@ class DockQuickSettings(QDialog):
             values[key]='已开启' if enabled else '已关闭'
             self.tiles[key].setToolTip(tip)
             self.tiles[key].setAccessibleDescription(values[key])
+        for key,(_,_,field,modes) in GLOBAL_CYCLES.items():
+            values[key]=dict(modes)[cfg[field]]
+            self.tiles[key].setToolTip(' → '.join(label for _,label in modes[1:]+modes[:1])+'。自定义使用各组件自己的设置。')
+        for key in WIDGET_STYLES:
+            labels = dict(widget_style_choices(key), custom='自定义', off='已关闭')
+            mode, _ = widget_style_state(cfg, key)
+            values[key] = labels[mode]
+            self.tiles[key].setToolTip(' → '.join(labels.values()) + '。自定义恢复你保存的样式。')
         self.tiles['clock'].setToolTip('左键开关时钟，右键设置时光进度与倒计时')
         values['resources']='已开启' if cfg['resource_enabled'] else '已关闭'
         self.tiles['resources'].setToolTip('切换桌面灵动胶囊')
@@ -509,6 +550,10 @@ class DockQuickSettings(QDialog):
             tile.value=values[key]
             tile.active={'已开启':True,'已关闭':False}.get(tile.value)
             description=tile.value
+            if key in WIDGET_STYLES:
+                tile.active = cfg[WIDGET_STYLES[key][0]]
+            elif key == 'idle_fade':
+                tile.active = {'on': True, 'off': False}.get(cfg['desktop_idle_fade_mode'])
             if key in SHELL_ACTIONS and shell_supported:
                 tile.active=cfg[key+'_enabled']
                 description=('已开启' if tile.active else '已关闭')+' · '+tile.value
@@ -586,11 +631,15 @@ class DockQuickSettings(QDialog):
             elif hasattr(tray,'importer'):tray.importer.show()
             return
         cfg=self.dock.cfg;changes={}
-        if key in ('appearance','size','position'):
+        if key in WIDGET_STYLES or key in ('appearance','size','position'):
             notes = getattr(runtime, 'notes', None)
             if key == 'appearance' and notes and not notes.flush():
                 self.show_feedback('便签保存失败，外观切换已取消。');return
             changes=next_cycle(cfg,key)
+        elif key in GLOBAL_CYCLES:
+            _,_,field,modes=GLOBAL_CYCLES[key]
+            choices=[value for value,_ in modes]
+            changes={field:choices[(choices.index(cfg[field])+1)%len(choices)]}
         elif key in WIDGET_SWITCHES:
             field=WIDGET_SWITCHES[key][2]
             changes={field:not cfg[field]}

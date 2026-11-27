@@ -31,16 +31,21 @@ def glass_fill(value,style):
     return color
 
 
-def palette_for(service,background=None):
+def palette_for(service,background=None,*,widget=None,component='flash',refresh=None,design=None):
     cfg=service.cfg
     style=flash_appearance(cfg) if background is None else background
     theme=style['theme']
     light=theme=='light' or (theme=='auto' and service.runtime.dock._sys_light)
+    if widget is not None:
+        from component_contrast import content_contrast
+        mode=cfg.get(component+'_content_mode','auto')
+        light=content_contrast(widget,service.runtime.dock,style,mode,refresh or widget.update,design=design,
+                               regional=component in ('resource','daily_picture'))
     surface='#f7f9fb' if light else '#26292d'
     accent=style['color'] or '#9ac6e0'
     vivid=cfg['flash_palette']=='vivid' and (background is not None or cfg.get('flash_appearance_source')!='app')
     return dict(light=light,surface=surface, field='#ffffff' if light else '#303439',
-                ink='#18232d' if light else '#ffffff', muted='#526373' if light else '#bdc9d2',
+                ink='#18232d' if light else '#ffffff', muted='#34485a' if light else '#e1ebf3',
                 line='#cfdae3' if light else '#4b5259', hover='#e4ebf0' if light else '#39414a',
                 fills={key:(rgb if vivid else
                        blend(blend(rgb,accent,.15),surface,.73 if light else .76).name())

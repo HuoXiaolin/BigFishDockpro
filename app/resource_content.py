@@ -222,7 +222,7 @@ class ContentView(QWidget):
         body=QVBoxLayout(self);body.setContentsMargins(0,0,0,0);body.setSpacing(4)
         head=QHBoxLayout();head.setSpacing(3)
         if kind=='picture':
-            self.picture_icons={};self.icon_ink=None
+            self.picture_icons={}
             from resource_pages import MediaLabel
             self.heading=MediaLabel(1,11,True,owner=owner);self.heading.setText('每日图片')
             head.addWidget(self.heading,1)
@@ -264,9 +264,12 @@ class ContentView(QWidget):
     def update_icons(self):
         from flash_view import icon
         ink=self.owner.colors['ink']
-        if ink==self.icon_ink:return
-        self.icon_ink=ink
-        for widget,symbol in self.picture_icons.items():widget.setIcon(icon(symbol,ink,15))
+        local=getattr(self.owner,'text_color_at',None)
+        for widget,symbol in self.picture_icons.items():
+            color=local(widget,widget.rect(),'ink') if local else ink
+            if widget.property('iconInk')!=color:
+                widget.setProperty('iconInk',color)
+                widget.setIcon(icon(symbol,color,15))
 
     def set_status(self,message):
         self.status.setText(message)
@@ -481,7 +484,7 @@ class ContentView(QWidget):
     def set_picture(self,image):
         self.photo.set_image(image)
         item=self.items[self.index] if self.items else {}
-        date=item.get('date','')
+        date=item.get('published') or item.get('date','')
         self.position.setText(f'{date[4:6]}/{date[6:8]}  {self.index+1}/{len(self.items)}' if date else f'{self.index+1}/{len(self.items)}' if self.items else '')
         self.title.setText(item.get('title',''));self.credit.setText(item.get('credit',''))
         self.title.setVisible(bool(self.title.text()));self.credit.setVisible(bool(self.credit.text()))

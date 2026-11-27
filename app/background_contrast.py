@@ -35,19 +35,18 @@ def majority_surface(colors):
     return ordered[len(ordered)//2] if ordered else None
 
 
-@lru_cache(maxsize=12)
-def _sample(key, rect):
+@lru_cache(maxsize=32)
+def _pixels(key, rect):
     from PyQt5.QtCore import QRect, QRectF, QSize
     from PyQt5.QtGui import QColor, QImage
     from wallpaper_source import image_file, render
     path, stamp, position, color, monitor, bounds = key
     source = image_file(path, stamp) if path and stamp is not None else QImage()
     sample = render(source, position, QColor.fromRgba(color), QRect(*monitor), QRect(*bounds), QRectF(*rect), QSize(16, 16))
-    colors = [sample.pixelColor(x, y) for y in range(16) for x in range(16)]
-    return tuple(sum(getattr(c, part)() for c in colors)/len(colors) for part in ('red', 'green', 'blue'))
+    return tuple(sample.pixelColor(x,y).getRgb()[:3] for y in range(16) for x in range(16))
 
 
-def wallpaper_color(window, local_rect=None):
+def wallpaper_samples(window, local_rect=None, *, allow_fallback=False):
     """Read wallpaper files only; never capture foreground applications."""
     from PyQt5.QtCore import QPoint, QRectF
     from PyQt5.QtGui import QGuiApplication
@@ -77,11 +76,20 @@ def wallpaper_color(window, local_rect=None):
             left = logical.left() if rect.center().x() < logical.center().x() else logical.right() + 1 - width
             area = QRectF(left, logical.top(), width, logical.height())
     else:
-        key = wallpaper_key(window, screen)
+        if local_rect.isEmpty():return None
+        key = wallpaper_key(window, screen, allow_fallback=True) if allow_fallback else wallpaper_key(window, screen)
+        path, stamp = key[:2]
+        if path and (stamp is None or image_file(path, stamp).isNull()):return None
         logical = screen.geometry()
         area = QRectF(local_rect).translated(window.mapToGlobal(QPoint(0,0)))
     monitor = QRectF(*key[4])
     sx, sy = monitor.width()/max(1, logical.width()), monitor.height()/max(1, logical.height())
     region = QRectF(monitor.x() + (area.x() - logical.x())*sx, monitor.y() + (area.y() - logical.y())*sy,
                     area.width()*sx, area.height()*sy)
-    return _sample(key, region.getRect())
+    return _pixels(key, region.getRect())
+
+
+def wallpaper_color(window, local_rect=None):
+    samples = wallpaper_samples(window, local_rect)
+    if samples:
+        return tuple(sum(channel)/len(samples) for channel in zip(*samples))

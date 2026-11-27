@@ -25,6 +25,8 @@ def add_menu_actions(menu,runtime):
     source=menu_group(menu,'图片来源与轮播','picture')
     frame=menu_group(menu,'外框与材质','palette')
     window=menu_group(menu,'尺寸与位置','position')
+    from desktop_idle_fade import add_action
+    add_action(window,runtime,'picture')
     lock=window.addAction('锁定位置')
     lock.setCheckable(True);lock.setChecked(cfg['daily_picture_locked'])
     lock.triggered.connect(lambda on:runtime.set_daily_picture_options(daily_picture_locked=on))
@@ -104,6 +106,10 @@ class DailyPictureCard(QWidget):
     @property
     def cfg(self):return self.runtime.dock.cfg
 
+    def text_color_at(self,label,rect,role):
+        from compact_colors import widget_colors
+        return widget_colors(self,label,rect)[role]
+
     def sync(self):
         placement=(self.cfg['daily_picture_layout'],self.cfg['card_scale'],self.cfg['daily_picture_manual_size'])
         if placement!=self.placement:
@@ -130,14 +136,21 @@ class DailyPictureCard(QWidget):
         if following or self.cfg['daily_picture_material']!='follow':
             design=material_design(style['material'],'aurora' if following else design)
         self.border=dict(theme_color=custom_color or self.cfg['theme_color'],panel_color=style['color'],card_design=design)
-        colors=palette_for(self.service,style)
+        colors=palette_for(self.service,style,widget=self,component='daily_picture',refresh=self.sync,design=design)
         if self.embedded:colors['card_alpha']=self.window().colors['card_alpha']
         if self.colors!=colors:
             self.colors=colors;palette=self.palette()
             for role,key in ((QPalette.WindowText,'ink'),(QPalette.ButtonText,'ink'),(QPalette.Text,'ink'),
                              (QPalette.Button,'hover'),(QPalette.Mid,'muted')):
                 palette.setColor(role,QColor(colors[key]))
-            self.setPalette(palette);self.content.update_icons()
+            self.setPalette(palette)
+        self.content.update_icons()
+        for label in (self.content.position,self.content.status):
+            color=self.text_color_at(label,label.contentsRect(),'muted')
+            if label.property('contentInk')!=color:
+                label.setProperty('contentInk',color)
+                label.setStyleSheet(f'color:{color};')
+        for label in (self.content.heading,self.content.title,self.content.credit):label.update()
         if not self.isVisible():self.show()
         self.content.refresh()
         self.update()
@@ -212,9 +225,9 @@ class DailyPictureCard(QWidget):
         return point
 
     def showEvent(self,event):
-        from window_layers import BOTTOM,restack
+        from window_layers import place_desktop
         super().showEvent(event)
-        if not self.embedded:restack(int(self.winId()),BOTTOM)
+        if not self.embedded:place_desktop(self,self.runtime.dock.cfg)
 
     def hideEvent(self,event):
         self.glass.clear()

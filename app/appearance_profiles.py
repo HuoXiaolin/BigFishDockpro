@@ -8,7 +8,7 @@ TOP_DEFAULTS = dict(DEFAULT_DOCK_STYLE, card_design=DEFAULT_PRESET_ID, panel_app
                     note_style='glass', note_appearance_source='custom', clock_style='digital', clock_flipped=False,
                     flash_palette='theme', resource_palette='theme',resource_tints={})
 TOP_KEYS = tuple(TOP_DEFAULTS) + tuple('panel_'+key for key in PANEL_PRESETS[0][1])
-CLOCK_KEYS = tuple(key for key in CLOCK_DEFAULTS if key != 'work')
+CLOCK_KEYS = tuple(key for key in CLOCK_DEFAULTS if key not in ('work','content_mode'))
 NOTE_KEYS = ('style','color','font_size','font_scale','body_font_size','body_font_scale','appearance','appearance_source')
 MODES = [('自定义','custom'),('默认样式','default')] + [(name,key) for key,(name,_) in zip(PRESET_IDS,PANEL_PRESETS)]
 
@@ -98,6 +98,7 @@ def apply_profile(cfg, mode, defaults):
     result=copy.deepcopy(cfg)
     if mode=='default':
         result['resource_background']='global'
+        text_modes={key:result[key+'_appearance'].get('content_mode','auto') for key in ('calendar','clock')}
         progress=copy.deepcopy(result['clock_appearance'].get('progress'))
         for key in TOP_KEYS:result[key]=copy.deepcopy(defaults[key])
         for component in ('clock','calendar'):
@@ -108,7 +109,7 @@ def apply_profile(cfg, mode, defaults):
         from clock_appearance import DEFAULT_STYLE
         for component in ('clock','calendar'):
             work=result[component+'_appearance']['work']
-            result[component+'_appearance']=normalize_clock(dict(DEFAULT_STYLE,work=work))
+            result[component+'_appearance']=normalize_clock(dict(DEFAULT_STYLE,work=work,content_mode=text_modes[component]))
         if progress is not None:result['clock_appearance']['progress']=progress
         result.update(clock_style='digital',clock_flipped=False)
         from card_metrics import DEFAULT_PROFILE

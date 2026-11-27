@@ -7,6 +7,7 @@ from PyQt5.QtCore import Qt,QPointF,QEvent,QPoint
 from PyQt5.QtGui import QPixmap,QPainter,QColor,QFont,QMouseEvent,QWheelEvent,QImage,QRegion
 from PyQt5.QtWidgets import QApplication,QWidget,QStyle,QStyleOptionButton
 from dock_extras import REFLECTION_BUDGET,DockQuickSettings
+from quick_actions import GLOBAL_CYCLES, PAGE_STARTS, QUICK_PAGES, page_for
 
 
 def check_quick_controls(popup,dock,output,checks):
@@ -16,7 +17,7 @@ def check_quick_controls(popup,dock,output,checks):
     app_light=app.palette().window().color().lightness()>128
     def check_footer():
         pager = popup.next_button.geometry()
-        assert popup.status.text()=='滚轮翻页' and pager.center().y()==popup.status.geometry().center().y()
+        assert popup.status.text()==QUICK_PAGES[popup.pages.currentIndex()][0] and pager.center().y()==popup.status.geometry().center().y()
         assert popup.height()-pager.bottom()-1==popup.layout().contentsMargins().bottom()
         assert popup.layout().count()==3  # Header, tiles, pagination.
     def control_image(button):
@@ -195,9 +196,68 @@ def run(api,runtime,root,output,checks):
         click('add');assert tray.add_icons.call_count==1
         click('quick');QApplication.processEvents();popup=dock.extras.popup
         from quick_actions import ACTIONS,PRODUCTIVITY_ACTIONS
-        assert popup.isVisible() and len(popup.tiles)==len(ACTIONS) and popup.pages.count()==(len(ACTIONS)+8)//9
+        assert popup.isVisible() and len(popup.tiles)==len(ACTIONS) and popup.pages.count()==len(QUICK_PAGES)
         assert all(tile.height()>=82 for tile in popup.tiles.values()),[tile.size() for tile in popup.tiles.values()]
         check_quick_controls(popup,dock,output,checks)
+        toggles={'card_snap':'card_snap','card_lock':'panel_locked'}
+        from quick_actions import normalize_order
+        assert set(popup.order())==set(popup.tiles) and len(popup.order())==len(popup.tiles)
+        for page,(title,group) in enumerate(QUICK_PAGES):
+            popup.set_page(page)
+            assert popup.status.text()==title
+            for index,key in enumerate(group):
+                assert popup.tiles[key].isVisible()
+                assert popup.page_grids[page].itemAtPosition(*divmod(index,3)).widget() is popup.tiles[key]
+            assert popup.grab().save(str(output/f'dock-quick-page-{page+1}.png'))
+        for key,(_,_,field,modes) in GLOBAL_CYCLES.items():
+            popup.set_page(page_for(popup.order().index(key)))
+            tile=popup.tiles[key]
+            assert tile.value==modes[0][1]
+            for mode,label in modes[1:]+modes[:1]:
+                tile.click()
+                assert cfg[field]==api.load_config()[field]==mode
+                assert tile.value==tile.accessibleDescription()==label and popup.isVisible()
+
+        for key,field in toggles.items():
+            popup.set_page(page_for(popup.order().index(key)))
+            tile=popup.tiles[key]
+            original_value=cfg[field]
+            assert tile.isVisible() and tile.active is original_value
+            tile.click()
+            assert cfg[field] is (not original_value) and tile.active is cfg[field]
+            assert api.load_config()[field] is cfg[field] and popup.isVisible()
+            tile.click()
+            assert cfg[field] is original_value
+        from quick_cycles import WIDGET_STYLES, next_cycle, widget_style_choices, widget_style_state
+        from settings_effects import save_changes
+        chosen={'capsule_pet':'bird','tray_pet':'penguin','capsule_halo':'mono','desktop_spectrum':'crown'}
+        stored=copy.deepcopy(cfg['dock_quick_custom'])
+        original_widgets={name:cfg[name] for switch, field, _ in WIDGET_STYLES.values() for name in (switch,field)}
+        for key, (switch, field, _) in WIDGET_STYLES.items():
+            assert save_changes(tray,api,{switch:False,field:chosen[key]})
+            popup.refresh()
+            popup.set_page(page_for(popup.order().index(key)))
+            tile=popup.tiles[key]
+            assert tile.value=='已关闭' and tile.active is False
+            for mode,title in dict(widget_style_choices(key),custom='自定义',off='已关闭').items():
+                tile.click()
+                loaded=api.load_config()
+                assert tile.value==tile.accessibleDescription()==title and tile.active==(mode!='off')
+                assert loaded[field]==(chosen[key] if mode in ('custom','off') else mode)
+                assert widget_style_state(loaded,key)==(mode,chosen[key]) and next_cycle(loaded,key)==next_cycle(cfg,key)
+        for key,(switch,field,_) in WIDGET_STYLES.items():
+            target='aurora' if key=='capsule_halo' else chosen[key]
+            for mode in widget_style_choices(key):
+                popup.tiles[key].click()
+                if mode==target:break
+            assert cfg[field]==target and cfg[switch]
+        assert popup.grab().save(str(output/'quick-component-presets.png'))
+        assert save_changes(tray,api,dict(original_widgets,dock_quick_custom=stored))
+        popup.refresh()
+        checks.append('The four widget tiles show each named preset, restore independent personal styles, turn off, and resume the same cycle from disk.')
+        popup.grab().save(str(output/'dock-quick-app-switches.png'))
+        popup.set_page(0)
+        checks.append('All quick actions fit their functional pages. All three global controls cycle through custom and both overrides.')
         popup.tiles['search'].click();assert '暂不可用' in popup.status.text()
         productivity=SimpleNamespace(closed=False,message='已撤销测试整理',history=SimpleNamespace(entries=[{}],message='可撤销：测试整理'),
                                      open_search=MagicMock(),open_layouts=MagicMock(),open_references=MagicMock(),undo=MagicMock(return_value=True))
@@ -209,7 +269,7 @@ def run(api,runtime,root,output,checks):
         popup.tiles['undo'].click();assert productivity.undo.call_count==1 and popup.status.text()==productivity.message
         productivity.message='保存失败，未撤销。';productivity.undo.return_value=False
         popup.tiles['undo'].click();assert '失败' in popup.status.text()
-        popup.set_page(popup.order().index('search')//9);popup.grab().save(str(output/'dock-quick-productivity.png'));popup.set_page(0)
+        popup.set_page(page_for(popup.order().index('search')));popup.grab().save(str(output/'dock-quick-productivity.png'));popup.set_page(0)
         callbacks = []
         component = SimpleNamespace(backend=None, payload=True, install_process=None)
         def install_offline(callback):
@@ -288,34 +348,32 @@ def run(api,runtime,root,output,checks):
             with patch.object(dock,'start_backdrop'):popup.tiles[key].click()
             assert cfg[field]==original_value
         wheel_on(popup.tiles['settings'],120);assert popup.pages.currentIndex()==0
-        from quick_actions import normalize_order,DEFAULT_ORDER,PREVIOUS_DEFAULT,PREVIOUS_ORDER,PRIORITY_ORDER,MIME,SHELL_ACTIONS,SYSTEM_ACTIONS,WIDGET_SWITCHES
-        def without_system(order):
-            return [key for key in order if key not in SYSTEM_ACTIONS and key not in WIDGET_SWITCHES]
-        assert [key for key in DEFAULT_ORDER if key not in WIDGET_SWITCHES][:len(PRIORITY_ORDER)]==PRIORITY_ORDER
+        from quick_actions import DEFAULT_ORDER,PREVIOUS_DEFAULT,PREVIOUS_ORDER,MIME,SHELL_ACTIONS,WIDGET_SWITCHES,LEGACY_BASE
         assert normalize_order(PREVIOUS_ORDER)==normalize_order(PREVIOUS_DEFAULT)==DEFAULT_ORDER
-        reversed_order=list(reversed(PREVIOUS_DEFAULT))
-        with_cursor=list(reversed_order)
-        with_cursor.insert(with_cursor.index('shell_notifications')+1,'cursor_styles')
-        assert normalize_order(reversed_order)==with_cursor+list(WIDGET_SWITCHES)
-        assert without_system(normalize_order(['clock','clock','not-an-action']))==['clock']+[key for key in PREVIOUS_ORDER if key!='clock']
-        assert DEFAULT_ORDER.index('taskbar_text')==DEFAULT_ORDER.index('taskbar')+1
+        anchored=list(LEGACY_BASE)
+        for key,anchor in (('capsule_pet','resources'),('tray_pet','taskbar_monitor')):
+            anchored.insert(anchored.index(anchor)+1,key)
+        for key,(_,_,_,anchor,_) in WIDGET_SWITCHES.items():
+            if anchor:anchored.insert(anchored.index(anchor)+1,key)
+        assert normalize_order(anchored)==DEFAULT_ORDER
+        old_factory=[key for key in LEGACY_BASE if key not in ('shell_start','shell_notifications','cursor_styles','watermark')]
+        assert normalize_order(old_factory)==DEFAULT_ORDER
+        assert normalize_order(anchored+['fullscreen_pause','card_snap','card_lock','desktop_spectrum','capsule_halo'])==DEFAULT_ORDER
         assert normalize_order([key for key in DEFAULT_ORDER if key not in SHELL_ACTIONS])==DEFAULT_ORDER
         previous=[key for key in PREVIOUS_ORDER if key not in PRODUCTIVITY_ACTIONS]
-        assert normalize_order(previous+['lite'])==DEFAULT_ORDER
-        custom_order=list(reversed(previous))
-        migrated_order=normalize_order(['lite']+custom_order)
-        assert without_system(migrated_order)==custom_order+list(PRODUCTIVITY_ACTIONS)
-        index=migrated_order.index('taskbar_text')+1
-        assert tuple(migrated_order[index:index+2])==SHELL_ACTIONS
         legacy=[key for key in previous if key!='taskbar_text']
-        assert normalize_order(legacy)==DEFAULT_ORDER
-        legacy[1],legacy[-1]=legacy[-1],legacy[1]
-        assert normalize_order(legacy)==normalize_order(legacy[:-1])==DEFAULT_ORDER
-        custom=list(reversed(legacy));upgraded=normalize_order(custom)
-        assert upgraded[upgraded.index('taskbar')+1]=='taskbar_text'
-        assert [key for key in without_system(upgraded) if key!='taskbar_text' and key not in PRODUCTIVITY_ACTIONS]==custom
-        rearranged=['taskbar_text']+custom
-        assert without_system(normalize_order(rearranged))==rearranged+list(PRODUCTIVITY_ACTIONS)
+        assert normalize_order(previous+['lite'])==normalize_order(legacy)==DEFAULT_ORDER
+        swapped_legacy=list(legacy)
+        swapped_legacy[1],swapped_legacy[-1]=swapped_legacy[-1],swapped_legacy[1]
+        assert normalize_order(swapped_legacy)==normalize_order(swapped_legacy[:-1])==DEFAULT_ORDER
+        for custom in (list(reversed(anchored)),list(reversed(PREVIOUS_DEFAULT)),list(reversed(legacy)),['clock','notes']):
+            upgraded=normalize_order(['lite',*custom,custom[0],'fullscreen_pause'])
+            assert [key for key in upgraded if key in custom]==custom
+            assert len(upgraded)==len(DEFAULT_ORDER) and set(upgraded)==set(DEFAULT_ORDER)
+            assert normalize_order(upgraded)==upgraded
+        custom=list(reversed(anchored))
+        upgraded=normalize_order(custom)
+        assert upgraded[upgraded.index('settings')+1:upgraded.index('settings')+3]==['global_layer','global_passthrough']
         arranged_new=['shell_notifications','references']+[key for key in DEFAULT_ORDER if key not in ('shell_notifications','references')]
         assert normalize_order(arranged_new)==arranged_new
         popup.toggle_edit();assert popup.editing

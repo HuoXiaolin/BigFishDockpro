@@ -141,14 +141,16 @@ class ResourceDesktopCard(ResourceContentHost):
         menu.addAction('组件设置…',lambda:self.service.settings(page))
         menu.addAction('组件布局…',lambda:self.service.settings(8))
         menu.addSeparator()
+        from desktop_idle_fade import add_action
+        add_action(menu,self.runtime,self.property('clickThroughKey'))
         component_actions(menu_group(menu,'鼠标穿透','cursor'),self.runtime,'resource:'+self.page_key)
         try:menu.exec_(event.globalPos())
         finally:menu.deleteLater()
 
     def showEvent(self,event):
         super().showEvent(event)
-        from window_layers import desktop_layer,shell_owner
-        desktop_layer(int(self.winId()),False,shell_owner())
+        from window_layers import place_desktop
+        place_desktop(self,self.service.cfg,shell_owned=True)
 
     def closeEvent(self,event):
         event.ignore()
