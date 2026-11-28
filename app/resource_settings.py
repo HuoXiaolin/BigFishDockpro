@@ -118,7 +118,7 @@ class ResourceOptions(QDialog):
          'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
         {'resource_halo','resource_halo_speed','resource_halo_color_mode','resource_halo_mono_color','resource_background','resource_backdrop_mode','resource_content_mode','resource_palette','resource_card_transparency','resource_badge_strength'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
-        {'resource_edge_snap','resource_edge_hide','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
+        {'resource_geometry_locked','resource_edge_snap','resource_edge_hide','resource_app_fold','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
          'resource_face_auto_switch','resource_face_switch_minutes'},
         {'resource_weather','resource_weather_days','resource_air_source','resource_weather_location','resource_weather_alert_sound','resource_news'},set(),
         {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound',
@@ -615,11 +615,16 @@ class ResourceOptions(QDialog):
         def build_6():
             layout=page(6)
             interaction=section(layout,'吸附与拖动')
-            for key,title in [('resource_edge_snap','屏幕边缘吸附'),('resource_edge_hide','贴边隐藏为光条，有新提醒时短暂显示收起胶囊'),('resource_peer_snap','相邻卡片吸附'),
+            for key,title in [('resource_geometry_locked','锁定位置和大小'),('resource_edge_snap','屏幕边缘吸附'),('resource_edge_hide','贴边隐藏为光条，有新提醒时短暂显示收起胶囊'),('resource_peer_snap','相邻卡片吸附'),
                               ('resource_liquid','液态拉伸、断开水滴与贴边圆角')]:
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
             hint=QLabel('吸附距离在主设置「桌面收纳」中调整。')
             hint.setWordWrap(True);interaction.addWidget(hint)
+            covering=section(layout,'应用窗口前收起')
+            form=QFormLayout();covering.addLayout(form)
+            combo(form,'resource_app_fold','收起样式',[('光条','light'),('圆球','ball'),('关闭','off')],cfg['resource_app_fold'],self.fields)
+            hint=QLabel('胶囊置顶并覆盖应用时生效。光条贴在胶囊原位置的上沿。新提醒显示 5 秒，回到桌面后恢复原来的形态。')
+            hint.setWordWrap(True);covering.addWidget(hint)
             interaction=section(layout,'表情与角色')
             for key,title in [('resource_face','显示表情（收起与展开）'),('resource_face_interactive','表情互动（跟随、眨眼与按压）')]:
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])

@@ -125,7 +125,7 @@ class CapsuleMotion(FaceTracker):
         w=self.window;cfg=w.service.cfg
         presentation=(w.service.compact,cfg['resource_fold'],cfg['resource_compact_width'],cfg['resource_compact_height'],
                       cfg['resource_expanded_width'],cfg['resource_expanded_height'],cfg['card_snap'],
-                      cfg['resource_edge_snap'],cfg['resource_peer_snap'])
+                      cfg['resource_edge_snap'],cfg['resource_peer_snap'],cfg['resource_geometry_locked'])
         if self.presentation!=presentation:
             self.snap.stop();self.landing=False;self.presentation=presentation
             self.drag_edge='free';self.stop_bridge()

@@ -75,7 +75,7 @@ def system_wallpaper(window):
                 position = 1
     except OSError:
         pass
-    if path.value and position != 5 and not (info.flags & 1):
+    if position != 5 and not (info.flags & 1):
         # SPI only identifies the primary image; a secondary monitor may have its own.
         raise OSError('Per-monitor wallpaper is unavailable')
     rect = info.monitor
@@ -147,14 +147,44 @@ def invalidate_source():
     image_file.cache_clear()
 
 
+def _readable_image(path):
+    try:
+        return bool(path) and not image_file(path,os.stat(path).st_mtime_ns).isNull()
+    except OSError:
+        return False
+
+
+def _source_for_monitor(window,allow_fallback):
+    try:
+        info=desktop_wallpaper(window)
+    except OSError:
+        if not allow_fallback:raise
+        info=system_wallpaper(window)
+        used_system=True
+    else:
+        used_system=False
+    if not allow_fallback or not info[0] or _readable_image(info[0]):
+        return info
+    if not used_system:
+        try:
+            alternate=system_wallpaper(window)
+            if alternate[0]!=info[0] and _readable_image(alternate[0]):
+                return alternate
+        except OSError:
+            pass
+    # Only the primary desktop and a spanned image can use this shared Windows cache.
+    appdata=os.environ.get('APPDATA')
+    if appdata and (info[1]==5 or _window_monitor(window).flags & 1):
+        cache=os.path.join(appdata,'Microsoft','Windows','Themes','TranscodedWallpaper')
+        if _readable_image(cache):
+            return (cache,*info[1:])
+    return info
+
+
 def source_info(window,screen,allow_fallback=False):
     key=screen.name(),allow_fallback;now=time.monotonic();cached=_metadata.get(key)
     if cached is None or now-cached[0]>=2:
-        try:
-            info=desktop_wallpaper(window)
-        except OSError:
-            if not allow_fallback:raise
-            info=system_wallpaper(window)
+        info=_source_for_monitor(window,allow_fallback)
         cached=(now,info);_metadata[key]=cached
         # Screen names can change after docking. Metadata must stay bounded.
         if len(_metadata)>16:

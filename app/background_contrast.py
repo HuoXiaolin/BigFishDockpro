@@ -80,6 +80,13 @@ def wallpaper_samples(window, local_rect=None, *, allow_fallback=False):
         key = wallpaper_key(window, screen, allow_fallback=True) if allow_fallback else wallpaper_key(window, screen)
         path, stamp = key[:2]
         if path and (stamp is None or image_file(path, stamp).isNull()):return None
+        if allow_fallback and window.isVisible():
+            from window_layers import client_frame
+            frame = client_frame(int(window.winId()))
+            if frame:
+                left,top,width,height = frame
+                sx,sy = width/max(1,window.width()), height/max(1,window.height())
+                return _pixels(key,(left+sx*local_rect.x(),top+sy*local_rect.y(),sx*local_rect.width(),sy*local_rect.height()))
         logical = screen.geometry()
         area = QRectF(local_rect).translated(window.mapToGlobal(QPoint(0,0)))
     monitor = QRectF(*key[4])

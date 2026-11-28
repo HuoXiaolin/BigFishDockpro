@@ -1,6 +1,6 @@
 """Effective pointer policy for desktop widgets and its recovery menu."""
 from weakref import WeakKeyDictionary
-from PyQt5.QtCore import QObject,QEvent,QTimer,Qt,pyqtSignal
+from PyQt5.QtCore import QObject,QEvent,QPoint,QTimer,Qt,pyqtSignal
 from PyQt5.QtWidgets import QActionGroup,QApplication,QWidget
 
 MODES=(('全部穿透','all'),('全部可交互','none'),('自定义','custom'))
@@ -66,15 +66,17 @@ class ClickThroughPolicy(QObject):
         from window_layers import alt_pressed,application_under,click_through,cursor_position,is_topmost
         mode=pointer_mode(self.runtime.dock.cfg,key)
         edge=getattr(window,'edge_reveal',None)
-        if edge or self.runtime.dock.cfg.get('resource_edge_hide') or self.runtime.dock.cfg.get('card_edge_hide'):
+        cfg=self.runtime.dock.cfg
+        app_fold=cfg.get('resource_app_fold','light') if key=='resource' and hasattr(window,'taskbar_slot') else 'off'
+        if edge or cfg.get('resource_edge_hide') or cfg.get('card_edge_hide') or app_fold!='off':
             from desktop_edge_reveal import EdgeReveal,option
             setting=option(key)
-            enabled=bool(setting and self.runtime.dock.cfg.get(setting) and window.isWindow())
-            if enabled and edge is None:
+            enabled=bool(setting and cfg.get(setting) and window.isWindow())
+            if (enabled or app_fold!='off') and edge is None:
                 window.edge_reveal=edge=EdgeReveal(window,self.runtime,key=='resource')
             if edge:
-                edge.configure(enabled)
-                if edge.fraction<1.:mode=False
+                edge.configure(enabled,app_fold)
+                if edge.fraction<1. and not edge.over_app:mode=False
         self.applying=True
         try:
             visible = window.isVisible()
@@ -87,11 +89,33 @@ class ClickThroughPolicy(QObject):
                 self.watched.pop(window, None)
             self.sync_timer()
             passthrough = mode is True and not unlocked
+            diagnostics=getattr(window,'capsule_diagnostics',None)
+            trace=None
             if conditional and not unlocked:
-                passthrough = application_under(int(window.winId()), point if point is not None else cursor_position())
-            restored = not passthrough and window.testAttribute(Qt.WA_TransparentForMouseEvents)
+                probe=point if point is not None else cursor_position()
+                if diagnostics is None:
+                    passthrough = application_under(int(window.winId()),probe)
+                else:
+                    trace={}
+                    hwnd=int(window.winId())
+                    passthrough = application_under(hwnd,probe,trace)
+                    if trace.get('inside'):
+                        trace['visible']=True
+                        mask=window.mask()
+                        if not mask.isEmpty():
+                            from window_layers import client_frame
+                            frame=client_frame(hwnd)
+                            if frame:
+                                x,y,width,height=frame
+                                trace['visible']=mask.contains(QPoint((probe.x-x)*window.width()//width,
+                                                                     (probe.y-y)*window.height()//height))
+            changed = passthrough != window.testAttribute(Qt.WA_TransparentForMouseEvents)
             click_through(window,passthrough)
-            if restored and visible:
+            if changed and edge and edge.visible_ball is not None:edge.visible_ball.repaint()
+            if visible and diagnostics is not None and self.app.activePopupWidget() is None:
+                diagnostics.record_policy(mode,conditional,unlocked,passthrough,trace,
+                                          bool(edge and edge.fraction<1. and not edge.over_app))
+            if changed and not passthrough and visible:
                 self.input_restored.emit(window)
         finally:self.applying=False
 

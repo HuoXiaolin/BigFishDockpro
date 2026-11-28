@@ -5,8 +5,10 @@ from pathlib import Path
 
 def check_tray_rows(runtime, app, output, checks):
     from unittest.mock import patch
-    from PyQt5.QtCore import QPoint
+    from PyQt5 import sip
+    from PyQt5.QtCore import QEvent, QPoint, QTimer
     from PyQt5.QtGui import QColor, QImage, QPainter
+    from PyQt5.QtWidgets import QDialog
     from desktop_panel_tests import wait_for
     from menu_paths import action_at
     from settings_interaction_tests import click_at
@@ -14,7 +16,15 @@ def check_tray_rows(runtime, app, output, checks):
     screen = app.primaryScreen().availableGeometry()
     root = runtime.tray.menu
     points = (screen.topLeft() + QPoint(40, 45), screen.topRight() + QPoint(-3, 45))
-    with patch.object(runtime.productivity, 'open_layouts') as open_layouts:
+    alive_in_dialog = []
+    def open_modal(checked=False):
+        dialog = QDialog()
+        def inspect():
+            alive_in_dialog.append(bool(root.actions()) and not sip.isdeleted(action) and not sip.isdeleted(parent))
+            dialog.accept()
+        QTimer.singleShot(10,inspect)
+        dialog.exec_()
+    with patch.object(runtime.productivity, 'open_layouts',side_effect=open_modal) as open_layouts:
         for index, anchor in enumerate(points):
             root.popup(anchor)
             app.processEvents()
@@ -48,9 +58,14 @@ def check_tray_rows(runtime, app, output, checks):
                             painter.end(); image.save(str(Path(output)/'tray-menu-cascade.png'))
                         click_at(parent, left if index==0 else right)
                         assert open_layouts.call_count == index+1 and not root.isVisible()
+                        assert alive_in_dialog[-1]
+                        wait_for(app,lambda:not root.actions())
+                        app.sendPostedEvents(None,QEvent.DeferredDelete)
+                        assert sip.isdeleted(action) and sip.isdeleted(parent)
             finally:
                 root.close(); app.processEvents()
     checks.append('Tray context menu: left and right row edges open two nested menus and trigger the leaf; compact content widths and outward cascades at both screen edges')
+    checks.append('Nested tray mouse release keeps its selected action and menus alive throughout a modal dialog, then frees the hidden tree after dispatch.')
 
 def run(output):
     from run_isolated_test import assert_isolated

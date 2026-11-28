@@ -135,7 +135,7 @@ def check_widgets(api,runtime,output,checks):
     from PyQt5.QtCore import QRect
     from background_contrast import wallpaper_samples
     from tempfile import TemporaryDirectory
-    from wallpaper_source import invalidate_source
+    from wallpaper_source import _window_monitor, invalidate_source
     with TemporaryDirectory() as folder:
         bands=QImage(40,24,QImage.Format_RGB32)
         bands.fill(QColor('#451687'))
@@ -143,6 +143,8 @@ def check_widgets(api,runtime,output,checks):
         source=str(Path(folder)/'split.png')
         assert bands.save(source)
         geometry=panel.screen().geometry()
+        native_rect=_window_monitor(panel).monitor
+        monitor=QRect(native_rect.left,native_rect.top,native_rect.right-native_rect.left,native_rect.bottom-native_rect.top)
         origin=panel.mapFromGlobal(geometry.topLeft())
         def sample_at(fraction):
             rect=QRect(origin.x()+round(geometry.width()*fraction),origin.y()+geometry.height()//2,8,8)
@@ -150,7 +152,7 @@ def check_widgets(api,runtime,output,checks):
         invalidate_source()
         try:
             with patch('wallpaper_source.desktop_wallpaper',side_effect=OSError('per-monitor API unavailable')), \
-                 patch('wallpaper_source.system_wallpaper',return_value=(source,2,QColor('black'),geometry,geometry)) as system:
+                 patch('wallpaper_source.system_wallpaper',return_value=(source,2,QColor('black'),monitor,monitor)) as system:
                 assert sample_at(.25)==(213,234,250) and sample_at(.75)==(69,22,135)
                 assert system.call_count==1
         finally:invalidate_source()

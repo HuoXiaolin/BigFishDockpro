@@ -4,7 +4,8 @@ from ctypes import wintypes as W
 from functools import lru_cache
 
 from taskbar_surface import _bindings, _sample_screen_dc
-from window_layers import DESKTOP_WINDOW_CLASSES, _dwm_window_attribute, native
+from window_layers import (WALLPAPER_HOSTS, _dwm_window_attribute, client_frame, native,
+                           points_in_surface, surface_role, visible_frame, window_class)
 
 
 COLUMNS, ROWS = 16, 8
@@ -16,12 +17,12 @@ def _user():
     user.GetWindowDC.argtypes = [W.HWND]
     user.GetWindowDC.restype = W.HDC
     user.ReleaseDC.argtypes = [W.HWND, W.HDC]
-    user.GetClientRect.argtypes = [W.HWND, C.POINTER(W.RECT)]
-    user.ClientToScreen.argtypes = [W.HWND, C.POINTER(W.POINT)]
     user.WindowFromPoint.argtypes = [W.POINT]
     user.WindowFromPoint.restype = W.HWND
-    user.GetAncestor.argtypes = [W.HWND, W.UINT]
-    user.GetAncestor.restype = W.HWND
+    user.MonitorFromWindow.argtypes = [W.HWND,W.DWORD]
+    user.MonitorFromWindow.restype = W.HANDLE
+    user.MonitorFromPoint.argtypes = [W.POINT,W.DWORD]
+    user.MonitorFromPoint.restype = W.HANDLE
     user.GetWindowDisplayAffinity.argtypes = [W.HWND, C.POINTER(W.DWORD)]
     return user
 
@@ -62,12 +63,12 @@ def _window_colors(hwnd, frame, rect, points, flags):
     if compositor:
         rendered = rendered_colors(hwnd,rect,local)
         if rendered:
-            return rendered
+            return rendered,'应用渲染读回'
     colors = _colors(hwnd, local)
     if not compositor and not any(colors):
         rendered = rendered_colors(hwnd,rect,local)
         if rendered:
-            return rendered
+            return rendered,'应用渲染读回'
     # Some DirectComposition clients expose an empty GDI surface. Validate a
     # uniform surface against *the same* visible points before substituting any
     # edge colors. A real black page, or a white page with a dark toolbar, is valid.
@@ -81,39 +82,76 @@ def _window_colors(hwnd, frame, rect, points, flags):
                 if not compositor:
                     rendered = rendered_colors(hwnd,rect,local)
                     if rendered:
-                        return rendered
+                        return rendered,'应用渲染读回'
                 def nearest(point):
                     x, y = point
                     return min(exposed, key=lambda item:(x-item[0][0])**2+(y-item[0][1])**2)[1]
-                return [nearest(p) for p in points]
-    return colors
+                return [nearest(p) for p in points],'同一应用邻近的可见像素'
+    return colors,'窗口设备上下文'
 
 
-def window_samples(window, local_rect):
-    """Return a 16 by 8 grid. Empty cells belong to the wallpaper or are unavailable."""
+def _sample_grid(window, local_rect):
     from PyQt5.QtCore import Qt
-    from PyQt5.QtWidgets import QWidget
     if not window.isVisible() or not window.testAttribute(Qt.WA_WState_Created) or local_rect.isEmpty():
         return None
-    user = _user()
     hwnd = int(window.winId())
-    client, origin = W.RECT(), W.POINT()
-    if not user.GetClientRect(hwnd, C.byref(client)) or not user.ClientToScreen(hwnd, C.byref(origin)):
+    client = client_frame(hwnd)
+    if not client:
         return None
     # Both the window DC and the z-order rectangles are in native pixels.
     # Qt global positions need not share the same origin at mixed display scales.
-    sx, sy = client.right/max(1,window.width()), client.bottom/max(1,window.height())
-    frame = origin.x, origin.y, origin.x+client.right, origin.y+client.bottom
-    points = [(origin.x+int(sx*(local_rect.x()+local_rect.width()*(x+.5)/COLUMNS)),
-               origin.y+int(sy*(local_rect.y()+local_rect.height()*(y+.5)/ROWS)))
+    left,top,width,height = client
+    sx, sy = width/max(1,window.width()), height/max(1,window.height())
+    frame = left,top,left+width,top+height
+    points = [(left+int(sx*(local_rect.x()+local_rect.width()*(x+.5)/COLUMNS)),
+               top+int(sy*(local_rect.y()+local_rect.height()*(y+.5)/ROWS)))
               for y in range(ROWS) for x in range(COLUMNS)]
+    return hwnd,frame,points
+
+
+def exposed_wallpaper_samples(window,local_rect):
+    """Last resort for unreadable wallpaper files. Only sample exposed shell pixels on this monitor."""
+    grid = _sample_grid(window,local_rect)
+    if not grid:
+        return None
+    hwnd, (left,top,right,bottom), points = grid
+    user = _user()
+    monitor = user.MonitorFromWindow(hwnd,0)
+    if not monitor:
+        return None
+    neighbours = set()
+    for x,y in points:
+        neighbours.update(((x,top-3),(x,bottom+2),(left-3,y),(right+2,y)))
+    exposed = []
+    for x,y in sorted(neighbours):
+        point = W.POINT(x,y)
+        if user.MonitorFromPoint(point,0)!=monitor:
+            continue
+        hit = user.WindowFromPoint(point)
+        if hit and window_class(user.GetAncestor(hit,2)) in WALLPAPER_HOSTS:
+            exposed.append((x,y))
+    if len(exposed)<3:
+        return None
+    samples = [(p,c) for p,c in zip(exposed,_colors(None,exposed)) if c is not None]
+    if len(samples)<3:
+        return None
+    return tuple(min(samples,key=lambda s:(s[0][0]-x)**2+(s[0][1]-y)**2)[1] for x,y in points)
+
+
+def window_samples(window, local_rect, *, sources=None):
+    """Return a 16 by 8 grid. Empty cells belong to the wallpaper or are unavailable."""
+    from PyQt5.QtWidgets import QWidget
+    grid = _sample_grid(window,local_rect)
+    if not grid:
+        return None
+    hwnd,frame,points = grid
+    user = _user()
     pending = list(range(len(points)))
     result = [None] * len(points)
     current = hwnd
     seen = {hwnd}
     attribute = _dwm_window_attribute()
-    name = C.create_unicode_buffer(128)
-    rect, bounds, cloaked, affinity = W.RECT(), W.RECT(), W.DWORD(), W.DWORD()
+    rect, cloaked, affinity = W.RECT(), W.DWORD(), W.DWORD()
     while pending:
         current = user.GetWindow(current, 2)  # GW_HWNDNEXT
         if not current or current in seen:
@@ -127,18 +165,32 @@ def window_samples(window, local_rect):
             continue
         flags = user.GetWindowLongW(current,-20)
         overlay = QWidget.find(current)
-        if ((flags & 0x80020) == 0x80020 or
-                overlay is not None and (overlay.property('clickThroughKey') or overlay.property('desktopLayerKey'))):
+        if overlay is not None and (overlay.property('clickThroughKey') or overlay.property('desktopLayerKey')):
             continue
-        box = bounds if attribute(current,9,C.byref(bounds),C.sizeof(bounds)) == 0 else rect
+        box = visible_frame(current,rect)
         inside = [i for i in pending if box.left<=points[i][0]<box.right and box.top<=points[i][1]<box.bottom]
         if not inside:
             continue
-        user.GetClassNameW(current,name,len(name))
-        if name.value not in DESKTOP_WINDOW_CLASSES and not (user.GetWindowDisplayAffinity(current,C.byref(affinity)) and affinity.value):
-            colors = _window_colors(current,frame,rect,[points[i] for i in inside],flags)
-            for i,color in zip(inside,colors):
-                result[i] = color
+        name=window_class(current)
+        role = surface_role(current,name,flags)
+        if role=='overlay':
+            continue
+        inside = points_in_surface(current,rect,flags,points,inside)
+        if not inside:
+            continue
+        method='桌面区域'
+        if role=='application':
+            if user.GetWindowDisplayAffinity(current,C.byref(affinity)) and affinity.value:
+                method='窗口启用显示保护'
+            else:
+                colors,method = _window_colors(current,frame,rect,[points[i] for i in inside],flags)
+                for i,color in zip(inside,colors):
+                    result[i] = color
+        if sources is not None:
+            pid=W.DWORD()
+            user.GetWindowThreadProcessId(current,C.byref(pid))
+            sources.append({'HWND':hex(current),'PID':pid.value,'窗口类':name,'取色方式':method,
+                            '覆盖点数':len(inside),'成功读取点数':sum(result[i] is not None for i in inside)})
         covered = set(inside)
         pending = [i for i in pending if i not in covered]
     return tuple(result) if any(color is not None for color in result) else None

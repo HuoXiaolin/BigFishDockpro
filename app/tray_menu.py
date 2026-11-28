@@ -3,16 +3,42 @@ import ctypes
 import os
 from ctypes import wintypes
 
+from PyQt5 import sip
 from PyQt5.QtCore import QEvent, QTimer
 from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QApplication, QMenu
 from ui_style import AlignedMenu
 
 
-class TrayContextMenu(AlignedMenu):
+class _TrayPopup(AlignedMenu):
+    def new_submenu(self,title):
+        return _TrayPopup(title,self)
+
+    def event(self,event):
+        if event.type() not in (QEvent.MouseButtonRelease,QEvent.KeyPress,QEvent.Shortcut):
+            return super().event(event)
+        root=self
+        while isinstance(root.parentWidget(),_TrayPopup):
+            root=root.parentWidget()
+        # Qt still uses the selected action and its parent menus after triggered()
+        # returns. Its handler may run another event loop while the popup is hidden.
+        root.dispatch_depth+=1
+        try:
+            return super().event(event)
+        finally:
+            root.dispatch_depth-=1
+            if not root.dispatch_depth and not sip.isdeleted(root) and not root.isVisible():
+                root.cleanup.start()
+
+
+class TrayContextMenu(_TrayPopup):
     """Dismiss a Windows tray popup when input goes outside its menu tree."""
     def __init__(self):
         super().__init__()
+        self.dispatch_depth=0
+        self.cleanup=QTimer(self)
+        self.cleanup.setSingleShot(True)
+        self.cleanup.timeout.connect(self.release_if_hidden)
         self.user=ctypes.windll.user32
         self.user.GetForegroundWindow.restype=wintypes.HWND
         self.user.SetForegroundWindow.argtypes=[wintypes.HWND]
@@ -33,6 +59,7 @@ class TrayContextMenu(AlignedMenu):
         return {key for key in (1,2,4) if self.user.GetAsyncKeyState(key)&0x8000}
 
     def showEvent(self,event):
+        self.cleanup.stop()
         super().showEvent(event)
         QApplication.instance().installEventFilter(self)
         self.buttons=self.mouse_buttons()
@@ -49,8 +76,8 @@ class TrayContextMenu(AlignedMenu):
         self.watcher.stop()
         QApplication.instance().removeEventFilter(self)
         super().hideEvent(event)
-        # Qt hides the menu before dispatching the chosen action.
-        QTimer.singleShot(0, self.release_if_hidden)
+        if not self.dispatch_depth:
+            self.cleanup.start()
 
     def clear_actions(self):
         owned_menus = {submenu for action in self.actions()
@@ -61,7 +88,7 @@ class TrayContextMenu(AlignedMenu):
             submenu.deleteLater()
 
     def release_if_hidden(self):
-        if not self.isVisible():
+        if not self.dispatch_depth and not self.isVisible():
             self.clear_actions()
 
     def eventFilter(self,watched,event):
@@ -177,6 +204,10 @@ def component_actions(menu,capsules,system,tray,runtime):
         monitor=capsules.addMenu('灵动胶囊')
         monitor.addAction('打开资源详情…').triggered.connect(runtime.resources.open)
         monitor.addAction('显示与采样设置…').triggered.connect(runtime.resources.settings)
+        from resource_resize import add_geometry_lock
+        add_geometry_lock(monitor,runtime.resources)
+        from capsule_diagnostics import add_export_action
+        add_export_action(monitor,runtime.resources)
         show=monitor.addAction('显示桌面灵动胶囊');show.setCheckable(True);show.setChecked(tray.cfg['resource_enabled'])
         show.triggered.connect(lambda on:runtime.resources.set_options(resource_enabled=on))
         bt=monitor.addAction('显示外设电量托盘图标');bt.setCheckable(True);bt.setChecked(tray.cfg['resource_bt_tray'])
@@ -238,5 +269,7 @@ def help_actions(menu,tray,runtime):
 
 
 def rebuild(tray):
+    if tray.menu.dispatch_depth:
+        return
     tray.menu.clear_actions()
     common_actions(tray.menu, tray)

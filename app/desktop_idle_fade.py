@@ -81,6 +81,8 @@ class WindowFade(QObject):
                 surface.setWindowOpacity(opacity)
         else:
             window.setWindowOpacity(opacity)
+            edge=getattr(window,'edge_reveal',None)
+            if edge and edge.visible_ball is not None:edge.visible_ball.update()
 
     def fade_to(self, target, duration):
         if target == self.target:
@@ -183,7 +185,11 @@ class DesktopIdleFade(QObject):
             window = widget.window()
             state = self.states.get(window)
             if state is not None and self.runtime.click_policy.accepts_input(window):
-                state.interact()
+                edge = getattr(window, 'edge_reveal', None)
+                # A masked capsule still has its full native rectangle. A synthetic
+                # enter over the clipped-away area must not restart its idle timer.
+                if kind==QEvent.KeyPress or not (edge and edge.capsule and edge.fraction<1.) or edge.visible_at_cursor():
+                    state.interact()
         return False
 
     def close(self):

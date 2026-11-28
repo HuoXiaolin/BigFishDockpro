@@ -162,7 +162,8 @@ DEFAULTS.update(resource_component_locations={},resource_component_order=list(CA
 DEFAULTS.update(resource_mail=False, resource_mail_accounts=[], resource_mail_notifications=True,
                 resource_alert_mail_code=True, resource_mail_icon=False, resource_mail_interval=30)
 DEFAULTS.update(dict.fromkeys(('resource_alert_'+key for key in DEVICE_ALERTS), False))
-DEFAULTS.update(resource_edge_hide=False, resource_alert_stopwatch=True, resource_alert_alarm=True)
+DEFAULTS.update(resource_edge_hide=False, resource_app_fold='light', resource_geometry_locked=False,
+                resource_alert_stopwatch=True, resource_alert_alarm=True)
 DEFAULTS.update(resource_compact_zones={}, resource_clock_weekday=True, resource_clock_lunar=False,
                 resource_clock_festival=True)
 DEFAULTS.update(resource_compact_rotate_interval=6, **dict.fromkeys(ZONE_ROTATION_KEYS.values(), True))
@@ -278,6 +279,7 @@ def migrate_rotation(cfg):
 
 def normalize(cfg,strict=False):
     migrate_rotation(cfg)
+    cfg.setdefault('resource_app_fold',DEFAULTS['resource_app_fold'])
     cfg.setdefault('resource_halo_color_mode', DEFAULTS['resource_halo_color_mode'])
     cfg['resource_halo_mono_color'] = clean_halo_color(cfg.get('resource_halo_mono_color', ''), strict)
     profiles=cfg.get('resource_peripheral_profiles',[])
@@ -357,7 +359,7 @@ def normalize(cfg,strict=False):
     from appearance_presets import CONTENT_MODES
     cfg.setdefault('resource_content_mode','auto')
     options={'resource_content_mode':tuple(v for _,v in CONTENT_MODES),'resource_background':('global','app','custom'),'resource_backdrop_mode':tuple(value for _,value in BACKDROP_MODES),
-             'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),
+             'resource_layer':('top','bottom'),'resource_fold':('pill','ball','bar'),'resource_app_fold':('off','light','ball'),
              'resource_palette':('theme','vivid','custom'),'resource_interval':(1,2,5),
              'resource_music_text':('wave','title','lyrics'),'resource_equalizer':('flow','spectrum'),
              'resource_ai_tray_mode':('auto','fixed'),
@@ -377,7 +379,7 @@ def normalize(cfg,strict=False):
         if cfg.get(key) not in allowed:
             if strict:raise ValueError('灵动胶囊设置无效：'+key)
             cfg[key]=DEFAULTS[key]
-    for key in ('resource_edge_hide','resource_alert_stopwatch','resource_alert_alarm','resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
+    for key in ('resource_geometry_locked','resource_edge_hide','resource_alert_stopwatch','resource_alert_alarm','resource_edge_snap','resource_peer_snap','resource_system_status','resource_pomodoro','resource_capsule_taskbar','resource_app_traffic',
                 'resource_agenda','resource_water_enabled','resource_compact_ai','resource_compact_music','resource_reminder_sound',
                 'resource_face_auto_switch','resource_runner_enabled','resource_tray_runner_enabled',
                 'resource_mail','resource_mail_notifications','resource_mail_icon','resource_weather_location',

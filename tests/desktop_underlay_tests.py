@@ -23,6 +23,8 @@ class TestBackground(QWidget):
 
 
 def run(runtime, output, checks):
+    from desktop_overlay_tests import run as check_overlays
+    check_overlays(runtime,output,checks)
     from custom_card_data import normalize_cards
     from custom_cards import CustomCard, CustomCards
     from daily_picture_card import DailyPictureCard

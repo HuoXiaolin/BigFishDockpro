@@ -320,10 +320,13 @@ class AlignedMenu(QMenu):
 
     def addMenu(self, title):
         if isinstance(title, str):
-            menu = AlignedMenu(title, self)
+            menu = self.new_submenu(title)
             super().addMenu(menu)
             return menu
         return super().addMenu(title)
+
+    def new_submenu(self,title):
+        return AlignedMenu(title,self)
 
     def showEvent(self, event):
         super().showEvent(event)

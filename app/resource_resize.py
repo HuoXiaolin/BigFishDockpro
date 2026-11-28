@@ -4,19 +4,26 @@ from PyQt5.QtWidgets import QWidget,QApplication
 from screen_layout import capture,screen_records
 
 
+def add_geometry_lock(menu, service):
+    action=menu.addAction('锁定位置和大小')
+    action.setCheckable(True)
+    action.setChecked(service.cfg['resource_geometry_locked'])
+    action.triggered.connect(lambda checked:service.set_options(resource_geometry_locked=checked))
+
+
 class ResizeEdge(QWidget):
     def __init__(self,owner,edge):
         super().__init__(owner);self.owner=owner;self.edge=edge;self.active=False
         self.setCursor(Qt.SizeFDiagCursor if edge in ('lt','rb') else Qt.SizeBDiagCursor if edge in ('rt','lb') else Qt.SizeHorCursor if edge in ('l','r') else Qt.SizeVerCursor)
         self.setAccessibleName('拖动调整胶囊大小');self.setMouseTracking(True)
     def mousePressEvent(self,event):
-        if event.button()!=Qt.LeftButton:return
+        if event.button()!=Qt.LeftButton or self.isHidden():event.ignore();return
         w=self.owner;self.active=True;self.start=event.globalPos();self.original=QRect(w.geometry())
         w.liquid.snap.stop();w.liquid.landing=False;w.liquid.stop_bridge()
         screen=QApplication.screenAt(w.geometry().center()) or QApplication.primaryScreen();self.area=screen.availableGeometry()
-        w.press=self.start;w.enter_timer.stop();event.accept()
+        w.press=self.start;w.press_locked=False;w.enter_timer.stop();event.accept()
     def mouseMoveEvent(self,event):
-        if not self.active:return
+        if not self.active or self.isHidden():return
         w=self.owner;compact=w.service.compact;delta=event.globalPos()-self.start;r=QRect(self.original)
         min_w,min_h,max_w,max_h=(96,28,1400,100) if compact else (260,180,1000,800)
         min_w=min(min_w,self.area.width());min_h=min(min_h,self.area.height())
@@ -50,6 +57,13 @@ class ResizeEdges:
                't':(corner,0,width-2*corner,edge),'b':(corner,height-edge,width-2*corner,edge),
                'lt':(0,0,corner,corner),'rt':(width-corner,0,corner,corner),
                'lb':(0,height-corner,corner,corner),'rb':(width-corner,height-corner,corner,corner)}
-        show=not w.service.compact or (w.service.cfg['resource_fold']!='ball' and w.taskbar_slot() is None)
+        reveal=getattr(w,'edge_reveal',None)
+        show=(not w.service.cfg['resource_geometry_locked'] and not (reveal and reveal.presenting_marker) and
+              (not w.service.compact or (w.service.cfg['resource_fold']!='ball' and w.taskbar_slot() is None)))
         for key,handle in self.handles.items():
-            handle.setGeometry(*boxes[key]);handle.setVisible(show);handle.raise_()
+            if not show and handle.active:
+                handle.active=False
+                w.press=None
+                if QWidget.mouseGrabber() is handle:handle.releaseMouse()
+            handle.setGeometry(*boxes[key]);handle.setVisible(show)
+            if show:handle.raise_()

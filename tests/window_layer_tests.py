@@ -31,6 +31,9 @@ def check_alt_unlock(api, runtime, app, capsule, strip, cover, center, hit, othe
     menu.deleteLater()
 
     hwnd, bar = int(capsule.winId()), int(strip.winId())
+    # The preceding scenario promoted the fullscreen cover to test z-order repair.
+    # The Alt scenario starts with a regular application underneath both readouts.
+    assert restack(int(cover.winId()),-2) and not is_topmost(int(cover.winId()))  # HWND_NOTOPMOST
     down = set()
     # Bit 0 alone only reports a previous press. Inject the high bit for a held
     # modifier without sending any physical keys to the user's input desktop.
@@ -49,7 +52,9 @@ def check_alt_unlock(api, runtime, app, capsule, strip, cover, center, hit, othe
         assert passes(capsule) and passes(strip) and hit(hwnd)==int(cover.winId())
         down.add(0xA4)
         wait_for(app, lambda: not passes(capsule) and not passes(strip))
-        assert hit(hwnd)==hwnd and hit(bar)==bar
+        assert hit(hwnd)==hwnd and hit(bar)==bar, (hwnd,hit(hwnd),bar,hit(bar),int(cover.winId()),
+                                                  capsule.geometry().getRect(),capsule.mask().boundingRect().getRect(),
+                                                  covers_above(int(cover.winId()),hwnd),is_topmost(hwnd),is_topmost(bar))
         down.add(0xA5);down.remove(0xA4)
         policy.update_pointer()
         assert not passes(capsule) and not passes(strip)
@@ -80,7 +85,7 @@ def check_alt_unlock(api, runtime, app, capsule, strip, cover, center, hit, othe
 def run(api,runtime,app,output,checks):
     dock=runtime.dock;cfg=dock.cfg;before=copy.deepcopy(cfg)
     service=runtime.resources
-    cover=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowDoesNotAcceptFocus)
+    cover=QWidget(None,Qt.Window|Qt.FramelessWindowHint|Qt.WindowDoesNotAcceptFocus)
     shell=QWidget(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowDoesNotAcceptFocus)
     user=native()
     user.WindowFromPoint.argtypes=[W.POINT];user.WindowFromPoint.restype=W.HWND

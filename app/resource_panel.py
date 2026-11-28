@@ -483,10 +483,12 @@ class ResourceContentHost(QWidget):
 class ResourceWindow(Foldable,ResourceContentHost):
     def __init__(self,service):
         super().__init__(service)
+        from capsule_diagnostics import CapsuleDiagnostics
+        self.capsule_diagnostics=CapsuleDiagnostics()
         self.setProperty('clickThroughKey','resource')
         self.runner_hovered=False
         self.setMouseTracking(True)
-        self.press=None;self.page_turns=PageTurns();self.last_layer=None
+        self.press=None;self.press_locked=False;self.page_turns=PageTurns();self.last_layer=None
         self.component_pages = {'resources':0, 'alert_almanac':0}
         self.taskbar_placement=None
         self.taskbar_size=None
@@ -791,6 +793,10 @@ class ResourceWindow(Foldable,ResourceContentHost):
             if self.halo_updated_at is not None:
                 self.halo_phase = (self.halo_phase + (now - self.halo_updated_at) / period) % 1
             self.halo_updated_at = now
+            edge = getattr(self,'edge_reveal',None)
+            if edge and edge.visible_ball is not None:
+                edge.visible_ball.update()
+                if edge.fraction==0.:return
         if self.compact_scroll and now - self.compact_scroll[1] >= COMPACT_SCROLL_SECONDS:
             pending = self.compact_scroll_pending
             self.compact_scroll = None
@@ -1020,12 +1026,20 @@ class ResourceWindow(Foldable,ResourceContentHost):
         if key != self._wallpaper_key:
             self._wallpaper_key = key
             self.glass.clear()
+            edge=getattr(self,'edge_reveal',None)
+            if edge and edge.light is not None and edge.light.glass is not None:
+                edge.light.glass.clear()
+                edge.light.update()
             self.update()
 
     def sync_window(self):
         self.liquid.prepare()
         self._compact_cache=None
         cfg=self.service.cfg
+        if cfg['resource_geometry_locked'] and self.press is not None and not self.press_locked:
+            self.resize_edges.sync()
+            self.press=None
+            self.liquid.released()
         previous=getattr(self,'background',None)
         palette_changed=self.sync_palette()
         compact = self.service.compact
@@ -1333,7 +1347,12 @@ class ResourceWindow(Foldable,ResourceContentHost):
 
     def paintEvent(self,event):
         if not self.colors:return
+        edge=getattr(self,'edge_reveal',None)
+        marker=edge.visible_ball if edge else None
+        if marker is not None and edge.fraction==0.:return
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
+        if marker is not None:
+            p.setClipRegion(QRegion(self.rect()).subtracted(QRegion(marker.geometry(),QRegion.Ellipse)))
         cfg=self.service.cfg;c=self.colors;compact=self.service.compact;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
         radius,inset,corners=self.glass_shape()
         self.glass.paint(p,self,self.service.runtime.dock,radius,self.press is not None,self.background,inset,
@@ -1538,7 +1557,9 @@ class ResourceWindow(Foldable,ResourceContentHost):
         if event.button()==Qt.LeftButton and (event.y()<38 or self.service.compact):
             self.enter_timer.stop();self.outside_since=None;self.press=event.globalPos();self.origin=self.pos()
             self.moved=False;event.accept()
-            self.liquid.begin()
+            self.press_locked=self.service.cfg['resource_geometry_locked']
+            if self.press_locked:self.liquid.press(True)
+            else:self.liquid.begin()
         else:super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
         if self.press is None:
@@ -1553,7 +1574,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
             return
         delta=event.globalPos()-self.press
         if delta.manhattanLength()>=QApplication.startDragDistance():self.moved=True
-        if self.moved:
+        if self.moved and not self.press_locked:
             target=self.origin+delta
             if self.pos()!=target:self.move(target);self.liquid.moved()
             event.accept()
@@ -1571,6 +1592,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         if not self.moved:
             if self.service.compact:self.expand_from(event.pos())
             return
+        if self.press_locked:return
         bar=self.taskbar_at(event.globalPos())
         if bar:
             center=self.geometry().center()
@@ -1592,6 +1614,8 @@ class ResourceWindow(Foldable,ResourceContentHost):
         menu_heading(menu,'灵动胶囊')
         menu.addAction('展开详情' if self.service.compact else '收起胶囊',lambda:self.service.fold(not self.service.compact))
         menu.addAction('资源显示设置…',self.service.settings)
+        from capsule_diagnostics import add_export_action
+        add_export_action(menu,self.service)
         menu.addSeparator()
         behavior=menu_group(menu,'展开与吸附','corner')
         opening=behavior.addMenu('展开后默认页面')
@@ -1600,6 +1624,8 @@ class ResourceWindow(Foldable,ResourceContentHost):
             item.setEnabled(key=='last' or self.page_enabled(key))
             item.triggered.connect(lambda checked,key=key:self.service.set_options(resource_open_page=key))
         window=menu_group(menu,'窗口与交互','position')
+        from resource_resize import add_geometry_lock
+        add_geometry_lock(window,self.service)
         for name,layer in [('置顶显示','top'),('置于底层','bottom')]:
             item=window.addAction(name);item.setCheckable(True);item.setChecked(cfg['resource_layer']==layer)
             item.triggered.connect(lambda checked,layer=layer:self.service.set_options(resource_layer=layer))

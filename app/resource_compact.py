@@ -99,8 +99,7 @@ def mono_halo_inks(value, light):
     return track, tuple(layers)
 
 
-def paint_mono_halo(window, painter, rect, transform, color, light):
-    path, length = window.halo_path, window.halo_length
+def paint_mono_halo(path, length, phase, painter, rect, transform, color, light):
     if length <= 0 or rect.isEmpty():return
     track, layers = mono_halo_inks(color, light)
     painter.setPen(track)
@@ -108,7 +107,7 @@ def paint_mono_halo(window, painter, rect, transform, color, light):
     # Locate the head and falloff by distance along the actual rounded outline.
     # Map those points into one continuous gradient, including across the seam.
     lead, tail = min(7., length*.025), min(170., length*.32)
-    head = (window.halo_phase % 1.) * length
+    head = (phase % 1.) * length
     center = rect.center()
     angles = []
     for offset in (lead, lead*.45, 0., -tail*.08, -tail*.23, -tail*.45, -tail*.72, -tail):
@@ -125,21 +124,27 @@ def paint_mono_halo(window, painter, rect, transform, color, light):
         painter.drawPath(path)
 
 
-def paint_halo(window,p,damage=None,fold=None):
+def paint_halo(window,p,damage=None,fold=None,*,ball_widget=None):
     cfg = window.service.cfg
     if not cfg['resource_halo']:return
-    r=QRectF(window.rect()).adjusted(4.5,4.5,-4.5,-4.5)
+    target=ball_widget if ball_widget is not None else window
+    r=QRectF(target.rect()).adjusted(4.5,4.5,-4.5,-4.5)
+    if r.isEmpty():return
     radius=(12 if (fold or cfg['resource_fold'])=='bar' else r.height()/2) if window.service.compact else 17
     # Transform the colour field with the capsule's aspect ratio. Three path
     # strokes produce the full luminous ring, without hundreds of draw calls.
-    key=(r.width(),r.height(),radius,window.liquid.radii(radius))
-    if getattr(window,'halo_key',None)!=key:
-        window.halo_path=window.liquid.shape(r,radius)
-        window.halo_length=window.halo_path.length()
-        window.halo_key=key
+    corners=(r.height()/2,)*4 if ball_widget is not None else window.liquid.radii(radius)
+    key=(r.width(),r.height(),radius,corners)
+    if getattr(target,'halo_key',None)!=key:
+        if ball_widget is not None:
+            from resource_liquid_shape import body_path
+            target.halo_path=body_path(r,corners)
+        else:target.halo_path=window.liquid.shape(r,radius)
+        target.halo_length=target.halo_path.length()
+        target.halo_key=key
         stroke=QPainterPathStroker();stroke.setWidth(10);stroke.setJoinStyle(Qt.RoundJoin)
-        window.halo_region=QRegion(stroke.createStroke(window.halo_path).toFillPolygon().toPolygon())
-    if damage is not None and not damage.intersects(window.halo_region):return
+        target.halo_region=QRegion(stroke.createStroke(target.halo_path).toFillPolygon().toPolygon())
+    if damage is not None and not damage.intersects(target.halo_region):return
     p.setBrush(Qt.NoBrush)
     transform = QTransform.fromTranslate(r.center().x(), r.center().y())
     transform.scale(r.width() / 2, r.height() / 2)
@@ -147,14 +152,14 @@ def paint_halo(window,p,damage=None,fold=None):
     if mode == 'mono':
         light = window.colors['light']
         color = cfg.get('resource_halo_mono_color') or halo_default_color(cfg, light)
-        paint_mono_halo(window,p,r,transform,color,light)
+        paint_mono_halo(target.halo_path,target.halo_length,window.halo_phase,p,r,transform,color,light)
         return
     transform.rotate(-window.halo_phase * 360)
     for width, base in halo_brushes(mode):
         brush = QBrush(base)
         brush.setTransform(transform)
         p.setPen(QPen(brush, width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        p.drawPath(window.halo_path)
+        p.drawPath(target.halo_path)
 
 
 def halo_damage(window):

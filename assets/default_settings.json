@@ -936,6 +936,8 @@
   "resource_liquid": true,
   "resource_edge_snap": true,
   "resource_edge_hide": false,
+  "resource_app_fold": "light",
+  "resource_geometry_locked": false,
   "resource_peer_snap": true,
   "resource_edge": "top",
   "resource_face": true,

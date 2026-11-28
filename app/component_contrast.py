@@ -80,6 +80,11 @@ class ContentContrast(QObject):
             layers = _glass_samples(material,theme,tint,opacity,highlight,system_light,design)
         fallback = (235,238,242) if fallback_light else (30,35,40)
         pixels = None
+        diagnostics=getattr(self.widget,'capsule_diagnostics',None)
+        sources=[] if diagnostics is not None else None
+        sampled=None
+        app_cells=0
+        paper_source=None
         needs_background = mode == 'auto' and any(layer[3]<250 for layer in layers)
         self.live = needs_background and desktop_backdrop(self.widget,self.dock.cfg) == 'dynamic'
         if needs_background:
@@ -90,15 +95,30 @@ class ContentContrast(QObject):
                 rect.moveTopLeft(self.widget.mapTo(top,rect.topLeft()))
                 if self.live:
                     from desktop_underlay import window_samples
-                    pixels = window_samples(top, rect)
+                    pixels = window_samples(top, rect, sources=sources)
+                    if diagnostics is not None and pixels:
+                        sampled=pixels
+                        app_cells=sum(color is not None for color in pixels)
                 if pixels is None or None in pixels:
-                    paper = wallpaper_samples(top,rect,allow_fallback=desktop_fallback)
-                    paper = tuple(paper[y*32+x] for y in range(8) for x in range(16)) if paper else (fallback,)*128
+                    try:paper = wallpaper_samples(top,rect,allow_fallback=desktop_fallback)
+                    except OSError:paper = None
+                    if paper:
+                        paper = tuple(paper[y*32+x] for y in range(8) for x in range(16))
+                        paper_source='壁纸或系统桌面底色'
+                    elif desktop_fallback:
+                        from desktop_underlay import exposed_wallpaper_samples
+                        paper = exposed_wallpaper_samples(top,rect)
+                        if paper:paper_source='同一屏幕上可见的桌面像素'
+                    paper = paper or (fallback,)*128
                     pixels = tuple(color if color is not None else paper[i] for i,color in enumerate(pixels)) if pixels else paper
+                    if diagnostics is not None and paper_source:sampled=pixels
             except (OSError, ValueError, RuntimeError, AttributeError):
                 pass
         measurement = self.spec, pixels
         if self.last_measurement == measurement and self.result is not None:
+            if diagnostics is not None:
+                diagnostics.record_colors(self.widget,sampled,app_cells,paper_source,self.surface_samples,
+                                          self.result,mode,needs_background,self.live,sources)
             return self.result
         self.last_measurement = measurement
         samples = [blend(layer[:3], (pixels[i] if pixels else None) or fallback, layer[3]/255)
@@ -113,6 +133,8 @@ class ContentContrast(QObject):
         else:
             light=app_light if mode=='app' else mode=='light'
         self.ink_background=representative if self.uses_custom_ink else None
+        if diagnostics is not None:
+            diagnostics.record_colors(self.widget,sampled,app_cells,paper_source,samples,light,mode,needs_background,self.live,sources)
         return light
 
     def sample_texture(self):
