@@ -96,27 +96,27 @@ class FaceTracker:
             self.frames.stop();return
         if self.face_bounds is not None:self.window.update(self.face_bounds)
 
-    def paint_face(self,p,center,slot=40,colors=None):
+    def paint_face(self,p,center,slot=40,colors=None,*,zoom=1.):
         if self.face is None or not self.option('face'):return
-        w=self.window;center=QPointF(center);cursor=w.mapFromGlobal(QCursor.pos());look=QPointF(cursor)-center
+        w=self.window;center=QPointF(center);cursor=w.mapFromGlobal(QCursor.pos());look=QPointF(cursor)/zoom-center
         active=self.interactive
-        self.face_bounds=QRectF(center.x()-slot/2-3,center.y()-20,slot+6,40).toAlignedRect().intersected(w.rect())
+        self.face_bounds=QRectF((center.x()-slot/2-3)*zoom,(center.y()-20)*zoom,(slot+6)*zoom,40*zoom).toAlignedRect().intersected(w.rect())
         self.face.spread=6 if self.down and active else 0;self.face.tilt=14 if self.down and active else 0
         colors=colors or w.colors
         role_id=self.option('face_role')
         if role_id and (role:=self.roles().get(role_id)):
-            available_height=2*min(center.y()-1,w.height()-center.y()-1)
+            available_height=2*min(center.y()-1,w.height()/zoom-center.y()-1)
             size=min(slot-3,26*self.option('face_scale')/100,available_height)
             if size>=6:
                 self.paint_role(p,role,center,size,look,colors,active)
                 return
-        scale=min(.72*self.option('face_scale')/100,(w.height()-10)/28,max(.3,(slot-4)/46))
+        scale=min(.72*self.option('face_scale')/100,(w.height()-10)/28,(w.height()/zoom-2)/28,max(.3,(slot-4)/46))
         self.face.paint(p,center.x(),center.y(),scale,1.,look,self.was_near if active else False,colors,animate=active)
 
     def paint_role(self,p,role,center,size,look,colors,active):
         rect=QRectF(center.x()-size/2,center.y()-size/2,size,size)
         anchors=tuple((rect.x()+size*x/100,rect.y()+size*y/100) for x,y in role.anchors)
-        pixels=min(144,max(1,round(size*p.device().devicePixelRatioF())))
+        pixels=min(256,max(1,round(size*p.deviceTransform().m11())))
         if role.ink:
             colors=dict(colors,ink=role.ink)
         p.save()

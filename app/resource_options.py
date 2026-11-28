@@ -111,6 +111,7 @@ REMINDER_OPTIONS={
 }
 REMINDER_OPTIONS.update({'resource_alert_'+key: title for key,title in DEVICE_ALERTS.items()})
 COMPACT_BADGE_HEIGHT_RANGE=(16,40)
+CAPSULE_CONTENT_SCALE_RANGE = (70, 160)
 COMPACT_ROTATE_INTERVAL_RANGE = (1, 300)
 COMPACT_ZONES = {'left':'靠左', 'center':'中间', 'right':'靠右'}
 ZONE_ROTATION_KEYS = {zone:'resource_compact_rotate_'+zone for zone in COMPACT_ZONES}
@@ -121,6 +122,11 @@ FACE_SWITCH_DEFAULT = 10
 
 def content_columns(window_width):
     return 1 if window_width <= CONTENT_COLUMN_BREAKPOINT else 2
+
+
+def page_columns(owner):
+    width=owner.detail.width() if getattr(owner,'scaled_detail',None) else owner.width()
+    return content_columns(width)
 
 
 DEFAULTS=dict(resource_enabled=False,resource_layer='bottom',resource_click_through=False,resource_auto_hide=True,resource_air_source='auto',
@@ -147,7 +153,7 @@ DEFAULTS.update(resource_traffic=True,resource_app_traffic=False,resource_task_f
                  resource_news=False,resource_news_feeds=[url for _,url in NEWS_FEED_PRESETS],resource_news_disabled_feeds=[],
                 resource_task_music=True,resource_task_music_colorful=False,resource_task_media_parts=list(TASK_MEDIA_PARTS),
                 resource_hide_unavailable=True,resource_limits={},resource_task_order=list(TASK_COLUMN_NAMES),
-                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_compact_metrics=list(COMPACT_METRICS),
+                resource_compact_width=500,resource_compact_height=35,resource_compact_badge_height=20,resource_content_scale=100,resource_compact_metrics=list(COMPACT_METRICS),
                 resource_compact_auto_width=True,resource_compact_pinned=['cpu','memory','gpu','network'],resource_compact_order=[],
                 resource_compact_ai=True,resource_compact_music=True,
                 resource_compact_density='dense',
@@ -460,7 +466,9 @@ def normalize(cfg,strict=False):
             value=DEFAULTS[key]
         cfg[key]=list(dict.fromkeys(value))[:7] if key=='resource_ai_providers' else list(dict.fromkeys(value))
     cfg['resource_task_order'] = list(dict.fromkeys(cfg['resource_task_order'] + list(TASK_COLUMN_NAMES)))
+    cfg.setdefault('resource_content_scale',DEFAULTS['resource_content_scale'])
     for key,low,high in [('resource_task_font',2,24),('resource_weather_days',1,7),('resource_face_scale',60,130),
+                         ('resource_content_scale',*CAPSULE_CONTENT_SCALE_RANGE),
                          ('resource_compact_width',96,1400),('resource_compact_height',28,100),
                          ('resource_compact_badge_height',*COMPACT_BADGE_HEIGHT_RANGE),
                          ('resource_expanded_width',260,1000),('resource_expanded_height',180,800)]:

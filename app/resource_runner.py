@@ -10,6 +10,7 @@ from PyQt5.QtGui import QCursor, QIcon, QImage, QImageReader, QPixmap
 from PyQt5.QtWidgets import QSystemTrayIcon, QToolTip
 
 from resource_options import RUNNER_ANIMALS, RUNNER_FIXED_RATES, RUNNER_METRICS, RUNNER_SLOT
+from capsule_scale import content_scale, content_size, window_rect
 from tray_readout import ReadoutTrayIcon
 
 
@@ -51,15 +52,20 @@ def frame_rate(speed, percent):
 
 
 def capsule_rect(window):
-    side = min(RUNNER_SLOT - 2, window.height() - 6, max(1, window.width() // 2 - 3))
+    return window_rect(window, animal_slot(window)).toRect()
+
+
+def animal_slot(window):
+    size = content_size(window)
+    side = max(1,min(RUNNER_SLOT-2,window.height()-6,size.height()-2,size.width()//2-3))
     inset = 4 if window.width() < 70 else 7
     if window.service.compact and window.fold_shape()=='ball':
         from capsule_order import has_component_order
         if has_component_order(window.service.cfg):
             from capsule_order_layout import ball_slots
-            placed=ball_slots(window,window.width()).get('runner')
+            placed=ball_slots(window,size.width()).get('runner')
             if placed is None:return QRect()
-            return QRect(round(placed.x+(placed.width-side)/2),(window.height()-side)//2,side,side)
+            return QRect(round(placed.x+(placed.width-side)/2),(size.height()-side)//2,side,side)
     if window.width() >= 70 and window.service.compact and window.fold_shape() != 'ball':
         from resource_compact import plan
         layout = plan(window, window.width())
@@ -67,10 +73,10 @@ def capsule_rect(window):
         if not width:
             return QRect()
         left = (layout['positions']['runner'].x if 'positions' in layout else
-                window.width() - 8 - layout['clock_width'] - width)
+                size.width() - 8 - layout['clock_width'] - width)
         side = min(side,width)
-        return QRect(round(left+(width-side)/2),(window.height()-side)//2,side,side)
-    return QRect(window.width() - inset - side, (window.height() - side) // 2, side, side)
+        return QRect(round(left+(width-side)/2),(size.height()-side)//2,side,side)
+    return QRect(size.width() - inset - side, (size.height() - side) // 2, side, side)
 
 
 @lru_cache(maxsize=len(RUNNER_ANIMALS))
@@ -249,8 +255,9 @@ class RunningAnimal(QObject):
             window.update(capsule_rect(window))
 
     def paint(self, painter, window):
-        rect = capsule_rect(window)
-        pixels = max(1, round(rect.width() * window.devicePixelRatioF()))
+        rect = animal_slot(window)
+        if rect.isEmpty():return
+        pixels = max(1, round(rect.width() * content_scale(window) * window.devicePixelRatioF()))
         pixmap = sprite(self.animal, self.frame, pixels)
         painter.drawPixmap(rect, pixmap)
 

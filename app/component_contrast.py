@@ -90,9 +90,9 @@ class ContentContrast(QObject):
         if needs_background:
             try:
                 # Never create a native HWND for an embedded label or card.
-                top = self.widget.window()
-                rect = self.widget.rect()
-                rect.moveTopLeft(self.widget.mapTo(top,rect.topLeft()))
+                from capsule_scale import native_host, widget_rect
+                top = native_host(self.widget)
+                rect = widget_rect(top,self.widget,self.widget.rect()).toAlignedRect()
                 if self.live:
                     from desktop_underlay import window_samples
                     pixels = window_samples(top, rect, sources=sources)

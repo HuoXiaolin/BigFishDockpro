@@ -104,6 +104,10 @@ class LiquidBridge(QWidget):
 
 
 class CapsuleMotion(FaceTracker):
+    def paint_face(self,p,center,slot=40,colors=None):
+        from capsule_scale import content_scale
+        super().paint_face(p,center,slot,colors,zoom=content_scale(self.window))
+
     def __init__(self,window):
         super().__init__(window,lambda:window.service.cfg,'resource',lambda:window.service.runtime.face_roles)
         self.bridge=None;self.drag_edge='free';self.broken=False;self.landing=False

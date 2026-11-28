@@ -1,7 +1,6 @@
 """Local foregrounds and translucent variants of the original capsule badge hues."""
 from functools import lru_cache
 
-from PyQt5.QtCore import QPoint, QRectF
 from PyQt5.QtGui import QColor
 
 from background_contrast import blend, contrast
@@ -30,8 +29,15 @@ def text_ink(accent,colors):
     return _legible(QColor(accent).name(),background,colors['light']) if background is not None else accent
 
 
+def content_colors(window,rect,colors):
+    if getattr(window,'_content_contrast',None) is None:return colors
+    from capsule_scale import window_rect
+    return area_colors(window,window_rect(window,rect),colors)
+
+
 def widget_colors(owner,child,rect=None):
-    area=QRectF(child.rect() if rect is None else rect).translated(child.mapTo(owner,QPoint()))
+    from capsule_scale import widget_rect
+    area=widget_rect(owner,child,child.rect() if rect is None else rect)
     return area_colors(owner,area,owner.colors)
 
 

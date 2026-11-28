@@ -17,7 +17,7 @@ from resource_quota import TRAY_PERIODS, provider_plan_name, tray_label, tray_me
 from resource_device_picker import DevicePicker
 from resource_options import DEVICE_ALERTS, DEVICE_SOURCES, HALO_COLOR_MODES, HALO_SPEEDS, MAIL_INTERVAL_RANGE, MONITOR_DEVICES, RUNNER_ANIMALS, RUNNER_METRICS, RUNNER_SPEEDS, clean_halo_color
 from settings_design import NumericControl,SettingsNavigation
-from resource_options import ALMANAC_CATEGORIES, COMPACT_ROTATE_INTERVAL_RANGE, COMPACT_ZONES, ZONE_ROTATION_KEYS
+from resource_options import ALMANAC_CATEGORIES, CAPSULE_CONTENT_SCALE_RANGE, COMPACT_ROTATE_INTERVAL_RANGE, COMPACT_ZONES, ZONE_ROTATION_KEYS
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
@@ -124,7 +124,7 @@ class ResourceOptions(QDialog):
          'resource_alert_stopwatch','resource_alert_alarm','resource_almanac_interval',*('resource_almanac_'+k for k in ALMANAC_CATEGORIES)},
         {'resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale','resource_face_auto_switch','resource_face_switch_minutes',
          'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height',
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_content_scale','resource_expanded_width','resource_expanded_height',
          'resource_compact_density','resource_compact_rings','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values()},
         {'resource_alert_battery','resource_alert_weather', *('resource_alert_'+key for key in DEVICE_ALERTS)},
         {'resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
@@ -712,6 +712,16 @@ class ResourceOptions(QDialog):
             layout=page(SIZE)
             compact=section(layout,'尺寸与分页')
             compact_form=QFormLayout();compact.addLayout(compact_form)
+            scale = ModernSpinBox()
+            scale.setRange(*CAPSULE_CONTENT_SCALE_RANGE)
+            scale.setSuffix('%')
+            scale.setSingleStep(5)
+            scale.setValue(cfg['resource_content_scale'])
+            scale.setAccessibleName('胶囊内容缩放')
+            control = NumericControl(scale)
+            control.setToolTip('100% 为原始大小。文字、徽标、表情、小动物和展开页一起缩放。胶囊外框宽高单独设置。')
+            compact_form.addRow('内容缩放', control)
+            self.fields['resource_content_scale'] = scale
             self.fields['resource_compact_auto_width']=check('宽度随内容收紧（不超过设定宽度）',cfg['resource_compact_auto_width']);compact.addWidget(self.fields['resource_compact_auto_width'])
             spin(compact_form,'resource_compact_width','胶囊宽度',96,1400,cfg['resource_compact_width'],self.fields)
             spin(compact_form,'resource_compact_height','胶囊高度',28,100,cfg['resource_compact_height'],self.fields)

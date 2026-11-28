@@ -10,7 +10,7 @@ from PyQt5.QtCore import QObject, QPointF, QProcess, QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainterPath, QPen
 
 from resource_options import DEVICE_ALERTS, compact_tile_height
-from compact_colors import area_colors, badge_fill, on_badge, text_ink
+from compact_colors import content_colors, badge_fill, on_badge, text_ink
 
 GROW, HOLD, SHRINK = .19, 5., .23
 KEYBOARD = {'caps_lock', 'input_mode', 'num_lock'}
@@ -298,7 +298,7 @@ class Indicators(QObject):
             value=self.values[kind]
             active=(not value[1] if kind=='volume' else value!='pending' and (bool(value) or kind in ('input_mode','brightness')))
             box=QRectF(left,middle-side/2,width,side);left+=width+3
-            local=area_colors(self.owner.window,box,colors)
+            local=content_colors(self.owner.window,box,colors)
             accent=ACTIVE_INK[kind][0 if local['light'] else 1]
             fill=badge_fill(accent,local,active)
             ink=QColor(text_ink(accent if active else local['muted'],on_badge(local,fill)))

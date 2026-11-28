@@ -11,7 +11,7 @@ from calendar_markers import MARKER_TONES,countdowns,countdown_on,event_last_sec
 from resource_agenda import SOURCES
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import text
-from resource_options import content_columns
+from resource_options import page_columns
 from flash_view import icon
 
 
@@ -387,7 +387,7 @@ class AgendaView(QWidget):
             self.model.set_reminder(event['id'],enabled=event['ack']);self.refresh()
 
     def resizeEvent(self,event):
-        self.layout_.setDirection(QBoxLayout.LeftToRight if content_columns(self.owner.width())==2 else QBoxLayout.TopToBottom)
+        self.layout_.setDirection(QBoxLayout.LeftToRight if page_columns(self.owner)==2 else QBoxLayout.TopToBottom)
         if event.size().width()!=event.oldSize().width():self.update_day_heading()
         super().resizeEvent(event)
 

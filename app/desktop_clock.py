@@ -318,7 +318,8 @@ class DesktopClock(QWidget):
         options=dict(self.option('appearance'),**values)
         if self.parentWidget() is not None:
             host=self.runtime.resources.window
-            if host is not None and self.window() is host:
+            from capsule_scale import native_host
+            if host is not None and native_host(self) is host:
                 options.update(host.background,_host_palette=host.colors)
                 options['design']=self.dock.cfg['card_design']
                 source=self.dock.cfg['resource_background']

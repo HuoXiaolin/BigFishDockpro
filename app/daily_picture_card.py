@@ -123,7 +123,9 @@ class DailyPictureCard(QWidget):
         from appearance_presets import dock_appearance, material_design, panel_appearance
         following = self.cfg['daily_picture_appearance_source'] == 'app'
         if self.embedded:
-            style=dict(self.window().background)
+            from capsule_scale import native_host
+            host=native_host(self)
+            style=dict(host.background)
         elif following:
             style=dock_appearance(self.cfg)
         else:
@@ -137,7 +139,7 @@ class DailyPictureCard(QWidget):
             design=material_design(style['material'],'aurora' if following else design)
         self.border=dict(theme_color=custom_color or self.cfg['theme_color'],panel_color=style['color'],card_design=design)
         colors=palette_for(self.service,style,widget=self,component='daily_picture',refresh=self.sync,design=design)
-        if self.embedded:colors['card_alpha']=self.window().colors['card_alpha']
+        if self.embedded:colors['card_alpha']=host.colors['card_alpha']
         if self.colors!=colors:
             self.colors=colors;palette=self.palette()
             for role,key in ((QPalette.WindowText,'ink'),(QPalette.ButtonText,'ink'),(QPalette.Text,'ink'),

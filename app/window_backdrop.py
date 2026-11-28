@@ -14,7 +14,8 @@ def component_backdrop(cfg, component, *, custom_top=None):
 
 def desktop_backdrop(widget, cfg):
     """Resolve the host of an embedded page and the layer of a detached card."""
-    host = widget.window()
+    from capsule_scale import native_host
+    host = native_host(widget)
     key = host.property('clickThroughKey') or host.property('desktopLayerKey') or ''
     component, _, identity = key.partition(':')
     if component == 'resource' and identity:

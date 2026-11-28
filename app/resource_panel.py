@@ -11,12 +11,13 @@ from ui_style import AlignedMenu
 from screen_layout import screen_records,valid_record,capture,project
 from fold_options import geometry as fold_geometry
 from resource_options import (COMPACT_STATUS,DESKTOP_COMPONENTS,FAN_METRICS,HALO_SPEEDS,METRICS,MONITOR_DEVICES,OPEN_PAGES,RUNNER_SLOT,SENSOR_UNITS,
-                              background,component_available,component_location,content_columns)
+                              background,component_available,component_location,page_columns)
 from flash_view import palette_for,icon
 
 
 from resource_charts import DashboardCard,MetricDisplay,SensorColumns,rate,metric_colors,sync_card_controls
 from capsule_glass import CapsuleGlass
+from capsule_scale import content_scale, content_size, window_rect
 from capsule_order import PageTurns, ZONES, automatic_step
 from resource_options import RESOURCE_READINGS, ZONE_ROTATION_KEYS, almanac_categories
 from desktop_edge_reveal import popup_blocks_folding
@@ -201,15 +202,17 @@ class CapsuleTab(QToolButton):
         colors=widget_colors(self.owner,self)
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         selected=self.isChecked()
+        scale=content_scale(self.owner)
         if selected or self.underMouse() or self.hasFocus():
             selected_alpha=92 if self.owner.background['material']=='clear' else 209 if colors['light'] else 231
             fill=QColor('#ffffff' if colors['light'] else '#303439')
             fill.setAlpha(selected_alpha if selected else 92 if colors['light'] else 102)
             edge=QColor(colors['ink']);edge.setAlpha(160 if self.hasFocus() else 26)
-            painter.setPen(QPen(edge,1) if selected or self.hasFocus() else Qt.NoPen)
+            painter.setPen(QPen(edge,scale) if selected or self.hasFocus() else Qt.NoPen)
             painter.setBrush(fill)
-            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1.5,1.5,-1.5,-1.5),7,7)
-        font=QFont(self.font());font.setPixelSize(11);font.setWeight(QFont.DemiBold if selected else QFont.Medium)
+            inset=1.5*scale
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(inset,inset,-inset,-inset),7*scale,7*scale)
+        font=QFont(self.font());font.setPixelSize(round(11*scale));font.setWeight(QFont.DemiBold if selected else QFont.Medium)
         painter.setFont(font)
         painter.setPen(QColor(colors['ink'] if selected else colors['muted']))
         painter.drawText(self.rect(),Qt.AlignCenter,self.text())
@@ -261,6 +264,7 @@ class ResourceContentHost(QWidget):
                          (QPalette.Highlight,'hover'),(QPalette.HighlightedText,'ink')):
             palette.setColor(role,QColor(colors[key]))
         self.setPalette(palette)
+        if getattr(self,'scaled_detail',None):self.detail.setPalette(palette)
         if self.dashboard is not None:sync_card_controls(self.dashboard,colors)
         return True
 
@@ -359,7 +363,7 @@ class ResourceContentHost(QWidget):
     def layout_dashboard(self):
         groups = ((self.graph, self.rank_section), (self.sensor_columns, self.battery_section))
         visible = tuple(tuple(panel for panel in group if not panel.isHidden()) for group in groups)
-        wide = content_columns(self.width()) == 2
+        wide = page_columns(self) == 2
         key = (wide, visible)
         if key == self.dashboard_layout_key:
             return
@@ -483,6 +487,7 @@ class ResourceContentHost(QWidget):
 class ResourceWindow(Foldable,ResourceContentHost):
     def __init__(self,service):
         super().__init__(service)
+        self.scaled_detail=None
         from capsule_diagnostics import CapsuleDiagnostics
         self.capsule_diagnostics=CapsuleDiagnostics()
         self.setProperty('clickThroughKey','resource')
@@ -821,7 +826,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
                     # its five-second pause while the halo keeps moving.
                     shift=marquee_frame(now-self.marquee_since,self.marquee_span)[0] if kind=='marquee' else None
                     if kind=='scroll' or shift!=getattr(self,'_marquee_shift',None):
-                        damage|=QRegion(area.toAlignedRect().adjusted(-1,-1,1,1))
+                        damage|=QRegion(window_rect(self,area).toAlignedRect().adjusted(-1,-1,1,1))
                     if kind=='marquee':self._marquee_shift=shift
         elif self.service.compact:
             damage=QRegion(self.rect())
@@ -835,7 +840,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 self.update()
             else:
                 for kind,area,*_ in surface[3]:
-                    if kind=='wave':self.update(area.toAlignedRect())
+                    if kind=='wave':self.update(window_rect(self,area).toAlignedRect())
         elif not self.service.compact:
             view=getattr(self,'_music_view',None)
             if view and view.isVisible():view.meter.update()
@@ -941,7 +946,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.page_turns = previous.advance(step,zones)
         from resource_compact import readouts_changed
         if (self.service.cfg.get('motion_enabled',True) and step % count
-                and readouts_changed(layout,previous,self.page_turns,self.width())):
+                and readouts_changed(layout,previous,self.page_turns,content_size(self).width())):
             self.compact_scroll = (previous, time.monotonic(), 1 if step > 0 else -1)
             if not self.animation.isActive() or self.animation.interval() != COMPACT_FRAME_MS:
                 self.animation.start(COMPACT_FRAME_MS)
@@ -1051,7 +1056,9 @@ class ResourceWindow(Foldable,ResourceContentHost):
         preferred = cfg['resource_open_page']
         if opening and preferred != 'last':
             self.page_key = preferred if self.page_enabled(preferred) else self.first_page()
+        self.layout_content()
         self.detail.setVisible(not compact)
+        if self.scaled_detail:self.scaled_detail.setVisible(not compact)
         self.settings_button.setVisible(not compact);self.fold_button.setVisible(not compact)
         if compact or not cfg['resource_rank']:
             self.rank_icons.clear();self.rank_frame=self.rank_style=None
@@ -1134,9 +1141,9 @@ class ResourceWindow(Foldable,ResourceContentHost):
         from capsule_order import has_component_order
         if has_component_order(self.service.cfg):
             from capsule_order_layout import ball_layout
-            return max(0,ball_layout(self,limit,height)[1]-min(38,height,limit))
+            return max(0,ball_layout(self,limit,height,scale=1.)[1]-min(38,height,limit))
         from resource_compact import ball_details
-        return ball_details(self,limit,height)[2]+(RUNNER_SLOT if self.service.cfg['resource_runner_enabled'] else 0)
+        return ball_details(self,limit,height,scale=1.)[2]+(RUNNER_SLOT if self.service.cfg['resource_runner_enabled'] else 0)
 
     def sync_taskbar(self):
         cfg=self.service.cfg
@@ -1285,6 +1292,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 if view and key!=self.page_key:view.hide()
         if not self.service.compact and self.page_key=='resources':self.refresh_dashboard()
         self.sync_pager()
+        if self.scaled_detail and not self.service.compact:self.layout_content()
         for key,btn in self.page_buttons.items():
             enabled=self.page_enabled(key)
             btn.setVisible(not self.service.compact and enabled);btn.setChecked(key==self.page_key)
@@ -1296,46 +1304,69 @@ class ResourceWindow(Foldable,ResourceContentHost):
         self.setToolTip('');self.setAccessibleName('\n'.join(tips) or '灵动胶囊 · 点击展开')
         self.update()
 
-    def resizeEvent(self,event):
-        h=min(34,self.height());self.detail.setGeometry(0,h,self.width(),max(1,self.height()-h))
+    def layout_content(self):
+        scale=content_scale(self)
+        h=min(round(34*scale),self.height())
+        bounds=QRect(0,h,self.width(),max(1,self.height()-h))
+        if scale==1.:
+            if self.scaled_detail:
+                self.scaled_detail.release(self)
+                self.scaled_detail=None
+                self.detail.setVisible(not self.service.compact)
+            self.detail.setGeometry(bounds)
+        elif not self.service.compact:
+            if self.scaled_detail is None:
+                from capsule_scale import ScaledDetailView
+                self.scaled_detail=ScaledDetailView(self)
+                self.scaled_detail.show()
+            self.scaled_detail.fit_content(bounds,scale)
         if self.dashboard is not None:
             self.layout_dashboard()
-        self.fold_button.setGeometry(self.width()-35,5,26,26);self.settings_button.setGeometry(self.width()-64,5,26,26)
+        for button,right in ((self.fold_button,35),(self.settings_button,64)):
+            button.setGeometry(self.width()-round(right*scale),round(5*scale),round(26*scale),round(26*scale))
+
+    def resizeEvent(self,event):
+        self.layout_content()
         self.layout_page_buttons()
         if hasattr(self,'resize_edges'):self.resize_edges.sync()
         super().resizeEvent(event)
         if self.colors:self.sync_rotation()
     def layout_page_buttons(self):
+        scale=content_scale(self)
         x=0
         for key in self.service.cfg['resource_component_order']:
             btn=self.page_buttons[key]
             if not self.page_enabled(key):continue
-            width=max(44,len(btn.text())*11+10)
-            btn.setGeometry(x,0,width,24);x+=width+2
+            width=round(max(44,len(btn.text())*11+10)*scale)
+            btn.setGeometry(x,0,width,round(24*scale));x+=width+round(2*scale)
         cfg=self.service.cfg;self.header_face_width=round(30*cfg['resource_face_scale']/100) if cfg['resource_face'] else 0
-        left=13+self.header_face_width if self.header_face_width else 35
-        total=max(1,x-2);available=max(1,self.width()-left-69);overflow=total>available
-        width=min(total,max(1,available-(36 if overflow else 0)))
-        self.nav_content.setFixedSize(total,24);self.nav.setGeometry(left,5,width,24)
+        left=round((13+self.header_face_width if self.header_face_width else 35)*scale)
+        total=max(1,x-round(2*scale));available=max(1,self.width()-left-round(69*scale));overflow=total>available
+        arrow=round(18*scale)
+        width=min(total,max(1,available-(2*arrow if overflow else 0)))
+        self.nav_content.setFixedSize(total,round(24*scale));self.nav.setGeometry(left,round(5*scale),width,round(24*scale))
         visible=not self.service.compact;self.nav.setVisible(visible)
         for index,button in enumerate(self.nav_arrows):
-            button.setGeometry(left+width+18*index,5,18,24);button.setVisible(visible and overflow)
-        self.nav_end=left+width+(36 if overflow else 0)
+            button.setGeometry(left+width+arrow*index,round(5*scale),arrow,round(24*scale));button.setVisible(visible and overflow)
+        self.nav_end=left+width+(2*arrow if overflow else 0)
         if visible and self.colors:self.update_header_inks()
 
     def update_header_inks(self):
         if self.service.compact:return
         from compact_colors import widget_colors
+        scale=content_scale(self)
         for control,symbol in ((self.settings_button,'settings'),(self.fold_button,'collapse')):
             ink=widget_colors(self,control)['ink']
-            if control.property('iconInk')!=ink:
+            side=round(15*scale)
+            if control.property('iconInk')!=ink or control.iconSize().width()!=side:
                 control.setProperty('iconInk',ink)
-                control.setIcon(icon(symbol,ink,15));control.setIconSize(QSize(15,15))
+                control.setIcon(icon(symbol,ink,side));control.setIconSize(QSize(side,side))
         for button in self.page_buttons.values():button.update()
         for button in self.nav_arrows:
             ink=widget_colors(self,button)['muted']
-            if button.property('arrowInk')!=ink:
-                button.setProperty('arrowInk',ink);button.setStyleSheet('color:'+ink+';')
+            style=f'color:{ink};'
+            if scale!=1.:style+=f'font-size:{round(10*scale)}px;padding:0;'
+            if button.styleSheet()!=style:button.setStyleSheet(style)
         self.page_pager.sync_appearance(widget_colors(self,self.page_pager)['ink'])
 
     def glass_shape(self):
@@ -1353,12 +1384,17 @@ class ResourceWindow(Foldable,ResourceContentHost):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.TextAntialiasing)
         if marker is not None:
             p.setClipRegion(QRegion(self.rect()).subtracted(QRegion(marker.geometry(),QRegion.Ellipse)))
-        cfg=self.service.cfg;c=self.colors;compact=self.service.compact;rect=QRectF(self.rect()).adjusted(1,1,-1,-1)
+        cfg=self.service.cfg;c=self.colors;compact=self.service.compact
         radius,inset,corners=self.glass_shape()
         self.glass.paint(p,self,self.service.runtime.dock,radius,self.press is not None,self.background,inset,
                          corners,backdrop_mode=component_backdrop(cfg,'resource'))
         from resource_compact import paint_halo,paint_compact,paint_ball_reminder
         paint_halo(self,p,event.region(),self.fold_shape())
+        scale=content_scale(self)
+        size=content_size(self)
+        p.scale(scale,scale)
+        inset=1/scale
+        rect=QRectF(0,0,size.width(),size.height()).adjusted(inset,inset,-inset,-inset)
         notice=self.ball_notice() if compact else None
         if notice and self.width()>=70:
             from resource_compact import paint_notice
@@ -1373,23 +1409,24 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 return
             runner=self.service.runners.get('capsule')
             if runner:
-                from resource_runner import capsule_rect
-                rect.setRight(capsule_rect(self).left()-1)
-            if self.fold_shape()=='ball' and rect.width()>38:
+                from resource_runner import animal_slot
+                rect.setRight(animal_slot(self).left()-1)
+            diameter=round(38/scale)
+            if self.fold_shape()=='ball' and rect.width()>diameter:
                 from resource_compact import ball_details,paint_badges
-                cells,badges,_=ball_details(self,self.width())
-                if cells:self.service.indicators.paint(p,cells,38,self.height()/2,c)
-                if badges:paint_badges(self,p,badges,rect.right(),self.height()/2)
-                rect.setWidth(min(36,rect.width()))
+                cells,badges,_=ball_details(self,size.width())
+                if cells:self.service.indicators.paint(p,cells,diameter,size.height()/2,c)
+                if badges:paint_badges(self,p,badges,rect.right(),size.height()/2)
+                rect.setWidth(min(diameter-2,rect.width()))
             reading=getattr(self.service.deck,'ball_quota',None)
             if reading and cfg['resource_ai'] and cfg['resource_compact_ai'] and component_location(cfg,'ai')=='capsule':
                 from resource_compact import paint_quota_ring
-                side=min(rect.width(),rect.height())-2
+                side=min(34,min(rect.width(),rect.height())-2/scale)
                 ring_rect=QRectF(0,0,side,side);ring_rect.moveCenter(rect.center())
                 paint_quota_ring(p,ring_rect,reading,c['light'])
-                self.compact_ai_hits=[(ring_rect,reading)]
+                self.compact_ai_hits=[(window_rect(self,ring_rect),reading)]
             if cfg['resource_face']:
-                self.liquid.paint_face(p,rect.center(),min(rect.width(),max(12,rect.width()-10)))
+                self.liquid.paint_face(p,rect.center(),min(rect.width(),max(12,rect.width()*scale-10)))
             else:
                 q=rect.center();p.setPen(QPen(QColor(metric_colors(self.service)['cpu']),2,Qt.SolidLine,Qt.RoundCap))
                 for n,h in enumerate((7,14,10)):p.drawLine(QPointF(q.x()-5+5*n,q.y()+6),QPointF(q.x()-5+5*n,q.y()+6-h))
@@ -1404,7 +1441,8 @@ class ResourceWindow(Foldable,ResourceContentHost):
             if self.nav.isVisible():
                 fill=QColor(c['hover']);fill.setAlpha(25)
                 p.setPen(Qt.NoPen);p.setBrush(fill)
-                p.drawRoundedRect(QRectF(self.nav.geometry()).adjusted(0,0,1,0),6,6)
+                nav=self.nav.geometry()
+                p.drawRoundedRect(QRectF(nav.x()/scale,nav.y()/scale,nav.width()/scale+1,nav.height()/scale),6,6)
             if cfg['resource_face']:
                 self.liquid.paint_face(p,QPointF(7+self.header_face_width/2,17),self.header_face_width)
             else:
@@ -1412,11 +1450,11 @@ class ResourceWindow(Foldable,ResourceContentHost):
                 for n,h in enumerate((6,13,9)):p.drawLine(16+n*4,24,16+n*4,24-h)
             font=QFont(self.font());font.setWeight(QFont.DemiBold);font.setPixelSize(15);p.setFont(font);p.setPen(QColor(c['ink']))
             bridge=self.service.deck
-            header_left=self.nav_end+4;header_width=max(0,self.width()-68-header_left)
+            header_left=round(self.nav_end/scale)+4;header_width=max(0,size.width()-68-header_left)
             if bridge and bridge.alert_until>time.monotonic() and cfg['resource_quota_alert'] and header_width>=80:
                 from resource_compact import text
                 text(p,QRectF(header_left,5,header_width,24),bridge.alert,c['ink'],9)
-            elif self.width()>=620 and header_width>=52 and self.service.history:
+            elif size.width()>=620 and header_width>=52 and self.service.history:
                 stamp=self.service.history[-1]['time']
                 sampled_at=time.time()-max(0,time.monotonic()-stamp)
                 font.setPixelSize(11);font.setWeight(QFont.Normal);p.setFont(font);p.setPen(QColor(c['muted']))

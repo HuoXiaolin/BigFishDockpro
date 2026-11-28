@@ -1,18 +1,19 @@
 """Content-sized compact rows and an inexpensive perimeter-following halo."""
 from functools import lru_cache
 from datetime import datetime
-from math import atan2, degrees, tau
+from math import atan2, ceil, degrees, tau
 import time
-from PyQt5.QtCore import Qt,QRectF,QPointF
+from PyQt5.QtCore import Qt,QRectF,QPointF,QSizeF
 from PyQt5.QtGui import QColor,QFont,QFontMetrics,QPainter,QPainterPath,QPainterPathStroker,QPen,QPixmap,QConicalGradient,QBrush,QRegion,QTransform
 from resource_status import connection_labels,metric_ink,metric_number
 from resource_traffic import amount
 from resource_quota import capsule_reading, ring_ink
 from resource_options import COMPACT_CLOCK_FORMATS,COMPACT_ROUTINES,RESOURCE_READINGS,RUNNER_SLOT,SENSOR_UNITS,almanac_categories,compact_text_height,compact_tile_height,component_location
 from capsule_order import clock_turn, has_component_order
+from capsule_scale import content_scale, content_size, window_rect
 from compact_clock import capsule_clock_width, capsule_headers, draw_clock, headers, lines_at
 from compact_text import draw_stacked_text, readout_fonts
-from compact_colors import area_colors, badge_fill, on_badge, text_ink
+from compact_colors import content_colors, badge_fill, on_badge, text_ink
 from spectrum_palettes import SPECTRUM_PALETTES
 
 
@@ -342,10 +343,11 @@ def content_badge_width(row,cfg):
     return stacked_badge_width(place,value)
 
 
-def cell_width(row,dense,window):
+def cell_width(row,dense,window,tile_height=None):
     key=row[0]
     if key in ('ai','weather','music'):return content_badge_width(row,window.service.cfg)
-    width=reading_width(key,row[1],dense,window.height(),badge_height(window))
+    side=badge_height(window) if tile_height is None else tile_height
+    width=reading_width(key,row[1],dense,window.height(),side)
     if key not in ('cpu','gpu','memory','network'):
         actual=QFontMetrics(readout_fonts(window.height(),dense)[1]).horizontalAdvance(row[2])
         width=max(width,actual+2)
@@ -361,10 +363,10 @@ def compact_face_width(cfg,height):
     return round(base*cfg['resource_face_scale']/100)
 
 
-def packed(values,available,dense,window):
+def packed(values,available,dense,window,tile_height):
     pages=[];row=[];used=0;gap=cell_gap(dense)
     for value in values:
-        width=min(cell_width(value,dense,window),available)
+        width=min(cell_width(value,dense,window,tile_height),available)
         size=width+(gap if row else 0)
         if row and used+size>available:pages.append(row);row=[];used=0;size=width
         row.append(value);used+=size
@@ -374,11 +376,15 @@ def packed(values,available,dense,window):
 
 def plan(window,limit=None):
     from datetime import date
-    key=(limit,window.width(),window.height(),window.page_turns,window.service.cfg['resource_runner_enabled'],badge_height(window),
+    scale=content_scale(window)
+    key=(limit,window.width(),window.height(),scale,window.page_turns,window.service.cfg['resource_runner_enabled'],badge_height(window),
          date.today() if window.service.cfg['resource_alert_almanac'] or window.service.cfg['resource_clock'] else None)
     cached=getattr(window,'_compact_cache',None)
     if cached and cached[0]==key:return cached[1]
-    result=_make_plan(window,limit);window._compact_cache=(key,result);return result
+    available=limit if limit is not None else window.service.cfg['resource_compact_width']
+    result=_make_plan(window,max(1,int(available/scale)),content_size(window).height(),preserve_overflow=scale!=1.)
+    window._compact_cache=(key,result)
+    return result
 
 
 def readouts_changed(layout, previous, current, width):
@@ -414,11 +420,12 @@ def badge_slots(window,items,capacity,limit,priority=False):
     return slots,capacity
 
 
-def _make_plan(window,limit=None):
+def _make_plan(window,limit,height,*,preserve_overflow=False):
     cfg=window.service.cfg;max_width=limit or cfg['resource_compact_width']
+    side=compact_tile_height(cfg,height)
     if has_component_order(cfg):
         from capsule_order_layout import make_plan
-        return make_plan(window,max_width)
+        return make_plan(window,max_width,height)
     badges,active_count=compact_badges(window.service,window.component_pages['alert_almanac'])
     values=grouped_values(window)
     hardware=values.get('resources', [])
@@ -435,12 +442,12 @@ def _make_plan(window,limit=None):
     extras=[row for key,rows in values.items() if key not in pinned_keys for row in rows]
     dense=cfg['resource_compact_density']=='dense' or max_width<420 or window.height()<38
     if not dense:
-        wanted=sum(max(cell_width(row,False,window) for row in group) for group in groups)
+        wanted=sum(max(cell_width(row,False,window,side) for row in group) for group in groups)
         wanted+=cell_gap(False)*max(0,len(groups)-1)
         if wanted+16+(60 if extras else 0)>max_width:dense=True
     gap=cell_gap(dense)
     clock=COMPACT_CLOCK_FORMATS[cfg['resource_clock_format']][1] if cfg['resource_clock'] else ()
-    clock_width=capsule_clock_width(cfg,clock,window.height()) if clock else 0
+    clock_width=capsule_clock_width(cfg,clock,height) if clock else 0
     # Keep one readable supplemental slot even when a large bold date has to
     # share the minimum capsule width with a pinned reading.
     clock_room=max_width-16
@@ -460,26 +467,35 @@ def _make_plan(window,limit=None):
     indicators=getattr(window.service,'indicators',None)
     # Changed devices get first use of spare space; leave room for a due reminder.
     budget=max(0,capacity-min(active_count*44,capacity//2))
-    devices=indicators.cells(budget,window.height()) if indicators else []
+    devices=indicators.cells(budget,height) if indicators else []
     capacity-=sum(width+3 for _,_,width,_ in devices)
     active,capacity=badge_slots(window,badges[:active_count],capacity,max_width,priority=True)
     ordinary_floor=26 if values and not active else 0
     battery_alert=any(kind=='battery' for kind,_,_,_ in active)
     device_keys={key for key,_,_,_ in devices}
     status=[row for row in status_values(window.service) if row[0] not in device_keys and (row[0]!='battery' or not battery_alert)]
-    status_width=badge_height(window)+3
+    status_width=side+3
+    status_count=len(status)
     status=status[:max(0,capacity-ordinary_floor)//status_width]
     capacity-=len(status)*status_width
     routine,spare=badge_slots(window,badges[active_count:],max(0,capacity-ordinary_floor),max_width)
+    if preserve_overflow and (len(status)<status_count or len(active)+len(routine)<len(badges)
+            or indicators and len(devices)<len(indicators.cells(4096,height))
+            or cfg['resource_runner_enabled'] and not runner_width
+            or cfg['resource_mail'] and cfg['resource_mail_icon'] and not mail_width
+            or cfg['resource_clock'] and not clock
+            or cfg['resource_face'] and face<compact_face_width(cfg,window.height())):
+        from capsule_order_layout import make_plan
+        return make_plan(window,max_width,height)
     if any(key=='almanac' for key,_ in badges) and not any(key=='almanac' and width>=STACKED_MIN_WIDTH for key,_,width,_ in (*active,*routine)):
         from capsule_order_layout import make_plan
-        return make_plan(window,max_width)
+        return make_plan(window,max_width,height)
     capacity=min(capacity,spare+ordinary_floor)
     tail=available-capacity
     pinned_groups=[];pinned_widths=[];used=0
     # Leave one reachable supplemental slot. Never demote the entire core.
     for index,group in enumerate(groups):
-        width=max(cell_width(row,dense,window) for row in group);cost=width+(gap if pinned_groups else 0)
+        width=max(cell_width(row,dense,window,side) for row in group);cost=width+(gap if pinned_groups else 0)
         remainder=groups[index+1:]
         reserve=40+gap if extras or remainder else 0
         if used+cost+reserve<=capacity:
@@ -490,10 +506,10 @@ def _make_plan(window,limit=None):
             # Use the component overflow layout so a narrow row can still reach
             # this card without putting its individual readings into other slots.
             from capsule_order_layout import make_plan
-            return make_plan(window,max_width)
+            return make_plan(window,max_width,height)
         else:extras.extend(group)
     room=capacity-used-(gap if used and extras else 0)
-    pages=[('values',rows) for rows in packed(extras,room,dense,window)] if extras and room>=26 else [('values',[])]
+    pages=[('values',rows) for rows in packed(extras,room,dense,window,side)] if extras and room>=26 else [('values',[])]
     # Each slot gets to show every city, provider or calendar line before repeating.
     from math import lcm
     component_counts = {'resources':len(hardware)}
@@ -503,7 +519,7 @@ def _make_plan(window,limit=None):
     count=lcm(*periods.values())
     pages=(pages*((count+len(pages)-1)//len(pages)))[:count]
     pinned=[g[window.page_turns.left%len(g)] for g in pinned_groups]
-    prefix=max((sum(min(cell_width(r,dense,window),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
+    prefix=max((sum(min(cell_width(r,dense,window,side),room) for r in rows)+gap*max(0,len(rows)-1) for _,rows in pages),default=0)
     natural=16+face+face_gap+tail+runner_width+mail_width+used+(gap if used and prefix else 0)+min(prefix,room)
     from math import ceil
     return dict(width=min(max_width,max(96,ceil(natural))),pinned=pinned,pinned_groups=pinned_groups,
@@ -514,7 +530,13 @@ def _make_plan(window,limit=None):
 
 
 def natural_width(window,limit):
-    return plan(window,limit)['width'] if window.service.cfg['resource_compact_auto_width'] else min(limit,window.service.cfg['resource_compact_width'])
+    if not window.service.cfg['resource_compact_auto_width']:
+        return min(limit,window.service.cfg['resource_compact_width'])
+    # Auto width describes the outside frame. Measure it at the original scale,
+    # then paginate the content independently inside that frame.
+    if content_scale(window)==1.:
+        return plan(window,limit)['width']
+    return _make_plan(window,limit,window.height())['width']
 
 
 def notice_font(window):
@@ -537,15 +559,16 @@ def paint_notice(window,p,notice):
     from resource_pomodoro_view import reminder_icon,reminder_ink
     kind,label=notice
     side=badge_height(window)
-    tile=QRectF(8,(window.height()-side)/2,side,side)
-    colors=area_colors(window,tile,window.colors)
+    bounds=QRectF(QPointF(),QSizeF(content_size(window)))
+    tile=QRectF(8,(bounds.height()-side)/2,side,side)
+    colors=content_colors(window,tile,window.colors)
     level=window.service.low_battery() if kind=='battery' else None
     ink=reminder_ink(kind,colors['light'],level)
     chip(p,tile,ink,colors)
     icon=QRectF(0,0,min(15,side),min(15,side));icon.moveCenter(tile.center())
     reminder_icon(p,icon,kind,text_ink(ink,on_badge(colors,badge_fill(ink,colors))))
-    area=QRectF(window.rect()).adjusted(tile.right()+6,0,-9,0)
-    colors=area_colors(window,area,window.colors)
+    area=bounds.adjusted(tile.right()+6,0,-9,0)
+    colors=content_colors(window,area,window.colors)
     if kind=='almanac':
         rows=almanac_badge_lines(window.service.cfg).get(label,(label,'今天'))
         ink=text_ink(reminder_ink(kind,colors['light']),colors)
@@ -563,7 +586,7 @@ def chip(p,rect,ink,colors):
 
 
 def badge_height(window):
-    return compact_tile_height(window.service.cfg,window.height())
+    return compact_tile_height(window.service.cfg,content_size(window).height())
 
 
 def ai_value_font():
@@ -655,7 +678,7 @@ def paint_badge_lines(p,area,title,value,muted,ink):
 
 
 def paint_content(window,p,rect,key,label,value,meta,overlays=None):
-    c=area_colors(window,rect,window.colors);cfg=window.service.cfg;mid=rect.center().y()
+    c=content_colors(window,rect,window.colors);cfg=window.service.cfg;mid=rect.center().y()
     if key=='ai':
         paint_ai_quota(p,rect,value,meta,c)
         return
@@ -696,14 +719,14 @@ def paint_content(window,p,rect,key,label,value,meta,overlays=None):
 def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None,overlays=None):
     cfg=window.service.cfg;c=window.colors;bounds=[];gap=cell_gap(dense)
     side=badge_height(window)
-    height=compact_text_height(cfg,window.height())
+    height=compact_text_height(cfg,content_size(window).height())
     caption,primary=readout_fonts(window.height(),dense)
     for index,row in enumerate(rows):
         key,label,value,meta=row
         width=min(widths[index] if widths else cell_width(row,dense,window),max(0,available))
         if width<26:break
         hit=QRectF(x,mid-height/2,width,height)
-        c=area_colors(window,hit,window.colors)
+        c=content_colors(window,hit,window.colors)
         ink=c['ink'] if key in ('ai','music','weather','traffic') else text_ink(metric_ink(window.service,key,c['light'],c['ink']),c)
         if key in ('ai','music','weather'):
             hit=content_badge_rect(QRectF(x,mid-side/2,width,side),row,cfg)
@@ -740,6 +763,7 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
         if clip is not None:
             hit = hit.intersected(clip)
         if not hit.isEmpty():
+            hit=window_rect(window,hit)
             bounds.append(hit)
             window.compact_shown.append(key)
             if key=='ai':
@@ -754,13 +778,13 @@ def paint_values(window,p,rows,x,mid,available,dense=False,widths=None,clip=None
 def paint_status(window,p,row,x,width,mid):
     side=badge_height(window)
     rect=QRectF(x,mid-side/2,width,side)
-    hit=rect.intersected(QRectF(window.rect()))
+    hit=window_rect(window,rect).intersected(QRectF(window.rect()))
     if hit.isEmpty():return
     scale=min(width,side)/20
     p.save()
     p.translate(rect.center())
     p.scale(scale,scale)
-    draw_status_icon(p,row,area_colors(window,rect,window.colors))
+    draw_status_icon(p,row,content_colors(window,rect,window.colors))
     p.restore()
     window.status_bounds[row[0]]=hit
 
@@ -850,7 +874,7 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
             side=min(width,height)
             rect=QRectF(rect.center().x()-side/2,mid-side/2,side,side)
         level=window.service.low_battery() if kind=='battery' else None
-        c=area_colors(window,rect,window.colors)
+        c=content_colors(window,rect,window.colors)
         ink=reminder_ink(kind,c['light'],level)
         chip(p,rect,ink,c)
         c=on_badge(c,badge_fill(ink,c))
@@ -870,7 +894,7 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
         else:
             size=min(13,rect.width())
             reminder_icon(p,QRectF(rect.center().x()-size/2,mid-size/2,size,size),kind,ink)
-        window.reminder_bounds.append(rect);window.reminder_kinds.append(kind)
+        window.reminder_bounds.append(window_rect(window,rect));window.reminder_kinds.append(kind)
         right-=width+3
     return right
 
@@ -878,7 +902,7 @@ def paint_badges(window,p,slots,right,mid,overlays=None):
 def paint_rolling_values(window,p,layout,rows,left,right,mid,scroll):
     previous, progress, direction = scroll
     previous = previous.left
-    clip = QRectF(left,2,max(0,right-left),window.height()-4)
+    clip = QRectF(left,2,max(0,right-left),content_size(window).height()-4)
     distance = clip.height() * direction
     eased = progress * progress * (3 - 2 * progress)
     outgoing, incoming = mid - distance * eased, mid + distance * (1 - eased)
@@ -904,7 +928,8 @@ def paint_rolling_values(window,p,layout,rows,left,right,mid,scroll):
 
 
 def paint_compact_body(window,p,layout,scroll=None,overlays=None):
-    cfg=window.service.cfg;c=window.colors;bridge=window.service.deck;mid=window.height()/2
+    size=content_size(window)
+    cfg=window.service.cfg;c=window.colors;bridge=window.service.deck;mid=size.height()/2
     pages=layout['pages'];window.compact_pages=len(pages)
     window.compact_shown=[];window.compact_providers=[];window.compact_ai_hits=[];window.compact_media=False
     window.compact_bounds=[];window.reminder_bounds=[];window.reminder_kinds=[];window.status_bounds={}
@@ -915,7 +940,7 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         paint_page(window,p,layout,scroll,overlays)
         return
     _,rows=pages[window.page_turns.left%len(pages)]
-    right=window.width()-8;left=8.+layout['face']+layout['face_gap']
+    right=size.width()-8;left=8.+layout['face']+layout['face_gap']
     clock=layout['clock'];width=layout['clock_width']
     if clock:
         right-=width
@@ -927,14 +952,14 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
         window.service.indicators.paint(p,layout['devices'],right,mid,c)
     if layout['mail_width']:
         right-=layout['mail_width']
-        paint_mail_status(window,p,QRectF(right,0,layout['mail_width'],window.height()))
+        paint_mail_status(window,p,QRectF(right,0,layout['mail_width'],size.height()))
     for row in reversed(layout['status']):
         right-=layout['status_width']
         paint_status(window,p,row,right,layout['status_width'],mid)
     if layout['routine_badges']:right=paint_badges(window,p,layout['routine_badges'],right,mid,overlays)
     if scroll:
         if overlays is None:paint_rolling_values(window,p,layout,rows,left,right,mid,scroll)
-        else:overlays.append(('scroll',QRectF(left,2,max(0,right-left),window.height()-4),rows))
+        else:overlays.append(('scroll',QRectF(left,2,max(0,right-left),size.height()-4),rows))
     else:
         core=layout['core'];window.compact_bounds+=paint_values(window,p,layout['pinned'],left,mid,core,layout['dense'],layout['pinned_widths'],overlays=overlays)
         left+=core+(layout['gap'] if core and rows else 0)
@@ -942,9 +967,9 @@ def paint_compact_body(window,p,layout,scroll=None,overlays=None):
 
 
 def paint_clock(window,p,clock,x,width,mid,turn=None):
-    height = compact_text_height(window.service.cfg,window.height())
+    height = compact_text_height(window.service.cfg,content_size(window).height())
     rect=QRectF(x,mid-height/2,width,height)
-    colors=area_colors(window,rect,window.colors)
+    colors=content_colors(window,rect,window.colors)
     draw_clock(p,rect,clock_rows(window,clock,turn),colors['muted'],colors['ink'])
 
 
@@ -966,19 +991,24 @@ def paint_compact(window,p,scroll=None,damage=None):
             p.drawPixmap(QPointF(),cached[2])
             return
     layout=plan(window,window.width())
+    scale=content_scale(window)
+    size=content_size(window)
     dpr=window.devicePixelRatioF()
+    # Qt 5 raster painters do not apply device transforms below 1. Render at
+    # at least one pixel per content unit so shrinking does not displace hits.
+    cache_dpr=max(1.,dpr*scale)
     stamp=clock_rows(window,layout['clock'],clock_turn(layout,window.page_turns)) if layout['clock'] else ()
-    key=(window.size(),dpr,window.font().key(),tuple(window.colors.items()),
+    key=(window.size(),dpr,scale,window.font().key(),tuple(window.colors.items()),
          badge_height(window),stamp,window.marquee_title,bool(scroll))
     if not cached or cached[0] is not layout or cached[1]!=key:
         overlays=[]
         # A huge user-resized/DPI-scaled capsule should not retain a huge bitmap.
-        if window.width()*window.height()*dpr*dpr>512*1024 or scroll and 'positions' in layout:
+        if size.width()*size.height()*cache_dpr*cache_dpr>512*1024 or scroll and 'positions' in layout:
             window._compact_surface=None
             paint_compact_body(window,p,layout,scroll,overlays)
         else:
-            image=QPixmap(max(1,round(window.width()*dpr)),max(1,round(window.height()*dpr)))
-            image.setDevicePixelRatio(dpr);image.fill(Qt.transparent)
+            image=QPixmap(ceil(size.width()*cache_dpr),ceil(size.height()*cache_dpr))
+            image.setDevicePixelRatio(cache_dpr);image.fill(Qt.transparent)
             painter=QPainter(image);painter.setRenderHints(p.renderHints());painter.setFont(window.font())
             try:paint_compact_body(window,painter,layout,scroll,overlays)
             finally:painter.end()
@@ -991,18 +1021,21 @@ def paint_compact(window,p,scroll=None,damage=None):
         elif kind=='marquee':paint_marquee(window,p,area,*args)
         elif kind=='scroll':
             window.compact_bounds=[];window.compact_shown=[];window.compact_providers=[];window.compact_ai_hits=[];window.compact_media=False
-            paint_rolling_values(window,p,layout,args[0],area.left(),area.right(),window.height()/2,scroll)
+            paint_rolling_values(window,p,layout,args[0],area.left(),area.right(),size.height()/2,scroll)
     if layout['face']:
         x = layout['positions']['face'].x if 'positions' in layout else 8
-        window.liquid.paint_face(p,QPointF(x+layout['face']/2,window.height()/2),layout['face'])
+        window.liquid.paint_face(p,QPointF(x+layout['face']/2,size.height()/2),layout['face'])
 
 
-def ball_details(window,limit,height=None):
-    room=max(0,limit-38-(RUNNER_SLOT if window.service.cfg['resource_runner_enabled'] else 0))
+def ball_details(window,limit,height=None,*,scale=None):
+    height=content_size(window).height() if height is None else height
+    scale=content_scale(window) if scale is None else scale
+    diameter=min(height,round(38/scale))
+    room=max(0,limit-diameter-(RUNNER_SLOT if window.service.cfg['resource_runner_enabled'] else 0))
     timers=[item for item in window.service.reminders() if item[0] in ('stopwatch','stopwatch_paused','alarm','alarm_due')]
     badges,left=badge_slots(window,timers,room,limit,priority=True)
     indicators=getattr(window.service,'indicators',None)
-    cells=indicators.cells(left,window.height() if height is None else height) if indicators else []
+    cells=indicators.cells(left,height) if indicators else []
     return cells,badges,room-left+sum(width+3 for _,_,width,_ in cells)
 
 
@@ -1023,7 +1056,7 @@ def paint_ball_reminder(window,p,rect):
             mark=QRectF(rect.center().x()+4,rect.top()+3,13,13)
         p.setPen(Qt.NoPen);p.setBrush(QColor(window.colors['surface']));p.drawEllipse(mark)
         reminder_icon(p,mark.adjusted(1.5,1.5,-1.5,-1.5),kind,ink)
-        window.reminder_bounds.append(mark);window.reminder_kinds.append(kind)
+        window.reminder_bounds.append(window_rect(window,mark));window.reminder_kinds.append(kind)
 
 
 def paint_mail_status(window,p,rect):
@@ -1032,7 +1065,7 @@ def paint_mail_status(window,p,rect):
     size=min(16,rect.width()-2,rect.height()-2)
     if size<=0:return
     center=rect.center()
-    colors=area_colors(window,rect,window.colors)
+    colors=content_colors(window,rect,window.colors)
     ink=text_ink(reminder_ink('mail_code',colors['light']),colors) if has_mail else colors['muted']
     reminder_icon(p,QRectF(center.x()-size/2,center.y()-size/2,size,size),'mail_new' if has_mail else 'mail',ink)
-    window.status_bounds['mail']=rect
+    window.status_bounds['mail']=window_rect(window,rect)

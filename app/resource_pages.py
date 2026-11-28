@@ -9,7 +9,7 @@ from resource_traffic import amount,totals
 from resource_compact import text
 from card_design import paint_capsule_card
 from resource_charts import DashboardCard,rate,sync_card_controls,sync_note_controls
-from resource_options import content_columns
+from resource_options import page_columns
 from resource_status import threshold
 
 SCROLL_STYLE='''
@@ -288,7 +288,7 @@ class TrafficReadout(QWidget):
         self.fit_cards()
 
     def fit_cards(self):
-        self.columns=content_columns(self.owner.width())
+        self.columns=page_columns(self.owner)
         self.setFixedHeight(65+self.gap+75 if self.columns==2 else 65+2*(53+self.gap))
 
     def resizeEvent(self,event):

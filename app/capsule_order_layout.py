@@ -5,6 +5,7 @@ from typing import NamedTuple
 from PyQt5.QtCore import QRectF, Qt
 
 from capsule_order import ZONES, badge_key, clock_turn, device_key, display_order, item_zones
+from capsule_scale import content_scale, content_size, window_rect
 from resource_options import COMPACT_CLOCK_FORMATS, RUNNER_SLOT, compact_tile_height, component_location
 
 
@@ -124,17 +125,19 @@ def zone_pages(ordered, zones, capacity, urgent):
     return pages,widths,bands,aligned_span(totals,GAP)
 
 
-def make_plan(window, limit):
+def make_plan(window, limit, height=None):
     from compact_clock import capsule_clock_width, capsule_headers
     from resource_compact import (MAIL_STEP, almanac_badge_lines, badge_slots, cell_width, compact_badges, compact_face_width,
                                   grouped_values, status_values)
     cfg = window.service.cfg
+    height = content_size(window).height() if height is None else height
+    side = compact_tile_height(cfg,height)
     inner = max(1,limit-16)
     dense = cfg['resource_compact_density']=='dense' or limit<420 or window.height()<38
     items = {}
     component_counts = {}
     for key, rows in grouped_values(window).items():
-        row_widths=tuple(cell_width(row,dense,window) for row in rows)
+        row_widths=tuple(cell_width(row,dense,window,side) for row in rows)
         if key == 'resources':
             component_counts[key] = len(rows)
             row = rows[window.component_pages[key] % len(rows)]
@@ -142,7 +145,7 @@ def make_plan(window, limit):
         else:
             items[key] = Slot(key,'value',max(row_widths),tuple(rows),row_widths)
     for row in status_values(window.service):
-        items[row[0]] = Slot(row[0],'status',compact_tile_height(cfg,window.height())+3,row)
+        items[row[0]] = Slot(row[0],'status',side+3,row)
     if cfg['resource_face']:
         items['face'] = Slot('face','face',compact_face_width(cfg,window.height()))
     if cfg['resource_mail'] and cfg['resource_mail_icon']:
@@ -151,7 +154,7 @@ def make_plan(window, limit):
         items['runner'] = Slot('runner','runner',RUNNER_SLOT)
     if cfg['resource_clock']:
         formats = COMPACT_CLOCK_FORMATS[cfg['resource_clock_format']][1]
-        items['clock'] = Slot('clock','clock',capsule_clock_width(cfg, formats, window.height()),formats)
+        items['clock'] = Slot('clock','clock',capsule_clock_width(cfg, formats, height),formats)
 
     urgent = []
     badges,active_count = compact_badges(window.service,window.component_pages['alert_almanac'])
@@ -167,7 +170,7 @@ def make_plan(window, limit):
             if badge[0]=='battery':items.pop('battery',None)
     indicators = window.service.indicators
     if indicators:
-        for cell in indicators.cells(4096,window.height()):
+        for cell in indicators.cells(4096,height):
             key = device_key(cell[0])
             items[key] = Slot(key,'device',cell[2],cell)
             if cell[0] in indicators.transitions:urgent.append(key)
@@ -241,7 +244,7 @@ def positions(layout,turns,width):
 def paint_item(window,p,placed,mid,dense,overlays,clip,clock_turn=0):
     from resource_compact import paint_badges,paint_clock,paint_mail_status,paint_status,paint_values
     slot,x,width,data = placed
-    height = window.height()
+    height = content_size(window).height()
     rect = QRectF(x,mid-height/2,width,height)
     if slot.kind=='value':
         window.compact_bounds.extend(paint_values(window,p,[data],x,mid,width,dense,[width],clip,overlays))
@@ -263,16 +266,17 @@ def paint_item(window,p,placed,mid,dense,overlays,clip,clock_turn=0):
 def paint_page(window,p,layout,scroll,overlays):
     current = layout['positions']
     calendar_page = clock_turn(layout,window.page_turns)
-    mid = window.height()/2
-    clip = QRectF(window.rect())
+    size = content_size(window)
+    mid = size.height()/2
+    clip = QRectF(0,0,size.width(),size.height())
     if not scroll:
         for placed in current.values():
             paint_item(window,p,placed,mid,layout['dense'],overlays,clip,calendar_page)
         return
     previous,progress,direction = scroll
-    before = positions(layout,previous,window.width())
+    before = positions(layout,previous,size.width())
     eased = progress*progress*(3-2*progress)
-    distance = max(1,window.height()-4)*direction
+    distance = max(1,size.height()-4)*direction
     p.save()
     p.setClipRect(clip,Qt.IntersectClip)
     for key,placed in before.items():
@@ -284,18 +288,19 @@ def paint_page(window,p,layout,scroll,overlays):
     p.restore()
 
 
-def ball_layout(window,limit,height=None):
+def ball_layout(window,limit,height=None,*,scale=None):
     """The ball has a round main icon and a short row of optional companions."""
     from resource_compact import badge_slots
-    height = window.height() if height is None else height
-    stamp = ('ordered-ball',limit,height)
+    height = content_size(window).height() if height is None else height
+    scale = content_scale(window) if scale is None else scale
+    stamp = ('ordered-ball',limit,height,scale)
     cached = getattr(window,'_compact_cache',None)
     if cached and cached[0]==stamp:return cached[1]
     cfg = window.service.cfg
     reading = getattr(window.service.deck,'ball_quota',None)
     has_ring = reading and cfg['resource_ai'] and cfg['resource_compact_ai'] and component_location(cfg,'ai')=='capsule'
     core = 'face' if cfg['resource_face'] or not has_ring else 'ai'
-    diameter=min(38,height,limit)
+    diameter=min(round(38/scale),height,limit)
     items = {core:Slot(core,'ball',diameter)}
     if has_ring:
         items['ai'] = Slot('ai','quota',diameter if core=='ai' else 26,(reading,))
@@ -342,14 +347,17 @@ def paint_ball(window,p):
     from PyQt5.QtGui import QColor,QPen
     from resource_charts import metric_colors
     from resource_compact import paint_quota_ring
-    positions = ball_slots(window,window.width())
-    mid = window.height()/2
+    size = content_size(window)
+    scale = content_scale(window)
+    positions = ball_slots(window,size.width())
+    mid = size.height()/2
     for placed in positions.values():
         slot,x,width,data = placed
-        rect = QRectF(x+1,1,width-2,window.height()-2)
+        inset=1/scale
+        rect = QRectF(x+inset,inset,width-2*inset,size.height()-2*inset)
         if slot.kind=='ball':
             if window.service.cfg['resource_face']:
-                window.liquid.paint_face(p,rect.center(),min(rect.width()-8,rect.height()))
+                window.liquid.paint_face(p,rect.center(),min(rect.width()*scale-8,rect.height()))
             else:
                 center=rect.center()
                 p.setPen(QPen(QColor(metric_colors(window.service)['cpu']),2,Qt.SolidLine,Qt.RoundCap))
@@ -357,10 +365,10 @@ def paint_ball(window,p):
                     start=QPointF(center.x()-5+5*i,mid+6)
                     p.drawLine(start,start-QPointF(0,h))
         elif slot.kind=='quota':
-            side=min(rect.width(),rect.height())-2
+            side=min(34,min(rect.width(),rect.height())-2/scale)
             ring=QRectF(0,0,side,side);ring.moveCenter(rect.center())
             paint_quota_ring(p,ring,data[0],window.colors['light'])
-            window.compact_ai_hits.append((ring,data[0]))
+            window.compact_ai_hits.append((window_rect(window,ring),data[0]))
         elif slot.kind in ('badge','device'):
             paint_item(window,p,placed._replace(x=x+1,width=width-3),mid,True,None,rect)
         else:

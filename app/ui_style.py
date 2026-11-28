@@ -1,5 +1,5 @@
 """Shared native Qt styling. Dock painting and glass rendering stay unchanged."""
-from PyQt5.QtGui import QColor, QPalette, QFont, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase,QWheelEvent,QFontMetrics
+from PyQt5.QtGui import QColor, QPalette, QFont, QFontInfo, QPen, QPainterPath, QPainter, QIcon, QPixmapCache,QFontDatabase,QWheelEvent,QFontMetrics
 from PyQt5.QtCore import Qt, QRectF, QSize, QRect, QObject, QEvent, QCoreApplication, QPoint, QPointF
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
     QProxyStyle, QStyle, QStyleFactory, QSpinBox, QComboBox, QToolButton,
@@ -417,7 +417,7 @@ class PopupList(QListView):
 
 class ComboPopupFrame(QFrame):
     def __init__(self,combo):
-        super().__init__(combo,Qt.Popup|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint)
+        super().__init__(combo,Qt.Popup|Qt.FramelessWindowHint|Qt.NoDropShadowWindowHint|Qt.BypassGraphicsProxyWidget)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setObjectName('ComboPopupFrame')
 
@@ -474,27 +474,39 @@ class ModernComboBox(QComboBox):
 
     def showPopup(self):
         if not self.isEnabled() or not self.count(): return
+        from capsule_scale import content_scale, native_host, widget_rect
+        host=native_host(self)
+        embedded=host is not self.window()
+        scale=content_scale(host) if embedded else 1.
         view = self.view()
         view.setModel(self.model())
         view.setModelColumn(self.modelColumn())
         view.setRootIndex(self.rootModelIndex())
-        view.setFont(self.font())
+        font=self.font()
+        if embedded:
+            font.setPixelSize(max(1,round(QFontInfo(font).pixelSize()*scale)))
+        view.setFont(font)
+        self._popup.setProperty('interfaceScale',UI_DENSITY*scale if embedded else None)
         self._popup.ensurePolished();view.ensurePolished()
         view.setCurrentIndex(self.model().index(self.currentIndex(),self.modelColumn(),self.rootModelIndex()))
-        point = self.mapToGlobal(QPoint(0,self.height()+3))
+        if embedded:
+            anchor=widget_rect(host,self,self.rect()).toAlignedRect().translated(host.mapToGlobal(QPoint()))
+        else:
+            anchor=QRect(self.mapToGlobal(QPoint()),self.size())
+        point = QPoint(anchor.left(),anchor.bottom()+4)
         screen = QApplication.screenAt(point) or QApplication.primaryScreen()
         bounds = screen.availableGeometry().adjusted(5,5,-5,-5)
-        metrics=QFontMetrics(self.font())
+        metrics=QFontMetrics(font)
         contents=max(metrics.horizontalAdvance(self.itemText(i))+(widget_px(self,24) if not self.itemIcon(i).isNull() else 0)
                      for i in range(self.count()))
-        reserves=widget_px(self,40)+view.verticalScrollBar().sizeHint().width()+8
-        width=min(bounds.width(),max(self.width(),widget_px(self,120),min(widget_px(self,780),contents+reserves)))
+        reserves=widget_px(view,40)+view.verticalScrollBar().sizeHint().width()+8
+        width=min(bounds.width(),max(anchor.width(),widget_px(view,120),min(widget_px(view,780),contents+reserves)))
         view.row_width=max(1,width-8-view.verticalScrollBar().sizeHint().width())
         view.doItemsLayout()
         visible=min(self.count(),self.maxVisibleItems())
         first=min(max(0,self.currentIndex()-visible//2),self.count()-visible)
         height=8+sum(view.sizeHintForRow(i) for i in range(first,first+visible))
-        top=self.mapToGlobal(QPoint(0,0)).y()-3
+        top=anchor.top()-3
         below=max(0,bounds.bottom()-point.y()+1)
         above=max(0,top-bounds.top())
         upward=height>below and above>below

@@ -180,11 +180,15 @@ def run(api,runtime,app,output,checks):
                            resource_compact_pinned=['cpu','notifications','weather'],
                            resource_compact_order=['notifications','weather','cpu'])
         old_profile.pop('resource_open_page')
+        old_profile.pop('resource_content_scale')
         migrated = normalize(old_profile, api)
+        assert migrated['resource_content_scale']==100
         assert 'resource_notifications' not in migrated
         assert migrated['resource_open_page'] == 'last'
         assert migrated['resource_compact_pinned'] == ['cpu','weather']
         assert migrated['resource_compact_order'] == ['weather','resources']
         checks.append('Capsule resize: sampling does not reset drag; single save, screen/min/max bounds, page geometry stable, manual compact size survives recreation, failed save restores. Unified AI, single-provider filter hidden, remarks collapsed.')
         checks.append('Capsule opening page: weather preference persists, hover and click open it, normal refresh preserves the selected page, disabled preference falls back to resources, and old reminder settings and pins migrate away.')
+        from capsule_content_scale_tests import run as check_content_scale
+        check_content_scale(api,runtime,app,output,checks)
     finally:cfg.clear();cfg.update(before);service.sync();api.save_config(cfg)

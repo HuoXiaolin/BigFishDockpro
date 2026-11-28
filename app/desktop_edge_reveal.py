@@ -56,12 +56,16 @@ class EdgeLight(QWidget):
                              appearance=owner.background,inset=4 if cfg['resource_halo'] else 0,
                              backdrop_mode=component_backdrop(cfg,'resource'))
             paint_halo(owner,p,event.region(),'ball',ball_widget=self)
+            from capsule_scale import content_scale
+            zoom=content_scale(owner)
             if cfg['resource_face']:
                 p.translate(-self.pos())
-                owner.liquid.paint_face(p,rect.center()+self.pos(),rect.width()*.64)
+                p.scale(zoom,zoom)
+                owner.liquid.paint_face(p,(rect.center()+self.pos())/zoom,min(rect.width()*.64,rect.width()/zoom))
             else:
                 p.setPen(Qt.NoPen);p.setBrush(accent)
-                p.drawEllipse(rect.center(),rect.width()*.14,rect.width()*.14)
+                radius=rect.width()*.14*zoom
+                p.drawEllipse(rect.center(),radius,radius)
             return
         gradient=QLinearGradient(rect.topLeft(),rect.topRight() if horizontal else rect.bottomLeft())
         for pos,ink in ((0,accent.darker(145)),(.24,accent),(.55,accent.lighter(155)),(1,accent.darker(130))):

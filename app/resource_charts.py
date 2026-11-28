@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QWidget, QSizePolicy
 
 from flash_view import blend
 from card_design import paint_capsule_card
-from resource_options import TINTS,content_columns
+from resource_options import TINTS,page_columns
 from resource_status import metric_ink,threshold
 
 
@@ -167,7 +167,7 @@ class MetricDisplay(DashboardCard):
         self.update()
 
     def fit_height(self):
-        self.load_columns = content_columns(self.owner.width())
+        self.load_columns = page_columns(self.owner)
         loads = int('cpu' in self.rows) + int('gpu' in self.rows)
         upper = self.load_height * math.ceil(loads / self.load_columns)
         height = 2*self.inset + upper + 25*('memory' in self.rows) + 25*('network' in self.rows)
@@ -311,7 +311,7 @@ class SensorColumns(DashboardCard):
         font.setFamily('Segoe UI')
         values = QFontMetrics(font)
         gap = self.column_gap
-        columns = content_columns(self.owner.width())
+        columns = page_columns(self.owner)
         available=self.width()-2*self.inset-(columns-1)*gap
         longest=max((values.horizontalAdvance(value) for _,items in self.groups for _,_,value,_ in items),default=0)
         inline_group=(available-self.group_width)/columns>=longest+2

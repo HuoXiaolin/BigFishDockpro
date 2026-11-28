@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QAbstractSpinBox, QBoxLayout, QDialog, QFormLayout,
 from flash_view import icon
 from resource_charts import DashboardCard, sync_card_controls
 from resource_compact import ring, text
-from resource_options import content_columns
+from resource_options import page_columns
 from resource_pomodoro import duration_text, elapsed_text, water_amount
 from resource_status import BATTERY_WARNING_LEVEL, low_battery_ink
 
@@ -363,7 +363,7 @@ class PomodoroView(QWidget):
             self.tools.setFixedHeight(height)
 
     def resizeEvent(self,event):
-        wide=content_columns(self.owner.width())==2
+        wide=page_columns(self.owner)==2
         direction=QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
         if self.cards.direction()!=direction:self.cards.setDirection(direction)
         if self.clock_cards.direction()!=direction:self.clock_cards.setDirection(direction)

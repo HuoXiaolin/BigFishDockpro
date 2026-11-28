@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton
 from ui_style import ModernComboBox
 from resource_compact import text
 from resource_charts import sync_note_controls
-from resource_options import content_columns
+from resource_options import page_columns
 from resource_status import band_ink
 from resource_weather import (RAIN_NOTICES,active_weather_notice,condition,forecast_rain_end,
                               measurement,moon_phase,notice_label,weather_time)
@@ -94,7 +94,7 @@ class WeatherCards(QWidget):
         self.update()
 
     def layout_cards(self):
-        self.columns=content_columns(self.owner.width())
+        self.columns=page_columns(self.owner)
         count=4//self.columns
         height=count*self.card_height+(count-1)*self.gap
         row=self.selected_row()
@@ -379,8 +379,12 @@ class WeatherCards(QWidget):
 
 
 class WeatherAction(QToolButton):
+    def __init__(self, owner):
+        super().__init__()
+        self.owner=owner
+
     def paintEvent(self,event):
-        colors=self.window().colors
+        colors=self.owner.colors
         if not colors:return
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing)
         active=self.isChecked() or self.isDown()
@@ -404,10 +408,10 @@ class WeatherView(QWidget):
         self.city.currentTextChanged.connect(self.city.setToolTip)
         self.city.setStyleSheet('QComboBox{min-height:0;padding:1px 23px 1px 7px;border:0;background:transparent;font-size:11px}')
         head.addWidget(self.city);head.addStretch(1)
-        self.week=WeatherAction();self.week.setText('七天');self.week.setCheckable(True)
+        self.week=WeatherAction(owner);self.week.setText('七天');self.week.setCheckable(True)
         self.week.setToolTip('切换昨天、今天、明天与未来七天')
         self.week.clicked.connect(self.set_range);head.addWidget(self.week)
-        self.refresh_button=WeatherAction();self.refresh_button.setText('刷新');self.refresh_button.clicked.connect(self.refresh_weather);head.addWidget(self.refresh_button)
+        self.refresh_button=WeatherAction(owner);self.refresh_button.setText('刷新');self.refresh_button.clicked.connect(self.refresh_weather);head.addWidget(self.refresh_button)
         self.week.setFixedHeight(22);self.refresh_button.setFixedHeight(22)
         box.addWidget(self.weather_head);self.cards=WeatherCards(owner);box.addWidget(self.cards)
         self.city.currentIndexChanged.connect(self.cards.set_city)

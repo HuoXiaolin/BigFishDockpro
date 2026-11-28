@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QBoxLayout,QToolButt
 from ui_style import ModernComboBox
 from resource_compact import text
 from resource_charts import sync_note_controls
-from resource_options import content_columns
+from resource_options import page_columns
 from resource_pages import CapsuleScrollArea,token_text,cost_text,cost_note,cost_label,reset_text
 from resource_usage import HEATMAP_WEEKS,aggregate,heatmap_days
 from resource_quota import amount_label, amount_text, provider_plan_name, quota_color, quota_window, remaining_percent, tray_metric_key, used_percent
@@ -103,7 +103,7 @@ class QuotaOverview(QWidget):
         self.cards = []
         y = 0
         buttons = iter(self.reset_buttons)
-        columns = content_columns(self.view.owner.width())
+        columns = page_columns(self.view.owner)
         for row in self.rows:
             quotas = row.get('quotas', [])
             card_columns = min(columns, max(1, len(quotas)))
@@ -319,7 +319,7 @@ class UsageCharts(QWidget):
         self.fit_charts()
 
     def fit_charts(self):
-        self.columns=content_columns(self.view.owner.width())
+        self.columns=page_columns(self.view.owner)
         self.setFixedHeight(262 if self.columns==1 else 128)
 
     def resizeEvent(self,event):

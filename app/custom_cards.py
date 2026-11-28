@@ -315,7 +315,8 @@ class CustomCard(QWidget):
         background=dock_appearance(cfg) if following else panel_appearance(cfg)
         colors=dock.base_theme_colors(background['theme'])
         custom={} if following else card['colors'];factor=cfg['card_scale']/70
-        host=self.window() if self.embedded else None
+        from capsule_scale import native_host
+        host=native_host(self) if self.embedded else None
         clear=background['material']=='clear' if following else style=='clear' or style=='follow' and background['material']=='clear'
         from component_contrast import card_text_ink, content_contrast
         mode=cfg.get('custom_card_content_mode','auto')

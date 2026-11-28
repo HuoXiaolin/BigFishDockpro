@@ -4,7 +4,7 @@ from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import QWidget
 
 from resource_compact import ring, text
-from resource_options import content_columns
+from resource_options import page_columns
 from resource_status import BATTERY_WARNING_LEVEL, band_ink, connection_labels, low_battery_ink
 
 
@@ -46,7 +46,7 @@ class SystemReadout(QWidget):
         self.fit_rows()
 
     def fit_rows(self):
-        self.columns=content_columns(self.owner.width())
+        self.columns=page_columns(self.owner)
         self.setFixedHeight(57 if self.columns==2 else 89)
 
     def resizeEvent(self,event):

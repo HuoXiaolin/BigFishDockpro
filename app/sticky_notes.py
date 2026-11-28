@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import uuid
 from types import SimpleNamespace
+from weakref import proxy
 from PyQt5.QtCore import Qt,QObject,QTimer,QRectF,QEvent,QPoint,QPointF,pyqtSignal,QVariant
 from PyQt5.QtGui import QPainter,QPainterPath,QColor,QPen,QLinearGradient,QFont,QTextCharFormat,QTextListFormat,QTextCursor,QTextDocument,QPalette,QIcon
 from PyQt5.QtWidgets import QWidget,QDialog,QLayout,QVBoxLayout,QHBoxLayout,QFormLayout,QLineEdit,QTextEdit,QToolButton,QLabel,QSizeGrip,QApplication,QListWidget,QListWidgetItem,QTabBar,QMessageBox,QShortcut
@@ -36,6 +37,7 @@ class NoteEditor(QTextEdit):
 
     def __init__(self,parent):
         super().__init__(parent)
+        self.note=proxy(parent)
         self.setDocument(LocalDocument(self));self.setAcceptRichText(False)
         self.document().setDocumentMargin(9)
         self.set_paragraph_theme(True)
@@ -75,7 +77,7 @@ class NoteEditor(QTextEdit):
         super().mouseReleaseEvent(event)
         cursor=self.cursorForPosition(event.pos())
         if event.button()==Qt.LeftButton and hasattr(self,'press_point') and (event.pos()-self.press_point).manhattanLength()<4 and not self.textCursor().hasSelection() and cursor.positionInBlock()<=1 and cursor.block().text().startswith(('☐ ','☑ ')):
-            cursor.movePosition(QTextCursor.StartOfBlock);self.setTextCursor(cursor);self.window().format_text('todo')
+            cursor.movePosition(QTextCursor.StartOfBlock);self.setTextCursor(cursor);self.note.format_text('todo')
     def insertFromMimeData(self,source):
         if source.hasText():self.insertPlainText(source.text())
 
@@ -472,7 +474,8 @@ class NoteWindow(QWidget):
         self.grip.setVisible(not self.embedded and not row['locked']);self.collapse_button.setText('▾' if collapsed else '−')
         appearance=self.effective_appearance()
         glass=appearance['style']=='glass'
-        capsule=self.window() if self.embedded else None
+        from capsule_scale import native_host
+        capsule=native_host(self) if self.embedded else None
         from component_contrast import content_contrast
         mode=self.dock.cfg.get('note_content_mode','auto')
         if capsule and mode=='auto':
@@ -567,7 +570,8 @@ class NoteWindow(QWidget):
     def paintEvent(self,event):
         if self.embedded:
             p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-            capsule=self.window()
+            from capsule_scale import native_host
+            capsule=native_host(self)
             paint_capsule_card(p,QRectF(self.rect()),capsule.colors,'sky',capsule.background,radius=11)
             return
         row=self.row();p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setRenderHint(QPainter.SmoothPixmapTransform);rect=QRectF(self.rect()).adjusted(1,1,-1,-1);shape=QPainterPath();shape.addRoundedRect(rect,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor,self.height()/2 if row['collapsed'] and __import__('fold_options').settings(self)['style']!='bar' else 14*self.ui_factor)
