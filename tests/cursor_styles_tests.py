@@ -34,7 +34,7 @@ def run(api, runtime, app, output, checks):
     from settings_catalog import CURSORS, NOTIFICATIONS, PAGE_GROUPS
     from settings_dialog import SettingsDialog
 
-    assert PAGE_GROUPS[0][1][-2:] == (NOTIFICATIONS, CURSORS)
+    assert dict(PAGE_GROUPS)['Windows 界面'][-2:] == (NOTIFICATIONS, CURSORS)
     prior_order = [key for key in reversed(DEFAULT_ORDER) if key != 'cursor_styles']
     migrated = normalize_order(prior_order)
     assert migrated.index('cursor_styles') == migrated.index('corners') + 1

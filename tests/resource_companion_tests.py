@@ -1,5 +1,6 @@
 """Regressions for narrow resident content, face controls and weather."""
 import copy,time
+from settings_sections import FACE, NEWS
 from unittest.mock import patch
 from PyQt5.QtCore import Qt,QEvent,QPointF,QRectF,QPoint
 from PyQt5.QtGui import QPainter,QImage,QColor,QCursor,QMouseEvent,QFontMetrics,QWheelEvent
@@ -19,8 +20,8 @@ def check_news_presets(options):
     assert normalize({'resource_news_feeds':[]})['resource_news_feeds']==[]
     assert normalize({'resource_news_feeds':[custom], 'resource_news_disabled_feeds':[custom,defaults[0]]})['resource_news_disabled_feeds']==[custom]
 
-    options.tabs.setCurrentIndex(7)
-    menu=options.tabs.widget(7).findChild(QPushButton,'NewsFeedPresets').menu()
+    options.tabs.setCurrentIndex(NEWS)
+    menu=options.tabs.widget(NEWS).findChild(QPushButton,'NewsFeedPresets').menu()
     actions={action.text():action for action in menu.actions() if not action.isSeparator()}
     options.news_feeds.setPlainText(custom)
     actions['IT之家'].trigger()
@@ -43,7 +44,7 @@ def check_news_presets(options):
     sources.item(2).setCheckState(Qt.Unchecked)
     disabled=[custom,defaults[0]]
     options.tabs.setCurrentIndex(6)
-    options.tabs.setCurrentIndex(7)
+    options.tabs.setCurrentIndex(NEWS)
     assert options.news_feeds.toPlainText().split()==merged
     sources=options.news_source_list
     assert [sources.item(i).data(Qt.UserRole) for i in range(sources.count()) if sources.item(i).checkState()==Qt.Unchecked]==disabled
@@ -330,7 +331,7 @@ def run(api,runtime,app,output,checks):
             assert {index for index,_ in samples}=={2} and len({ink for _,ink in samples})==3
             assert air_quality_style(151,light)[0]==3
         from resource_settings import ResourceOptions
-        options=ResourceOptions(service);options.tabs.setCurrentIndex(5)
+        options=ResourceOptions(service);options.tabs.setCurrentIndex(7)
         options.weather_threshold_fields[1].setValue(29)
         assert not options.commit() and cfg['resource_weather_thresholds']==thresholds
         options.weather_threshold_fields[1].setValue(18)
@@ -374,9 +375,9 @@ def run(api,runtime,app,output,checks):
         options.fields['resource_face_auto_switch'].setChecked(True)
         assert interval.isEnabled()
         interval.setValue(4)
-        options.show_page(6)
+        options.tabs.setCurrentIndex(FACE)
         news_feeds,disabled_feeds=check_news_presets(options)
-        options.tabs.setCurrentIndex(6)
+        options.tabs.setCurrentIndex(FACE)
         interval = options.fields['resource_face_switch_minutes']
         assert interval.isEnabled() and interval.value() == 4
         options.grab().save(str(output/'resource-face-options.png'))

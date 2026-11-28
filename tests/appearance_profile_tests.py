@@ -13,7 +13,7 @@ def run(api,runtime,main,app,output,checks):
     defaults=api.normalize_features(copy.deepcopy(api.DEFAULT_CONFIG))
     cfg=copy.deepcopy(defaults)
     cfg.update(clock_style='orbit',card_design='paper',theme_color='#236798',notes_enabled=False,
-        sticky_notes=[dict(id='style-fixture',title='主题切换测试',html='<p>正文保留</p>',text='正文保留',style='paper',color='#ffdce5',font_size=15,font_scale=1.0,body_font_size=25,body_font_scale=1.0,visible=False,geometry=[80,90,400,280])],
+        sticky_notes=[dict(id='style-fixture',title='主题切换测试',html='<p>正文保留</p>',text='正文保留',style='paper',appearance_source='custom',color='#ffdce5',font_size=15,font_scale=1.0,body_font_size=25,body_font_scale=1.0,visible=False,geometry=[80,90,400,280])],
         clock_layout={'screen':'unmodified'},items=[{'path':'shell:Downloads','name':'下载'}])
     cfg['clock_appearance'].update(font='Bahnschrift',font_scale=147,design='minimal',layout='portrait')
     cfg['clock_appearance']['work']['start']='08:45'

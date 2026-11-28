@@ -12,8 +12,8 @@ def section(parent, title):
     box.setObjectName('SettingsGroup')
     box.setAttribute(Qt.WA_StyledBackground)
     layout = QVBoxLayout(box)
-    layout.setContentsMargins(12, 9, 12, 10)
-    layout.setSpacing(7)
+    layout.setContentsMargins(16, 12, 16, 13)
+    layout.setSpacing(9)
     heading = QLabel(title)
     heading.setProperty('role', 'group-title')
     layout.addWidget(heading)
@@ -26,7 +26,7 @@ class ComponentPages(QStackedWidget):
         super().__init__()
         dialog.setProperty('simpleForms', True)
         content = QHBoxLayout()
-        content.setSpacing(10)
+        content.setSpacing(16)
         body.addLayout(content, 1)
         self.nav = SettingsNavigation()
         self.nav.setAccessibleName(group + '设置分类')
@@ -50,6 +50,18 @@ class ComponentPages(QStackedWidget):
     def tabText(self, index):
         return self.entries[index].text()
 
+    def order_navigation(self, indices):
+        """Display pages in task order while preserving direct links by page ID."""
+        current=self.currentIndex()
+        blocked=self.nav.blockSignals(True)
+        try:
+            for index in indices:
+                item=self.entries[index]
+                self.nav.addItem(self.nav.takeItem(self.nav.row(item)))
+            self.select_page(current)
+        finally:
+            self.nav.blockSignals(blocked)
+
     def page(self, title, icon):
         scroll = QScrollArea()
         scroll.setFrameShape(QFrame.NoFrame)
@@ -57,8 +69,8 @@ class ComponentPages(QStackedWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         part = QWidget()
         layout = QVBoxLayout(part)
-        layout.setContentsMargins(1, 1, 6, 1)
-        layout.setSpacing(8)
+        layout.setContentsMargins(2, 2, 9, 5)
+        layout.setSpacing(13)
         layout.setAlignment(Qt.AlignTop)
         scroll.setWidget(part)
         self.entries.append(self.nav.add_page(title, icon, self.count()))

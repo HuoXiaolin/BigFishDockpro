@@ -18,6 +18,68 @@ def action(menu, *titles):
     return item
 
 
+def check_desktop_return(w,application,stack,checks):
+    service=w.service
+    cfg=service.cfg
+    edge=w.edge_reveal
+    app=QApplication.instance()
+    def cover(visible):
+        application.setVisible(visible)
+        stack()
+        edge.check_application()
+    def settled():
+        return getattr(w,'_fold_surface',None) is None
+
+    with patch.dict(cfg,motion_enabled=True,resource_app_fold='light',resource_fold='bar',
+                    resource_expand_mode='hover',resource_geometry_locked=True,passthrough_mode='none'):
+        service.sync()
+        Events.drag(w,QPoint(3,w.height()//2),QPoint())
+        wait_for(app,lambda:not service.compact and settled())
+        cover(True)
+        wait_for(app,lambda:edge.over_app and edge.fraction==0.)
+        assert w.fold_shape()=='bar'
+        inside=w.mapToGlobal(QPoint(3,w.height()//2))
+        with patch('desktop_edge_reveal.QCursor.pos',return_value=inside) as cursor:
+            cover(False)
+            wait_for(app,lambda:not edge.over_app and edge.fraction==1.)
+            QApplication.sendEvent(w,QEvent(QEvent.Enter))
+            wait_for(app,lambda:not w.enter_timer.isActive())
+            assert service.compact and w.detail.isHidden() and w.mask().isEmpty()
+            assert w.geometry()==w.floating_rect(True) and not cfg['resource_collapsed']
+            cursor.return_value=w.geometry().bottomRight()+QPoint(15,15)
+            QApplication.sendEvent(w,QEvent(QEvent.Leave))
+            cursor.return_value=inside
+            QApplication.sendEvent(w,QEvent(QEvent.Enter))
+            wait_for(app,lambda:not service.compact and settled())
+        checks.append('An expanded capsule returns from the app light strip as its compact bar. A stationary pointer keeps details closed; a new hover and an explicit click can open them.')
+
+        cfg.update(resource_app_fold='ball',resource_fold='ball',resource_expand_mode='click')
+        service.sync()
+        cover(True)
+        wait_for(app,lambda:edge.over_app and edge.fraction==0.)
+        normal=w.geometry()
+        notice=('quota_notice','测试提醒')
+        service.peek_reminder(notice)
+        wait_for(app,lambda:edge.fraction==1. and settled())
+        deadline=edge.peek_until
+        cover(False)
+        assert not edge.over_app and service.compact and w.detail.isHidden()
+        assert edge.notice==notice and edge.peek_until==deadline
+        wait_for(app,lambda:not edge.as_pill and settled(),7)
+        assert service.compact and w.fold_shape()=='ball' and w.geometry()==normal and w.mask().isEmpty()
+        assert not cfg['resource_collapsed']
+        checks.append('Returning to the desktop mid-reminder preserves its original deadline. The configured compact ball and its bounds return when it expires, with details still closed.')
+
+        with patch.dict(cfg,motion_enabled=False),patch.object(edge,'visible_at_cursor',return_value=True):
+            service.fold(False,automatic=True)
+            cover(True)
+            assert edge.over_app and not service.compact
+            cover(False)
+            assert not edge.over_app and service.compact and w.detail.isHidden()
+        checks.append('Returning while hover has delayed app folding also lands in the compact capsule without changing its saved preference.')
+    service.sync()
+
+
 def check_strip(w,edge,checks):
     bar=edge.light.geometry()
     assert bar.top()==0 and abs(bar.center().x()-w.rect().center().x())<=1

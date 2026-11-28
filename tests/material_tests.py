@@ -138,7 +138,7 @@ def check_appearance_sources(api,runtime,output,checks):
     from glass_panel import PanelOptions
     from resource_options import background
     from resource_settings import ResourceOptions
-    from settings_catalog import WIDGETS
+    from settings_catalog import WIDGETS, VISUALS
     from settings_dialog import SettingsDialog
     from sticky_notes import NoteOptions
 
@@ -205,6 +205,7 @@ def check_appearance_sources(api,runtime,output,checks):
 
         dialog=SettingsDialog(runtime.tray,api);dialogs.append(dialog);dialog.tabs.setCurrentIndex(WIDGETS)
         for component,setting in (('daily_picture','material'),('spectrum','mono_color'),('note','style')):
+            dialog.tabs.setCurrentIndex(WIDGETS if component=='note' else VISUALS)
             if component=='spectrum':dialog.set_draft_values({'spectrum_color_mode':'mono'})
             source=dialog.fields[component+'_appearance_source'];assert options(source)==APPEARANCE_SOURCES
             dialog.set_draft_values({component+'_appearance_source':'app'})

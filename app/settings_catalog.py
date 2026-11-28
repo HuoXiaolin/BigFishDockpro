@@ -3,17 +3,22 @@ from panel_preferences import FOLD_SIZE_RANGE
 
 APPEARANCE, COLLECTION, APPS, RUNNING, UPDATES, USAGE, ABOUT, TASKBAR, WIDGETS, CAPSULES, DATA = range(11)
 START_MENU, NOTIFICATIONS, CURSORS = 11, 12, 13
-PAGES = ('Dock 外观', '桌面收纳', '应用管理', '启动与运行', '更新设置', '使用统计',
-         '关于', '任务栏', '桌面组件', '胶囊与监控', '数据与备份', '开始菜单', '通知面板', '鼠标样式')
+INTERACTION, VISUALS = 14, 15
+PAGES = ('Dock 外观与停靠', '桌面卡片与收纳', '应用与文件入口', '启动与运行', '更新设置', '使用统计',
+         '关于', '任务栏', '时钟、日历与便签', '灵动与闪念胶囊', '数据与备份', '开始菜单', '通知面板', '鼠标样式',
+         '全局显示与交互', '图片、频谱与水印')
 PAGE_SYMBOLS = ('palette', 'panels', 'apps', 'startup', 'update', 'size', 'info',
-                'position', 'calendar', 'wave', 'notes', 'apps', 'calendar', 'cursor')
+                'position', 'calendar', 'wave', 'notes', 'apps', 'calendar', 'cursor', 'position', 'palette')
 PAGE_GROUPS = (
-    ('外观与系统', (APPEARANCE, TASKBAR, START_MENU, NOTIFICATIONS, CURSORS)),
-    ('收纳与组件', (COLLECTION, APPS, WIDGETS, CAPSULES)),
-    ('运行与数据', (RUNNING, UPDATES, USAGE, DATA, ABOUT)),
+    ('Dock 栏', (APPEARANCE, APPS)),
+    ('桌面组件', (INTERACTION, CAPSULES, COLLECTION, WIDGETS, VISUALS)),
+    ('Windows 界面', (TASKBAR, START_MENU, NOTIFICATIONS, CURSORS)),
+    ('运行与维护', (RUNNING, DATA, USAGE, UPDATES, ABOUT)),
 )
 PAGE_TARGETS = {'@usage': USAGE, '@taskbar': TASKBAR, '@widgets': WIDGETS, '@capsules': CAPSULES, '@data': DATA,
-                '@start': START_MENU, '@notifications': NOTIFICATIONS, '@cursors': CURSORS}
+                '@start': START_MENU, '@notifications': NOTIFICATIONS, '@cursors': CURSORS, '@interaction': INTERACTION,
+                '@visuals': VISUALS, '@dock': APPEARANCE, '@apps': APPS, '@collection': COLLECTION, '@running': RUNNING,
+                '@updates': UPDATES, '@about': ABOUT}
 
 
 ALT_PASSTHROUGH_LABEL = '按住 Alt 临时解除鼠标穿透'
@@ -53,24 +58,24 @@ def field_catalog(api, cfg):
         'custom_bottom': (0, '自定义距底部（像素）', 'number', (0, 2000)),
         'bottom_margin': (0, '边缘距离（像素）', 'number', (0, 200)),
         'layer': (0, 'Dock 自定义层级', 'combo', api.LAYERS),
-        'desktop_layer_mode': (APPEARANCE, '全局层级', 'combo', [('各组件自定义','custom'),('置顶','top'),('置底','bottom')]),
-        'passthrough_mode': (APPEARANCE, '全局鼠标穿透', 'combo', [('各组件自定义','custom'),('穿透','all'),('不穿透','none')]),
-        'desktop_idle_fade_mode': (APPEARANCE, '全局空闲淡化', 'combo', [('各组件自定义','custom'),('全部开启','on'),('全部关闭','off')]),
-        'desktop_idle_fade_amount': (APPEARANCE, '淡化程度（%）', 'number', (0, 95)),
+        'desktop_layer_mode': (INTERACTION, '全局层级', 'combo', [('各组件自定义','custom'),('置顶','top'),('置底','bottom')]),
+        'passthrough_mode': (INTERACTION, '全局鼠标穿透', 'combo', [('各组件自定义','custom'),('穿透','all'),('不穿透','none')]),
+        'desktop_idle_fade_mode': (INTERACTION, '全局空闲淡化', 'combo', [('各组件自定义','custom'),('全部开启','on'),('全部关闭','off')]),
+        'desktop_idle_fade_amount': (INTERACTION, '淡化程度（%）', 'number', (0, 95)),
         'dock_idle_fade': (APPEARANCE, 'Dock 空闲淡化', 'check', None),
         'resource_idle_fade': (CAPSULES, '灵动胶囊空闲淡化', 'check', None),
         'flash_idle_fade': (CAPSULES, '闪念胶囊空闲淡化', 'check', None),
         'clock_idle_fade': (WIDGETS, '时钟空闲淡化', 'check', None),
         'calendar_idle_fade': (WIDGETS, '日历空闲淡化', 'check', None),
-        'daily_picture_idle_fade': (WIDGETS, '每日图片空闲淡化', 'check', None),
-        'watermark_idle_fade': (WIDGETS, '文字水印空闲淡化', 'check', None),
-        'spectrum_idle_fade': (WIDGETS, '音乐频谱空闲淡化', 'check', None),
+        'daily_picture_idle_fade': (VISUALS, '每日图片空闲淡化', 'check', None),
+        'watermark_idle_fade': (VISUALS, '文字水印空闲淡化', 'check', None),
+        'spectrum_idle_fade': (VISUALS, '音乐频谱空闲淡化', 'check', None),
         'show_name': (0, '悬停时显示应用名称', 'check', None),
-        'passthrough_alt_unlock': (APPEARANCE, ALT_PASSTHROUGH_LABEL, 'check', None),
+        'passthrough_alt_unlock': (INTERACTION, ALT_PASSTHROUGH_LABEL, 'check', None),
         'sep_split': (0, '分隔符切开玻璃背景', 'check', None),
         'lang': (0, '原 Dock 菜单语言', 'combo', [(name, key) for name, key in api.LANGS]),
-        'screen_corners': (0, '启用屏幕圆角', 'check', None),
-        'corner_radius': (0, '屏幕圆角半径（像素）', 'number', (0, 120)),
+        'screen_corners': (INTERACTION, '启用屏幕圆角', 'check', None),
+        'corner_radius': (INTERACTION, '屏幕圆角半径（像素）', 'number', (0, 120)),
         'taskbar_mode': (TASKBAR, '任务栏效果', 'combo', MODES),
         'taskbar_text_mode': (TASKBAR, '任务栏文字与系统图标', 'combo', TEXT_MODES),
         'taskbar_text_auto': (TASKBAR, '文字随壁纸自动切换黑白色', 'check', None),
@@ -85,7 +90,7 @@ def field_catalog(api, cfg):
         'panel_enabled': (1, '显示桌面卡片', 'check', None),
         'desktop_auto_sort': (1, '按文件类型自动分类', 'check', None),
         'panel_content_mode': (1, '文字与方块', 'combo', CONTENT_MODES),
-        'daily_picture_content_mode': (WIDGETS, '图片卡文字与方块', 'combo', CONTENT_MODES),
+        'daily_picture_content_mode': (VISUALS, '图片卡文字与方块', 'combo', CONTENT_MODES),
         'note_content_mode': (WIDGETS, '便签文字与方块', 'combo', CONTENT_MODES),
         'flash_content_mode': (CAPSULES, '闪念文字与方块', 'combo', CONTENT_MODES),
         'custom_card_content_mode': (WIDGETS, '自定义卡片文字与方块', 'combo', CONTENT_MODES),
@@ -119,31 +124,31 @@ def field_catalog(api, cfg):
         'desktop_icon_mode': (1, '桌面图标显示', 'combo', [('桌面与卡片同时显示', 'both'), ('隐藏全部桌面图标', 'hide_all')]),
         'desktop_middle_toggle': (1, '鼠标中键切换桌面图标', 'check', None),
         'clock_enabled': (WIDGETS, '桌面时钟', 'check', None),
-        'watermark_enabled': (WIDGETS, '显示桌面文字水印', 'check', None),
-        'watermark_text': (WIDGETS, '水印文字', 'text', None),
-        'watermark_color': (WIDGETS, '水印颜色', 'color', None),
-        'watermark_auto_contrast': (WIDGETS, '水印颜色自动适配背景', 'check', None),
-        'watermark_size': (WIDGETS, '水印字号（像素）', 'number', WATERMARK_RANGES['watermark_size']),
-        'watermark_angle': (WIDGETS, '旋转角度（°）', 'number', WATERMARK_RANGES['watermark_angle']),
-        'watermark_opacity': (WIDGETS, '水印不透明度（%）', 'number', WATERMARK_RANGES['watermark_opacity']),
-        'watermark_layer': (WIDGETS, '水印层级', 'combo', WATERMARK_LAYERS),
-        'watermark_mode': (WIDGETS, '水印模式', 'combo', WATERMARK_MODES),
-        'watermark_position': (WIDGETS, '单一位置', 'combo', WATERMARK_POSITIONS),
-        'watermark_density': (WIDGETS, '平铺密度', 'number', WATERMARK_RANGES['watermark_density']),
+        'watermark_enabled': (VISUALS, '显示桌面文字水印', 'check', None),
+        'watermark_text': (VISUALS, '水印文字', 'text', None),
+        'watermark_color': (VISUALS, '水印颜色', 'color', None),
+        'watermark_auto_contrast': (VISUALS, '水印颜色自动适配背景', 'check', None),
+        'watermark_size': (VISUALS, '水印字号（像素）', 'number', WATERMARK_RANGES['watermark_size']),
+        'watermark_angle': (VISUALS, '旋转角度（°）', 'number', WATERMARK_RANGES['watermark_angle']),
+        'watermark_opacity': (VISUALS, '水印不透明度（%）', 'number', WATERMARK_RANGES['watermark_opacity']),
+        'watermark_layer': (VISUALS, '水印层级', 'combo', WATERMARK_LAYERS),
+        'watermark_mode': (VISUALS, '水印模式', 'combo', WATERMARK_MODES),
+        'watermark_position': (VISUALS, '单一位置', 'combo', WATERMARK_POSITIONS),
+        'watermark_density': (VISUALS, '平铺密度', 'number', WATERMARK_RANGES['watermark_density']),
         'calendar_enabled': (WIDGETS, '桌面日历', 'check', None),
-        'spectrum_enabled': (WIDGETS, '桌面音乐频谱', 'check', None),
-        'spectrum_style': (WIDGETS, '频谱样式', 'combo', SPECTRUM_STYLES),
-        'spectrum_appearance_source': (WIDGETS, '频谱外观来源', 'combo', APPEARANCE_SOURCES),
-        'spectrum_backdrop_mode': (WIDGETS, '频谱玻璃背景', 'combo', BACKDROP_MODES),
-        'spectrum_layer': (WIDGETS, '频谱桌面层级', 'combo', [('置底','bottom'),('置顶','top')]),
-        'spectrum_color_mode': (WIDGETS, '频谱配色', 'combo', SPECTRUM_COLOR_MODES),
-        'spectrum_mono_color': (WIDGETS, '频谱单色', 'color', None),
-        'daily_picture_enabled': (WIDGETS, '桌面每日图片', 'check', None),
-        'daily_picture_appearance_source': (WIDGETS, '每日图片外观来源', 'combo', APPEARANCE_SOURCES),
-        'daily_picture_material': (WIDGETS, '每日图片外框材质', 'combo', [('沿用桌面收纳材质','follow'), *MATERIALS]),
-        'daily_picture_color': (WIDGETS, '每日图片外框颜色', 'color', None),
-        'daily_picture_source': (WIDGETS, '每日图片来源', 'combo', [('必应每日图片','bing'),('本地图片轮播','local')]),
-        'daily_picture_interval': (WIDGETS, '本地轮播间隔（秒）', 'number', (5,3600)),
+        'spectrum_enabled': (VISUALS, '桌面音乐频谱', 'check', None),
+        'spectrum_style': (VISUALS, '频谱样式', 'combo', SPECTRUM_STYLES),
+        'spectrum_appearance_source': (VISUALS, '频谱外观来源', 'combo', APPEARANCE_SOURCES),
+        'spectrum_backdrop_mode': (VISUALS, '频谱玻璃背景', 'combo', BACKDROP_MODES),
+        'spectrum_layer': (VISUALS, '频谱桌面层级', 'combo', [('置底','bottom'),('置顶','top')]),
+        'spectrum_color_mode': (VISUALS, '频谱配色', 'combo', SPECTRUM_COLOR_MODES),
+        'spectrum_mono_color': (VISUALS, '频谱单色', 'color', None),
+        'daily_picture_enabled': (VISUALS, '桌面每日图片', 'check', None),
+        'daily_picture_appearance_source': (VISUALS, '每日图片外观来源', 'combo', APPEARANCE_SOURCES),
+        'daily_picture_material': (VISUALS, '每日图片外框材质', 'combo', [('沿用桌面收纳材质','follow'), *MATERIALS]),
+        'daily_picture_color': (VISUALS, '每日图片外框颜色', 'color', None),
+        'daily_picture_source': (VISUALS, '每日图片来源', 'combo', [('必应每日图片','bing'),('本地图片轮播','local')]),
+        'daily_picture_interval': (VISUALS, '本地轮播间隔（秒）', 'number', (5,3600)),
         'notes_enabled': (WIDGETS, '便签卡片', 'check', None),
         'note_appearance_source': (WIDGETS, '新便签外观来源', 'combo', APPEARANCE_SOURCES),
         'note_style': (WIDGETS, '新便签装饰样式', 'combo', STYLES),
@@ -187,21 +192,27 @@ def field_catalog(api, cfg):
     }
 
 
-def targets(catalog):
+def targets(catalog, runtime=None):
     result = []
+    groups = {index:name for name, indices in PAGE_GROUPS for index in indices}
     for key, (page, title, kind, options) in catalog.items():
         if key == 'card_design':
             continue
-        result.append(dict(key=key, title=title, page=PAGES[page] if page >= 0 else '设置',
+        result.append(dict(key=key, title=title, page=f'{groups[page]} › {PAGES[page]}' if page >= 0 else '设置',
                            options=' '.join(name for name, _ in options) if kind == 'combo' else ''))
     for key, title in (('@clock', '时钟字体与布局'), ('@calendar', '日历设计与节假日'),
                        ('@notes', '便签管理与搜索'), ('@groups', '卡片分组与合并'),
                        ('@layouts', '桌面布局方案'), ('@references', '失效入口检查')):
         result.append(dict(key=key, title=title, page='组件与整理', options=''))
-    for key, options in (('@usage', '操作趋势 功能排行 重置统计'), ('@taskbar', '任务栏效果 监控'),
-                         ('@widgets', '桌面时钟 日历 音乐频谱 每日图片'), ('@capsules', '灵动胶囊 闪念胶囊'),
-                         ('@data', '导入配置 导出配置 恢复默认'),
-                         ('@cursors', '鼠标指针 光标 导入方案 恢复系统默认 cur ani')):
-        name = PAGES[PAGE_TARGETS[key]]
-        result.append(dict(key=key, title=name, page='总设置', options=options))
+    aliases = {'@dock':'Dock 外观 主题 停靠位置', '@apps':'应用管理 添加文件 文件夹 快捷映射',
+               '@collection':'桌面收纳 分类 分组合并', '@widgets':'桌面组件 桌面时钟 日历 便签',
+               '@visuals':'桌面组件 桌面图片 每日图片 音乐频谱 水印', '@capsules':'胶囊与监控 灵动胶囊 闪念胶囊',
+               '@interaction':'全局置顶置底 鼠标穿透 Alt 解锁 空闲淡化 屏幕圆角',
+               '@usage':'操作趋势 功能排行 重置统计', '@taskbar':'任务栏效果 监控', '@data':'导入配置 导出配置 恢复默认',
+               '@cursors':'鼠标指针 光标 导入方案 恢复系统默认 cur ani'}
+    for key, page in PAGE_TARGETS.items():
+        result.append(dict(key=key,title=PAGES[page],page='总设置 › '+groups[page],options=aliases.get(key,'')))
+    if runtime is not None:
+        from settings_shortcuts import component_links
+        result.extend(entry.search_row() for entry in component_links(runtime,catalog))
     return result

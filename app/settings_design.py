@@ -72,15 +72,20 @@ class SettingsNavigation(QListWidget):
         item = QListWidgetItem(title)
         item.setData(self.symbol_role, symbol)
         item.setData(Qt.UserRole, page)
+        item.setToolTip(title)
         self.addItem(item)
         self.set_page_icon(item)
         return item
 
     def fit_density(self):
         from ui_style import widget_px
-        self.setFixedWidth(max(94,widget_px(self,158)))
+        self.ensurePolished()
         size = widget_px(self,16)
         self.setIconSize(QSize(size,size))
+        # Reserve eight full-width characters, plus the icon, item insets and scrollbar.
+        rail_width = self.fontMetrics().horizontalAdvance('设置') * 4 + size + widget_px(self,42)
+        rail_width += self.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, self)
+        self.setFixedWidth(max(widget_px(self,194), rail_width))
         heading = QFont(self.font())
         heading.setPixelSize(max(10, widget_px(self, 13)))
         heading.setWeight(QFont.DemiBold)
@@ -92,6 +97,10 @@ class SettingsNavigation(QListWidget):
 
     def set_page_icon(self, item):
         item.setIcon(navigation_icon(item.data(self.symbol_role), self.palette()))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.fit_density()
 
     def changeEvent(self,event):
         super().changeEvent(event)
@@ -140,7 +149,9 @@ class ResponsiveFields(QWidget):
 
     def arrange(self):
         from ui_style import widget_px
-        columns = 2 if self.width() >= widget_px(self, 410) else 1
+        cell_width = max((cell.minimumSizeHint().width() for cell, wide in self.cells if not wide), default=0)
+        pair_width = max(widget_px(self, 410), cell_width * 2 + self.grid.horizontalSpacing())
+        columns = 2 if self.width() >= pair_width else 1
         if self.columns == columns and self.grid.count() == len(self.cells):
             self.fit_height()
             return
@@ -303,8 +314,8 @@ def group_form(form, dialog):
 
 def group_main_form(form, rows):
     """Keep each functional group together; labels and fields share two columns."""
-    form.setContentsMargins(10, 8, 10, 10)
-    form.setVerticalSpacing(10)
+    form.setContentsMargins(13, 10, 13, 14)
+    form.setVerticalSpacing(14)
     form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     form.setRowWrapPolicy(QFormLayout.DontWrapRows)
     group = fields = None
@@ -325,8 +336,8 @@ def group_main_form(form, rows):
             box.setObjectName('SettingsGroup')
             box.setAttribute(Qt.WA_StyledBackground)
             group = QVBoxLayout(box)
-            group.setContentsMargins(14, 9, 14, 9)
-            group.setSpacing(8)
+            group.setContentsMargins(16, 13, 16, 13)
+            group.setSpacing(10)
             field.setProperty('role', 'group-title')
             group.addWidget(field)
             form.addRow(box)
@@ -404,9 +415,12 @@ def prepare_dialog(dialog):
         return
     if dialog.objectName() == 'SettingsDialog':
         dialog.tabs.pages.setObjectName('SettingsSheet')
-        dialog.tabs.pages.setContentsMargins(8,8,8,8)
-        dialog.tabs.layout().setSpacing(8)
+        dialog.tabs.pages.setContentsMargins(12,12,12,12)
+        dialog.tabs.layout().setSpacing(14)
         return
+    if dialog.findChild(SettingsNavigation) is not None:
+        dialog.resize(max(720, dialog.width() + 92), max(440, dialog.height() + 52))
+        dialog.setProperty('settingsCanvasSize', dialog.size())
     header_index = next((i for i in range(body.count()) if isinstance(body.itemAt(i).widget(),SettingsHeader)), None)
     if header_index is None:
         return
@@ -425,8 +439,8 @@ def prepare_dialog(dialog):
     sheet = QWidget()
     sheet.setObjectName('SettingsSheet')
     interior = QVBoxLayout(sheet)
-    interior.setContentsMargins(18, 16, 18, 16)
-    interior.setSpacing(12)
+    interior.setContentsMargins(22, 18, 22, 18)
+    interior.setSpacing(14)
     for _ in range(footer_index-header_index-1):
         index = header_index+1
         stretch = body.stretch(index)

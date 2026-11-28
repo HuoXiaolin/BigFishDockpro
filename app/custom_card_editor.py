@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QApplication,QColorDialog,QDialog,QFileDialog,QForm
 
 from appearance_presets import APPEARANCE_SOURCES
 from component_settings import ComponentPages, section, settings_footer
+from settings_sections import CUSTOM_TABS
 from custom_card_data import ARRANGEMENTS,KINDS,MAX_CARDS,MAX_ROWS,STYLES,TEMPLATE,TOOLS,developer_prompt,parse_card_json,validate_card
 from ui_style import ModernCheckBox,ModernComboBox,ModernSpinBox,SettingsHeader,button,compact_dialog,label
 
@@ -26,7 +27,7 @@ class CardEditor(QDialog):
         self.remove_button=button('删除卡片',self.remove);picker.addWidget(self.remove_button)
         body.addLayout(picker)
         self.tabs=ComponentPages(self,body,'原生卡片')
-        base=section(self.tabs.page('内容','notes'),'卡片内容')
+        base=section(self.tabs.page(CUSTOM_TABS[0],'notes'),'卡片内容')
         form=QFormLayout();self.title=QLineEdit();self.title.setMaxLength(28)
         self.title.setAccessibleName('卡片名称');form.addRow('名称',self.title)
         self.source=self.combo({key:title for title,key in APPEARANCE_SOURCES});form.addRow('外观来源',self.source)
@@ -79,7 +80,7 @@ class CardEditor(QDialog):
         return field
 
     def build_design(self):
-        form=self.tabs.form('排版与配图','palette','排版、图片与文字')
+        form=self.tabs.form(CUSTOM_TABS[1],'palette','排版、图片与文字')
         self.arrangement=self.combo(ARRANGEMENTS);form.addRow('排版',self.arrangement)
         self.header_date=ModernCheckBox('标题右侧显示日期');form.addRow(self.header_date)
         self.image=self.file_input(form,'配图','图片 (*.jpg *.jpeg *.png *.webp *.bmp)')
@@ -106,7 +107,7 @@ class CardEditor(QDialog):
         for field in (self.style,*self.color_controls):field.setEnabled(custom)
 
     def build_tools(self):
-        lay=section(self.tabs.page('工具与接口','apps'),'工具与参数')
+        lay=section(self.tabs.page(CUSTOM_TABS[2],'apps'),'工具与参数')
         self.tool=self.combo(TOOLS);lay.addWidget(self.tool)
         lay.addWidget(label('可选模板，也可在下方修改工具参数或导入提示词生成的完整卡片 JSON。','muted'))
         self.tool_json=QPlainTextEdit();self.tool_json.setAccessibleName('工具 JSON');lay.addWidget(self.tool_json,1)

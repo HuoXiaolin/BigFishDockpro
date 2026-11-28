@@ -12,17 +12,17 @@ from ui_style import SettingsHeader, button, compact_dialog, exec_dialog, label
 
 COMPONENTS = {
     'flash': ('闪念胶囊', (
-        ('停靠与收起', 'position', ('enabled', 'idle_fade', 'side', 'edge_hide', 'auto_hide', 'delay', 'drop')),
+        ('停靠与交互', 'position', ('enabled', 'side', 'edge_hide', 'auto_hide', 'delay', 'drop', 'idle_fade')),
         ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'backdrop_mode', 'palette', 'color')))),
     'spectrum': ('桌面音乐频谱', (
-        ('显示与层级', 'wave', ('enabled', 'style', 'layer', 'locked', 'idle_fade')),
-        ('材质与配色', 'palette', ('appearance_source', 'backdrop_mode', 'color_mode', 'mono_color')))),
+        ('频谱样式与配色', 'wave', ('enabled', 'style', 'appearance_source', 'color_mode', 'mono_color')),
+        ('背景与窗口', 'position', ('backdrop_mode', 'layer', 'locked', 'idle_fade')))),
     'daily_picture': ('每日图片', (
-        ('图片与轮播', 'calendar', ('enabled', 'idle_fade', 'source', 'interval', 'locked')),
-        ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'material', 'color')))),
+        ('图片来源与轮播', 'calendar', ('enabled', 'source', 'interval')),
+        ('外观与窗口', 'palette', ('appearance_source', 'content_mode', 'material', 'color', 'locked', 'idle_fade')))),
     'watermark': ('桌面文字水印', (
-        ('文字与颜色', 'notes', ('enabled', 'text', 'color', 'auto_contrast', 'size', 'opacity')),
-        ('位置与平铺', 'position', ('mode', 'position', 'angle', 'density', 'layer', 'idle_fade')))),
+        ('文字与颜色', 'notes', ('enabled', 'text', 'size', 'color', 'auto_contrast', 'opacity')),
+        ('位置与平铺', 'position', ('mode', 'position', 'density', 'angle', 'layer', 'idle_fade')))),
     'note': ('新便签默认设置', (
         ('材质与配色', 'palette', ('appearance_source', 'content_mode', 'style')),)),
 }

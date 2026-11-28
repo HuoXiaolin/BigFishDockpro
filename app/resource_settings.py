@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt, QRectF, QSignalBlocker, QUrl
 from PyQt5.QtGui import QColor, QDesktopServices, QPainter
 from PyQt5.QtWidgets import (QWidget,QDialog,QStackedWidget,QFrame,QLabel,QPushButton,QLineEdit,QColorDialog,QScrollArea,
                              QVBoxLayout,QHBoxLayout,QGridLayout,QFormLayout,QListWidget,QListWidgetItem,
-                             QAbstractItemView)
+                             QAbstractItemView,QSizePolicy)
 from appearance_presets import BACKDROP_MODES,COLOR_MODES,material_choices
 from window_backdrop import BACKDROP_HINT
 from component_passthrough import CHOICES,LEGACY,individual,selection_changes
@@ -21,9 +21,9 @@ from resource_options import ALMANAC_CATEGORIES, COMPACT_ROTATE_INTERVAL_RANGE, 
 from ui_style import AlignedMenu,SettingsHeader,ModernComboBox,ModernSpinBox,ModernCheckBox,ColorSwatch,THEME_COLORS,button
 
 
-PAGE_NAMES = ('胶囊行为','任务栏监控','收起显示','AI 与音乐','材质与配色','资源与阈值','表情与吸附','天气与订阅','组件布局','日程与提醒')
-NAV_SYMBOLS = ('startup','position','size','wave','palette','monitor','corner','notes','panels','calendar')
-NAV_GROUPS = (('胶囊',(0,2,4,6,8)),('监控',(5,1)),('内容与接入',(9,7,3)))
+from settings_sections import CAPSULE_SECTIONS, FACE, SIZE, STATUS, MUSIC, MAIL, NEWS
+
+PAGE_NAMES = tuple(row[1] for row in sorted(row for _, rows in CAPSULE_SECTIONS for row in rows))
 COMPACT_GROUPS = (
     ('性能与流量', ('cpu','gpu','memory','disk_activity','network','fps','traffic')),
     ('电脑状态', COMPACT_STATUS),
@@ -104,33 +104,40 @@ class ResourceOptions(QDialog):
         2: ('compact_fields',),
         3: ('ai_fields',),
         4: ('custom_fields',),
-        5: ('limit_fields','weather_threshold_fields'),
+        5: ('limit_fields',),
+        7: ('weather_threshold_fields',),
         8: ('location_fields', 'location_fades'),
     }
     field_pages=[
         {'resource_enabled','resource_auto_hide','resource_layer','resource_fold','resource_delay','resource_open_page','resource_click_through','resource_expand_mode',
          'resource_capsule_taskbar','resource_capsule_taskbar_position','resource_idle_fade'},
         {'resource_taskbar','resource_task_threshold','resource_task_music','resource_task_music_colorful','resource_taskbar_position','resource_taskbar_layer','resource_task_font','resource_taskbar_click_through'},
-        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height','resource_compact_density','resource_compact_rings','resource_clock','resource_clock_format','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values(),'resource_weather_compact','resource_compact_ai','resource_compact_music','resource_alert_battery',
-           'resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
-           'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device','resource_mail_icon','resource_alert_weather'} | {'resource_alert_'+key for key in DEVICE_ALERTS},
-        {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric',
-         'resource_quota_alert','resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
+        {'resource_clock','resource_clock_format','resource_clock_weekday','resource_clock_lunar','resource_clock_festival',
+         'resource_weather_compact','resource_compact_ai','resource_compact_music'},
+        {'resource_ai','resource_ai_tray','resource_ai_tray_mode','resource_ai_tray_provider','resource_ai_tray_metric','resource_quota_alert'},
         {'resource_halo','resource_halo_speed','resource_halo_color_mode','resource_halo_mono_color','resource_background','resource_backdrop_mode','resource_content_mode','resource_palette','resource_card_transparency','resource_badge_strength'},
         {'resource_'+key for key in METRICS}|{'resource_threshold','resource_interval','resource_bt_tray','resource_hide_unavailable', *MONITOR_DEVICES.values()},
-        {'resource_geometry_locked','resource_edge_snap','resource_edge_hide','resource_app_fold','resource_peer_snap','resource_liquid','resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale',
-         'resource_face_auto_switch','resource_face_switch_minutes'},
-        {'resource_weather','resource_weather_days','resource_air_source','resource_weather_location','resource_weather_alert_sound','resource_news'},set(),
+        {'resource_geometry_locked','resource_edge_snap','resource_edge_hide','resource_app_fold','resource_peer_snap','resource_liquid'},
+        {'resource_weather','resource_weather_days','resource_air_source','resource_weather_location','resource_weather_alert_sound'},
+        set(),
         {'resource_pomodoro','resource_agenda','resource_alert_agenda','resource_alert_focus','resource_alert_water','resource_alert_almanac','resource_reminder_sound',
-         'resource_alert_stopwatch','resource_alert_alarm','resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval',
-         'resource_almanac_interval',*('resource_almanac_'+k for k in ALMANAC_CATEGORIES)}]
+         'resource_alert_stopwatch','resource_alert_alarm','resource_almanac_interval',*('resource_almanac_'+k for k in ALMANAC_CATEGORIES)},
+        {'resource_face','resource_face_interactive','resource_face_mood','resource_face_role','resource_face_scale','resource_face_auto_switch','resource_face_switch_minutes',
+         'resource_runner_enabled','resource_runner_animal','resource_runner_speed','resource_runner_metric','resource_runner_device'},
+        {'resource_compact_auto_width','resource_compact_width','resource_compact_height','resource_compact_badge_height','resource_expanded_width','resource_expanded_height',
+         'resource_compact_density','resource_compact_rings','resource_compact_rotate_interval',*ZONE_ROTATION_KEYS.values()},
+        {'resource_alert_battery','resource_alert_weather', *('resource_alert_'+key for key in DEVICE_ALERTS)},
+        {'resource_music','resource_lyrics','resource_music_text','resource_equalizer'},
+        {'resource_mail','resource_mail_notifications','resource_alert_mail_code','resource_mail_interval','resource_mail_icon'},
+        {'resource_news'},
+    ]
 
     def ensure_page(self,index):
         if index in self.loaded:return
         self.loaded.add(index);self.builders[index]()
         draft = self.drafts.get(index)
         if draft:
-            if index == 2:
+            if index == FACE:
                 fields = draft['stores']['fields']
                 self.fields['resource_runner_device'].set_metric(fields['resource_runner_metric'], fields['resource_runner_device'])
             for name, values in draft['stores'].items():
@@ -161,11 +168,12 @@ class ResourceOptions(QDialog):
             elif index == 2:
                 for field in ('format','weekday','lunar','festival'):
                     self.fields['resource_clock_'+field].setEnabled(self.fields['resource_clock'].isChecked())
+            elif index == FACE:
                 self.sync_runner_fields()
-            elif index == 6:
                 self.fields['resource_face_switch_minutes'].setEnabled(self.fields['resource_face_auto_switch'].isChecked())
             elif index == 7:
                 self.weather_cities.setText(draft['text'])
+            elif index == NEWS:
                 self.news_feeds.setPlainText(draft['feeds'])
         root = self.tabs.widget(index)
         for form in root.findChildren(QFormLayout):
@@ -175,7 +183,7 @@ class ResourceOptions(QDialog):
             from ui_style import compact_widget_tree
             compact_widget_tree(root)
             apply_density(capture_density(root), float(self.property('interfaceScale') or .7))
-        if index == 7:
+        if index == NEWS:
             self.refresh_news_sources()
         elif index == 3:
             self.sync_ai_tray_fields()
@@ -201,7 +209,7 @@ class ResourceOptions(QDialog):
         text = self.color.text() if index == 4 else self.weather_cities.text() if index == 7 else ''
         scroll = self.tabs.widget(index).layout().itemAt(0).widget().verticalScrollBar().value()
         self.drafts[index] = dict(stores=stores, text=text, scroll=scroll)
-        if index == 7:
+        if index == NEWS:
             self.drafts[index]['feeds'] = self.news_feeds.toPlainText()
 
     def show_page(self, index):
@@ -220,6 +228,7 @@ class ResourceOptions(QDialog):
                 self.swatches = {}
             elif previous == 7:
                 self.weather_cities = None
+            elif previous == NEWS:
                 self.news_feeds = None
                 self.news_source_list = None
             self.loaded.remove(previous)
@@ -235,40 +244,56 @@ class ResourceOptions(QDialog):
         super().__init__(None,Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinimizeButtonHint)
         self.setProperty('simpleForms', True)
         self.service=service;cfg=service.cfg
-        self.setWindowTitle('灵动胶囊设置 · 大肥鱼Dock');self.resize(598,506)
+        self.setWindowTitle('灵动胶囊设置 · 大肥鱼Dock');self.resize(740,568)
         self.loaded=set();self.fields=OptionFields(self);self.tints=dict(cfg['resource_tints'])
         self.drafts = {}
         self.orders = {}
         self.news_disabled_feeds=set(cfg['resource_news_disabled_feeds'])
-        for name,index in [('custom_fields',4),('task_fields',1),('task_media_fields',1),('compact_fields',2),('ai_fields',3),('limit_fields',5),('weather_threshold_fields',5),('location_fields',8),('location_fades',8)]:
-            setattr(self,name,PageFields(self,index))
+        for index, stores in self.page_stores.items():
+            for name in stores:
+                setattr(self,name,PageFields(self,index))
         from copy import deepcopy
         self.baseline = {key: deepcopy(value) if key.startswith('resource_') else value for key, value in cfg.items()
                          if key.startswith(('resource_', 'panel_'))}
         self.baseline['component_idle_fade'] = dict(cfg['component_idle_fade'])
         box=QVBoxLayout(self);box.addWidget(SettingsHeader(self,'灵动胶囊设置'))
         content = QHBoxLayout()
-        content.setSpacing(10)
+        content.setSpacing(16)
         box.addLayout(content,1)
         self.nav = SettingsNavigation()
         self.nav.setAccessibleName('灵动胶囊设置分类')
-        content.addWidget(self.nav)
+        rail=QVBoxLayout()
+        self.category_query=QLineEdit()
+        self.category_query.setPlaceholderText('查找分类或设置')
+        self.category_query.setAccessibleName('查找胶囊设置分类')
+        self.category_query.setClearButtonEnabled(True)
+        self.category_query.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed)
+        rail.addWidget(self.category_query)
+        self.empty_categories=QLabel('没有匹配的分类')
+        self.empty_categories.setProperty('role','muted')
+        self.empty_categories.hide()
+        rail.addWidget(self.empty_categories)
+        rail.addWidget(self.nav,1)
+        content.addLayout(rail)
         self.tabs = QStackedWidget()
         content.addWidget(self.tabs,1)
         for _ in PAGE_NAMES:
             self.tabs.addWidget(QWidget())
         self.nav_items = {}
-        for group, indices in NAV_GROUPS:
+        for group, rows in CAPSULE_SECTIONS:
             self.nav.add_group(group)
-            for index in indices:
-                self.nav_items[index] = self.nav.add_page(PAGE_NAMES[index],NAV_SYMBOLS[index],index)
+            for index,title,icon,words in rows:
+                item=self.nav_items[index]=self.nav.add_page(title,icon,index)
+                item.setData(Qt.UserRole+2,group+' '+title+' '+words)
+        self.category_query.textChanged.connect(self.filter_categories)
+        self.category_query.returnPressed.connect(self.open_first_match)
 
         def page(index):
             scroll=QScrollArea();scroll.setFrameShape(QFrame.NoFrame);scroll.setWidgetResizable(True)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             part=QWidget();layout=QVBoxLayout(part);scroll.setWidget(part)
-            layout.setContentsMargins(1,1,6,1)
-            layout.setSpacing(9)
+            layout.setContentsMargins(2,2,9,5)
+            layout.setSpacing(13)
             root = self.tabs.widget(index)
             outer = root.layout()
             if outer is None:
@@ -371,31 +396,6 @@ class ResourceOptions(QDialog):
                     else:
                         field=check(COMPACT_ITEMS[key],key in cfg['resource_compact_metrics']);self.compact_fields[key]=field
                     grid.addWidget(field,i//3,i%3)
-            compact=section(layout,'尺寸与分页')
-            compact_form=QFormLayout();compact.addLayout(compact_form)
-            self.fields['resource_compact_auto_width']=check('宽度随内容收紧（不超过设定宽度）',cfg['resource_compact_auto_width']);compact.addWidget(self.fields['resource_compact_auto_width'])
-            spin(compact_form,'resource_compact_width','胶囊宽度',96,1400,cfg['resource_compact_width'],self.fields)
-            spin(compact_form,'resource_compact_height','胶囊高度',28,100,cfg['resource_compact_height'],self.fields)
-            spin(compact_form,'resource_compact_badge_height','色块高度',*COMPACT_BADGE_HEIGHT_RANGE,cfg['resource_compact_badge_height'],self.fields)
-            self.fields['resource_compact_badge_height'].setSuffix(' px')
-            self.fields['resource_compact_badge_height'].setToolTip('调整收起时的色块和状态图标高度。资源标题和数值保留原有字体与字号，两行的上下位置与日期、时间对齐。')
-            spin(compact_form,'resource_expanded_width','展开宽度（各页共用）',260,1000,cfg['resource_expanded_width'],self.fields)
-            spin(compact_form,'resource_expanded_height','展开高度（各页共用）',180,800,cfg['resource_expanded_height'],self.fields)
-            combo(compact_form,'resource_compact_density','内容密度',[('自动紧凑','auto'),('始终紧凑','dense')],cfg['resource_compact_density'],self.fields)
-            self.fields['resource_compact_rings']=check('资源占用环',cfg['resource_compact_rings'])
-            compact.addWidget(self.fields['resource_compact_rings'])
-            paging = QFormLayout();paging.setHorizontalSpacing(8);compact.addLayout(paging)
-            key = 'resource_compact_rotate_interval'
-            spin(paging,key,'读数轮换间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
-            self.fields[key].setSuffix(' 秒')
-            zones = QHBoxLayout()
-            for zone, key in ZONE_ROTATION_KEYS.items():
-                field = self.fields[key] = check(COMPACT_ZONES[zone],cfg[key])
-                field.setAccessibleName(COMPACT_ZONES[zone]+'区域自动翻页')
-                field.setToolTip('控制该区域的多页内容。资源和节日各自在自己的位置轮换。')
-                zones.addWidget(field)
-            zones.addStretch()
-            paging.addRow('区域自动翻页',zones)
             clock=section(layout,'日期与时间')
             show_clock=check('显示日期或时间',cfg['resource_clock'])
             self.fields['resource_clock']=show_clock;clock.addWidget(show_clock)
@@ -413,30 +413,6 @@ class ResourceOptions(QDialog):
                 show_clock.toggled.connect(field.setEnabled)
             details.addStretch()
             form.addRow('日期行内容', details)
-            mail=section(layout,'邮箱图标')
-            key='resource_mail_icon'
-            self.fields[key]=check('收起时显示邮箱图标',cfg[key]);mail.addWidget(self.fields[key])
-            running=section(layout,'跑步小动物')
-            show_runner = check('在收起胶囊显示小动物', cfg['resource_runner_enabled'])
-            self.fields['resource_runner_enabled'] = show_runner
-            running.addWidget(show_runner)
-            form=QFormLayout();running.addLayout(form)
-            combo(form,'resource_runner_animal','动物形象',[(label,value) for value,label in RUNNER_ANIMALS.items()],cfg['resource_runner_animal'],self.fields)
-            metric = combo(form,'resource_runner_metric','监测指标',[(label,value) for value,label in RUNNER_METRICS.items()],cfg['resource_runner_metric'],self.fields)
-            hardware_picker(form, 'resource_runner_device', '监测设备', cfg['resource_runner_metric'])
-            combo(form,'resource_runner_speed','奔跑速度',[(label,value) for value,label in RUNNER_SPEEDS.items()],cfg['resource_runner_speed'],self.fields)
-            show_runner.toggled.connect(self.sync_runner_fields)
-            metric.currentIndexChanged.connect(self.sync_runner_fields)
-            self.sync_runner_fields()
-            compact=section(layout,'收起时自动提醒')
-            for key in ('resource_alert_battery','resource_alert_weather'):
-                self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
-            devices=section(layout,'键盘与设备状态')
-            note=QLabel('已选状态在收起时显示图标。状态变化时显示文字，5 秒后收回。')
-            note.setWordWrap(True);devices.addWidget(note)
-            for kind,title in DEVICE_ALERTS.items():
-                key='resource_alert_'+kind
-                self.fields[key]=check(title,cfg[key]);devices.addWidget(self.fields[key])
             layout.addStretch()
 
         def build_3():
@@ -477,12 +453,6 @@ class ResourceOptions(QDialog):
             self.fields['resource_ai_tray'].toggled.connect(self.sync_ai_tray_fields)
             for field in self.ai_fields.values():
                 field.toggled.connect(self.refresh_ai_tray_choices)
-            music=section(layout,'音乐与歌词')
-            for key,title in [('resource_music','音乐预览与控制'),('resource_lyrics','同步歌词（允许联网匹配）')]:
-                self.fields[key]=check(title,cfg[key]);music.addWidget(self.fields[key])
-            music_form=QFormLayout();music.addLayout(music_form)
-            combo(music_form,'resource_music_text','收起时显示',[('声音律动','wave'),('歌名','title'),('当前歌词','lyrics')],cfg['resource_music_text'],self.fields)
-            combo(music_form,'resource_equalizer','音乐律动',[('声音流动','flow'),('频谱','spectrum')],cfg['resource_equalizer'],self.fields)
             layout.addStretch()
 
         def build_4():
@@ -603,13 +573,6 @@ class ResourceOptions(QDialog):
             for key,unit in SENSOR_UNITS.items():
                 if key=='gpu_memory':continue
                 spin(limits_form,key,METRICS[key]+'（'+unit+'）',0,100000,cfg['resource_limits'].get(key,default_limit(key)),self.limit_fields)
-            weather=section(layout,'收起天气温度颜色')
-            form=QFormLayout();weather.addLayout(form)
-            labels=('深蓝低于（℃）','绿色从（℃）开始','黄色高于（℃）','红色高于（℃）')
-            for index,(label,value) in enumerate(zip(labels,cfg['resource_weather_thresholds'])):
-                spin(form,index,label,-80,80,value,self.weather_threshold_fields)
-            hint=QLabel('深蓝和绿色之间使用浅蓝。分界值按从低到高排列。')
-            hint.setWordWrap(True);weather.addWidget(hint)
             layout.addStretch()
 
         def build_6():
@@ -618,30 +581,13 @@ class ResourceOptions(QDialog):
             for key,title in [('resource_geometry_locked','锁定位置和大小'),('resource_edge_snap','屏幕边缘吸附'),('resource_edge_hide','贴边隐藏为光条，有新提醒时短暂显示收起胶囊'),('resource_peer_snap','相邻卡片吸附'),
                               ('resource_liquid','液态拉伸、断开水滴与贴边圆角')]:
                 self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
-            hint=QLabel('吸附距离在主设置「桌面收纳」中调整。')
+            hint=QLabel('吸附距离在总设置的「桌面卡片与收纳」中调整。')
             hint.setWordWrap(True);interaction.addWidget(hint)
             covering=section(layout,'应用窗口前收起')
             form=QFormLayout();covering.addLayout(form)
             combo(form,'resource_app_fold','收起样式',[('光条','light'),('圆球','ball'),('关闭','off')],cfg['resource_app_fold'],self.fields)
-            hint=QLabel('胶囊置顶并覆盖应用时生效。光条贴在胶囊原位置的上沿。新提醒显示 5 秒，回到桌面后恢复原来的形态。')
+            hint=QLabel('胶囊置顶并覆盖应用时生效。光条贴在胶囊原位置的上沿。新提醒显示 5 秒。返回桌面时只显示收起胶囊。')
             hint.setWordWrap(True);covering.addWidget(hint)
-            interaction=section(layout,'表情与角色')
-            for key,title in [('resource_face','显示表情（收起与展开）'),('resource_face_interactive','表情互动（跟随、眨眼与按压）')]:
-                self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
-            face_form=QFormLayout();interaction.addLayout(face_form)
-            combo(face_form,'resource_face_mood','表情样式',list(zip(('靠近随机变化','默认','开心','眨眼','爱心','星星眼','害羞','嘟嘴','眯眼'),('random','default','happy','wink','love','star','shy','pout','squint'))),cfg['resource_face_mood'],self.fields)
-            auto_switch = check('定时切换表情', cfg['resource_face_auto_switch'])
-            self.fields['resource_face_auto_switch'] = auto_switch
-            face_form.addRow(auto_switch)
-            spin(face_form, 'resource_face_switch_minutes', '切换间隔（分钟）', *FACE_SWITCH_RANGE,
-                 cfg['resource_face_switch_minutes'], self.fields)
-            interval = self.fields['resource_face_switch_minutes']
-            interval.setEnabled(auto_switch.isChecked())
-            auto_switch.toggled.connect(interval.setEnabled)
-            spin(face_form,'resource_face_scale','表情大小（%）',60,130,cfg['resource_face_scale'],self.fields)
-            from face_role_controls import add_role_controls
-            self.fields['resource_face_role']=add_role_controls(self,face_form,self.service.runtime,
-                                                               self.status,cfg['resource_face_role'])
             layout.addStretch()
 
         def build_7():
@@ -662,38 +608,13 @@ class ResourceOptions(QDialog):
             combo(weather_form,'resource_air_source','空气质量来源',[('Open-Meteo 自动','auto'),('CAMS 全球小时数据','cams'),('和风天气','qweather')],cfg['resource_air_source'],self.fields)
             from weather_connection import edit_connection
             daily.addWidget(button('和风天气连接…',lambda:edit_connection(self,self.service)))
-            daily=section(layout,'新闻订阅')
-            daily.setAlignment(Qt.AlignTop)
-            news_controls=QHBoxLayout()
-            self.fields['resource_news']=check('显示新闻订阅',cfg['resource_news'])
-            news_controls.addWidget(self.fields['resource_news']);news_controls.addStretch()
-            presets=QPushButton('添加内置源')
-            presets.setObjectName('NewsFeedPresets');presets.setAutoDefault(False)
-            menu=AlignedMenu(presets)
-            menu.addAction('添加全部内置源',lambda:self.add_news_sources([url for _,url in NEWS_FEED_PRESETS]))
-            menu.addSeparator()
-            for name,url in NEWS_FEED_PRESETS:
-                menu.addAction(name,lambda checked=False,url=url:self.add_news_sources([url]))
-            presets.setMenu(menu);news_controls.addWidget(presets)
-            edit_links=QPushButton('编辑链接');edit_links.setAutoDefault(False);edit_links.setCheckable(True)
-            news_controls.addWidget(edit_links);daily.addLayout(news_controls)
-            self.news_source_list=QListWidget()
-            self.news_source_list.setAccessibleName('订阅源开关')
-            self.news_source_list.setTextElideMode(Qt.ElideMiddle)
-            self.news_source_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.news_source_list.setStyleSheet('QListWidget{padding:2px;} QListWidget::item{min-height:22px;padding:2px 6px;}')
-            self.news_source_list.itemChanged.connect(self.toggle_news_source)
-            daily.addWidget(self.news_source_list)
-
-            from PyQt5.QtWidgets import QPlainTextEdit
-            editor=QWidget();editor_layout=QVBoxLayout(editor);editor_layout.setContentsMargins(0,0,0,0)
-            editor_layout.addWidget(QLabel(f'RSS / Atom 订阅链接（每行一个，最多 {MAX_NEWS_FEEDS} 个）'))
-            self.news_feeds=QPlainTextEdit('\n'.join(cfg['resource_news_feeds']))
-            self.news_feeds.setAccessibleName('新闻订阅链接')
-            self.news_feeds.setFixedHeight(82)
-            self.news_feeds.textChanged.connect(self.refresh_news_sources)
-            editor_layout.addWidget(self.news_feeds);daily.addWidget(editor);editor.hide()
-            edit_links.toggled.connect(editor.setVisible)
+            weather=section(layout,'收起天气温度颜色')
+            form=QFormLayout();weather.addLayout(form)
+            labels=('深蓝低于（℃）','绿色从（℃）开始','黄色高于（℃）','红色高于（℃）')
+            for index,(label,value) in enumerate(zip(labels,cfg['resource_weather_thresholds'])):
+                spin(form,index,label,-80,80,value,self.weather_threshold_fields)
+            hint=QLabel('深蓝和绿色之间使用浅蓝。分界值按从低到高排列。')
+            hint.setWordWrap(True);weather.addWidget(hint)
             layout.addStretch()
 
         def build_8():
@@ -745,6 +666,102 @@ class ResourceOptions(QDialog):
             spin(timing,key,'节日轮换间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
             self.fields[key].setSuffix(' 秒')
             show.toggled.connect(self.sync_almanac_fields)
+            timers=section(layout,'专注与喝水')
+            self.fields['resource_pomodoro']=check('显示番茄钟与喝水提醒',cfg['resource_pomodoro'])
+            timers.addWidget(self.fields['resource_pomodoro'])
+            for key,title in (('resource_alert_focus','收起时显示专注计时与完成提醒'),
+                              ('resource_alert_stopwatch','收起时同步显示正计时'),('resource_alert_alarm','收起时显示下次闹钟与到点提醒'),
+                              ('resource_alert_water','收起时显示喝水提醒')):
+                self.fields[key]=check(title,cfg[key]);timers.addWidget(self.fields[key])
+            layout.addStretch()
+
+        def build_face():
+            layout=page(FACE)
+            interaction=section(layout,'表情与角色')
+            for key,title in [('resource_face','显示表情（收起与展开）'),('resource_face_interactive','表情互动（跟随、眨眼与按压）')]:
+                self.fields[key]=check(title,cfg[key]);interaction.addWidget(self.fields[key])
+            face_form=QFormLayout();interaction.addLayout(face_form)
+            combo(face_form,'resource_face_mood','表情样式',list(zip(('靠近随机变化','默认','开心','眨眼','爱心','星星眼','害羞','嘟嘴','眯眼'),('random','default','happy','wink','love','star','shy','pout','squint'))),cfg['resource_face_mood'],self.fields)
+            auto_switch = check('定时切换表情', cfg['resource_face_auto_switch'])
+            self.fields['resource_face_auto_switch'] = auto_switch
+            face_form.addRow(auto_switch)
+            spin(face_form, 'resource_face_switch_minutes', '切换间隔（分钟）', *FACE_SWITCH_RANGE,
+                 cfg['resource_face_switch_minutes'], self.fields)
+            interval = self.fields['resource_face_switch_minutes']
+            interval.setEnabled(auto_switch.isChecked())
+            auto_switch.toggled.connect(interval.setEnabled)
+            spin(face_form,'resource_face_scale','表情大小（%）',60,130,cfg['resource_face_scale'],self.fields)
+            from face_role_controls import add_role_controls
+            self.fields['resource_face_role']=add_role_controls(self,face_form,self.service.runtime,
+                                                               self.status,cfg['resource_face_role'])
+            running=section(layout,'跑步小动物')
+            show_runner = check('在收起胶囊显示小动物', cfg['resource_runner_enabled'])
+            self.fields['resource_runner_enabled'] = show_runner
+            running.addWidget(show_runner)
+            form=QFormLayout();running.addLayout(form)
+            combo(form,'resource_runner_animal','动物形象',[(label,value) for value,label in RUNNER_ANIMALS.items()],cfg['resource_runner_animal'],self.fields)
+            metric = combo(form,'resource_runner_metric','监测指标',[(label,value) for value,label in RUNNER_METRICS.items()],cfg['resource_runner_metric'],self.fields)
+            hardware_picker(form, 'resource_runner_device', '监测设备', cfg['resource_runner_metric'])
+            combo(form,'resource_runner_speed','奔跑速度',[(label,value) for value,label in RUNNER_SPEEDS.items()],cfg['resource_runner_speed'],self.fields)
+            show_runner.toggled.connect(self.sync_runner_fields)
+            metric.currentIndexChanged.connect(self.sync_runner_fields)
+            self.sync_runner_fields()
+            layout.addStretch()
+
+        def build_size():
+            layout=page(SIZE)
+            compact=section(layout,'尺寸与分页')
+            compact_form=QFormLayout();compact.addLayout(compact_form)
+            self.fields['resource_compact_auto_width']=check('宽度随内容收紧（不超过设定宽度）',cfg['resource_compact_auto_width']);compact.addWidget(self.fields['resource_compact_auto_width'])
+            spin(compact_form,'resource_compact_width','胶囊宽度',96,1400,cfg['resource_compact_width'],self.fields)
+            spin(compact_form,'resource_compact_height','胶囊高度',28,100,cfg['resource_compact_height'],self.fields)
+            spin(compact_form,'resource_compact_badge_height','色块高度',*COMPACT_BADGE_HEIGHT_RANGE,cfg['resource_compact_badge_height'],self.fields)
+            self.fields['resource_compact_badge_height'].setSuffix(' px')
+            self.fields['resource_compact_badge_height'].setToolTip('调整收起时的色块和状态图标高度。资源标题和数值保留原有字体与字号，两行的上下位置与日期、时间对齐。')
+            spin(compact_form,'resource_expanded_width','展开宽度（各页共用）',260,1000,cfg['resource_expanded_width'],self.fields)
+            spin(compact_form,'resource_expanded_height','展开高度（各页共用）',180,800,cfg['resource_expanded_height'],self.fields)
+            combo(compact_form,'resource_compact_density','内容密度',[('自动紧凑','auto'),('始终紧凑','dense')],cfg['resource_compact_density'],self.fields)
+            self.fields['resource_compact_rings']=check('资源占用环',cfg['resource_compact_rings'])
+            compact.addWidget(self.fields['resource_compact_rings'])
+            paging = QFormLayout();paging.setHorizontalSpacing(8);compact.addLayout(paging)
+            key = 'resource_compact_rotate_interval'
+            spin(paging,key,'读数轮换间隔',*COMPACT_ROTATE_INTERVAL_RANGE,cfg[key],self.fields)
+            self.fields[key].setSuffix(' 秒')
+            zones = QHBoxLayout()
+            for zone, key in ZONE_ROTATION_KEYS.items():
+                field = self.fields[key] = check(COMPACT_ZONES[zone],cfg[key])
+                field.setAccessibleName(COMPACT_ZONES[zone]+'区域自动翻页')
+                field.setToolTip('控制该区域的多页内容。资源和节日各自在自己的位置轮换。')
+                zones.addWidget(field)
+            zones.addStretch()
+            paging.addRow('区域自动翻页',zones)
+            layout.addStretch()
+
+        def build_status():
+            layout=page(STATUS)
+            compact=section(layout,'收起时自动提醒')
+            for key in ('resource_alert_battery','resource_alert_weather'):
+                self.fields[key]=check(REMINDER_OPTIONS[key],cfg[key]);compact.addWidget(self.fields[key])
+            devices=section(layout,'键盘与设备状态')
+            note=QLabel('已选状态在收起时显示图标。状态变化时显示文字，5 秒后收回。')
+            note.setWordWrap(True);devices.addWidget(note)
+            for kind,title in DEVICE_ALERTS.items():
+                key='resource_alert_'+kind
+                self.fields[key]=check(title,cfg[key]);devices.addWidget(self.fields[key])
+            layout.addStretch()
+
+        def build_music():
+            layout=page(MUSIC)
+            music=section(layout,'音乐与歌词')
+            for key,title in [('resource_music','音乐预览与控制'),('resource_lyrics','同步歌词（允许联网匹配）')]:
+                self.fields[key]=check(title,cfg[key]);music.addWidget(self.fields[key])
+            music_form=QFormLayout();music.addLayout(music_form)
+            combo(music_form,'resource_music_text','收起时显示',[('声音律动','wave'),('歌名','title'),('当前歌词','lyrics')],cfg['resource_music_text'],self.fields)
+            combo(music_form,'resource_equalizer','音乐律动',[('声音流动','flow'),('频谱','spectrum')],cfg['resource_equalizer'],self.fields)
+            layout.addStretch()
+
+        def build_mail():
+            layout=page(MAIL)
             mail=section(layout,'邮件通知')
             for key,title in (('resource_mail','显示邮箱卡片并同步邮件'),('resource_mail_notifications','来信时通知'),
                               ('resource_alert_mail_code','收起时显示验证码方块')):
@@ -756,16 +773,49 @@ class ResourceOptions(QDialog):
             form.addRow('刷新周期（秒）',interval)
             from resource_mail_settings import edit_mail_accounts
             mail.addWidget(button('邮箱账号管理…',lambda:edit_mail_accounts(self.service,self)))
-            timers=section(layout,'专注与喝水')
-            self.fields['resource_pomodoro']=check('显示番茄钟与喝水提醒',cfg['resource_pomodoro'])
-            timers.addWidget(self.fields['resource_pomodoro'])
-            for key,title in (('resource_alert_focus','收起时显示专注计时与完成提醒'),
-                              ('resource_alert_stopwatch','收起时同步显示正计时'),('resource_alert_alarm','收起时显示下次闹钟与到点提醒'),
-                              ('resource_alert_water','收起时显示喝水提醒')):
-                self.fields[key]=check(title,cfg[key]);timers.addWidget(self.fields[key])
+            mail=section(layout,'邮箱图标')
+            key='resource_mail_icon'
+            self.fields[key]=check('收起时显示邮箱图标',cfg[key]);mail.addWidget(self.fields[key])
             layout.addStretch()
 
-        self.builders=[build_0,build_1,build_2,build_3,build_4,build_5,build_6,build_7,build_8,build_9]
+        def build_news():
+            layout=page(NEWS)
+            daily=section(layout,'新闻订阅')
+            daily.setAlignment(Qt.AlignTop)
+            news_controls=QHBoxLayout()
+            self.fields['resource_news']=check('显示新闻订阅',cfg['resource_news'])
+            news_controls.addWidget(self.fields['resource_news']);news_controls.addStretch()
+            presets=QPushButton('添加内置源')
+            presets.setObjectName('NewsFeedPresets');presets.setAutoDefault(False)
+            menu=AlignedMenu(presets)
+            menu.addAction('添加全部内置源',lambda:self.add_news_sources([url for _,url in NEWS_FEED_PRESETS]))
+            menu.addSeparator()
+            for name,url in NEWS_FEED_PRESETS:
+                menu.addAction(name,lambda checked=False,url=url:self.add_news_sources([url]))
+            presets.setMenu(menu);news_controls.addWidget(presets)
+            edit_links=QPushButton('编辑链接');edit_links.setAutoDefault(False);edit_links.setCheckable(True)
+            news_controls.addWidget(edit_links);daily.addLayout(news_controls)
+            self.news_source_list=QListWidget()
+            self.news_source_list.setAccessibleName('订阅源开关')
+            self.news_source_list.setTextElideMode(Qt.ElideMiddle)
+            self.news_source_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.news_source_list.setStyleSheet('QListWidget{padding:2px;} QListWidget::item{min-height:22px;padding:2px 6px;}')
+            self.news_source_list.itemChanged.connect(self.toggle_news_source)
+            daily.addWidget(self.news_source_list)
+
+            from PyQt5.QtWidgets import QPlainTextEdit
+            editor=QWidget();editor_layout=QVBoxLayout(editor);editor_layout.setContentsMargins(0,0,0,0)
+            editor_layout.addWidget(QLabel(f'RSS / Atom 订阅链接（每行一个，最多 {MAX_NEWS_FEEDS} 个）'))
+            self.news_feeds=QPlainTextEdit('\n'.join(cfg['resource_news_feeds']))
+            self.news_feeds.setAccessibleName('新闻订阅链接')
+            self.news_feeds.setFixedHeight(82)
+            self.news_feeds.textChanged.connect(self.refresh_news_sources)
+            editor_layout.addWidget(self.news_feeds);daily.addWidget(editor);editor.hide()
+            edit_links.toggled.connect(editor.setVisible)
+            layout.addStretch()
+
+        self.builders=[build_0,build_1,build_2,build_3,build_4,build_5,build_6,build_7,build_8,build_9,
+                       build_face,build_size,build_status,build_music,build_mail,build_news]
         self.tabs.currentChanged.connect(self.show_page)
         self.nav.currentItemChanged.connect(self.navigate)
         self.service.ai_data_changed.connect(self.refresh_ai_tray_choices)
@@ -782,6 +832,32 @@ class ResourceOptions(QDialog):
             index=item.data(Qt.UserRole)
             if index is not None:
                 self.tabs.setCurrentIndex(index)
+
+    def filter_categories(self,query):
+        words=query.casefold().split()
+        matches=0
+        # Walk up from the last page so a heading can follow its children's visibility.
+        group_matches=0
+        for row in reversed(range(self.nav.count())):
+            item=self.nav.item(row)
+            if item.data(Qt.UserRole) is None:
+                item.setHidden(group_matches==0)
+                group_matches=0
+            else:
+                text=item.data(Qt.UserRole+2).casefold()
+                visible=all(word in text for word in words)
+                item.setHidden(not visible)
+                group_matches+=visible
+                matches+=visible
+        self.empty_categories.setVisible(not matches)
+
+    def open_first_match(self):
+        for row in range(self.nav.count()):
+            item=self.nav.item(row)
+            if item.data(Qt.UserRole) is not None and not item.isHidden():
+                self.nav.setCurrentItem(item)
+                self.nav.setFocus(Qt.ShortcutFocusReason)
+                return
 
     def export_driver(self):
         from pawnio_setup import export_installer
@@ -1066,7 +1142,12 @@ class ResourceOptions(QDialog):
             from resource_weather import clean_cities
             try:
                 changes['resource_weather_cities']=clean_cities([s.strip() for s in re.split('[,，;；]',self.drafts[7]['text']) if s.strip()],True)
-                feeds=clean_feeds(self.drafts[7]['feeds'].split(),True)
+                bounds=self.drafts[7]['stores']['weather_threshold_fields']
+                changes['resource_weather_thresholds']=clean_weather_thresholds([bounds[i] for i in range(4)],True)
+            except ValueError as error:self.status.setText(str(error));return False
+        if NEWS in self.drafts:
+            try:
+                feeds=clean_feeds(self.drafts[NEWS]['feeds'].split(),True)
                 changes['resource_news_feeds']=feeds
                 changes['resource_news_disabled_feeds']=[url for url in feeds if url in self.news_disabled_feeds]
             except ValueError as error:self.status.setText(str(error));return False
@@ -1089,8 +1170,6 @@ class ResourceOptions(QDialog):
             from resource_status import default_limit
             thresholds=self.drafts[5]['stores']
             changes['resource_limits']={k:value for k,value in thresholds['limit_fields'].items() if value!=default_limit(k)}
-            try:changes['resource_weather_thresholds']=clean_weather_thresholds([thresholds['weather_threshold_fields'][i] for i in range(4)],True)
-            except ValueError as error:self.status.setText(str(error));return False
         if len(changes.get('resource_ai_providers',[]))>7:self.status.setText('最多同时显示 7 个 AI 工具。');return False
         if changes.get('resource_ai_tray') and changes.get('resource_ai_tray_mode') == 'fixed':
             if not changes['resource_ai_tray_provider'] or not changes['resource_ai_tray_metric']:

@@ -11,7 +11,7 @@ def run(api,runtime,root,output,checks):
     def stage(message):
         with (Path(output)/'usage-stage.log').open('a',encoding='utf-8') as stream:stream.write(message+'\n')
     stage('begin')
-    from settings_catalog import APPEARANCE, TASKBAR, USAGE, WIDGETS
+    from settings_catalog import APPEARANCE, TASKBAR, USAGE, VISUALS
     from usage_stats import SCHEMA_VERSION, UsageStore
     from settings_dialog import SettingsDialog
     from ui_style import apply_theme
@@ -80,13 +80,15 @@ def run(api,runtime,root,output,checks):
         assert dialog.tabs.currentIndex()==TASKBAR and dialog.tabs.nav.currentItem() is dialog.tabs.nav_items[TASKBAR]
         assert tuple(dialog._mounted)==(TASKBAR,)
         dialog.focus_setting('daily_picture_source')
-        assert dialog.tabs.currentIndex()==WIDGETS and tuple(dialog._mounted)==(WIDGETS,)
+        assert dialog.tabs.currentIndex()==VISUALS and tuple(dialog._mounted)==(VISUALS,)
         dialog.tabs.setCurrentIndex(APPEARANCE)
         assert dialog.fields['icon_size'].value()==old_value+1
         dialog.focus_setting('@usage')
         page = dialog.usage_page
         assert page.view_state()==(90, 'total') and tuple(dialog._mounted)==(USAGE,)
 
+        dialog.size_mode.setCurrentIndex(dialog.size_mode.findData('small'))
+        dialog.resize(dialog.width(), 420)
         for _ in range(4):app.processEvents()
         scroll = dialog.tabs.pages.currentWidget()
         assert scroll.verticalScrollBar().maximum() > 0, (

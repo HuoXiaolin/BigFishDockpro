@@ -11,7 +11,7 @@ def run(output):
     assert_isolated()
     import dock as api
     from PyQt5.QtWidgets import QApplication,QLabel,QScrollArea,QSlider
-    from PyQt5.QtCore import QCoreApplication,QEvent,Qt
+    from PyQt5.QtCore import QCoreApplication,QEvent,QRect,QSize,Qt
     from PyQt5.QtTest import QTest
     from ui_style import apply_theme,shutdown_ui
     from runtime_controller import RuntimeController
@@ -39,6 +39,9 @@ def run(output):
             assert main.property('designPopup') and main.fields['icon_size'].window() is main
             for name,body_size in (('small',10),('medium',11)):
                 main.size_mode.setCurrentIndex(main.size_mode.findData(name));settle(app)
+                area=main.available_interface_area()
+                width,height=(768,560) if name=='small' else (960,700)
+                assert (main.width(),main.height())==(min(width,area.width()-24),min(height,area.height()-24))
                 for index in range(main.tabs.count()):
                     main.tabs.setCurrentIndex(index);settle(app)
                     scroll=main.tabs.pages.currentWidget()
@@ -54,6 +57,8 @@ def run(output):
                             assert widget.geometry().right()<=grid.width()+2,(name,widget.geometry().getRect(),grid.width())
                 cfg['settings_size']=name
                 capsule_options=ResourceOptions(runtime.resources);capsule_options.show();settle(app)
+                width,height=(666,496) if name=='small' else (832,620)
+                assert (capsule_options.width(),capsule_options.height())==(min(width,area.width()-24),min(height,area.height()-24))
                 assert capsule_options.property('interfaceScale')==main.property('interfaceScale')
                 assert capsule_options.fields['resource_layer'].font().pixelSize()==body_size
                 pin=capsule_options.fields['resource_capsule_taskbar']
@@ -70,8 +75,11 @@ def run(output):
                 heading=nav.item(0)
                 assert not heading.flags() & Qt.ItemIsSelectable
                 assert heading.font().weight()>nav.font().weight()
-                assert nav.width()==main.tabs.nav.width() and nav.iconSize()==main.tabs.nav.iconSize()
+                assert nav.width()==main.tabs.nav.width() and nav.iconSize()==main.tabs.nav.iconSize(), (name, nav.width(), main.tabs.nav.width(), nav.iconSize(), main.tabs.nav.iconSize())
                 assert nav.font().pixelSize()==main.tabs.nav.font().pixelSize()
+                for rail in (nav,main.tabs.nav):
+                    text_width=rail.viewport().width()-rail.iconSize().width()-20
+                    assert all(rail.fontMetrics().horizontalAdvance(rail.item(row).text())<=text_width for row in range(rail.count()))
                 assert all(not item.icon().isNull() for item in capsule_options.nav_items.values())
                 for index in (0, 5, 3, 2):
                     item=capsule_options.nav_items[index]
@@ -118,12 +126,21 @@ def run(output):
             choice.setCurrentIndex(saved)
             main.size_mode.setCurrentIndex(main.size_mode.findData('small'));settle(app)
             main.resize(main.minimumSize());settle(app)
+            chooser=main.tabs.compact_nav
+            assert chooser.isVisible() and not main.tabs.nav.isVisible()
+            chooser.setCurrentIndex(chooser.findData(14));settle(app)
+            assert main.tabs.currentIndex()==14
             for index in range(main.tabs.count()):
                 main.tabs.setCurrentIndex(index);settle(app)
                 scroll=main.tabs.pages.currentWidget()
                 assert scroll.widget().width() <= scroll.viewport().width()+2, ('minimum',index,scroll.widget().width(),scroll.viewport().width())
             main.tabs.setCurrentIndex(0);settle(app);main.grab().save(str(output/'settings-minimum.png'))
             main.size_mode.setCurrentIndex(main.size_mode.findData('medium'));settle(app)
+            original_size=main.size()
+            with patch.object(main,'available_interface_area',return_value=QRect(1200,200,800,560)):
+                main.adapt_interface();settle(app)
+                assert main.size()==QSize(776,536) and main.available_interface_area().contains(main.geometry())
+            main.adapt_interface();settle(app);assert main.size()==original_size
             checks.append('all pages scroll at minimum width without horizontal clipping; real combo popup mouse open and keyboard selection work')
             from appearance_profile_tests import run as check_profiles
             check_profiles(api,runtime,main,app,output,checks)

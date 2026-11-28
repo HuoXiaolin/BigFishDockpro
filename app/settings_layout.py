@@ -1,10 +1,11 @@
 """Adaptive settings-window density, based on immutable compact-layout metrics."""
 from PyQt5.QtCore import Qt,QTimer
+from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QApplication,QWidget
 from ui_style import UI_DENSITY,ModernComboBox,label,density_stylesheet
 
 MODES=[('自动适配','auto'),('小','small'),('中','medium'),('手动调整','custom')]
-SETTINGS_SIZE = (768, 600)
+SETTINGS_SIZE = (960, 700)
 SETTINGS_MINIMUM = (575, 360)
 
 
@@ -23,6 +24,24 @@ def size_factor(mode, area, custom_density):
 def content_factor(window_factor):
     # Keep text and controls close in size so a larger window shows more rows.
     return round(.25 + .53 * window_factor, 2)
+
+
+def canvas_factor(mode, area, density):
+    # Leave room for navigation and two-column forms even with compact controls.
+    if mode == 'auto':
+        mode = automatic_mode(area)
+    return .8 if mode == 'small' else size_factor(mode, area, density)
+
+
+def available_settings_area(dialog):
+    handle = dialog.windowHandle()
+    if dialog.isVisible() and handle and handle.screen():
+        return handle.screen().availableGeometry()
+    owner = handle.transientParent() if handle else None
+    if owner and owner.screen():
+        return owner.screen().availableGeometry()
+    screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+    return screen.availableGeometry()
 
 
 def capture_density(root):
@@ -77,8 +96,7 @@ class SettingsSizingMixin:
         self.size_mode.setCurrentIndex(self.size_mode.findData('medium'))
         self.size_mode.currentIndexChanged.connect(self.adapt_interface);self.adapt_interface()
     def available_interface_area(self):
-        screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
-        return screen.availableGeometry()
+        return available_settings_area(self)
     def refresh_interface_style(self):
         if not getattr(self,'_interface_ready',False):return
         factor=float(self.property('interfaceScale') or .7)
@@ -91,6 +109,7 @@ class SettingsSizingMixin:
             apply_density(self._density_reference,factor)
             for reference in getattr(self,'_page_density',{}).values():
                 apply_density(reference,factor)
+            self.tabs.nav.fit_density()
             area=self.available_interface_area()
             self.setMinimumSize(min(round(SETTINGS_MINIMUM[0]*self._window_factor),area.width()-24),
                                 min(round(SETTINGS_MINIMUM[1]*self._window_factor),area.height()-24))
@@ -103,7 +122,8 @@ class SettingsSizingMixin:
         self._interface_resizing=True
         self.setProperty('interfaceScale',content_factor(factor));self.refresh_interface_style();self._interface_resizing=True
         try:
-            target=self._manual_dimensions if mode=='custom' and len(self._manual_dimensions)==2 else [round(value*factor) for value in SETTINGS_SIZE]
+            frame_scale=canvas_factor(mode,area,self._custom_density)
+            target=self._manual_dimensions if mode=='custom' and len(self._manual_dimensions)==2 else [round(value*frame_scale) for value in SETTINGS_SIZE]
             width=min(target[0],max(300,area.width()-24));height=min(target[1],max(250,area.height()-24));self.resize(width,height)
             self.move(max(area.left(),min(self.x(),area.right()-self.width()+1)),max(area.top(),min(self.y(),area.bottom()-self.height()+1)))
         finally:self._interface_resizing=False
@@ -125,8 +145,9 @@ def fit_auxiliary_dialog(dialog,cfg):
     """New card controls inherit the saved settings density on their current screen."""
     if dialog.property('auxiliaryDensityApplied'):return
     dialog.setProperty('auxiliaryDensityApplied',True)
-    screen=QApplication.screenAt(dialog.frameGeometry().center()) or QApplication.primaryScreen();area=screen.availableGeometry()
-    window_factor=size_factor(cfg.get('settings_size','medium'),area,cfg.get('settings_custom_density',100))
+    area=available_settings_area(dialog)
+    mode=cfg.get('settings_size','medium');density=cfg.get('settings_custom_density',100)
+    window_factor=size_factor(mode,area,density)
     factor=content_factor(window_factor)
     ratio=window_factor/UI_DENSITY;size=dialog.size();minimum=dialog.minimumSize()
     dialog.setProperty('interfaceScale',factor)
@@ -135,4 +156,9 @@ def fit_auxiliary_dialog(dialog,cfg):
     if base and factor != UI_DENSITY:
         dialog.setStyleSheet(density_stylesheet(base,factor))
     dialog.setMinimumSize(min(round(minimum.width()*ratio),area.width()-24),min(round(minimum.height()*ratio),area.height()-24))
-    dialog.resize(min(round(size.width()*ratio),area.width()-24),min(round(size.height()*ratio),area.height()-24))
+    canvas=dialog.property('settingsCanvasSize')
+    if canvas is not None:
+        size=canvas*canvas_factor(mode,area,density)
+    else:
+        size=size*ratio
+    dialog.resize(min(size.width(),area.width()-24),min(size.height(),area.height()-24))

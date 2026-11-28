@@ -1451,7 +1451,7 @@ class ResourceWindow(Foldable,ResourceContentHost):
         super().enterEvent(event)
     def expand_hover(self):
         edge=getattr(self,'edge_reveal',None)
-        if self.compact_notice or edge and (edge.peek_until or edge.fraction<1.):return
+        if self.compact_notice or edge and (edge.wait_for_hover_leave or edge.peek_until or edge.fraction<1.):return
         cursor=QCursor.pos()
         if self.service.cfg['resource_expand_mode']=='hover' and not self.testAttribute(Qt.WA_TransparentForMouseEvents) and self.press is None and not self.liquid.landing and self.isVisible() and self.geometry().contains(cursor):
             self.expand_from(self.mapFromGlobal(cursor),automatic=True)

@@ -12,6 +12,10 @@ def run(runtime, app, output, checks):
     from component_preferences import COMPONENTS, ComponentPreferences
     from menu_paths import action_at
     from settings_dialog import SettingsDialog
+    from settings_catalog import INTERACTION, PAGE_GROUPS, PAGES, VISUALS
+    from settings_sections import CAPSULE_SECTIONS, MAIL, MUSIC, NEWS, SIZE, STATUS
+    from resource_settings import ResourceOptions
+    from command_search import matches
     from quick_actions import ACTIONS, TILE_TINTS
 
     assert {key for key, _, _ in ACTIONS} == set(TILE_TINTS)
@@ -19,6 +23,12 @@ def run(runtime, app, output, checks):
     main.show()
     app.processEvents()
     try:
+        indices=[index for _,members in PAGE_GROUPS for index in members]
+        assert sorted(indices)==list(range(len(PAGES)))
+        for key,page in (('passthrough_alt_unlock',INTERACTION),('watermark_size',VISUALS)):
+            main.focus_setting(key)
+            assert main.tabs.currentIndex()==page and main.fields[key].isVisible()
+        main.tabs.setCurrentIndex(0)
         menu = main.shortcuts.menu()
         for component, (name, pages) in COMPONENTS.items():
             for index, (title, _, _) in enumerate(pages):
@@ -36,8 +46,33 @@ def run(runtime, app, output, checks):
             clock_page.assert_called_once_with(3)
         with patch.object(runtime.resources,'settings') as capsule_page:
             menu.aboutToShow.emit()
-            action_at(menu,'灵动胶囊','任务栏监控').trigger()
+            action_at(menu,'灵动胶囊','监控与媒体','任务栏监控').trigger()
             capsule_page.assert_called_once_with(1)
+            rows=main.search_targets()
+            for query,index in (('应用窗口前收起',6),('麦克风',STATUS),('色块高度',SIZE),
+                                ('音乐预览',MUSIC),('验证码',MAIL),('RSS',NEWS)):
+                results,_=matches({},[],rows,query,'settings')
+                target=next(row for row in results if row['payload']==f'@editor/resource/{index}')
+                assert target['detail'].startswith('灵动胶囊 › ')
+                main.focus_setting(target['payload'])
+                capsule_page.assert_called_with(index)
+        editor=ResourceOptions(runtime.resources)
+        try:
+            ids=[i for _,rows in CAPSULE_SECTIONS for i,*_ in rows]
+            assert sorted(ids)==list(range(editor.tabs.count()))
+            for index in ids:
+                editor.tabs.setCurrentIndex(index)
+                assert set(editor.fields)==editor.field_pages[index],(index,set(editor.fields)^editor.field_pages[index])
+            editor.category_query.setText('应用窗口前收起')
+            assert [index for index in ids if not editor.nav_items[index].isHidden()]==[6]
+            editor.category_query.returnPressed.emit()
+            assert editor.tabs.currentIndex()==6 and 'resource_app_fold' in editor.fields
+            editor.category_query.setText('无匹配条件')
+            assert not editor.empty_categories.isHidden()
+            editor.category_query.clear()
+            assert all(not editor.nav_items[index].isHidden() for index in ids)
+        finally:editor.reject();editor.deleteLater()
+        checks.append('All main and capsule categories occur once. Search and shortcuts open the same component pages; sidebar filtering finds app folding and restores all categories after clearing.')
         main.grab().save(str(output/'main-component-shortcuts.png'))
         preview=main.dock_preview
         saved_material=runtime.dock.cfg['dock_material']

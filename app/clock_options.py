@@ -48,10 +48,13 @@ class ClockOptions(QDialog):
         self.preview=ClockPreview(self)
         self.preview.setFixedHeight(155)
         self.tabs.right.insertWidget(0,self.preview)
-        layout=self.tabs.form('样式布局','layouts','样式与尺寸')
-        typeform=self.tabs.form('文字配色','text_color','字体与颜色')
-        material=self.tabs.form('材质','palette','背景与透明度')
-        workform=self.tabs.form('农历与节假日' if self.calendar else '工作时间','calendar','日历规则' if self.calendar else '工作周与班次')
+        from settings_sections import CLOCK_ORDER, clock_tabs
+        titles=clock_tabs(self.calendar)
+        layout=self.tabs.form(titles[0],'layouts','样式与尺寸')
+        typeform=self.tabs.form(titles[1],'text_color','字体与颜色')
+        material=self.tabs.form(titles[2],'palette','背景与透明度')
+        workform=self.tabs.form(titles[3],'calendar','日历规则' if self.calendar else '工作周与班次')
+        self.tabs.order_navigation(CLOCK_ORDER)
         self.tabs.currentChanged.connect(lambda index:self.preview.setVisible(index!=3))
         def choice(form,key,title,items,visible=True):
             field=ModernComboBox(self);field.setAccessibleName(title)

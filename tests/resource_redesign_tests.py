@@ -124,6 +124,78 @@ def magpie_history(checks):
     checks.append('The default heatmap export covers the first visible week and keeps historical requests without a model name.')
 
 
+def ai_popup_theme(service, app, output, checks):
+    from PyQt5.QtGui import QPalette
+    from dock_extras import DockQuickSettings
+    from settings_dialog import SettingsDialog
+    from settings_effects import save_changes
+
+    runtime = service.runtime
+    dock, tray = runtime.dock, service.ai_tray
+    cfg = service.cfg
+    before = copy.deepcopy(cfg)
+    quick = DockQuickSettings(dock.extras)
+    main = None
+
+    def check_render(light):
+        app.processEvents()
+        popup = tray.popup
+        assert popup.isVisible(), ('AI popup hidden', cfg['theme'], app.activePopupWidget())
+        assert dock.is_light() == popup.colors['light'] == light, (cfg['theme'], dock._sys_light, dock.is_light(), popup.colors['light'], light)
+        image = popup.grab().toImage()
+        surface = image.pixelColor(image.width()//2, round(4*image.devicePixelRatio()))
+        assert surface.name() == popup.colors['surface'] and (surface.lightness() > 128) == light
+        stats = popup.stats_view
+        assert stats.period_selector.control_palette().color(QPalette.Text).name() == popup.colors['ink']
+        assert stats.notes_button.property('noteInk') == popup.colors['ink']
+        assert (popup.ai_view.detail_dialog.palette().color(QPalette.Base).lightness() > 128) == light
+        return image
+
+    try:
+        assert save_changes(runtime.tray, runtime.api, {'theme':'dark', 'resource_content_mode':'dark'})
+        main = SettingsDialog(runtime.tray, runtime.api)
+        theme = main.fields['theme']
+        theme.setCurrentIndex(theme.findData('light'))
+        main.save.click()
+        tray.open()
+        assert runtime.api.load_config()['theme'] == 'light' and cfg['resource_content_mode'] == 'dark'
+        stats = tray.popup.stats_view
+        stats.set_period('week')
+        stats.provider.setCurrentIndex(stats.provider.findData('Codex'))
+        stats.scroll.ensureWidgetVisible(stats.heatmap)
+        assert check_render(True).save(str(output/'ai-usage-dock-light.png'))
+        scroll = stats.scroll.verticalScrollBar().value()
+
+        quick.tiles['color_mode'].click()
+        assert save_changes(runtime.tray, runtime.api, {'resource_content_mode':'light'})
+        assert check_render(False).save(str(output/'ai-usage-dock-dark.png'))
+        assert (stats.period, stats.provider.currentData(), stats.scroll.verticalScrollBar().value()) == ('week', 'Codex', scroll)
+
+        with patch.object(runtime.api, 'system_is_light', return_value=False) as system_light:
+            quick.tiles['color_mode'].click()
+            assert cfg['theme'] == 'auto'
+            for light in (True, False):
+                system_light.return_value = light
+                dock.refresh_tray_theme()
+                check_render(light)
+        tray.popup.hide()
+        app.processEvents()
+        quick.tiles['color_mode'].click()
+        app.processEvents()
+        from PyQt5.QtWidgets import QSystemTrayIcon
+        tray.tray.activated.emit(QSystemTrayIcon.Trigger)
+        check_render(True)
+        assert getattr(tray.popup, '_content_contrast', None) is None
+        checks.append('AI usage popup follows the saved Dock brightness, the Quick Settings tile and both system tones live; rendered surface, filters, details and notes agree, including after reopening with opposite capsule colors.')
+    finally:
+        quick.deleteLater()
+        if main is not None:
+            main.reject()
+            main.deleteLater()
+        restore = {key:value for key,value in before.items() if cfg.get(key) != value}
+        save_changes(runtime.tray, runtime.api, restore)
+
+
 def ai_tray_modes(service, app, output, checks):
     import ctypes
     from ctypes import wintypes
@@ -461,6 +533,7 @@ def run(api,runtime,app,output,checks):
         stats.provider.setCurrentIndex(0);stats.set_period('month');stats.set_metric('cost')
         popup.grab().save(str(output/'redesign-ai-tray-heatmap.png'))
         checks.append('AI usage popup: heatmap scrolls into view under providers, uses the selected tool and metric, and opens exact-date details without resetting the calendar on period changes.')
+        ai_popup_theme(service,app,output,checks)
         tray.open('ai');app.processEvents();assert popup.geometry()==geometry
         popup.grab().save(str(output/'redesign-ai-tray-quota.png'))
         # The same popup must preserve every returned period and distinguish a real zero from missing data.

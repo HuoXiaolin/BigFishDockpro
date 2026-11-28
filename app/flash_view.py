@@ -31,6 +31,13 @@ def glass_fill(value,style):
     return color
 
 
+def surface_palette(light):
+    return dict(light=light, surface='#f7f9fb' if light else '#26292d',
+                field='#ffffff' if light else '#303439', ink='#18232d' if light else '#ffffff',
+                muted='#34485a' if light else '#e1ebf3', line='#cfdae3' if light else '#4b5259',
+                hover='#e4ebf0' if light else '#39414a')
+
+
 def palette_for(service,background=None,*,widget=None,component='flash',refresh=None,design=None):
     cfg=service.cfg
     style=flash_appearance(cfg) if background is None else background
@@ -41,15 +48,14 @@ def palette_for(service,background=None,*,widget=None,component='flash',refresh=
         mode=cfg.get(component+'_content_mode','auto')
         light=content_contrast(widget,service.runtime.dock,style,mode,refresh or widget.update,design=design,
                                regional=component in ('resource','daily_picture'))
-    surface='#f7f9fb' if light else '#26292d'
+    colors=surface_palette(light)
     accent=style['color'] or '#9ac6e0'
     vivid=cfg['flash_palette']=='vivid' and (background is not None or cfg.get('flash_appearance_source')!='app')
-    return dict(light=light,surface=surface, field='#ffffff' if light else '#303439',
-                ink='#18232d' if light else '#ffffff', muted='#34485a' if light else '#e1ebf3',
-                line='#cfdae3' if light else '#4b5259', hover='#e4ebf0' if light else '#39414a',
-                fills={key:(rgb if vivid else
-                       blend(blend(rgb,accent,.15),surface,.73 if light else .76).name())
-                       for key,(_,rgb) in COLORS.items()})
+    colors['fills'] = {
+        key: rgb if vivid else blend(blend(rgb,accent,.15), colors['surface'], .73 if light else .76).name()
+        for key, (_,rgb) in COLORS.items()
+    }
+    return colors
 
 
 def icon(name,ink,side=17):

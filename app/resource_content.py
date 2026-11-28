@@ -330,7 +330,7 @@ class ContentView(QWidget):
             if self.source!=urls:
                 self.source=urls;self.cancel();self.set_headlines([]);self.next_fetch=0.
             if not urls:
-                self.status.setText('订阅源已全部关闭。' if feeds else '在灵动胶囊设置「天气与订阅」添加内置源，或填写 RSS / Atom 链接。')
+                self.status.setText('订阅源已全部关闭。' if feeds else '在灵动胶囊设置「新闻订阅」添加内置源，或填写 RSS / Atom 链接。')
                 self.update_controls()
                 return
         if not self.job and time.monotonic()>=self.next_fetch:

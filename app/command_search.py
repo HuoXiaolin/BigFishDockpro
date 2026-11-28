@@ -71,7 +71,7 @@ class SearchDialog(QDialog):
 
     def settings_targets(self):
         from settings_catalog import field_catalog, targets
-        return targets(field_catalog(self.runtime.api, self.runtime.dock.cfg))
+        return targets(field_catalog(self.runtime.api, self.runtime.dock.cfg),self.runtime)
 
     def refresh(self):
         scope=self.scope.currentData()
@@ -98,7 +98,9 @@ class SearchDialog(QDialog):
         if index<0 or index>=len(self.results):return
         row=self.results[index];runtime=self.runtime
         if row['kind']=='settings':
+            self.close()
             runtime.show_settings();runtime.tray.settings_dialog.focus_setting(row['payload'])
+            return
         elif row['kind']=='flash':
             target=runtime.flash.item(row['payload'])
             if not target or target['deleted']:

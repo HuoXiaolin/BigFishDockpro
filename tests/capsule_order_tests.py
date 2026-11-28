@@ -477,12 +477,14 @@ def run(api,runtime,app,output,checks):
         assert list(configured_items(cfg))==initial
         sort_dialog(options,target)
         assert 'resource_compact_rotate' not in options.fields
+        from settings_sections import SIZE
+        options.tabs.setCurrentIndex(SIZE)
         options.fields['resource_compact_rotate_interval'].setValue(11)
         options.fields['resource_compact_rotate_center'].setChecked(False)
-        options.tabs.setCurrentIndex(5);options.tabs.setCurrentIndex(2)
+        options.tabs.setCurrentIndex(5);options.tabs.setCurrentIndex(SIZE)
         assert options.fields['resource_compact_rotate_interval'].value()==11 and not options.fields['resource_compact_rotate_center'].isChecked()
         app.processEvents()
-        scroll=options.tabs.widget(2).layout().itemAt(0).widget()
+        scroll=options.tabs.widget(SIZE).layout().itemAt(0).widget()
         section=options.fields['resource_compact_auto_width'].parentWidget()
         scroll.verticalScrollBar().setValue(section.mapTo(scroll.widget(),section.rect().topLeft()).y()-5)
         zone_field=options.fields['resource_compact_rotate_center']

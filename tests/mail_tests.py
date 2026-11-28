@@ -110,6 +110,7 @@ def run(api, runtime, app, output, checks):
     from mail_messages import MailItem
     from resource_mail_settings import MailAccountEditor, MailAccountsDialog
     from resource_settings import ResourceOptions
+    from settings_sections import MAIL
     from ui_test_events import Events
 
     transport_checks(checks)
@@ -183,12 +184,12 @@ def run(api, runtime, app, output, checks):
                 assert open_url.call_args.args[0].toString() == 'https://mail.126.com/'
 
             settings = ResourceOptions(service)
-            settings.show();settings.tabs.setCurrentIndex(9);app.processEvents()
+            settings.show();settings.tabs.setCurrentIndex(MAIL);app.processEvents()
             period = settings.fields['resource_mail_interval']
             assert (period.value(), period.minimum(), period.maximum()) == (30, 10, 900)
             period.setValue(45)
             assert settings.commit() and api.load_config()['resource_mail_interval'] == 45
-            settings.tabs.setCurrentIndex(2);app.processEvents()
+            assert settings.fields['resource_mail_icon'].isVisible()
             settings.fields['resource_mail_icon'].setChecked(True)
             assert settings.commit() and api.load_config()['resource_mail_icon']
             settings.reject()

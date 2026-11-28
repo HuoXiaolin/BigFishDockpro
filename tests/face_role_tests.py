@@ -89,6 +89,7 @@ def run(api, runtime, app, output, checks):
     from face_role_controls import ROLE_PROMPT
     from glass_panel import PanelOptions
     from resource_settings import ResourceOptions
+    from settings_sections import FACE
     from settings_dialog import SettingsDialog
     cfg = runtime.dock.cfg
     before = copy.deepcopy(cfg)
@@ -118,7 +119,7 @@ def run(api, runtime, app, output, checks):
             panel.set_collapsed_geometry(False)
             resource_options = ResourceOptions(service)
             dialogs.append(resource_options)
-            resource_options.tabs.setCurrentIndex(6)
+            resource_options.tabs.setCurrentIndex(FACE)
             picker = resource_options.fields['resource_face_role']
             assert picker.currentData() == ''
             clipboard = Mock()
@@ -130,7 +131,7 @@ def run(api, runtime, app, output, checks):
                 click(resource_options, '导入角色包…')
             assert picker.currentData() == 'whale-girl' and cfg['resource_face_role'] == ''
             resource_options.tabs.setCurrentIndex(0)
-            resource_options.tabs.setCurrentIndex(6)
+            resource_options.tabs.setCurrentIndex(FACE)
             assert resource_options.fields['resource_face_role'].currentData() == 'whale-girl'
             assert resource_options.commit()
             role = library.get('whale-girl')

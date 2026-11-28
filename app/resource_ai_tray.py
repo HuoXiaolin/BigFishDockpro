@@ -3,8 +3,8 @@ from PyQt5.QtCore import Qt, QPointF, QRectF, QObject
 from PyQt5.QtGui import QPainter, QPainterPath, QPixmap, QIcon, QColor, QPen, QCursor, QFont
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QToolButton,QLabel,QSystemTrayIcon,QApplication
 from ui_style import AlignedMenu
-from flash_view import palette_for
-from resource_options import AI_PROVIDER_NAMES, background
+from flash_view import surface_palette
+from resource_options import AI_PROVIDER_NAMES
 from resource_pages import SCROLL_STYLE, reset_text
 from resource_quota import daily_text, ring_ink, tray_balance_text, tray_label, tray_readings
 from resource_status import TRAY_RING_SIZES, draw_tray_rings, ring_dimensions, today_ring_ink
@@ -102,7 +102,7 @@ class AiPopup(QWidget):
         self.refresh()
         self.stats_view.scroll.verticalScrollBar().setValue(0)
     def refresh(self):
-        colors=palette_for(self.service,background(self.service.cfg),widget=self,component='resource',refresh=self.refresh)
+        colors=surface_palette(self.service.runtime.dock.is_light())
         if colors!=self.colors:
             self.colors=colors;self.setStyleSheet('QWidget{background:transparent;color:%(ink)s;font:11px "Microsoft YaHei UI"} QLabel#UsageTitle{font-size:15px;font-weight:600;padding-left:5px} QLabel#Subtle{color:%(muted)s;font-size:10px} QToolButton{border:0;padding:3px 6px;border-radius:5px;color:%(muted)s} QToolButton:hover,QToolButton:checked{background:%(hover)s;color:%(ink)s} QTableWidget{border:0;background:transparent} QHeaderView::section{background:%(hover)s;color:%(muted)s;border:0;padding:4px}'%colors+SCROLL_STYLE)
         self.ai_view.refresh();self.update()
@@ -117,7 +117,7 @@ class AiTray(QObject):
         self.balance=None
         self.taskbar_ink=None
         self.data_key=None
-        self.appearance=None
+        self.dock_light=None
         from ui_style import menu_heading
         menu_heading(self.menu,'AI 用量')
         self.menu.addAction('查看用量',lambda:self.open('ai'))
@@ -135,16 +135,14 @@ class AiTray(QObject):
         prefs = mode, provider, target
         data_key = (id(bridge), bridge.ai_revision if bridge else 0, prefs)
         light = self.service.runtime.dock.is_light()
-        style = background(cfg)
-        appearance = light, style, self.service.runtime.dock._sys_light if style['theme'] == 'auto' else None
-        if data_key == self.data_key and appearance == self.appearance:
+        if data_key == self.data_key and light == self.dock_light:
             return
         if data_key != self.data_key:
             rows = bridge.providers if bridge else []
             self.readings = tray_readings(rows, *prefs)
             self.balance = tray_balance_text(self.readings[0].amount) if self.readings else None
             self.tray.set_readout(self.tooltip(rows, mode, provider, target))
-        self.data_key, self.appearance = data_key, appearance
+        self.data_key, self.dock_light = data_key, light
         self.update_icon()
         if self.popup and self.popup.isVisible():
             self.popup.refresh()
@@ -155,7 +153,7 @@ class AiTray(QObject):
             self.update_icon()
 
     def update_icon(self):
-        light = self.appearance[0]
+        light = self.dock_light
         levels = ()
         if self.balance:
             if self.taskbar_ink is None:

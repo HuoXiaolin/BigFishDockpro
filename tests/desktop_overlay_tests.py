@@ -38,7 +38,7 @@ def check_wallpaper_sources(folder,window,monitor,checks):
 
 
 def run(runtime,output,checks):
-    from capsule_marker_tests import check_ball,check_export,check_fade,check_lock,check_strip
+    from capsule_marker_tests import check_ball,check_desktop_return,check_export,check_fade,check_lock,check_strip
     from component_contrast import card_text_ink
     from desktop_underlay import exposed_wallpaper_samples, window_samples
     from desktop_underlay_tests import TestBackground
@@ -127,7 +127,7 @@ def run(runtime,output,checks):
                 with patch('desktop_underlay._colors',side_effect=lambda handle,points:[(28,31,42)]*len(points)) as read:
                     assert set(exposed_wallpaper_samples(w,w.rect()))=={(28,31,42)}
                     read.reset_mock()
-                    application.show();stack()
+                    application.show();app.processEvents();application.repaint();stack()
                     assert exposed_wallpaper_samples(w,w.rect()) is None
                     read.assert_not_called()
                 hud.show();pet.show()
@@ -142,7 +142,12 @@ def run(runtime,output,checks):
                 check_fade(runtime,w,edge,checks)
                 stack();assert pointer(marker=True)
                 w._content_contrast.refresh()
-                assert w.colors['light'] and w._content_contrast.live
+                # Native readback can finish after the first Qt frame on a private desktop.
+                try:
+                    wait_for(app,lambda: w.colors['light'] and w._content_contrast.live and
+                             w.capsule_diagnostics.colors['应用窗口采样点数']==128)
+                except AssertionError as exc:
+                    raise AssertionError(w.capsule_diagnostics.colors) from exc
                 check_export(runtime,w,Path(temp),app_id,checks)
                 stack();edge.check_application();edge.settle()
                 assert edge.light.grab().save(str(Path(output)/'application-fold-light.png'))
@@ -169,11 +174,13 @@ def run(runtime,output,checks):
                 runtime.idle_fade.sync_window(w)
                 assert w.mask().boundingRect().width()==shape.width()
                 application.hide();stack();edge.check_application()
-                assert not edge.over_app and not pointer() and not service.compact and w.mask().isEmpty()
+                assert not edge.over_app and not pointer() and service.compact and w.mask().isEmpty()
+                assert w.detail.isHidden() and w.geometry()==w.floating_rect(True) and not cfg['resource_collapsed']
+                check_desktop_return(w,application,stack,checks)
                 cfg['resource_app_fold']='off';policy.apply(w)
                 application.show();stack()
                 assert pointer() and not edge.app_timer.isActive() and w.mask().isEmpty()
-                checks.append('A real underlying app triggers the light strip and ball, keeps app passthrough and Alt override, shows a new notice for five seconds and restores the expanded desktop state. Off preserves the pointer policy.')
+                checks.append('A real underlying app triggers the light strip and ball, keeps app passthrough and Alt override, shows a new notice for five seconds and returns to the compact desktop capsule. Off preserves the pointer policy.')
 
                 # The same app has a cut-out over the middle of the capsule.
                 left=w.mapToGlobal(w.rect().topLeft()).x()-application.x()

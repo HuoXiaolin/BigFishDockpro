@@ -1,6 +1,7 @@
 """Exercise both independent pet settings on the real Qt surfaces."""
 import copy
 import time
+from settings_sections import FACE
 from unittest.mock import patch
 
 
@@ -233,7 +234,7 @@ def run(api, runtime, app, output, checks):
         assert api.save_config(cfg) is not False
 
         dialog = ResourceOptions(service)
-        dialog.tabs.setCurrentIndex(2)
+        dialog.tabs.setCurrentIndex(FACE)
         assert not dialog.fields['resource_runner_animal'].isEnabled()
         assert not dialog.fields['resource_runner_metric'].isEnabled()
         assert all('tray_runner' not in key and key != 'resource_runner_color' for page in dialog.field_pages for key in page)
@@ -469,7 +470,7 @@ def run(api, runtime, app, output, checks):
                                  'display': {display_a:Device('第一屏',r'\\.\DISPLAY1'),display_b:Device('第二屏',r'\\.\DISPLAY2')}})
         dialog.deleteLater()
         dialog = ResourceOptions(service)
-        dialog.tabs.setCurrentIndex(2)
+        dialog.tabs.setCurrentIndex(FACE)
         dialog.fields['resource_runner_enabled'].setChecked(True)
         choose(dialog.fields['resource_runner_metric'], 'gpu')
         choose(dialog.fields['resource_runner_device'], gpu_b)
@@ -477,7 +478,7 @@ def run(api, runtime, app, output, checks):
         for key,value in (('gpu',gpu_a),('network',net),('disk',disk),('display',display_b)):
             choose(dialog.fields[f'resource_{key}_device'], value)
         dialog.fields['resource_disk_activity'].setChecked(True)
-        dialog.tabs.setCurrentIndex(2)
+        dialog.tabs.setCurrentIndex(FACE)
         assert dialog.fields['resource_runner_device'].currentData() == gpu_b
         assert dialog.commit()
         assert service.set_options(resource_tray_runner_enabled=True,resource_tray_runner_metric='network_utilization',

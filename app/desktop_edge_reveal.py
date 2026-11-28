@@ -79,6 +79,7 @@ class EdgeReveal(QObject):
         self.edge_enabled=False;self.app_mode='off';self.over_app=False;self.hidden_shape='light';self.previous_fold=_UNCHANGED
         self.light=None;self.peek_until=0.;self.manual_hover=False;self.notice=None;self.as_pill=False
         self.hovered_strip=None
+        self.wait_for_hover_leave=False
         self.idle=QTimer(self);self.idle.setSingleShot(True);self.idle.timeout.connect(self.settle)
         self.app_timer=QTimer(self);self.app_timer.setInterval(450);self.app_timer.timeout.connect(self.check_application)
         self.animation=QVariantAnimation(self)
@@ -107,23 +108,46 @@ class EdgeReveal(QObject):
         from ctypes.wintypes import POINT
         from window_layers import application_under,client_frame,is_topmost
         w=self.window
+        if self.wait_for_hover_leave and not w.geometry().contains(QCursor.pos()):
+            self.wait_for_hover_leave=False
         if w.press is not None or w.liquid.landing or getattr(w,'_fold_surface',None):return
-        active=False
+        covered=None
         if self.app_mode!='off' and w.isVisible() and not w.isMinimized() and w.taskbar_slot() is None:
             hwnd=int(w.winId())
             if is_topmost(hwnd):
                 frame=client_frame(hwnd)
-                if frame:
-                    x,y,width,height=frame
-                    middle=w.rect().center()
-                    if not w.service.compact:
-                        shared=w.geometry().intersected(w.floating_rect(True))
-                        if not shared.isEmpty():middle=w.mapFromGlobal(shared.center())
-                    active=application_under(hwnd,POINT(x+round((middle.x()+.5)*width/w.width()),y+round((middle.y()+.5)*height/w.height())))
+                if not frame:return
+                x,y,width,height=frame
+                middle=w.rect().center()
+                if not w.service.compact:
+                    shared=w.geometry().intersected(w.floating_rect(True))
+                    if not shared.isEmpty():middle=w.mapFromGlobal(shared.center())
+                covered=application_under(hwnd,POINT(x+round((middle.x()+.5)*width/w.width()),y+round((middle.y()+.5)*height/w.height())))
+        active=bool(covered)
         if active==self.over_app:return
         self.over_app=active
         self.runtime.click_policy.apply(w)
-        self.settle()
+        if covered is False:
+            self.return_to_desktop()
+        else:
+            self.wait_for_hover_leave=False
+            self.settle()
+
+    def return_to_desktop(self):
+        w=self.window
+        self.previous_fold=_UNCHANGED
+        self.manual_hover=False;self.hovered_strip=None
+        w.enter_timer.stop()
+        w.service.fold(True,automatic=True)
+        # Revealing the capsule beneath a stationary pointer can synthesize Enter.
+        self.wait_for_hover_leave=w.geometry().contains(QCursor.pos())
+        self.move_to(1.)
+        w.resize_edges.sync()
+        if self.peek_until:
+            self.idle.start(max(1,ceil((self.peek_until-time.monotonic())*1000)))
+        elif self.edge_enabled:
+            self.idle.start(650)
+        else:self.idle.stop()
 
     def hiding_position(self):
         if self.over_app and self.app_mode=='light':return 'app-top'
@@ -140,10 +164,17 @@ class EdgeReveal(QObject):
 
     def reset(self,refresh=True):
         self.idle.stop();self.animation.stop();self.peek_until=0.;self.manual_hover=False
-        self.hovered_strip=None
-        self.notice=None;self.as_pill=False
+        self.hovered_strip=None;self.wait_for_hover_leave=False
+        self.finish_peek(refresh and self.window.isVisible())
         self.target=1.;self.set_fraction(1.);self.edge='free'
         self.restore_fold(refresh)
+
+    def finish_peek(self,refresh=True):
+        if not self.as_pill:return
+        self.as_pill=False;self.notice=None
+        w=self.window
+        w._compact_cache=None
+        if refresh:w.reposition();w.update()
 
     def restore_fold(self,refresh):
         if self.previous_fold is _UNCHANGED:return
@@ -165,17 +196,20 @@ class EdgeReveal(QObject):
     def settle(self):
         if not self.enabled:return
         w=self.window;edge=self.hiding_position()
+        wait=self.peek_until-time.monotonic()
+        if wait>0:
+            self.idle.start(max(1,ceil(wait*1000)));return
         if edge=='free':
-            if self.previous_fold is not _UNCHANGED or self.peek_until:self.reset()
+            if self.previous_fold is not _UNCHANGED:self.reset()
             else:
+                self.peek_until=0.
                 self.manual_hover=False;self.move_to(1.)
+                if self.as_pill:
+                    with w.service.fold_transition(content_change=True):self.finish_peek()
             return
         if self.edge!=edge:
             self.edge=edge
             if self.fraction<1.:self.set_fraction(self.fraction)
-        wait=self.peek_until-time.monotonic()
-        if wait>0:
-            self.idle.start(max(1,round(wait*1000)));return
         settings_dialog = w.service.options_dialog if self.capsule else None
         if popup_blocks_folding(settings_dialog) or QApplication.mouseButtons():
             self.idle.start(650);return
@@ -267,8 +301,7 @@ class EdgeReveal(QObject):
             if self.capsule and hasattr(w,'resize_edges'):w.resize_edges.sync()
             self.runtime.click_policy.apply(w)
             if self.capsule and self.target==0. and value==0. and not self.peek_until:
-                if self.as_pill or self.notice:
-                    self.as_pill=False;self.notice=None;w._compact_cache=None;w.reposition()
+                self.finish_peek()
             if self.capsule:w.sync_rotation()
 
     def eventFilter(self,w,event):
@@ -291,6 +324,8 @@ class EdgeReveal(QObject):
             if not self.hovered_strip.contains(event.globalPos()):
                 self.hovered_strip=None;w.resize_edges.sync()
         elif kind==QEvent.Leave:
+            if self.wait_for_hover_leave and not w.geometry().contains(QCursor.pos()):
+                self.wait_for_hover_leave=False
             if self.hovered_strip is not None:
                 self.hovered_strip=None;w.resize_edges.sync()
             self.manual_hover=False

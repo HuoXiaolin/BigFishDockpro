@@ -16,7 +16,7 @@ from appearance_presets import DOCK_PRESETS, material_choices, select_material, 
 from window_backdrop import BACKDROP_HINT
 from settings_catalog import (ABOUT, APPEARANCE, APPS, CAPSULES, COLLECTION, CURSORS, DATA, PAGE_GROUPS,
                               PAGE_SYMBOLS, PAGE_TARGETS, PAGES, RUNNING, TASKBAR, UPDATES, USAGE,
-                              WIDGETS, START_MENU, NOTIFICATIONS, field_catalog)
+                              WIDGETS, INTERACTION, VISUALS, START_MENU, NOTIFICATIONS, field_catalog)
 from settings_field_editors import SettingsFieldEditors
 from settings_design import SettingsNavigation
 
@@ -24,7 +24,14 @@ from settings_design import SettingsNavigation
 class SettingsPages(QWidget):
     def __init__(self):
         super().__init__()
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.compact_nav = ModernComboBox()
+        self.compact_nav.setAccessibleName('选择设置分类')
+        outer.addWidget(self.compact_nav)
+        self.compact_nav.hide()
+        layout = QHBoxLayout()
+        outer.addLayout(layout, 1)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         self.nav = SettingsNavigation()
@@ -39,9 +46,11 @@ class SettingsPages(QWidget):
             self.nav.add_group(group)
             for index in indices:
                 self.nav_items[index] = self.nav.add_page(PAGES[index], PAGE_SYMBOLS[index], index)
+                self.compact_nav.addItem(f'{group} · {PAGES[index]}', index)
         layout.addWidget(self.nav)
         layout.addWidget(self.pages, 1)
         self.nav.currentItemChanged.connect(self.navigate)
+        self.compact_nav.currentIndexChanged.connect(lambda row: self.setCurrentIndex(self.compact_nav.itemData(row)))
         self.pages.currentChanged.connect(self.select_nav_item)
         self.select_nav_item(APPEARANCE)
 
@@ -54,6 +63,9 @@ class SettingsPages(QWidget):
         item = self.nav_items[index]
         if self.nav.currentItem() is not item:
             self.nav.setCurrentItem(item)
+        self.compact_nav.setCurrentIndex(self.compact_nav.findData(index))
+        if index == PAGE_GROUPS[0][1][0]:
+            self.nav.scrollToTop()
 
     def count(self): return self.pages.count()
     def currentIndex(self): return self.pages.currentIndex()
@@ -61,6 +73,9 @@ class SettingsPages(QWidget):
 
     def resizeEvent(self, event):
         self.nav.fit_density()
+        narrow = self.width() < self.nav.width() + 315
+        self.compact_nav.setVisible(narrow)
+        self.nav.setVisible(not narrow)
         super().resizeEvent(event)
 
 
@@ -104,7 +119,7 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
     PAGE_BUILDERS = {
         APPEARANCE: 'build_appearance', COLLECTION: 'build_panel', APPS: 'build_apps', RUNNING: 'build_running',
         UPDATES: 'build_updates', USAGE: 'build_usage', ABOUT: 'build_info', TASKBAR: 'build_taskbar',
-        WIDGETS: 'build_widgets', CAPSULES: 'build_capsules', DATA: 'build_data',
+        WIDGETS: 'build_widgets', INTERACTION: 'build_interaction', VISUALS: 'build_visuals', CAPSULES: 'build_capsules', DATA: 'build_data',
         START_MENU: 'build_start_menu', NOTIFICATIONS: 'build_notifications', CURSORS: 'build_cursor_styles',
     }
 
@@ -124,8 +139,8 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.resize(*SETTINGS_SIZE)
         self.setMinimumSize(*SETTINGS_MINIMUM)
         body = QVBoxLayout(self)
-        body.setContentsMargins(18, 12, 18, 12)
-        body.setSpacing(12)
+        body.setContentsMargins(22, 16, 22, 16)
+        body.setSpacing(14)
         self.header = SettingsHeader(self)
         self.create_size_selector()
         body.addWidget(self.header)
@@ -343,11 +358,6 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
 
     def build_appearance(self, appearance):
         from settings_design import section_marker
-        section_marker(appearance, '默认设置')
-        defaults = QHBoxLayout()
-        defaults.addWidget(button('使用默认设置', self.stage_defaults))
-        defaults.addWidget(label('载入默认配置，保存后生效。', 'muted'), 1)
-        appearance.addRow(defaults)
         self.create_profile_controls(appearance)
         section_marker(appearance,'Dock 材质与配色')
         self.dock_preset = ModernComboBox()
@@ -392,23 +402,11 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.add_field(layout, 'position')
         self.add_field(layout, 'custom_bottom')
         self.add_field(layout, 'bottom_margin')
-        self.add_field(layout, 'desktop_layer_mode')
         self.add_field(layout, 'layer')
-        self.add_field(layout, 'passthrough_mode')
-        self.add_field(layout, 'passthrough_alt_unlock')
-        self.fields['passthrough_alt_unlock'].setToolTip('按住左 Alt 或右 Alt 可以点击或拖动穿透中的组件，松开后恢复原模式。')
+        self.add_field(layout, 'dock_idle_fade')
         self.add_field(layout, 'show_name')
         self.add_field(layout, 'sep_split')
         self.add_field(layout, 'lang')
-        section_marker(layout,'桌面组件空闲淡化')
-        self.add_field(layout,'desktop_idle_fade_mode')
-        self.add_field(layout,'desktop_idle_fade_amount')
-        self.add_field(layout,'dock_idle_fade')
-        layout.addRow(label('自定义时，按各组件自己的开关生效。连续 6 秒无操作时淡化，交互时恢复。','muted'))
-        section_marker(layout,'屏幕圆角')
-        self.add_field(layout, 'screen_corners')
-        self.fields['screen_corners'].setToolTip('手动暂停桌面组件时隐藏，圆角区域允许鼠标穿透。')
-        self.add_field(layout, 'corner_radius')
         self.fields['position'].currentIndexChanged.connect(self.position_changed)
         self.dock_preset.currentIndexChanged.connect(self.apply_dock_preset)
         self.fields['dock_material'].currentIndexChanged.connect(self.material_changed)
@@ -416,7 +414,28 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
             self.change_signal(self.fields[key]).connect(self.customize_dock)
         from dock_appearance_preview import DockPreview
         self.dock_preview = DockPreview(self)
-        appearance.insertRow(4, self.dock_preview)
+        appearance.insertRow(2, self.dock_preview)
+        section_marker(appearance, '默认设置')
+        defaults = QHBoxLayout()
+        defaults.addWidget(button('使用默认设置', self.stage_defaults))
+        defaults.addWidget(label('载入默认配置，保存后生效。', 'muted'), 1)
+        appearance.addRow(defaults)
+
+    def build_interaction(self, layout):
+        from settings_design import section_marker
+        section_marker(layout, '桌面层级与鼠标穿透')
+        self.add_field(layout, 'desktop_layer_mode')
+        self.add_field(layout, 'passthrough_mode')
+        self.add_field(layout, 'passthrough_alt_unlock')
+        self.fields['passthrough_alt_unlock'].setToolTip('按住左 Alt 或右 Alt 可以点击或拖动穿透中的组件，松开后恢复原模式。')
+        section_marker(layout,'桌面组件空闲淡化')
+        self.add_field(layout,'desktop_idle_fade_mode')
+        self.add_field(layout,'desktop_idle_fade_amount')
+        layout.addRow(label('自定义时，按各组件自己的开关生效。连续 6 秒无操作时淡化，交互时恢复。','muted'))
+        section_marker(layout,'屏幕圆角')
+        self.add_field(layout, 'screen_corners')
+        self.fields['screen_corners'].setToolTip('手动暂停桌面组件时隐藏，圆角区域允许鼠标穿透。')
+        self.add_field(layout, 'corner_radius')
 
     def build_start_menu(self, form):
         from shell_appearance_settings import build_page
@@ -437,25 +456,6 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
     def build_taskbar(self, form):
         from settings_design import section_marker
         runtime = getattr(self.tray, 'runtime', None)
-        section_marker(form, '任务栏监控')
-        if runtime:
-            self.component_row(form, 'resource_taskbar', self.catalog['resource_taskbar'][1],
-                               button('监控设置…', lambda: runtime.resources.settings(page=1)))
-        else:
-            self.add_field(form, 'resource_taskbar')
-        section_marker(form, '托盘小动物')
-        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_metric'):
-            self.add_field(form, key)
-        from resource_device_picker import DevicePicker
-        key = 'resource_tray_runner_device'
-        device = self.fields[key] = DevicePicker(getattr(runtime, 'resources', None),
-                                                self._draft['resource_tray_runner_metric'], self._draft[key], form.parentWidget())
-        device.setAccessibleName(self.catalog[key][1])
-        form.addRow(self.field_label(self.catalog[key][1]), device)
-        self.add_field(form, 'resource_tray_runner_speed')
-        self.fields['resource_tray_runner_enabled'].toggled.connect(self.sync_tray_runner_fields)
-        self.fields['resource_tray_runner_metric'].currentIndexChanged.connect(self.sync_tray_runner_fields)
-        self.sync_tray_runner_fields()
         section_marker(form, '效果与文字')
         self.add_field(form, 'taskbar_mode')
         self.add_field(form, 'taskbar_text_auto')
@@ -501,6 +501,25 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
                     form.addRow(download)
                 for key in ('taskbar_mode', 'taskbar_color', 'taskbar_opacity', 'taskbar_blur'):
                     self.fields[key].setEnabled(False)
+        section_marker(form, '任务栏监控')
+        if runtime:
+            self.component_row(form, 'resource_taskbar', self.catalog['resource_taskbar'][1],
+                               button('监控设置…', lambda: runtime.resources.settings(page=1)))
+        else:
+            self.add_field(form, 'resource_taskbar')
+        section_marker(form, '托盘小动物')
+        for key in ('resource_tray_runner_enabled', 'resource_tray_runner_animal', 'resource_tray_runner_metric'):
+            self.add_field(form, key)
+        from resource_device_picker import DevicePicker
+        key = 'resource_tray_runner_device'
+        device = self.fields[key] = DevicePicker(getattr(runtime, 'resources', None),
+                                                self._draft['resource_tray_runner_metric'], self._draft[key], form.parentWidget())
+        device.setAccessibleName(self.catalog[key][1])
+        form.addRow(self.field_label(self.catalog[key][1]), device)
+        self.add_field(form, 'resource_tray_runner_speed')
+        self.fields['resource_tray_runner_enabled'].toggled.connect(self.sync_tray_runner_fields)
+        self.fields['resource_tray_runner_metric'].currentIndexChanged.connect(self.sync_tray_runner_fields)
+        self.sync_tray_runner_fields()
 
     def sync_tray_runner_fields(self, selected=None):
         from resource_options import DEVICE_SOURCES
@@ -581,23 +600,18 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         self.add_field(panel, 'clock_idle_fade')
         self.component_row(panel, 'calendar_enabled', '桌面日历', button('日历设置', lambda:self.tray.runtime.calendar.open_settings()))
         self.add_field(panel, 'calendar_idle_fade')
-        section_marker(panel,'桌面文字水印')
-        from feature_config import WATERMARK_TEXT_LIMIT
-        for key in ('enabled','idle_fade','text','color','auto_contrast','size','angle','opacity','layer','mode','position','density'):
-            self.add_field(panel, 'watermark_'+key)
-        self.fields['watermark_text'].setMaxLength(WATERMARK_TEXT_LIMIT)
-        self.fields['watermark_mode'].currentIndexChanged.connect(self.sync_watermark_fields)
-        panel.addRow(label('单一水印显示在主屏幕，平铺覆盖每个屏幕。鼠标和键盘输入穿透水印。','muted'))
-        section_marker(panel,'音乐频谱')
-        self.add_field(panel, 'spectrum_enabled')
-        self.add_field(panel, 'spectrum_idle_fade')
-        self.add_field(panel, 'spectrum_style')
-        self.add_field(panel, 'spectrum_appearance_source')
-        self.add_field(panel, 'spectrum_backdrop_mode')
-        self.fields['spectrum_backdrop_mode'].setToolTip(BACKDROP_HINT)
-        self.add_field(panel, 'spectrum_layer')
-        self.add_field(panel, 'spectrum_color_mode')
-        self.add_field(panel, 'spectrum_mono_color')
+        section_marker(panel,'便签与原生卡片')
+        self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
+        self.add_field(panel, 'note_appearance_source')
+        self.add_field(panel, 'note_content_mode')
+        self.add_field(panel, 'note_style')
+        self.fields['note_appearance_source'].currentIndexChanged.connect(self.sync_appearance_sources)
+        panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
+        self.add_field(panel, 'custom_card_content_mode')
+        self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
+
+    def build_visuals(self, panel):
+        from settings_design import section_marker
         section_marker(panel,'每日图片')
         self.add_field(panel, 'daily_picture_enabled')
         self.add_field(panel, 'daily_picture_idle_fade')
@@ -612,17 +626,26 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
             choose_local(self.tray.runtime,folder=folder)
         self.action_row(panel,'本地图片',button('选择图片…',lambda:choose_picture()),
                         button('选择文件夹…',lambda:choose_picture(True)))
+        section_marker(panel,'音乐频谱')
+        self.add_field(panel, 'spectrum_enabled')
+        self.add_field(panel, 'spectrum_idle_fade')
+        self.add_field(panel, 'spectrum_style')
+        self.add_field(panel, 'spectrum_appearance_source')
+        self.add_field(panel, 'spectrum_backdrop_mode')
+        self.fields['spectrum_backdrop_mode'].setToolTip(BACKDROP_HINT)
+        self.add_field(panel, 'spectrum_layer')
+        self.add_field(panel, 'spectrum_color_mode')
+        self.add_field(panel, 'spectrum_mono_color')
         self.fields['spectrum_enabled'].setToolTip('跟随默认播放设备的声音。拖动频谱移动，拖右下角调整大小，右键可切换样式或锁定。')
-        section_marker(panel,'便签与原生卡片')
-        self.component_row(panel, 'notes_enabled', '便签卡片', button('新建便签', self.new_note), button('管理与搜索', lambda:self.tray.runtime.notes.manage()))
-        self.add_field(panel, 'note_appearance_source')
-        self.add_field(panel, 'note_content_mode')
-        self.add_field(panel, 'note_style')
-        for key in ('daily_picture_appearance_source', 'note_appearance_source', 'spectrum_appearance_source', 'spectrum_color_mode'):
+        section_marker(panel,'桌面文字水印')
+        from feature_config import WATERMARK_TEXT_LIMIT
+        for key in ('enabled','idle_fade','text','color','auto_contrast','size','angle','opacity','layer','mode','position','density'):
+            self.add_field(panel, 'watermark_'+key)
+        self.fields['watermark_text'].setMaxLength(WATERMARK_TEXT_LIMIT)
+        self.fields['watermark_mode'].currentIndexChanged.connect(self.sync_watermark_fields)
+        panel.addRow(label('单一水印显示在主屏幕，平铺覆盖每个屏幕。鼠标和键盘输入穿透水印。','muted'))
+        for key in ('daily_picture_appearance_source', 'spectrum_appearance_source', 'spectrum_color_mode'):
             self.fields[key].currentIndexChanged.connect(self.sync_appearance_sources)
-        panel.addRow(label('便签支持文字格式、待办与自动保存，删除后可恢复。内容保存在本机，导出配置包含正文。','muted'))
-        self.add_field(panel, 'custom_card_content_mode')
-        self.action_row(panel,'自定义桌面卡片',button('原生卡片编辑器…',lambda:self.tray.runtime.open_custom_cards()))
 
     def build_capsules(self, panel):
         from flash_data import COLORS
@@ -905,7 +928,7 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
         usage = self.__dict__.get('usage_page')
         if usage is not None:
             usage.refresh()
-        self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
+        self.move(self.available_interface_area().center() - self.rect().center())
         self.showNormal() if self.isMinimized() else self.show()
         self.raise_()
         self.activateWindow()
@@ -1145,16 +1168,25 @@ class SettingsDialog(SettingsFieldEditors,AppearanceProfileMixin,SettingsSizingM
 
     def search_targets(self):
         from settings_catalog import targets
-        return targets(self.catalog)
+        return targets(self.catalog,self.tray.runtime)
 
     def search_settings(self):
         dialog=self.tray.runtime.productivity.open_search()
         dialog.scope.setCurrentIndex(dialog.scope.findData('settings'));dialog.query.setText(self.setting_query.text());dialog.refresh();dialog.query.setFocus()
 
     def focus_setting(self,key):
+        if key.startswith('@editor/'):
+            from settings_shortcuts import component_links
+            for entry in component_links(self.tray.runtime,self.catalog):
+                if entry.key==key:
+                    self.open_secondary(entry.action)
+                    return
+            self.status.setText('该组件已关闭。请重新搜索或从「组件设置」选择当前组件。')
+            return
         if key in PAGE_TARGETS:
             self.tabs.setCurrentIndex(PAGE_TARGETS[key])
-            self.tabs.nav.setFocus(Qt.ShortcutFocusReason)
+            navigation = self.tabs.compact_nav if self.tabs.compact_nav.isVisible() else self.tabs.nav
+            navigation.setFocus(Qt.ShortcutFocusReason)
             return
         runtime=self.tray.runtime
         actions={'@clock':runtime.clock.open_settings,'@calendar':runtime.calendar.open_settings,'@notes':runtime.notes.manage,'@groups':runtime.panels.manage_groups,'@layouts':runtime.productivity.open_layouts,'@references':runtime.productivity.open_references}

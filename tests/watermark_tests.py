@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QWidget
 
 from desktop_watermark import single_geometry, tile_centers
 from dock_extras import DockQuickSettings
-from settings_catalog import WIDGETS
+from settings_catalog import VISUALS
 from settings_dialog import SettingsDialog
 from tray_menu import common_actions
 from ui_style import AlignedMenu
@@ -27,7 +27,7 @@ def run(api, runtime, app, checks):
     receiver.setAttribute(Qt.WA_ShowWithoutActivating)
     screen = app.primaryScreen()
     try:
-        dialog.tabs.setCurrentIndex(WIDGETS);dialog.show()
+        dialog.tabs.setCurrentIndex(VISUALS);dialog.show()
         dialog.set_draft_values(dict(watermark_enabled=True, watermark_color='#5599dd', watermark_auto_contrast=False, watermark_opacity=47,
                                      watermark_text='测试 123', watermark_size=36, watermark_angle=-32))
         assert dialog.fields['watermark_position'].isEnabled() and not dialog.fields['watermark_density'].isEnabled()

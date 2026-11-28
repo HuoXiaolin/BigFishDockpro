@@ -77,20 +77,23 @@ def run(api,runtime,root,output,checks):
                 dense.size_mode.setCurrentIndex(dense.size_mode.findData(mode));app.processEvents();sizes.append(dense.size());fonts.append(dense.fields['icon_size'].font().pixelSize())
                 assert dense.size_mode.currentData()==mode
                 dense.grab().save(str(Path(output)/('settings-preset-'+mode+'.png')))
-            assert sizes==[QSize(538,420),QSize(768,600)],sizes
+            assert sizes==[QSize(768,560),QSize(960,700)],sizes
             assert fonts==[10,11],fonts
             dense.size_mode.setCurrentIndex(dense.size_mode.findData('auto'));assert float(dense.property('interfaceScale'))==.78
             for _ in range(2):
-                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(768,600) and dense.size_mode.currentData()=='auto'
+                apply_theme(app,False);apply_theme(app,True);assert dense.size()==QSize(960,700) and dense.size_mode.currentData()=='auto'
             dense.reject();assert cfg==saved_cfg,{key:(saved_cfg.get(key),cfg.get(key)) for key in set(saved_cfg)|set(cfg) if saved_cfg.get(key)!=cfg.get(key)}
             dense.reveal();dense.size_mode.setCurrentIndex(dense.size_mode.findData('medium'));dense.resize(910,710);app.processEvents()
             assert dense.size_mode.currentData()=='custom'
             dense.commit();assert cfg['settings_size']=='custom' and cfg['settings_manual_size']==[910,710]
         dense.reject();dense.reveal();area=dense.available_interface_area()
-        assert dense.size()==QSize(min(768,area.width()-24),min(600,area.height()-24)),dense.size()
+        assert dense.size()==QSize(min(960,area.width()-24),min(700,area.height()-24)),dense.size()
         assert dense.size_mode.currentData()=='medium'
         assert cfg['settings_manual_size']==[910,710]
-        checks.append('adaptive settings: small/medium frames enlarged 20 percent to 538x420/768x600; fonts remain 10/11 px; medium on reopen, custom dimensions retained, theme idempotence and cancel preserved')
+        with patch.object(dense,'available_interface_area',return_value=QRect(1200,200,800,560)):
+            dense.adapt_interface()
+            assert dense.size()==QSize(776,536) and dense.available_interface_area().contains(dense.geometry())
+        checks.append('expanded small/medium settings frames, stable typography, work-area bounds, custom dimensions, save and cancel')
     finally:
         if dialog:dialog.reject();dialog.deleteLater()
         if dense:

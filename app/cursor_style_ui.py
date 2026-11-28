@@ -6,6 +6,7 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from cursor_styles import PACK_ERRORS, read_pack
+from settings_design import ResponsiveFields
 from ui_style import ModernComboBox, button, label
 
 
@@ -79,10 +80,10 @@ class CursorStylePanel(QWidget):
         body.addLayout(selector)
         body.addWidget(label('指针预览', 'section'))
         self.previews = []
-        preview_layout = QHBoxLayout()
-        preview_layout.addWidget(self.preview_surface('浅色背景', '#f6f8fc', '#1e2b38'), 1)
-        preview_layout.addWidget(self.preview_surface('深色背景', '#252e39', '#edf2f7'), 1)
-        body.addLayout(preview_layout)
+        previews = ResponsiveFields()
+        previews.add(self.preview_surface('浅色背景', '#f6f8fc', '#1e2b38'))
+        previews.add(self.preview_surface('深色背景', '#252e39', '#edf2f7'))
+        body.addWidget(previews)
         actions = QHBoxLayout()
         actions.addStretch()
         actions.addWidget(self.restore_button)

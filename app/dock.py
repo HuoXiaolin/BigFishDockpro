@@ -937,6 +937,9 @@ class Dock(QWidget):
         cur = system_is_light()
         if cur != self._sys_light:
             self._sys_light = cur
+            if self.cfg.get("theme", "auto") == "auto":
+                from ui_style import apply_theme
+                apply_theme(QApplication.instance(), self.is_light())
             self.update()
             runtime = getattr(getattr(self, 'tray', None), 'runtime', None)
             if runtime:

@@ -612,7 +612,8 @@ class NoteOptions(QDialog):
         from component_settings import ComponentPages, settings_footer
         body=QVBoxLayout(self);body.addWidget(SettingsHeader(self,'便签设置'))
         self.tabs=ComponentPages(self,body,'便签')
-        form=self.tabs.form('材质与配色','palette','便签外观')
+        from settings_sections import NOTE_TABS
+        form=self.tabs.form(NOTE_TABS[0],'palette','便签外观')
         from appearance_presets import APPEARANCE_SOURCES
         self.source=ModernComboBox()
         for title,key in APPEARANCE_SOURCES:self.source.addItem(title,key)
@@ -641,15 +642,15 @@ class NoteOptions(QDialog):
         self.preset.setCurrentIndex(matched)
         self.source.currentIndexChanged.connect(self.sync_source)
         self.sync_source()
-        form=self.tabs.form('文字与交互','notes','文字、收起与层级')
         self.body_font=ModernSpinBox();self.body_font.setRange(8,72);self.body_font.setValue(note.text_pixels());self.body_font.setAccessibleName('便签正文字号')
         font_row=QHBoxLayout();font_row.addWidget(self.body_font,1);self.follow_button=button('跟随卡片',self.follow_font);font_row.addWidget(self.follow_button);form.addRow('正文字号（像素）',font_row)
+        form.addRow(label('正文字号只影响这张便签，标题使用卡片字号。','muted'))
+        form=self.tabs.form(NOTE_TABS[1],'panels','收起、淡化与层级')
         self.auto_hide=ModernCheckBox('鼠标离开后自动收起');self.auto_hide.setChecked(row['auto_hide']);form.addRow(self.auto_hide)
         from desktop_idle_fade import FadeCheckBox
         self.idle_fade=FadeCheckBox(note.dock.cfg,note.property('clickThroughKey'));form.addRow(self.idle_fade)
         flags=QHBoxLayout();self.pinned=ModernCheckBox('置顶显示');self.locked=ModernCheckBox('锁定位置与大小')
         self.pinned.setChecked(row['pinned']);self.locked.setChecked(row['locked']);flags.addWidget(self.pinned);flags.addWidget(self.locked);flags.addStretch();form.addRow(flags)
-        form.addRow(label('正文字号只影响这张便签，标题使用卡片字号。','muted'))
         self.status=label('','muted')
         settings_footer(self,body,self.status,self.commit)
         self.body_font.valueChanged.connect(self.font_changed);self.follow_button.setEnabled(self.custom);self.loading=False;compact_dialog(self)
